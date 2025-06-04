@@ -1,0 +1,866 @@
+{
+  "project_title": "OreNoNyoubou_Shudaika",
+  "global_settings": {
+    "tempo": 88,
+    "time_signature": "4/4",
+    "key_tonic": "F",
+    "key_mode": "major"
+  },
+  "sections": {
+    "Verse 1": {
+      "order": 1,
+      "length_in_measures": 9,
+      "tonic": "D",
+      "mode": "dorian",
+      "musical_intent": {
+        "emotion": "quiet_pain_and_nascent_strength",
+        "intensity": "low"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_reflective_arpeggio_rh",
+        "piano_lh_style_keyword": "piano_sustained_root_lh",
+        "piano_velocity_rh": 55,
+        "piano_velocity_lh": 50,
+        "piano_apply_pedal": true,
+        "drum_style_key": "no_drums"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 8.0
+      },
+      "chord_progression": [
+        {
+          "label": "Dsus2",
+          "duration_beats": 4,
+          "nuance": "transparent_longing_dorian_i_sus2"
+        },
+        {
+          "label": "Gsus2/D",
+          "duration_beats": 4,
+          "nuance": "gentle_movement_dorian_iv_sus2_over_tonic_pedal"
+        },
+        {
+          "label": "Cadd9",
+          "duration_beats": 4,
+          "nuance": "hint_of_light_dorian_VII_add9"
+        },
+        {
+          "label": "Amadd9",
+          "duration_beats": 4,
+          "nuance": "reflective_dorian_v_add9"
+        },
+        {
+          "label": "Dsus2",
+          "duration_beats": 4,
+          "nuance": "return_to_longing_dorian_i_sus2"
+        },
+        {
+          "label": "B-add9",
+          "duration_beats": 4,
+          "nuance": "introspective_color_dorian_bVI_add9"
+        },
+        {
+          "label": "Csus4/G",
+          "duration_beats": 4,
+          "nuance": "yearning_dorian_VIIsus4_over_V"
+        },
+        {
+          "label": "Dm",
+          "duration_beats": 7,
+          "nuance": "quiet_resolve_lingering_dorian_i"
+        }
+      ],
+      "adjusted_start_beat": 0.0,
+      "expression_details": {
+        "dynamics_profile": "mp",
+        "base_articulation": "legato",
+        "tempo_feel_adjust_bpm": -1.5,
+        "humanize_profile": "soft_reflective"
+      }
+    },
+    "Pre-Chorus 1": {
+      "order": 2,
+      "length_in_measures": 10,
+      "tonic": "A",
+      "mode": "aeolian",
+      "musical_intent": {
+        "emotion": "deep_regret_gratitude_and_realization",
+        "intensity": "medium_low"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_chordal_moving_rh",
+        "piano_lh_style_keyword": "piano_walking_bass_like_lh",
+        "piano_velocity_rh": 60,
+        "piano_velocity_lh": 55,
+        "piano_apply_pedal": true,
+        "drum_style_key": "ballad_soft_kick_snare_8th_hat"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 37.25
+      },
+      "chord_progression": [
+        {
+          "label": "Am7add11",
+          "duration_beats": 4
+        },
+        {
+          "label": "Dm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "G13",
+          "duration_beats": 4
+        },
+        {
+          "label": "Cmaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Bdim7",
+          "duration_beats": 4,
+          "nuance": "passing_diminished_tension"
+        },
+        {
+          "label": "E7b9",
+          "duration_beats": 4
+        },
+        {
+          "label": "Am7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Am7",
+          "duration_beats": 5.25
+        },
+        {
+          "label": "Rest",
+          "duration_beats": 2.75
+        }
+      ],
+      "adjusted_start_beat": 35.0,
+      "expression_details": {
+        "dynamics_profile": "mp-mf",
+        "base_articulation": "legato",
+        "tempo_feel_adjust_bpm": -0.8,
+        "humanize_profile": "gentle_swing"
+      }
+    },
+    "Chorus 1": {
+      "order": 3,
+      "length_in_measures": 9,
+      "tonic": "F",
+      "mode": "ionian",
+      "musical_intent": {
+        "emotion": "acceptance_of_love_and_pain_hopeful_belief",
+        "intensity": "medium_high"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_powerful_block_chords_rh",
+        "piano_lh_style_keyword": "piano_active_octave_bass_lh",
+        "piano_velocity_rh": 75,
+        "piano_velocity_lh": 70,
+        "piano_apply_pedal": true,
+        "drum_style_key": "anthem_rock_chorus_16th_hat"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 77.25
+      },
+      "chord_progression": [
+        {
+          "label": "Fmaj7add9",
+          "duration_beats": 4
+        },
+        {
+          "label": "C/E",
+          "duration_beats": 4
+        },
+        {
+          "label": "Dm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Gm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "C7sus4",
+          "duration_beats": 2
+        },
+        {
+          "label": "C7",
+          "duration_beats": 2
+        },
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "B-maj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "F/A",
+          "duration_beats": 4
+        },
+        {
+          "label": "Gm7",
+          "duration_beats": 2.0
+        }
+      ],
+      "adjusted_start_beat": 75.0,
+      "expression_details": {
+        "dynamics_profile": "mf-f",
+        "base_articulation": "accented_legato",
+        "tempo_feel_adjust_bpm": 0.5,
+        "humanize_profile": "forward_driving"
+      }
+    },
+    "Verse 2": {
+      "order": 4,
+      "length_in_measures": 8,
+      "tonic": "C",
+      "mode": "phrygian",
+      "musical_intent": {
+        "emotion": "self_reproach_regret_deep_sadness",
+        "intensity": "medium_low"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_reflective_arpeggio_rh",
+        "piano_lh_style_keyword": "piano_sustained_root_lh",
+        "piano_velocity_rh": 50,
+        "piano_velocity_lh": 45,
+        "piano_apply_pedal": true,
+        "drum_style_key": "no_drums_or_sparse_cymbal"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 112.5
+      },
+      "chord_progression": [
+        {
+          "label": "Cm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "D-maj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "E-m7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Fm",
+          "duration_beats": 4
+        },
+        {
+          "label": "Cm",
+          "duration_beats": 4
+        },
+        {
+          "label": "A-maj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Gm7b5",
+          "duration_beats": 2
+        },
+        {
+          "label": "C7#9b13",
+          "duration_beats": 2,
+          "nuance": "phrygian_dominant_flavor"
+        },
+        {
+          "label": "Cm",
+          "duration_beats": 3.0
+        }
+      ],
+      "adjusted_start_beat": 109.0,
+      "expression_details": {
+        "dynamics_profile": "mp",
+        "base_articulation": "detached_legato",
+        "tempo_feel_adjust_bpm": -1.0,
+        "humanize_profile": "delayed_emotion"
+      }
+    },
+    "Chorus 2": {
+      "order": 5,
+      "length_in_measures": 7,
+      "tonic": "D",
+      "mode": "dorian",
+      "musical_intent": {
+        "emotion": "supported_light_longing_for_rebirth",
+        "intensity": "medium"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_chordal_moving_rh",
+        "piano_lh_style_keyword": "piano_walking_bass_like_lh",
+        "piano_velocity_rh": 65,
+        "piano_velocity_lh": 60,
+        "piano_apply_pedal": true,
+        "drum_style_key": "rock_ballad_build_up_8th_hat"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 32.0
+      },
+      "chord_progression": [
+        {
+          "label": "Dm7add13",
+          "duration_beats": 4
+        },
+        {
+          "label": "Gm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "C7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "B-maj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Em7b5",
+          "duration_beats": 4
+        },
+        {
+          "label": "A7b9",
+          "duration_beats": 1.0
+        }
+      ],
+      "adjusted_start_beat": 140.0,
+      "expression_details": {
+        "dynamics_profile": "mf",
+        "base_articulation": "legato",
+        "tempo_feel_adjust_bpm": 0.0,
+        "humanize_profile": "gentle_push"
+      }
+    },
+    "Interlude": {
+      "order": 6,
+      "length_in_measures": 4,
+      "tonic": "F",
+      "mode": "major",
+      "musical_intent": {
+        "emotion": "reflective_transition_instrumental_passage",
+        "intensity": "medium_low"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_reflective_arpeggio_rh",
+        "piano_lh_style_keyword": "piano_sustained_root_lh",
+        "piano_velocity_rh": 60,
+        "piano_velocity_lh": 55,
+        "piano_apply_pedal": true,
+        "drum_style_key": "no_drums_or_gentle_cymbal_swell"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 24.0
+      },
+      "chord_progression": [
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Gm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Am7",
+          "duration_beats": 4
+        },
+        {
+          "label": "B-maj7",
+          "duration_beats": 3.0
+        }
+      ],
+      "adjusted_start_beat": 165.0,
+      "expression_details": {
+        "dynamics_profile": "mp-mf",
+        "base_articulation": "detached_legato",
+        "tempo_feel_adjust_bpm": -0.5,
+        "humanize_profile": "gentle_swing"
+      }
+    },
+    "Bridge 1": {
+      "order": 7,
+      "length_in_measures": 8,
+      "tonic": "C",
+      "mode": "mixolydian",
+      "musical_intent": {
+        "emotion": "trial_cry_prayer_unbreakable_heart",
+        "intensity": "medium_high"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_powerful_block_chords_rh",
+        "piano_lh_style_keyword": "piano_active_octave_bass_lh",
+        "piano_velocity_rh": 70,
+        "piano_velocity_lh": 65,
+        "piano_apply_pedal": true,
+        "drum_style_key": "rock_ballad_build_up_8th_hat"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 32.0
+      },
+      "chord_progression": [
+        {
+          "label": "C13",
+          "duration_beats": 4
+        },
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "C7",
+          "duration_beats": 4
+        },
+        {
+          "label": "B-maj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "F/A",
+          "duration_beats": 4
+        },
+        {
+          "label": "Gm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "C7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4,
+          "nuance": "temporary_resolve_to_F"
+        }
+      ],
+      "adjusted_start_beat": 180.0,
+      "expression_details": {
+        "dynamics_profile": "mf-f",
+        "base_articulation": "accented_legato",
+        "tempo_feel_adjust_bpm": 0.5,
+        "humanize_profile": "forward_driving"
+      }
+    },
+    "Verse 3": {
+      "order": 8,
+      "length_in_measures": 8,
+      "tonic": "A",
+      "mode": "aeolian",
+      "musical_intent": {
+        "emotion": "memory_unresolved_feelings_silence",
+        "intensity": "low"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_reflective_arpeggio_rh",
+        "piano_lh_style_keyword": "piano_sustained_root_lh",
+        "piano_velocity_rh": 50,
+        "piano_velocity_lh": 45,
+        "piano_apply_pedal": true,
+        "drum_style_key": "no_drums"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 32.0
+      },
+      "chord_progression": [
+        {
+          "label": "Am7",
+          "duration_beats": 4,
+          "nuance": "add sus2 feeling"
+        },
+        {
+          "label": "Dm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "G7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Cmaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "E7sus4",
+          "duration_beats": 2
+        },
+        {
+          "label": "E7",
+          "duration_beats": 2
+        },
+        {
+          "label": "Am7",
+          "duration_beats": 8
+        }
+      ],
+      "adjusted_start_beat": 212.0,
+      "expression_details": {
+        "dynamics_profile": "mp",
+        "base_articulation": "legato",
+        "tempo_feel_adjust_bpm": -1.0,
+        "humanize_profile": "soft_reflective"
+      }
+    },
+    "Pre-Chorus 2": {
+      "order": 9,
+      "length_in_measures": 12,
+      "tonic": "D",
+      "mode": "dorian",
+      "musical_intent": {
+        "emotion": "wavering_heart_gratitude_chosen_strength",
+        "intensity": "medium"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_chordal_moving_rh",
+        "piano_lh_style_keyword": "piano_walking_bass_like_lh",
+        "piano_velocity_rh": 65,
+        "piano_velocity_lh": 60,
+        "piano_apply_pedal": true,
+        "drum_style_key": "ballad_soft_kick_snare_8th_hat"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 46.0
+      },
+      "chord_progression": [
+        {
+          "label": "Dm7add11",
+          "duration_beats": 4
+        },
+        {
+          "label": "Gm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "C7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "B-maj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "C/B-",
+          "duration_beats": 4
+        },
+        {
+          "label": "Am7",
+          "duration_beats": 4
+        },
+        {
+          "label": "D7sus4",
+          "duration_beats": 2,
+          "nuance": "turnaround_to_Gm_or_Dm"
+        },
+        {
+          "label": "D7",
+          "duration_beats": 2
+        },
+        {
+          "label": "Gm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "A7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Dm7",
+          "duration_beats": 6
+        },
+        {
+          "label": "Rest",
+          "duration_beats": 1.0
+        }
+      ],
+      "adjusted_start_beat": 244.0,
+      "expression_details": {
+        "dynamics_profile": "mf",
+        "base_articulation": "legato",
+        "tempo_feel_adjust_bpm": 0.0,
+        "humanize_profile": "gentle_push"
+      }
+    },
+    "Chorus 3": {
+      "order": 10,
+      "length_in_measures": 9,
+      "tonic": "F",
+      "mode": "ionian",
+      "musical_intent": {
+        "emotion": "reaffirmed_strength_of_love_positive_determination",
+        "intensity": "high"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_powerful_block_chords_rh",
+        "piano_lh_style_keyword": "piano_active_octave_bass_lh",
+        "piano_velocity_rh": 80,
+        "piano_velocity_lh": 75,
+        "piano_apply_pedal": true,
+        "drum_style_key": "anthem_rock_chorus_16th_hat"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 48.0,
+        "drum_fill_at_end": "chorus_end_fill"
+      },
+      "chord_progression": [
+        {
+          "label": "Fmaj7add13",
+          "duration_beats": 4
+        },
+        {
+          "label": "C/E",
+          "duration_beats": 4
+        },
+        {
+          "label": "Dm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Gm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "C7",
+          "duration_beats": 4,
+          "nuance": "strong_dominant"
+        },
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "B-maj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Am7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Dm7",
+          "duration_beats": 1.0
+        }
+      ],
+      "adjusted_start_beat": 291.0,
+      "expression_details": {
+        "dynamics_profile": "f",
+        "base_articulation": "accented",
+        "tempo_feel_adjust_bpm": 1.0,
+        "humanize_profile": "bold_drive"
+      }
+    },
+    "Bridge 2": {
+      "order": 11,
+      "length_in_measures": 8,
+      "tonic": "Bb",
+      "mode": "lydian",
+      "musical_intent": {
+        "emotion": "hope_dawn_light_gentle_guidance",
+        "intensity": "medium"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_reflective_arpeggio_rh",
+        "piano_lh_style_keyword": "piano_sustained_root_lh",
+        "piano_velocity_rh": 60,
+        "piano_velocity_lh": 55,
+        "piano_apply_pedal": true,
+        "drum_style_key": "no_drums_or_gentle_cymbal_swell"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 32.0
+      },
+      "chord_progression": [
+        {
+          "label": "B-maj7#11add9",
+          "duration_beats": 4
+        },
+        {
+          "label": "C/B-",
+          "duration_beats": 4
+        },
+        {
+          "label": "Am7",
+          "duration_beats": 4,
+          "nuance": "contrast_to_lydian_brightness"
+        },
+        {
+          "label": "Dm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Gm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "C7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4,
+          "nuance": "return_to_global_tonic_area"
+        },
+        {
+          "label": "B-maj7#11",
+          "duration_beats": 4,
+          "nuance": "add sus2 feeling"
+        }
+      ],
+      "adjusted_start_beat": 324.0,
+      "expression_details": {
+        "dynamics_profile": "mf",
+        "base_articulation": "legato",
+        "tempo_feel_adjust_bpm": 0.0,
+        "humanize_profile": "gentle_push"
+      }
+    },
+    "Verse 4": {
+      "order": 12,
+      "length_in_measures": 8,
+      "tonic": "Bb",
+      "mode": "lydian",
+      "musical_intent": {
+        "emotion": "nature_memory_floating_sensation_forgiveness",
+        "intensity": "medium_low"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_reflective_arpeggio_rh",
+        "piano_lh_style_keyword": "piano_sustained_root_lh",
+        "piano_velocity_rh": 55,
+        "piano_velocity_lh": 50,
+        "piano_apply_pedal": true,
+        "drum_style_key": "no_drums_or_sparse_chimes"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 64.0
+      },
+      "chord_progression": [
+        {
+          "label": "B-maj7#11add9",
+          "duration_beats": 4
+        },
+        {
+          "label": "F/A",
+          "duration_beats": 4
+        },
+        {
+          "label": "Gm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "C7sus4",
+          "duration_beats": 2,
+          "nuance": "gentle_suspension"
+        },
+        {
+          "label": "C7",
+          "duration_beats": 2
+        },
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4,
+          "nuance": "momentary_grounding"
+        },
+        {
+          "label": "E-maj7#11",
+          "duration_beats": 4
+        },
+        {
+          "label": "B-maj7/D",
+          "duration_beats": 4
+        },
+        {
+          "label": "Cm7",
+          "duration_beats": 4
+        }
+      ],
+      "adjusted_start_beat": 356.0,
+      "expression_details": {
+        "dynamics_profile": "mp-mf",
+        "base_articulation": "detached_legato",
+        "tempo_feel_adjust_bpm": -0.5,
+        "humanize_profile": "gentle_swing"
+      }
+    },
+    "Chorus 4": {
+      "order": 13,
+      "length_in_measures": 8,
+      "tonic": "F",
+      "mode": "ionian",
+      "musical_intent": {
+        "emotion": "future_cooperation_our_path_final_resolve_and_liberation",
+        "intensity": "high_to_very_high_then_fade"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_powerful_block_chords_rh",
+        "piano_lh_style_keyword": "piano_active_octave_bass_lh",
+        "piano_velocity_rh": 85,
+        "piano_velocity_lh": 80,
+        "piano_apply_pedal": true,
+        "drum_style_key": "anthem_rock_chorus_16th_hat"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 129.5,
+        "mode_shift_to_lydian_beat_offset": 96.0
+      },
+      "chord_progression": [
+        {
+          "label": "Fmaj7add9",
+          "duration_beats": 4
+        },
+        {
+          "label": "C/E",
+          "duration_beats": 4
+        },
+        {
+          "label": "Dm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Gm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "C7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "B-maj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "F/A",
+          "duration_beats": 4
+        }
+      ],
+      "adjusted_start_beat": 388.0,
+      "expression_details": {
+        "dynamics_profile": "ff-p",
+        "base_articulation": "accented_legato",
+        "tempo_feel_adjust_bpm": 1.5,
+        "humanize_profile": "emotional_arc"
+      }
+    }
+  }
+}

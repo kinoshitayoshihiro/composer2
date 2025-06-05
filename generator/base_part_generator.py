@@ -1,110 +1,175 @@
-# ===============================================================
-# S‑1 Sprint  ─ 共通基底クラス + BassGenerator 置換パッチ
-# ===============================================================
-# 1. base_part_generator.py  (NEW FILE)
-# ---------------------------------------------------------------
+# --- START OF FILE generator/base_part_generator.py (修正版) ---
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List
-from music21 import stream
-from utilities.prettymidi_sync import apply_groove_pretty, load_groove_profile
-from utilities.override_loader import get_part_override
+from typing import Dict, Any, List, Optional
+from music21 import stream, note, tempo, meter, key, instrument as m21instrument
+import logging
+
+try:
+    # ★★★ prettymidi_sync からのインポート名を修正 ★★★
+    from utilities.prettymidi_sync import apply_groove_pretty, load_groove_profile
+    from utilities.override_loader import (
+        get_part_override,
+        Overrides as OverrideModelType,
+        PartOverride,
+    )  # ★★★ PartOverrideModel -> PartOverride ★★★
+    from utilities.humanizer import apply_humanization_to_part, HUMANIZATION_TEMPLATES
+except ImportError as e:
+    logging.warning(
+        f"BasePartGenerator: Could not import some utilities: {e}. Some features might be limited."
+    )
+
+    def apply_groove_pretty(part, groove_profile):
+        return part  # type: ignore
+
+    def load_groove_profile(path):
+        return None  # type: ignore
+
+    # ★★★ PartOverride のダミーも修正 ★★★
+    class PartOverride:  # type: ignore
+        model_config = {}
+        model_fields = {}
+
+        def model_dump(self, exclude_unset=True):
+            return {}
+
+    def get_part_override(
+        overrides, section_label, part_name
+    ) -> Optional[PartOverride]:
+        return None  # type: ignore
+
+    def apply_humanization_to_part(part, template_name=None, custom_params=None):
+        return part  # type: ignore
+
+    HUMANIZATION_TEMPLATES = {}  # type: ignore
+
+    class OverrideModelType:
+        root: Dict = {}  # type: ignore
 
 
 class BasePartGenerator(ABC):
     """全楽器ジェネレーターが継承する共通基底クラス。"""
 
-    def __init__(self, part_name: str, rhythm_lib: Dict[str, Any]):
+    def __init__(
+        self,
+        part_name: str,
+        part_parameters: Dict[str, Any],  # ← これを追加
+        main_cfg: Dict[str, Any],
+        groove_profile: Optional[Dict[str, Any]] = None,
+        global_tempo_val: int = 120,
+        global_ts_str: str = "4/4",
+        global_key_tonic_val: str = "C",
+        global_key_mode_val: str = "maj",
+    ):
         self.part_name = part_name
-        self.rhythm_lib = rhythm_lib
-        self.measure_duration = 4.0  # 4/4 基準（TODO: 動的に）
-        self.logger = self._get_logger()
+        self.part_parameters = part_parameters
+        self.main_cfg = main_cfg
+        self.groove_profile = groove_profile
 
-    # ----------------  PUBLIC API  ----------------
+        self.global_tempo = global_tempo_val
+        self.global_time_signature_str = global_ts_str
+        self.global_key_tonic = global_key_tonic_val
+        self.global_key_mode = global_key_mode_val
+
+        self.measure_duration = 4.0
+        try:
+            ts_obj_for_dur = meter.TimeSignature(self.global_time_signature_str)
+            self.measure_duration = ts_obj_for_dur.barDuration.quarterLength
+        except Exception:
+            pass
+
+        self.logger = self._get_logger()
+        self.overrides: Optional[PartOverride] = (
+            None  # ★★★ PartOverrideModel -> PartOverride ★★★
+        )
+
     def compose(
         self,
         *,
-        section: Dict[str, Any],
-        overrides_root: Dict[str, Any],
-        groove_path: str
+        section_data: Dict[str, Any],
+        overrides_root: Optional[OverrideModelType] = None,
+        groove_profile_path: Optional[str] = None,
+        next_section_data: Optional[Dict[str, Any]] = None,
+        part_specific_humanize_params: Optional[Dict[str, Any]] = None,
     ) -> stream.Part:
-        """共通ワークフロー：オーバーライド適用 → ノート生成 → グルーヴ適用。"""
-        self.overrides = get_part_override(
-            overrides_root, section["label"], self.part_name
+        section_label = section_data.get(
+            "section_name", "UnknownSection"
+        )  # section -> section_data
+        if overrides_root:
+            # ★★★ PartOverrideModel -> PartOverride ★★★
+            self.overrides = get_part_override(
+                overrides_root, section_label, self.part_name
+            )
+        else:
+            self.overrides = None
+
+        self.logger.info(
+            f"Rendering part for section: '{section_label}' with overrides: {self.overrides.model_dump(exclude_unset=True) if self.overrides and hasattr(self.overrides, 'model_dump') else 'None'}"
         )
-        part = self._render_part(section)
-        # groove 適用（存在すれば）
-        if groove_path and part.notes:
-            gp = load_groove_profile(groove_path)
-            apply_groove_pretty(part, gp)
+
+        part = self._render_part(section_data, next_section_data)
+
+        if not isinstance(part, stream.Part):
+            self.logger.error(
+                f"_render_part for {self.part_name} did not return a valid music21.stream.Part. Returning empty part."
+            )
+            part = stream.Part(id=self.part_name)
+
+        if groove_profile_path and part.flatten().notes:
+            try:
+                gp = load_groove_profile(groove_profile_path)
+                if gp:
+                    # ★★★ apply_groove_pretty が Part を返すように修正したので、代入する ★★★
+                    part = apply_groove_pretty(part, gp)
+                    self.logger.info(
+                        f"Applied groove from '{groove_profile_path}' to {self.part_name}."
+                    )
+                else:
+                    self.logger.warning(
+                        f"Could not load groove profile from '{groove_profile_path}'."
+                    )
+            except Exception as e_groove:
+                self.logger.error(
+                    f"Error applying groove to {self.part_name}: {e_groove}",
+                    exc_info=True,
+                )
+
+        if part_specific_humanize_params and part_specific_humanize_params.get(
+            "humanize_opt", False
+        ):
+            if part.flatten().notes:
+                try:
+                    template = part_specific_humanize_params.get(
+                        "template_name", "default_subtle"
+                    )
+                    custom = part_specific_humanize_params.get("custom_params", {})
+                    # ★★★ apply_humanization_to_part が Part を返すように修正したので、代入する ★★★
+                    part = apply_humanization_to_part(
+                        part, template_name=template, custom_params=custom
+                    )
+                    self.logger.info(
+                        f"Applied humanization (template: {template}) to {self.part_name}."
+                    )
+                except Exception as e_humanize_part:
+                    self.logger.error(
+                        f"Error during part-level humanization for {self.part_name}: {e_humanize_part}",
+                        exc_info=True,
+                    )
+            else:
+                self.logger.info(
+                    f"Part {self.part_name} is empty, skipping humanization."
+                )
         return part
 
-    # ----------------  必須サブクラス実装  ----------------
     @abstractmethod
-    def _render_part(self, section: Dict[str, Any]) -> stream.Part:
-        """各楽器固有のノート生成を行う抽象メソッド。"""
+    def _render_part(
+        self,
+        section_data: Dict[str, Any],
+        next_section_data: Optional[Dict[str, Any]] = None,
+    ) -> stream.Part:
         raise NotImplementedError
 
-    # ----------------  共通ユーティリティ  ----------------
     def _get_logger(self):
-        import logging
-
-        return logging.getLogger(self.part_name)
-
-    def humanize_velocity(self, note_obj, ratio=0.05):
-        import random
-
-        delta = int(note_obj.volume.velocity * ratio * (random.random() * 2 - 1))
-        note_obj.volume.velocity = max(1, min(127, note_obj.volume.velocity + delta))
+        return logging.getLogger(f"modular_composer.{self.part_name}_generator")
 
 
-# ===============================================================
-# 2. bass_generator.py  (MODIFIED) — クラス定義を Base 継承に変更
-# ---------------------------------------------------------------
-from base_part_generator import BasePartGenerator
-from music21 import stream, note, harmony
-
-...
-
-
-class BassGenerator(BasePartGenerator):
-    def __init__(self, rhythm_lib):
-        super().__init__("bass", rhythm_lib)
-        # bass 固有設定
-        self.base_velocity = 72
-
-    # --------- メイン実装 ---------
-    def _render_part(self, section: Dict[str, Any]) -> stream.Part:
-        part = stream.Part(id="bass")
-        pattern_key = self._choose_pattern(section)
-        notes = self._render_pattern(pattern_key, section)
-        notes = self._apply_overrides(notes)
-        for n in notes:
-            part.insert(n.offset, n)
-        return part
-
-    # 以下：既存メソッドを変更せずコピー or 呼び出し
-    # _choose_pattern, _render_pattern, _apply_overrides など…
-
-
-# ===============================================================
-# 3. modular_composer.py — 生成器初期化＆呼び出し変更
-# ---------------------------------------------------------------
-from base_part_generator import BasePartGenerator  # noqa: F401 (import for side‑effect)
-
-...
-# 生成器作成
-bass_gen = BassGenerator(rhythm_lib=bass_patterns)
-...
-for sec in sections:
-    bass_part = bass_gen.compose(
-        section=sec,
-        overrides_root=arrangement_overrides,
-        groove_path=args.groove_profile,
-    )
-    score.insert(sec["absolute_offset"], bass_part)
-
-# ===============================================================
-# 4. utilities/override_loader.py — get_part_override は既存
-# ===============================================================
-
-# === 完了 ===
+# --- END OF FILE generator/base_part_generator.py ---

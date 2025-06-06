@@ -1,6 +1,7 @@
 # --- START OF FILE generator/bass_generator.py (S-1 Sprint適用・エラー修正・アルゴリズム拡充・型ヒント修正版) ---
 import music21
 import logging
+import random  # ← 追加
 from music21 import (
     stream,
     note,
@@ -16,7 +17,6 @@ from music21 import (
     volume as m21volume,
     duration as m21duration,
 )
-import random
 from typing import List, Dict, Optional, Any, Tuple, Union, cast, Sequence
 import copy
 import math
@@ -150,19 +150,28 @@ class BassGenerator(BasePartGenerator):
         part_parameters: Dict[str, Any],
         main_cfg: Dict[str, Any],
         groove_profile: Optional[Dict[str, Any]] = None,
-        global_tempo: float = None,
-        global_time_signature_obj=None,
+        global_time_signature_obj=None,  # run_composition から渡される
     ):
         super().__init__(
             part_name=part_name,
             part_parameters=part_parameters,
             main_cfg=main_cfg,
             groove_profile=groove_profile,
+            # global_tempo_val などは main_cfg から BasePartGenerator が取得
         )
-        self.global_tempo = global_tempo
-        self.global_time_signature_obj = global_time_signature_obj
+        self.rng = random.Random()
+        if self.main_cfg.get("rng_seed") is not None:
+            self.rng.seed(self.main_cfg["rng_seed"])
+
+        # 以前の__init__にあった独自の初期化処理はここに残す
+        self.global_time_signature_obj = get_time_signature_object(self.global_ts_str)
+        self.global_key_tonic = self.main_cfg.get("global_settings", {}).get(
+            "key_tonic"
+        )
+        self.global_key_mode = self.main_cfg.get("global_settings", {}).get("key_mode")
+
         if self.global_time_signature_obj is None:
-            logging.getLogger("BassGenerator").warning(
+            self.logger.warning(
                 "BassGenerator: global_time_signature_obj が設定されていません。"
             )
         self._add_internal_default_patterns()
@@ -266,8 +275,8 @@ class BassGenerator(BasePartGenerator):
             },
         }
         for key_pat, val_pat in defaults_to_add.items():
-            if key_pat not in self.rhythm_lib:
-                self.rhythm_lib[key_pat] = val_pat
+            if key_pat not in self.part_parameters:
+                self.part_parameters[key_pat] = val_pat
                 self.logger.info(
                     f"BassGenerator: Added default pattern '{key_pat}' to internal rhythm_lib."
                 )
@@ -280,7 +289,7 @@ class BassGenerator(BasePartGenerator):
         pattern_key = BUCKET_TO_PATTERN_BASS.get(
             (bucket, intensity), "bass_quarter_notes"
         )
-        if pattern_key not in self.rhythm_lib:
+        if pattern_key not in self.part_parameters:  # ←修正
             self.logger.warning(
                 f"Chosen pattern key '{pattern_key}' (for emotion '{emotion}', intensity '{intensity}') not in library. Falling back to 'basic_chord_tone_quarters'."
             )
@@ -289,12 +298,12 @@ class BassGenerator(BasePartGenerator):
 
     def _get_rhythm_pattern_details(self, rhythm_key: str) -> Dict[str, Any]:
         # (変更なし)
-        if not rhythm_key or rhythm_key not in self.rhythm_lib:
+        if not rhythm_key or rhythm_key not in self.part_parameters:  # ←修正
             self.logger.warning(
                 f"BassGenerator: Rhythm key '{rhythm_key}' not found. Using 'basic_chord_tone_quarters'."
             )
             rhythm_key = "basic_chord_tone_quarters"
-        details = self.rhythm_lib.get(rhythm_key)
+        details = self.part_parameters.get(rhythm_key)  # ←修正
         if not details:
             self.logger.error(
                 "BassGenerator: CRITICAL - Default 'basic_chord_tone_quarters' also not found. Using minimal root_only."
@@ -1128,7 +1137,7 @@ class BassGenerator(BasePartGenerator):
             self.logger.warning(
                 f"BassGenerator: Algorithmic pattern_type '{pattern_type}' is defined in library but not yet implemented. Falling back to 'algorithmic_chord_tone_quarters'."
             )
-            default_algo_options = self.rhythm_lib.get(
+            default_algo_options = self.part_parameters.get(
                 "basic_chord_tone_quarters", {}
             ).get("options", {})
             notes_tuples.extend(
@@ -1148,7 +1157,7 @@ class BassGenerator(BasePartGenerator):
             self.logger.warning(
                 f"BassGenerator: Unknown algorithmic or unhandled pattern_type '{pattern_type}'. Falling back to 'algorithmic_chord_tone_quarters'."
             )
-            default_algo_options = self.rhythm_lib.get(
+            default_algo_options = self.part_parameters.get(
                 "basic_chord_tone_quarters", {}
             ).get("options", {})
             notes_tuples.extend(
@@ -1206,7 +1215,7 @@ class BassGenerator(BasePartGenerator):
 
         pattern_details = self._get_rhythm_pattern_details(rhythm_key_from_params)
         actual_rhythm_key_used = rhythm_key_from_params
-        if rhythm_key_from_params not in self.rhythm_lib:
+        if rhythm_key_from_params not in self.part_parameters:  # ←修正
             actual_rhythm_key_used = "basic_chord_tone_quarters"
         final_bass_params["rhythm_key"] = actual_rhythm_key_used
 
@@ -1332,6 +1341,9 @@ class BassGenerator(BasePartGenerator):
             "explicit",
             "root_fifth",
             "funk_octave_pops",
+            "explicit",
+            "root_fifth",
+            "funk_octave_pops",
             "walking_blues",
             "latin_tumbao",
             "half_time_pop",
@@ -1378,9 +1390,9 @@ class BassGenerator(BasePartGenerator):
             self.logger.warning(
                 f"{log_blk_prefix}: Pattern '{final_bass_params['rhythm_key']}' type '{pattern_type_from_lib}' not handled or missing 'pattern' list. Using fallback 'basic_chord_tone_quarters'."
             )
-            fallback_options = self.rhythm_lib.get("basic_chord_tone_quarters", {}).get(
-                "options", {}
-            )
+            fallback_options = self.part_parameters.get(
+                "basic_chord_tone_quarters", {}
+            ).get("options", {})
             generated_notes_for_block = self._generate_algorithmic_pattern(
                 "algorithmic_chord_tone_quarters",
                 m21_cs_obj,

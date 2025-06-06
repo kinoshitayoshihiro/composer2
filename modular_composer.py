@@ -263,6 +263,7 @@ def prepare_stream_for_generators(
     main_config: Dict,
     rhythm_lib_all: Dict,
     arrangement_overrides: Overrides,
+    drum_patterns: Optional[Dict] = None,  # ← drum_patterns を追加
 ) -> List[Dict]:
     logger.info("Preparing stream for generators from processed emotion chordmap...")
     stream_for_generators: List[Dict] = []
@@ -389,11 +390,25 @@ def prepare_stream_for_generators(
                     elif part_name == "melody":
                         rhythm_category_key = "melody_rhythms"
 
-                    rhythm_lib_for_instrument = (
-                        rhythm_lib_all.get(rhythm_category_key, {})
-                        if rhythm_category_key
-                        else {}
-                    )
+                    if part_name == "drums":
+                        rhythm_lib_for_instrument = drum_patterns  # ← ここを修正
+                    else:
+                        # それ以外は従来通り
+                        rhythm_category_key = None
+                        if part_name == "bass":
+                            rhythm_category_key = "bass_patterns"
+                        elif part_name == "piano":
+                            rhythm_category_key = "piano_patterns"
+                        elif part_name == "guitar":
+                            rhythm_category_key = "guitar_patterns"
+                        elif part_name == "melody":
+                            rhythm_category_key = "melody_rhythms"
+                        rhythm_lib_for_instrument = (
+                            rhythm_lib_all.get(rhythm_category_key, {})
+                            if rhythm_category_key
+                            else {}
+                        )
+
                     part_override_model = get_part_override(
                         arrangement_overrides, sec_name, part_name
                     )
@@ -454,133 +469,85 @@ def run_composition(
         logger.error("No blocks to process. Aborting.")
         return
 
-    # ▼▼▼ gens 変数の初期化とジェネレータインスタンスの格納 ▼▼▼
-    gens: Dict[str, BasePartGenerator] = {}  # 型ヒントを BasePartGenerator に
-    cv_inst = ChordVoicer(
-        global_tempo=global_tempo_val, global_time_signature=global_ts_str
-    )  # ChordVoicerは別途
+    # ▼▼▼ ジェネレータインスタンスの生成 ▼▼▼
+    gens: Dict[str, BasePartGenerator] = {}
+
+    # マッピング
+    GENERATOR_MAP = {
+        "bass": BassGenerator,
+        "guitar": GuitarGenerator,
+        "drums": DrumGenerator,
+        "piano": PianoGenerator,
+        # "melody": MelodyGenerator, # 必要に応じて追加
+    }
 
     for part_name, generate_flag in main_cfg.get("parts_to_generate", {}).items():
         if not generate_flag:
             continue
 
-        part_default_cfg = main_cfg["default_part_parameters"].get(part_name, {})
-        instrument_str = part_default_cfg.get("instrument", "Piano")
-        try:
-            instrument_obj = m21instrument.fromString(instrument_str)
-        except Exception:
-            instrument_obj = m21instrument.Piano()
+        if part_name in GENERATOR_MAP:
+            # 🟨ここから修正🟨
+            rhythm_category_key = f"{part_name}_patterns"
+            rhythm_lib_for_instrument = rhythm_lib_data.get(rhythm_category_key, {})
 
-        rhythm_category_key: Optional[str] = None
-        if part_name == "drums":
-            rhythm_category_key = "drum_patterns"
-        elif part_name == "bass":
-            rhythm_category_key = "bass_patterns"
-        elif part_name == "piano":
-            rhythm_category_key = "piano_patterns"
-        elif part_name == "guitar":
-            rhythm_category_key = "guitar_patterns"
-        elif part_name == "melody":
-            rhythm_category_key = "melody_rhythms"
+            # DrumGeneratorの場合、特別な設定をmain_cfgに注入 (この部分はOK)
+            if part_name == "drums":
+                main_cfg.setdefault("vocal_midi_path_for_drums", "data/vocal_ore.midi")
+                main_cfg.setdefault("heatmap_json_path_for_drums", "data/heatmap.json")
 
-        rhythm_lib_for_instrument: Dict[str, Any] = (
-            rhythm_lib_data.get(rhythm_category_key, {}) if rhythm_category_key else {}
-        )
+            try:
+                GeneratorClass = GENERATOR_MAP[part_name]
+                # 呼び出し方を統一！ part_parameters という名前にします
+                gens[part_name] = GeneratorClass(
+                    part_name=part_name,
+                    part_parameters=rhythm_lib_for_instrument,  # 'rhythm_lib' ではなく 'part_parameters'
+                    main_cfg=main_cfg,
+                )
+                logger.info(
+                    f"Successfully instantiated {part_name.capitalize()}Generator."
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to instantiate {part_name.capitalize()}Generator: {e}",
+                    exc_info=True,
+                )
+            # 🟨ここまで修正🟨
 
-        # BasePartGenerator を継承するジェネレータのインスタンス化
-        if part_name == "bass":
-            gens[part_name] = BassGenerator(
-                part_name=part_name,
-                part_parameters=rhythm_lib_for_instrument,  # ← 引数名をBasePartGeneratorに合わせる
-                main_cfg=main_cfg,
-                groove_profile=None,  # 必要に応じて
-                global_tempo=global_tempo_val,
-                global_time_signature_obj=ts_obj_score,
-            )
-        # --- 他のジェネレータも同様に BasePartGenerator を継承し、ここでインスタンス化 ---
-        elif part_name == "piano":
-            logger.warning(
-                f"PianoGenerator is not yet fully adapted to BasePartGenerator. Skipping {part_name}."
-            )
+        elif part_name == "chords":
+            # ChordVoicerの処理は別途
             pass
-        elif part_name == "drums":
+        else:
             logger.warning(
-                f"DrumGenerator is not yet fully adapted to BasePartGenerator. Skipping {part_name}."
+                f"Generator for part '{part_name}' not found or handled. Skipping."
             )
-            pass
-        elif part_name == "guitar":
-            logger.warning(
-                f"GuitarGenerator is not yet fully adapted to BasePartGenerator. Skipping {part_name}."
-            )
-            pass
-        # ... (MelodyGenerator, VocalGenerator も同様) ...
-        elif part_name == "chords":  # ChordVoicer は BasePartGenerator を継承しない
-            if instrument_obj:
-                cv_inst.default_instrument = instrument_obj
-            # ChordVoicer は gens には含めず、ループの外で別途処理する
-    # ▲▲▲ gens 変数の初期化とジェネレータインスタンスの格納ここまで ▲▲▲
+
+    # ▲▲▲ ジェネレーターインスタンスの生成ここまで ▲▲▲
 
     # パート生成ループ
     for i, current_block_data in enumerate(proc_blocks):
         next_block_data = proc_blocks[i + 1] if i + 1 < len(proc_blocks) else None
 
-        # "chords" パートの処理 (ChordVoicer を直接使用)
-        if main_cfg["parts_to_generate"].get("chords"):
-            logger.info(f"Generating chords part using ChordVoicer for block {i+1}...")
-            try:
-                chord_part_obj = cv_inst.compose([current_block_data])
-                if (
-                    isinstance(chord_part_obj, stream.Part)
-                    and chord_part_obj.flatten().notesAndRests
-                ):
-                    final_score.insert(
-                        current_block_data["absolute_offset"], chord_part_obj
-                    )
-            except Exception as e_cv_compose:
-                logger.error(
-                    f"Error in ChordVoicer compose for block {i+1}: {e_cv_compose}",
-                    exc_info=True,
-                )
-
         for part_name, generator_instance in gens.items():
-            if generator_instance and main_cfg["parts_to_generate"].get(part_name):
+            if generator_instance:
                 logger.info(
                     f"Generating {part_name} part for block {i+1} via BasePartGenerator..."
                 )
                 try:
-                    part_humanize_cfg = main_cfg["default_part_parameters"].get(
-                        part_name, {}
+                    # ▼▼▼ humanize_params の準備（キー名を合わせる） ▼▼▼
+                    humanize_params_for_part = (
+                        current_block_data.get("part_params", {})
+                        .get(part_name, {})
+                        .get("final_touch_humanize", {})
                     )
-                    humanize_params_for_part = {
-                        "humanize_opt": current_block_data["part_params"][
-                            part_name
-                        ].get(
-                            "humanize_opt",
-                            part_humanize_cfg.get("default_humanize", False),
-                        ),
-                        "template_name": current_block_data["part_params"][
-                            part_name
-                        ].get(
-                            "template_name",
-                            part_humanize_cfg.get("default_humanize_style_template"),
-                        ),
-                        "custom_params": current_block_data["part_params"][
-                            part_name
-                        ].get("custom_params", {}),
-                    }
 
                     part_obj = generator_instance.compose(
                         section_data=current_block_data,
                         overrides_root=arrangement_overrides,
-                        groove_profile_path=(
-                            cli_args.groove_profile
-                            if hasattr(cli_args, "groove_profile")
-                            and cli_args.groove_profile
-                            else None
-                        ),
+                        groove_profile_path=cli_args.groove_profile,
                         next_section_data=next_block_data,
-                        part_specific_humanize_params=humanize_params_for_part,
+                        part_specific_humanize_params=humanize_params_for_part,  # ★この引数を渡す
                     )
+                    # ▲▲▲ ここまで修正 ▲▲▲
 
                     if (
                         isinstance(part_obj, stream.Part)
@@ -589,12 +556,7 @@ def run_composition(
                         final_score.insert(
                             current_block_data["absolute_offset"], part_obj
                         )
-                    elif isinstance(part_obj, stream.Score) and part_obj.parts:
-                        for sub_part in part_obj.parts:
-                            if sub_part.flatten().notesAndRests:
-                                final_score.insert(
-                                    current_block_data["absolute_offset"], sub_part
-                                )
+
                 except Exception as e_gen_part:
                     logger.error(
                         f"Error in {part_name} generation for block {i+1}: {e_gen_part}",
@@ -688,6 +650,17 @@ def main_cli():
     parser.add_argument(
         "--groove-profile", type=str, help="Path to groove profile JSON file."
     )  # groove_profile引数を追加
+    parser.add_argument(
+        "--drum-mode",
+        choices=["chord", "independent"],
+        default=None,
+        help=(
+            "Drum generation mode:\n"
+            "  'chord'       : chordmapセクションごとに生成\n"
+            "  'independent' : ボーカルヒートマップ全体で一括生成\n"
+            "デフォルトは chordmap有無で自動判定"
+        ),
+    )
 
     default_parts_cfg = DEFAULT_CONFIG.get("parts_to_generate", {})
     for part_key, default_enabled_status in default_parts_cfg.items():
@@ -835,7 +808,8 @@ def main_cli():
     # ▲▲▲ arrangement_overrides のロード処理ここまで ▲▲▲
 
     logger.info(
-        f"Final Effective Config (using processed chordmap): {json.dumps(effective_cfg, indent=2, ensure_ascii=False)}"
+        "Final Effective Config (using processed chordmap): %s",
+        json.dumps(effective_cfg, indent=2, ensure_ascii=False),
     )
 
     try:
@@ -854,5 +828,8 @@ def main_cli():
 
 
 if __name__ == "__main__":
+    with open("data/drum_patterns.yml", encoding="utf-8") as f:
+        drum_patterns = yaml.safe_load(f)
+
     main_cli()
 # --- END OF FILE modular_composer.py ---

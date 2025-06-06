@@ -1,4 +1,4 @@
-# --- START OF FILE generator/guitar_generator.py (オフセット/デュレーション取得修正, エラー対策・execution_style導入・velocity_factor統一版) ---
+# --- START OF FILE generator/guitar_generator.py (BasePartGenerator継承・改修版) ---
 import music21
 from typing import List, Dict, Optional, Tuple, Any, Sequence, Union, cast
 import copy
@@ -8,32 +8,27 @@ import music21.note as note
 import music21.harmony as harmony
 import music21.pitch as pitch
 import music21.meter as meter
-import music21.duration as duration  # duration をインポート
+import music21.duration as music21_duration
 import music21.instrument as m21instrument
 import music21.interval as interval
 import music21.tempo as tempo
 import music21.chord as m21chord
 import music21.articulations as articulations
 import music21.volume as m21volume
+from music21 import instrument as m21instrument
 
+# ...existing code...
 import random
 import logging
 import math
 
-# safe_get をインポート
+from .base_part_generator import BasePartGenerator
+
 try:
     from utilities.safe_get import safe_get
 except ImportError:
-    logger_fallback_safe_get_guitar = logging.getLogger(
-        __name__ + ".fallback_safe_get_guitar"
-    )
-    logger_fallback_safe_get_guitar.error(
-        "GuitarGen: CRITICAL - Could not import safe_get from utilities. Fallback will be basic .get()."
-    )
 
-    def safe_get(
-        data, key_path, default=None, cast_to=None, log_name="dummy_safe_get"
-    ):  # ダミー
+    def safe_get(data, key_path, default=None, cast_to=None, log_name="dummy_safe_get"):
         val = data.get(key_path.split(".")[0])
         if val is None:
             return default
@@ -46,32 +41,20 @@ except ImportError:
 
 
 try:
-    from utilities.override_loader import (
-        get_part_override,
-        Overrides as OverrideModelType,
-    )
     from utilities.core_music_utils import (
         MIN_NOTE_DURATION_QL,
         get_time_signature_object,
         sanitize_chord_label,
     )
-    from utilities.humanizer import apply_humanization_to_part, HUMANIZATION_TEMPLATES
 except ImportError:
-    logger_fallback_utils_guitar = logging.getLogger(
-        __name__ + ".fallback_utils_guitar"
-    )  # 修正: ロガー名変更
-    logger_fallback_utils_guitar.warning(
-        "GuitarGen: Could not import from utilities. Using fallbacks."
-    )
     MIN_NOTE_DURATION_QL = 0.125
 
     def get_time_signature_object(ts_str: Optional[str]) -> meter.TimeSignature:
         if not ts_str:
             ts_str = "4/4"
-        # try-except を修正
         try:
             return meter.TimeSignature(ts_str)
-        except Exception:  # より一般的な例外補足
+        except Exception:
             return meter.TimeSignature("4/4")
 
     def sanitize_chord_label(label: Optional[str]) -> Optional[str]:
@@ -83,30 +66,8 @@ except ImportError:
             "none",
             "-",
         ]:
-            return "Rest"  # None ではなく "Rest" を返すように修正 (他のジェネレータと合わせる)
+            return "Rest"
         return label.strip()
-
-    def apply_humanization_to_part(part, template_name=None, custom_params=None):
-        return part
-
-    HUMANIZATION_TEMPLATES = {}
-
-    class DummyPartOverride:
-        model_config = {}
-        model_fields = {}
-
-        def model_dump(self, exclude_unset=True):
-            return {}
-
-    def get_part_override(
-        overrides, section, part
-    ) -> DummyPartOverride:  # 型ヒント修正
-        return DummyPartOverride()
-
-    class OverrideModelType:  # ダミー
-        root: Dict = {}
-
-    PartOverrideModel = DummyPartOverride  # ダミー
 
 
 logger = logging.getLogger("modular_composer.guitar_generator")
@@ -115,13 +76,11 @@ DEFAULT_GUITAR_OCTAVE_RANGE: Tuple[int, int] = (2, 5)
 GUITAR_STRUM_DELAY_QL: float = 0.02
 MIN_STRUM_NOTE_DURATION_QL: float = 0.05
 
-
 EXEC_STYLE_BLOCK_CHORD = "block_chord"
 EXEC_STYLE_STRUM_BASIC = "strum_basic"
 EXEC_STYLE_ARPEGGIO_FROM_INDICES = "arpeggio_from_indices"
 EXEC_STYLE_POWER_CHORDS = "power_chords"
 EXEC_STYLE_MUTED_RHYTHM = "muted_rhythm"
-
 
 EMOTION_INTENSITY_MAP: Dict[Tuple[str, str], str] = {
     ("quiet_pain_and_nascent_strength", "low"): "guitar_ballad_arpeggio",
@@ -182,82 +141,53 @@ class GuitarStyleSelector:
             and part_params_override_rhythm_key in rhythm_library_keys
         ):
             return part_params_override_rhythm_key
-
         effective_emotion = (emotion or "default").lower()
         effective_intensity = (intensity or "default").lower()
         key = (effective_emotion, effective_intensity)
         style_from_map = self.mapping.get(key)
         if style_from_map and style_from_map in rhythm_library_keys:
             return style_from_map
-
         style_emo_default = self.mapping.get((effective_emotion, "default"))
         if style_emo_default and style_emo_default in rhythm_library_keys:
             return style_emo_default
-
         style_int_default = self.mapping.get(("default", effective_intensity))
         if style_int_default and style_int_default in rhythm_library_keys:
             return style_int_default
-
         if DEFAULT_GUITAR_RHYTHM_KEY in rhythm_library_keys:
             return DEFAULT_GUITAR_RHYTHM_KEY
-        if (
-            rhythm_library_keys
-        ):  # Fallback to the first available key if default is missing
+        if rhythm_library_keys:
             return rhythm_library_keys[0]
-        return ""  # Should not happen if default is always in library
+        return ""
 
 
-class GuitarGenerator:
-    def __init__(
-        self,
-        rhythm_library: Optional[Dict[str, Dict]] = None,
-        default_instrument=m21instrument.AcousticGuitar(),
-        global_tempo: int = 120,
-        global_time_signature: str = "4/4",
-    ):
-        self.rhythm_library = rhythm_library if rhythm_library is not None else {}
-        logger.info(
-            f"GuitarGen __init__: Initialized with {len(self.rhythm_library)} guitar patterns."
-        )
-        ts_obj_for_default = get_time_signature_object(global_time_signature)
-        bar_dur_ql = (
-            ts_obj_for_default.barDuration.quarterLength if ts_obj_for_default else 4.0
-        )
-        if DEFAULT_GUITAR_RHYTHM_KEY not in self.rhythm_library:
-            self.rhythm_library[DEFAULT_GUITAR_RHYTHM_KEY] = {
-                "description": "Default quarter note block chords",
-                "execution_style": EXEC_STYLE_BLOCK_CHORD,
+class GuitarGenerator(BasePartGenerator):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.style_selector = GuitarStyleSelector()
+        # 安全なフォールバック
+        if "guitar_default_quarters" not in self.part_parameters:
+            self.part_parameters["guitar_default_quarters"] = {
                 "pattern": [
                     {
-                        "offset": i * 1.0,
-                        "duration": 1.0,
-                        "velocity_factor": 0.8 - (i % 2 * 0.05),
+                        "offset": 0,
+                        "duration": 1,
+                        "velocity_factor": 0.8,
+                        "type": "block",
                     }
-                    for i in range(int(bar_dur_ql))
                 ],
-                "reference_duration_ql": bar_dur_ql,
+                "reference_duration_ql": 1.0,
+                "description": "Failsafe default quarter note strum",
             }
-            logger.info(
-                f"GuitarGen: Added '{DEFAULT_GUITAR_RHYTHM_KEY}' to self.rhythm_library."
-            )
-
-        self.default_instrument = default_instrument
-        self.global_tempo = global_tempo
-        self.global_time_signature_str = global_time_signature
-        self.global_time_signature_obj = get_time_signature_object(
-            global_time_signature
-        )
-        self.style_selector = GuitarStyleSelector()
 
     def _get_guitar_friendly_voicing(
         self,
         cs: harmony.ChordSymbol,
         num_strings: int = 6,
-        preferred_octave_bottom: int = 2,  # E2 is a common low E for guitar
+        preferred_octave_bottom: int = 2,
     ) -> List[pitch.Pitch]:
         if not cs or not cs.pitches:
             return []
-        original_pitches = list(cs.pitches)  # Keep original if voicing fails
+        original_pitches = list(cs.pitches)
         try:
             temp_chord = cs.closedPosition(
                 forceOctave=preferred_octave_bottom, inPlace=False
@@ -270,44 +200,28 @@ class GuitarGenerator:
                 f"GuitarGen: Error in closedPosition for {cs.figure}: {e_closed_pos}. Using original pitches."
             )
             candidate_pitches = sorted(original_pitches, key=lambda p_sort: p_sort.ps)
-
         if not candidate_pitches:
             logger.warning(
                 f"GuitarGen: No candidate pitches for {cs.figure} after closedPosition. Returning empty."
             )
             return []
-
-        # Ensure pitches are within a typical guitar range (e.g., E2 to B5)
         guitar_min_ps = pitch.Pitch(f"E{DEFAULT_GUITAR_OCTAVE_RANGE[0]}").ps
-        guitar_max_ps = pitch.Pitch(
-            f"B{DEFAULT_GUITAR_OCTAVE_RANGE[1]}"
-        ).ps  # Approx B5
-
-        # Shift entire voicing up if the bottom note is too low
+        guitar_max_ps = pitch.Pitch(f"B{DEFAULT_GUITAR_OCTAVE_RANGE[1]}").ps
         if candidate_pitches and candidate_pitches[0].ps < guitar_min_ps:
             oct_shift = math.ceil((guitar_min_ps - candidate_pitches[0].ps) / 12.0)
             candidate_pitches = [
                 p_cand.transpose(int(oct_shift * 12)) for p_cand in candidate_pitches
             ]
-            candidate_pitches.sort(
-                key=lambda p_sort: p_sort.ps
-            )  # Re-sort after transpose
-
-        # Select unique pitches within range, favoring lower unique notes for typical guitar voicing
-        selected_dict: Dict[str, pitch.Pitch] = (
-            {}
-        )  # Using dict to ensure unique pitch names
+            candidate_pitches.sort(key=lambda p_sort: p_sort.ps)
+        selected_dict: Dict[str, pitch.Pitch] = {}
         for p_cand_select in candidate_pitches:
             if guitar_min_ps <= p_cand_select.ps <= guitar_max_ps:
-                if (
-                    p_cand_select.name not in selected_dict
-                ):  # Keep only the lowest instance of each pitch name
+                if p_cand_select.name not in selected_dict:
                     selected_dict[p_cand_select.name] = p_cand_select
-
         final_voiced_pitches = sorted(
             list(selected_dict.values()), key=lambda p_sort: p_sort.ps
         )
-        return final_voiced_pitches[:num_strings]  # Return up to num_strings
+        return final_voiced_pitches[:num_strings]
 
     def _create_notes_from_event(
         self,
@@ -323,32 +237,35 @@ class GuitarGenerator:
         )
 
         num_strings = guitar_block_params.get(
-            "guitar_num_strings", 6
-        )  # Prioritize block params
-        preferred_octave_bottom = guitar_block_params.get("guitar_target_octave", 3)
+            "guitar_num_strings",
+            guitar_block_params.get(
+                "num_strings", 6
+            ),  # DEFAULT_CONFIGから取得できるように修正
+        )
+        preferred_octave_bottom = guitar_block_params.get(
+            "guitar_target_octave",
+            guitar_block_params.get(
+                "target_octave", 3
+            ),  # DEFAULT_CONFIGから取得できるように修正
+        )
         chord_pitches = self._get_guitar_friendly_voicing(
             cs, num_strings, preferred_octave_bottom
         )
         if not chord_pitches:
             return []
 
-        is_palm_muted = guitar_block_params.get(
-            "palm_mute", False
-        )  # Check for palm mute in block params
+        is_palm_muted = guitar_block_params.get("palm_mute", False)
 
         if execution_style == EXEC_STYLE_POWER_CHORDS and cs.root():
-            p_root = pitch.Pitch(cs.root().name)  # Ensure it's a pitch object
-            # Adjust octave for power chord (typically lower on guitar)
-            target_power_chord_octave = DEFAULT_GUITAR_OCTAVE_RANGE[0]  # E.g., E2
+            p_root = pitch.Pitch(cs.root().name)
+            target_power_chord_octave = DEFAULT_GUITAR_OCTAVE_RANGE[0]
             if p_root.octave < target_power_chord_octave:
                 p_root.octave = target_power_chord_octave
             elif p_root.octave > target_power_chord_octave + 1:
-                p_root.octave = (
-                    target_power_chord_octave + 1
-                )  # Allow one octave higher too
+                p_root.octave = target_power_chord_octave + 1
 
             power_chord_pitches = [p_root, p_root.transpose(interval.PerfectFifth())]
-            if num_strings > 2:  # Optionally add octave of root if space
+            if num_strings > 2:
                 root_oct_up = p_root.transpose(interval.PerfectOctave())
                 if (
                     root_oct_up.ps
@@ -364,7 +281,7 @@ class GuitarGenerator:
                 n_in_ch_note.volume.velocity = event_final_velocity
                 if is_palm_muted:
                     n_in_ch_note.articulations.append(articulations.Staccatissimo())
-            ch.offset = 0.0  # Relative to event start
+            ch.offset = 0.0
             notes_for_event.append(ch)
 
         elif execution_style == EXEC_STYLE_BLOCK_CHORD:
@@ -381,12 +298,15 @@ class GuitarGenerator:
 
         elif execution_style == EXEC_STYLE_STRUM_BASIC:
             event_stroke_dir = guitar_block_params.get(
-                "current_event_stroke", "down"
-            )  # Get from block_params if set by pattern event
-            is_down = event_stroke_dir == "down"
-            play_order = (
-                list(reversed(chord_pitches)) if is_down else chord_pitches
-            )  # Strum down = high to low strings (visually) = low to high pitch
+                "current_event_stroke",
+                guitar_block_params.get(
+                    "strum_direction_cycle", "down,down,up,up"
+                ).split(",")[
+                    0
+                ],  # サイクルからも取得
+            )
+            is_down = event_stroke_dir.lower() == "down"  # 小文字比較
+            play_order = list(reversed(chord_pitches)) if is_down else chord_pitches
             strum_delay = rhythm_pattern_definition.get(
                 "strum_delay_ql",
                 guitar_block_params.get("strum_delay_ql", GUITAR_STRUM_DELAY_QL),
@@ -394,16 +314,18 @@ class GuitarGenerator:
 
             for i, p_obj_strum in enumerate(play_order):
                 n_strum = note.Note(p_obj_strum)
-                n_strum.duration = music21.duration.Duration(
-                    quarterLength=max(
-                        MIN_STRUM_NOTE_DURATION_QL,
-                        event_duration_ql * (0.6 if is_palm_muted else 0.9),
+                n_strum.duration = (
+                    music21_duration.Duration(  # music21.duration -> music21_duration
+                        quarterLength=max(
+                            MIN_STRUM_NOTE_DURATION_QL,
+                            event_duration_ql * (0.6 if is_palm_muted else 0.9),
+                        )
                     )
                 )
-                n_strum.offset = i * strum_delay  # Staggered offset for strum effect
+                n_strum.offset = i * strum_delay
                 vel_adj_range = 10
                 vel_adj = 0
-                if len(play_order) > 1:  # Avoid division by zero for single note
+                if len(play_order) > 1:
                     if is_down:
                         vel_adj = int(
                             (
@@ -431,7 +353,7 @@ class GuitarGenerator:
             )
             arp_note_dur_ql = rhythm_pattern_definition.get(
                 "note_duration_ql", guitar_block_params.get("note_duration_ql", 0.5)
-            )  # Duration of each arpeggio note
+            )
             ordered_arp_pitches: List[pitch.Pitch] = []
             if isinstance(arp_pattern_indices, list) and chord_pitches:
                 ordered_arp_pitches = [
@@ -439,9 +361,7 @@ class GuitarGenerator:
                     for idx in arp_pattern_indices
                 ]
             else:
-                ordered_arp_pitches = (
-                    chord_pitches  # Fallback to playing all chord tones in order
-                )
+                ordered_arp_pitches = chord_pitches
 
             current_offset_in_event = 0.0
             arp_idx = 0
@@ -451,7 +371,7 @@ class GuitarGenerator:
                     arp_note_dur_ql, event_duration_ql - current_offset_in_event
                 )
                 if actual_arp_dur < MIN_NOTE_DURATION_QL / 4.0:
-                    break  # Too short to play
+                    break
                 n_arp = note.Note(
                     p_play_arp,
                     quarterLength=actual_arp_dur * (0.8 if is_palm_muted else 0.95),
@@ -461,9 +381,7 @@ class GuitarGenerator:
                 if is_palm_muted:
                     n_arp.articulations.append(articulations.Staccatissimo())
                 notes_for_event.append(n_arp)
-                current_offset_in_event += (
-                    arp_note_dur_ql  # Arpeggio notes are sequential
-                )
+                current_offset_in_event += arp_note_dur_ql
                 arp_idx += 1
         elif execution_style == EXEC_STYLE_MUTED_RHYTHM:
             mute_note_dur = rhythm_pattern_definition.get(
@@ -475,22 +393,20 @@ class GuitarGenerator:
             )
             t_mute = 0.0
             if not chord_pitches:
-                return []  # Need at least one pitch for muted note
-            mute_base_pitch = chord_pitches[
-                0
-            ]  # Use lowest chord tone as base for muted note pitch (doesn't matter much)
+                return []
+            mute_base_pitch = chord_pitches[0]
             while t_mute < event_duration_ql:
                 actual_mute_dur = min(mute_note_dur, event_duration_ql - t_mute)
                 if actual_mute_dur < MIN_NOTE_DURATION_QL / 8.0:
                     break
                 n_mute = note.Note(mute_base_pitch)
-                n_mute.articulations = [
-                    articulations.Staccatissimo()
-                ]  # Muted implies short
-                n_mute.duration.quarterLength = actual_mute_dur
+                n_mute.articulations = [articulations.Staccatissimo()]
+                n_mute.duration.quarterLength = (
+                    actual_mute_dur  # music21.duration -> duration
+                )
                 n_mute.volume = m21volume.Volume(
                     velocity=int(event_final_velocity * 0.6) + random.randint(-5, 5)
-                )  # Muted notes are softer
+                )
                 n_mute.offset = t_mute
                 notes_for_event.append(n_mute)
                 t_mute += mute_interval
@@ -500,404 +416,283 @@ class GuitarGenerator:
             )
         return notes_for_event
 
-    def compose(
+    def _render_part(
         self,
-        processed_chord_stream: List[Dict],
-        overrides: Optional[OverrideModelType] = None,  # 型ヒント修正
-        cli_guitar_style_override: Optional[str] = None,
+        section_data: Dict[str, Any],
+        next_section_data: Optional[Dict[str, Any]] = None,
     ) -> stream.Part:
-        guitar_part = stream.Part(id="Guitar")  # ID は既に設定されています
-        # ▼▼▼ 楽器情報とパート名の設定を追加 ▼▼▼
-        actual_instrument = copy.deepcopy(self.default_instrument)
+        guitar_part = stream.Part(id=self.part_name)
+        actual_instrument = copy.deepcopy(
+            self.default_instrument
+        )  # BasePartGeneratorで設定されたものを使用
         if not actual_instrument.partName:
-            actual_instrument.partName = (
-                "Acoustic Guitar"  # または self.default_instrument.instrumentName など
-            )
+            actual_instrument.partName = self.part_name.capitalize()
         if not actual_instrument.partAbbreviation:
-            actual_instrument.partAbbreviation = "Gt."
+            actual_instrument.partAbbreviation = self.part_name[:3].capitalize() + "."
         guitar_part.insert(0, actual_instrument)
-        # guitar_part.partName = actual_instrument.partName
-        # ▲▲▲ ここまで追加 ▲▲▲
-        guitar_part.insert(0, tempo.MetronomeMark(number=self.global_tempo))
-        if self.global_time_signature_obj:
-            ts_copy_init = meter.TimeSignature(
-                self.global_time_signature_obj.ratioString
-            )
-            guitar_part.insert(0, ts_copy_init)
-        else:
-            guitar_part.insert(0, meter.TimeSignature("4/4"))  # Fallback
 
-        if not processed_chord_stream:
-            return guitar_part
-        logger.info(f"GuitarGen: Starting for {len(processed_chord_stream)} blocks.")
-        all_generated_elements_for_part: List[Union[note.Note, m21chord.Chord]] = []
+        log_blk_prefix = f"GuitarGen._render_part (Section: {section_data.get('section_name', 'Unknown')}, Chord: {section_data.get('original_chord_label', 'N/A')})"
 
-        for blk_idx, blk_data_original in enumerate(processed_chord_stream):
-            blk_data = copy.deepcopy(blk_data_original)
-            log_blk_prefix = f"Guitar.Blk{blk_idx+1}"  # 1-indexed for logs
+        # パラメータのマージ (chordmapのpart_params と arrangement_overrides)
+        # self.overrides は BasePartGenerator.compose() で設定される PartOverride オブジェクト
+        guitar_params_from_chordmap = section_data.get("part_params", {}).get(
+            self.part_name, {}
+        )
+        final_guitar_params = guitar_params_from_chordmap.copy()
+        # options のマージも考慮 (BassGenerator参考)
+        final_guitar_params.setdefault("options", {})
 
-            # ★★★ オフセットとデュレーションの取得 (safe_get を使用) ★★★
-            default_offset_fallback = 0.0
-            block_offset_ql = safe_get(
-                blk_data,
-                "humanized_offset_beats",
-                default=safe_get(
-                    blk_data,
-                    "absolute_offset",
-                    default=safe_get(
-                        blk_data,
-                        "offset",
-                        default=default_offset_fallback,
-                        cast_to=float,
-                        log_name=f"{log_blk_prefix}.OffsetFallback",
-                    ),
-                    cast_to=float,
-                    log_name=f"{log_blk_prefix}.AbsOffsetFallback",
-                ),
-                cast_to=float,
-                log_name=f"{log_blk_prefix}.HumOffset",
-            )
+        if self.overrides and hasattr(self.overrides, "model_dump"):
+            override_dict = self.overrides.model_dump(exclude_unset=True)
+            if not isinstance(final_guitar_params.get("options"), dict):
+                final_guitar_params["options"] = {}  # 念のため初期化
 
-            default_duration_fallback = (
-                self.global_time_signature_obj.barDuration.quarterLength
-                if self.global_time_signature_obj
-                else 4.0
-            )
-            block_duration_ql = safe_get(
-                blk_data,
-                "humanized_duration_beats",
-                default=safe_get(
-                    blk_data,
-                    "q_length",
-                    default=default_duration_fallback,
-                    cast_to=float,
-                    log_name=f"{log_blk_prefix}.QLFallback",
-                ),
-                cast_to=float,
-                log_name=f"{log_blk_prefix}.HumDur",
-            )
-            if block_duration_ql <= 0:
-                logger.warning(
-                    f"GuitarGen: Block {blk_idx+1} has non-positive duration {block_duration_ql}. Using {default_duration_fallback}ql."
-                )
-                block_duration_ql = default_duration_fallback
-            # ★★★ ここまでオフセットとデュレーション ★★★
+            chordmap_options = final_guitar_params.get("options", {})
+            override_options = override_dict.pop("options", None)  # popで取り出し
 
-            chord_label_str = blk_data.get(
-                "chord_symbol_for_voicing", blk_data.get("original_chord_label", "C")
-            )  # Fallback to C
-            current_section_name = blk_data.get(
-                "section_name", f"UnnamedSection_{blk_idx}"
-            )
+            if isinstance(override_options, dict):  # override側にoptionsがあればマージ
+                merged_options = chordmap_options.copy()
+                merged_options.update(override_options)
+                final_guitar_params["options"] = merged_options
+            # options 以外のキーで上書き
+            final_guitar_params.update(override_dict)
+        logger.debug(f"{log_blk_prefix}: FinalParams={final_guitar_params}")
 
-            part_specific_overrides_model = get_part_override(
-                overrides if overrides else OverrideModelType(root={}),
-                current_section_name,
-                "guitar",
+        # 必要な情報を section_data から取得
+        block_duration_ql = safe_get(
+            section_data,
+            "humanized_duration_beats",
+            default=safe_get(
+                section_data, "q_length", default=self.measure_duration, cast_to=float
+            ),
+            cast_to=float,
+        )
+        if block_duration_ql <= 0:
+            logger.warning(
+                f"{log_blk_prefix}: Non-positive duration {block_duration_ql}. Using measure_duration {self.measure_duration}ql."
             )
-            guitar_params_from_chordmap = blk_data.get("part_params", {}).get(
-                "guitar", {}
-            )
-            final_guitar_params = guitar_params_from_chordmap.copy()
-            if part_specific_overrides_model and hasattr(
-                part_specific_overrides_model, "model_dump"
-            ):  # Ensure it's a Pydantic model
-                override_dict = part_specific_overrides_model.model_dump(
-                    exclude_unset=True
-                )
-                chordmap_options = final_guitar_params.get("options", {})
-                override_options = override_dict.pop("options", None)
-                if isinstance(chordmap_options, dict) and isinstance(
-                    override_options, dict
-                ):
-                    merged_options = chordmap_options.copy()
-                    merged_options.update(override_options)
-                    final_guitar_params["options"] = merged_options
-                elif isinstance(override_options, dict) and override_options:
-                    final_guitar_params["options"] = override_options
-                final_guitar_params.update(override_dict)
-            logger.debug(
-                f"GuitarGen Block {blk_idx+1}: FinalParams={final_guitar_params}"
-            )
+            block_duration_ql = self.measure_duration
 
-            if chord_label_str.lower() in ["rest", "r", "n.c.", "nc", "none", "-"]:
-                logger.info(
-                    f"GuitarGen: Block {blk_idx+1} ('{chord_label_str}') is a Rest. Skipping."
-                )
-                continue
-            sanitized_label = sanitize_chord_label(chord_label_str)
-            cs_object: Optional[harmony.ChordSymbol] = None
-            if (
-                sanitized_label and sanitized_label.lower() != "rest"
-            ):  # Check again after sanitize
-                try:
-                    cs_object = harmony.ChordSymbol(sanitized_label)
-                    specified_bass_str = blk_data.get("specified_bass_for_voicing")
-                    if specified_bass_str:
-                        final_bass_str = sanitize_chord_label(specified_bass_str)
-                        if final_bass_str and final_bass_str.lower() != "rest":
-                            cs_object.bass(final_bass_str)
-                    if not cs_object.pitches:
-                        cs_object = None  # If parsing results in no pitches
-                except Exception as e_parse_guitar:
-                    logger.warning(
-                        f"GuitarGen: Error parsing chord '{sanitized_label}': {e_parse_guitar}."
-                    )
+        chord_label_str = section_data.get(
+            "chord_symbol_for_voicing", section_data.get("original_chord_label", "C")
+        )
+        if chord_label_str.lower() in ["rest", "r", "n.c.", "nc", "none", "-"]:
+            logger.info(
+                f"{log_blk_prefix}: Block is a Rest. Skipping guitar part for this block."
+            )
+            return guitar_part  # 空のパートを返す
+
+        sanitized_label = sanitize_chord_label(chord_label_str)
+        cs_object: Optional[harmony.ChordSymbol] = None
+        if sanitized_label and sanitized_label.lower() != "rest":
+            try:
+                cs_object = harmony.ChordSymbol(sanitized_label)
+                specified_bass_str = section_data.get("specified_bass_for_voicing")
+                if specified_bass_str:
+                    final_bass_str = sanitize_chord_label(specified_bass_str)
+                    if final_bass_str and final_bass_str.lower() != "rest":
+                        cs_object.bass(final_bass_str)
+                if not cs_object.pitches:
                     cs_object = None
-            if cs_object is None:
+            except Exception as e_parse_guitar:
                 logger.warning(
-                    f"GuitarGen: Could not create ChordSymbol for '{chord_label_str}'. Skipping block."
+                    f"{log_blk_prefix}: Error parsing chord '{sanitized_label}': {e_parse_guitar}."
+                )
+                cs_object = None
+        if cs_object is None:
+            logger.warning(
+                f"{log_blk_prefix}: Could not create ChordSymbol for '{chord_label_str}'. Skipping block."
+            )
+            return guitar_part
+
+        # リズムキーの選択
+        current_musical_intent = section_data.get("musical_intent", {})
+        emotion = current_musical_intent.get("emotion")
+        intensity = current_musical_intent.get("intensity")
+        # final_guitar_params から cli_override に相当するものを取得 (必要なら)
+        # ここではひとまず cli_guitar_style_override は None とする (BasePartGenerator.compose から渡されないため)
+        cli_guitar_style_override = final_guitar_params.get("cli_guitar_style_override")
+
+        param_rhythm_key = final_guitar_params.get(
+            "guitar_rhythm_key", final_guitar_params.get("rhythm_key")
+        )
+        final_rhythm_key_selected = self.style_selector.select(
+            emotion=emotion,
+            intensity=intensity,
+            cli_override=cli_guitar_style_override,  # modular_composer.py の args.guitar_style を渡せるようにする想定
+            part_params_override_rhythm_key=param_rhythm_key,
+            rhythm_library_keys=list(
+                self.part_parameters.keys()
+            ),  # self.rhythm_lib -> self.part_parameters
+        )
+        logger.info(
+            f"{log_blk_prefix}: Selected rhythm_key='{final_rhythm_key_selected}' for guitar."
+        )
+
+        rhythm_details = self.part_parameters.get(
+            final_rhythm_key_selected
+        )  # self.rhythm_lib -> self.part_parameters
+        if not rhythm_details:
+            logger.warning(
+                f"{log_blk_prefix}: Rhythm key '{final_rhythm_key_selected}' not found. Using default."
+            )
+            rhythm_details = self.part_parameters.get(DEFAULT_GUITAR_RHYTHM_KEY)
+            if not rhythm_details:
+                logger.error(
+                    f"{log_blk_prefix}: CRITICAL - Default guitar rhythm missing. Using minimal block."
+                )
+                rhythm_details = {
+                    "execution_style": EXEC_STYLE_BLOCK_CHORD,
+                    "pattern": [
+                        {
+                            "offset": 0,
+                            "duration": block_duration_ql,
+                            "velocity_factor": 0.7,
+                        }
+                    ],
+                    "reference_duration_ql": block_duration_ql,
+                }
+
+        pattern_events = rhythm_details.get("pattern", [])
+        if pattern_events is None:
+            pattern_events = []
+
+        pattern_ref_duration = rhythm_details.get(
+            "reference_duration_ql", self.measure_duration
+        )
+        if pattern_ref_duration <= 0:
+            pattern_ref_duration = self.measure_duration
+
+        # Strum cycle の準備 (パッチ参考)
+        strum_cycle_str = final_guitar_params.get(
+            "strum_direction_cycle",
+            rhythm_details.get("strum_direction_cycle", "D,D,U,U"),
+        )
+        strum_cycle_list = [s.strip().upper() for s in strum_cycle_str.split(",")]
+        current_strum_idx = 0
+
+        for event_idx, event_def in enumerate(pattern_events):
+            log_event_prefix = f"{log_blk_prefix}.Event{event_idx}"
+            event_offset_in_pattern = safe_get(
+                event_def,
+                "offset",
+                default=0.0,
+                cast_to=float,
+                log_name=f"{log_event_prefix}.Offset",
+            )
+            event_duration_in_pattern = safe_get(
+                event_def,
+                "duration",
+                default=1.0,
+                cast_to=float,
+                log_name=f"{log_event_prefix}.Dur",
+            )
+            if event_duration_in_pattern <= 0:
+                logger.warning(
+                    f"{log_event_prefix}: Invalid duration {event_duration_in_pattern}. Using 1.0."
+                )
+                event_duration_in_pattern = 1.0
+
+            event_velocity_factor = safe_get(
+                event_def,
+                "velocity_factor",
+                default=1.0,
+                cast_to=float,
+                log_name=f"{log_event_prefix}.VelFactor",
+            )
+
+            current_event_guitar_params = (
+                final_guitar_params.copy()
+            )  # イベント固有のパラメータ用
+            # パターンイベントにstrum_directionがあればそれを優先、なければサイクルから
+            event_stroke_direction = event_def.get("strum_direction")
+            if not event_stroke_direction and strum_cycle_list:
+                event_stroke_direction = strum_cycle_list[
+                    current_strum_idx % len(strum_cycle_list)
+                ]
+                current_strum_idx += 1
+            if event_stroke_direction:
+                current_event_guitar_params["current_event_stroke"] = (
+                    event_stroke_direction
+                )
+
+            scale_factor = (
+                block_duration_ql / pattern_ref_duration
+                if pattern_ref_duration > 0
+                else 1.0
+            )
+            # このイベントのブロック内での開始オフセット (絶対ではない)
+            current_event_start_offset_in_block = event_offset_in_pattern * scale_factor
+            # このイベントのスケールされたデュレーション
+            actual_event_dur_scaled = event_duration_in_pattern * scale_factor
+
+            # ブロック境界チェック
+            if current_event_start_offset_in_block >= block_duration_ql - (
+                MIN_NOTE_DURATION_QL / 16.0
+            ):
+                continue  # イベントがブロックのほぼ最後か外で始まる
+
+            max_possible_event_dur_from_here = (
+                block_duration_ql - current_event_start_offset_in_block
+            )
+            final_actual_event_dur_for_create = min(
+                actual_event_dur_scaled, max_possible_event_dur_from_here
+            )
+
+            if final_actual_event_dur_for_create < MIN_NOTE_DURATION_QL / 2.0:
+                logger.debug(
+                    f"{log_event_prefix}: Skipping very short event (dur: {final_actual_event_dur_for_create:.3f} ql)"
                 )
                 continue
 
-            current_musical_intent = blk_data.get("musical_intent", {})
-            emotion = current_musical_intent.get("emotion")
-            intensity = current_musical_intent.get("intensity")
-            param_rhythm_key = final_guitar_params.get(
-                "guitar_rhythm_key", final_guitar_params.get("rhythm_key")
+            # ベロシティの決定
+            block_base_velocity_candidate = current_event_guitar_params.get(
+                "velocity"
+            )  # マージ済みパラメータから
+            if block_base_velocity_candidate is None:
+                block_base_velocity_candidate = rhythm_details.get("velocity_base", 70)
+            if block_base_velocity_candidate is None:
+                block_base_velocity_candidate = section_data.get(
+                    "emotion_params", {}
+                ).get(
+                    "humanized_velocity", 70
+                )  # humanizerからの値も考慮
+            try:
+                block_base_velocity = int(block_base_velocity_candidate)
+            except (TypeError, ValueError):
+                block_base_velocity = 70
+
+            final_event_velocity = int(block_base_velocity * event_velocity_factor)
+            final_event_velocity = max(1, min(127, final_event_velocity))
+
+            # Palm Mute 判定 (パッチ参考)
+            # final_guitar_params に palm_mute があればそれを使い、なければリズム定義から、それもなければFalse
+            current_event_guitar_params["palm_mute"] = final_guitar_params.get(
+                "palm_mute", rhythm_details.get("palm_mute", False)
             )
 
-            final_rhythm_key_selected = self.style_selector.select(
-                emotion=emotion,
-                intensity=intensity,
-                cli_override=cli_guitar_style_override,
-                part_params_override_rhythm_key=param_rhythm_key,
-                rhythm_library_keys=list(self.rhythm_library.keys()),
-            )
-            logger.info(
-                f"GuitarGen Block {blk_idx+1}: Selected rhythm_key='{final_rhythm_key_selected}' for guitar."
+            generated_elements = self._create_notes_from_event(
+                cs_object,
+                rhythm_details,  # execution_style などを含むリズム定義
+                current_event_guitar_params,  # palm_mute, current_event_stroke などを含む
+                final_actual_event_dur_for_create,
+                final_event_velocity,
             )
 
-            rhythm_details = self.rhythm_library.get(final_rhythm_key_selected)
-            if not rhythm_details:
-                logger.warning(
-                    f"GuitarGen: Rhythm key '{final_rhythm_key_selected}' not found. Using default '{DEFAULT_GUITAR_RHYTHM_KEY}'."
-                )
-                rhythm_details = self.rhythm_library.get(DEFAULT_GUITAR_RHYTHM_KEY)
-                if not rhythm_details:  # Should not happen if default is always added
-                    logger.error(
-                        f"GuitarGen: CRITICAL - Default guitar rhythm '{DEFAULT_GUITAR_RHYTHM_KEY}' also missing. Using minimal block pattern."
-                    )
-                    rhythm_details = {
-                        "execution_style": EXEC_STYLE_BLOCK_CHORD,
-                        "pattern": [
-                            {
-                                "offset": 0,
-                                "duration": block_duration_ql,
-                                "velocity_factor": 0.7,
-                            }
-                        ],
-                        "reference_duration_ql": block_duration_ql,
-                    }
-
-            pattern_events = rhythm_details.get(
-                "pattern", []
-            )  # Default to empty list if "pattern" key is missing
-            if pattern_events is None:
-                pattern_events = []  # Ensure it's a list
-
-            pattern_ref_duration = rhythm_details.get(
-                "reference_duration_ql",
-                (
-                    self.global_time_signature_obj.barDuration.quarterLength
-                    if self.global_time_signature_obj
-                    else 4.0
-                ),
-            )
-            if pattern_ref_duration <= 0:
-                pattern_ref_duration = (
-                    self.global_time_signature_obj.barDuration.quarterLength
-                    if self.global_time_signature_obj
-                    else 4.0
-                )
-
-            for event_def in pattern_events:
-                log_event_prefix = f"{log_blk_prefix}.Event"
-                event_offset_in_pattern = safe_get(
-                    event_def,
-                    "offset",
-                    default=0.0,
-                    cast_to=float,
-                    log_name=f"{log_event_prefix}.Offset",
-                )
-                event_duration_in_pattern = safe_get(
-                    event_def,
-                    "duration",
-                    default=1.0,
-                    cast_to=float,
-                    log_name=f"{log_event_prefix}.Dur",
-                )  # Default to 1 beat if missing
-                if event_duration_in_pattern <= 0:
-                    logger.warning(
-                        f"GuitarGen: Event in pattern '{final_rhythm_key_selected}' has invalid duration {event_duration_in_pattern}. Using 1.0."
-                    )
-                    event_duration_in_pattern = 1.0
-
-                event_velocity_factor = safe_get(
-                    event_def,
-                    "velocity_factor",
-                    default=1.0,
-                    cast_to=float,
-                    log_name=f"{log_event_prefix}.VelFactor",
-                )
-                current_event_guitar_params = (
-                    final_guitar_params.copy()
-                )  # Params for this specific event in the block
-                event_stroke_direction = event_def.get(
-                    "strum_direction"
-                )  # Check if strum direction is in pattern event
-                if event_stroke_direction:
-                    current_event_guitar_params["current_event_stroke"] = (
-                        event_stroke_direction
-                    )
-
-                scale_factor = (
-                    block_duration_ql / pattern_ref_duration
-                    if pattern_ref_duration > 0
-                    else 1.0
-                )
-                abs_event_start_offset_in_block = event_offset_in_pattern * scale_factor
-                actual_event_dur_scaled = event_duration_in_pattern * scale_factor
-                final_event_abs_offset_in_score = (
-                    block_offset_ql + abs_event_start_offset_in_block
-                )
-
-                if (
-                    final_event_abs_offset_in_score
-                    >= block_offset_ql
-                    + block_duration_ql
-                    - (MIN_NOTE_DURATION_QL / 16.0)
-                ):
-                    continue  # Event starts too late
-                max_possible_event_dur_from_here = (
-                    block_offset_ql + block_duration_ql
-                ) - final_event_abs_offset_in_score
-                final_actual_event_dur_for_create = min(
-                    actual_event_dur_scaled, max_possible_event_dur_from_here
-                )
-
-                if final_actual_event_dur_for_create < MIN_NOTE_DURATION_QL / 2.0:
-                    logger.debug(
-                        f"GuitarGen: Skipping very short event (dur: {final_actual_event_dur_for_create:.3f} ql)"
-                    )
-                    continue
-
-                block_base_velocity_candidate = current_event_guitar_params.get(
-                    "velocity"
-                )
-                if block_base_velocity_candidate is None:
-                    block_base_velocity_candidate = rhythm_details.get(
-                        "velocity_base", 70
-                    )  # Pattern's base vel
-                if block_base_velocity_candidate is None:
-                    block_base_velocity_candidate = 70  # Global fallback
-                try:
-                    block_base_velocity = int(block_base_velocity_candidate)
-                except (TypeError, ValueError):
-                    block_base_velocity = 70
-
-                final_event_velocity = int(block_base_velocity * event_velocity_factor)
-                final_event_velocity = max(1, min(127, final_event_velocity))
-
-                generated_elements = self._create_notes_from_event(
-                    cs_object,
-                    rhythm_details,
-                    current_event_guitar_params,
-                    final_actual_event_dur_for_create,
-                    final_event_velocity,
-                )
-                for el in generated_elements:
-                    el.offset += final_event_abs_offset_in_score  # Add the event's start offset within the score
-                    all_generated_elements_for_part.append(el)
-
-        # Humanization (applied once to all collected elements)
-        global_guitar_params_for_humanize = {}
-        if processed_chord_stream:  # Check if there were any blocks to process
-            first_block_guitar_params = (
-                processed_chord_stream[0].get("part_params", {}).get("guitar", {})
-            )
-            if first_block_guitar_params.get(
-                "humanize_opt", False
-            ):  # Default to False if not specified
-                h_template = first_block_guitar_params.get(
-                    "template_name", "guitar_strum_loose"
-                )
-                h_custom_params_dict = first_block_guitar_params.get(
-                    "custom_params", {}
-                )
-                logger.info(
-                    f"GuitarGen: Humanizing guitar part (template: {h_template}, custom_params: {h_custom_params_dict})"
-                )
-
-                temp_part_for_humanize = (
-                    stream.Part()
-                )  # Create a temporary part for humanization
-                for el_item_guitar in all_generated_elements_for_part:
-                    temp_part_for_humanize.insert(el_item_guitar.offset, el_item_guitar)
-
-                humanized_result = apply_humanization_to_part(
-                    temp_part_for_humanize,
-                    template_name=h_template,
-                    custom_params=h_custom_params_dict,
-                )
-                if isinstance(humanized_result, stream.Part):
-                    guitar_part_humanized = humanized_result
-                    guitar_part_humanized.id = "Guitar"  # Reset ID
-                    # Ensure instrument, tempo, time signature are present after humanization
-                    if not guitar_part_humanized.getElementsByClass(
-                        m21instrument.Instrument
-                    ).first():
-                        guitar_part_humanized.insert(0, self.default_instrument)
-                    if not guitar_part_humanized.getElementsByClass(
-                        tempo.MetronomeMark
-                    ).first():
-                        guitar_part_humanized.insert(
-                            0, tempo.MetronomeMark(number=self.global_tempo)
-                        )
-                    if (
-                        not guitar_part_humanized.getElementsByClass(
-                            meter.TimeSignature
-                        ).first()
-                        and self.global_time_signature_obj
-                    ):
-                        guitar_part_humanized.insert(
-                            0,
-                            meter.TimeSignature(
-                                self.global_time_signature_obj.ratioString
-                            ),
-                        )
-                    guitar_part = guitar_part_humanized  # Replace original part with humanized one
-                else:
-                    logger.error(
-                        "GuitarGen: apply_humanization_to_part did not return Part. Using unhumanized."
-                    )
-                    for (
-                        el_item_guitar_final
-                    ) in (
-                        all_generated_elements_for_part
-                    ):  # Fallback to inserting unhumanized elements
-                        guitar_part.insert(
-                            el_item_guitar_final.offset, el_item_guitar_final
-                        )
-            else:
-                logger.info("GuitarGen: Humanization skipped for guitar part.")
-                for (
-                    el_item_guitar_final
-                ) in (
-                    all_generated_elements_for_part
-                ):  # Insert unhumanized elements if humanization is off
-                    guitar_part.insert(
-                        el_item_guitar_final.offset, el_item_guitar_final
-                    )
-        else:  # No blocks processed, part remains empty or with just global settings
-            logger.info(
-                "GuitarGen: No blocks to process, skipping humanization and note insertion."
-            )
+            for el in generated_elements:
+                # el.offset は _create_notes_from_event 内でイベント開始からの相対オフセットになっている
+                # これに、このリズムイベントのブロック内での開始オフセットを加算
+                el.offset += current_event_start_offset_in_block
+                guitar_part.insert(el.offset, el)  # パート内でのオフセットで挿入
 
         logger.info(
-            f"GuitarGen: Finished. Part has {len(list(guitar_part.flatten().notesAndRests))} elements."
+            f"{log_blk_prefix}: Finished processing. Part has {len(list(guitar_part.flatten().notesAndRests))} elements before groove/humanize."
         )
         return guitar_part
+
+    def _add_internal_default_patterns(self):
+        # 旧呼び出しを noop にする互換 stub
+        return
 
 
 # --- END OF FILE generator/guitar_generator.py ---

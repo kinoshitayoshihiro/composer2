@@ -1,0 +1,1015 @@
+# --- rhythm_library.yml (修正版) ---
+---
+piano_patterns:
+  # --- Calm Patterns ---
+  piano_rh_ambient_pad:
+    description: "High‑voiced pad – whole‑note sustain."
+    pattern_type: fixed_pattern
+    length_beats: 4
+    pattern:
+      - {offset: 0, duration: 4, type: chord_high_voices, velocity_factor: 0.8}
+    tags: [rh, pad, calm, low]
+
+  piano_lh_roots_whole:
+    description: "LH plays root note as a whole note."
+    pattern_type: fixed_pattern
+    length_beats: 4
+    pattern:
+      - {offset: 0, duration: 4, type: root, velocity_factor: 1.0}
+    tags: [lh, root, calm, low]
+
+  piano_rh_block_chords_quarters:
+    description: "Quarter‑note block chords."
+    pattern_type: fixed_pattern
+    length_beats: 4
+    pattern:
+      - {offset: 0, duration: 1, type: chord, velocity_factor: 1.0}
+      - {offset: 1, duration: 1, type: chord, velocity_factor: 0.85}
+      - {offset: 2, duration: 1, type: chord, velocity_factor: 0.95}
+      - {offset: 3, duration: 1, type: chord, velocity_factor: 0.8}
+    tags: [rh, chord, calm, medium]
+
+  piano_lh_roots_half:
+    description: "LH plays root note as half notes."
+    pattern_type: fixed_pattern
+    length_beats: 4
+    pattern:
+      - {offset: 0, duration: 2, type: root, velocity_factor: 1.0}
+      - {offset: 2, duration: 2, type: root, velocity_factor: 0.9}
+    tags: [lh, root, calm, medium]
+
+  # --- Groove / Energetic Patterns (例) ---
+  piano_rh_syncopated_chords_pop:
+    description: "8th‑syncopated pop stabs."
+    pattern_type: fixed_pattern
+    length_beats: 4
+    pattern:
+      - {offset: 0, duration: 0.5, type: chord, velocity_factor: 0.9}
+      - {offset: 1.5, duration: 0.5, type: chord, velocity_factor: 0.95}
+      - {offset: 2, duration: 0.5, type: chord, velocity_factor: 0.9}
+      - {offset: 3.5, duration: 0.5, type: chord, velocity_factor: 1.0}
+    tags: [rh, syncopated, groove, energetic]
+
+  piano_lh_octaves_quarters:
+    description: "LH plays octave roots as quarter notes."
+    pattern_type: fixed_pattern
+    length_beats: 4
+    pattern:
+      - {offset: 0, duration: 1, type: octave_root, velocity_factor: 1.0}
+      - {offset: 1, duration: 1, type: octave_root, velocity_factor: 0.8}
+      - {offset: 2, duration: 1, type: octave_root, velocity_factor: 0.9}
+      - {offset: 3, duration: 1, type: octave_root, velocity_factor: 0.75}
+    tags: [lh, octave, groove, energetic]
+
+  piano_rh_arpeggio_sixteenths_up_down:
+    description: "16th‑note arpeggio up‑down cycle."
+    pattern_type: arpeggio_indices
+    length_beats: 4
+    arpeggio_indices: [0,1,2,3,2,1]
+    note_duration_ql: 0.25
+    tags: [rh, arpeggio, energetic]
+
+  piano_lh_alberti_bass_eighths:
+    description: "LH Alberti bass style with eighth notes."
+    pattern_type: arpeggio_indices
+    length_beats: 4
+    note_duration_ql: 0.5
+    arpeggio_indices: [0, 2, 1, 2]
+    tags: [lh, alberti, energetic]
+
+  # --- Fallback & Basic ---
+  piano_fallback_block:
+    description: "Fallback block chord for the entire bar duration. Assumes chord type."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0 # reference_duration_ql を length_beats に変更
+    velocity_base: 60
+    tags: ["piano", "fallback", "block_chord", "full_bar"]
+    pattern:
+      - offset: 0.0
+        duration: 4.0
+        velocity_factor: 0.8
+        type: "chord"
+
+  # --- Left Hand (LH) Specific Patterns ---
+  piano_lh_roots_whole:
+    description: "LH plays root note as a whole note."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 65
+    tags: ["piano", "lh", "bass_line", "whole_note", "root"]
+    pattern:
+      - offset: 0.0
+        duration: 4.0
+        velocity_factor: 0.9
+        type: "root"
+
+  piano_lh_roots_half:
+    description: "LH plays root note as half notes (e.g., on beat 1 and 3)."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 68
+    tags: ["piano", "lh", "bass_line", "half_note", "root"]
+    pattern:
+      - offset: 0.0
+        duration: 2.0
+        velocity_factor: 0.9
+        type: "root"
+      - offset: 2.0
+        duration: 2.0
+        velocity_factor: 0.85
+        type: "root"
+
+  piano_lh_octaves_quarters:
+    description: "LH plays octave roots as quarter notes."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 70
+    tags: ["piano", "lh", "bass_line", "octave", "quarter_note"]
+    pattern:
+      - offset: 0.0
+        duration: 1.0
+        velocity_factor: 1.0
+        type: "octave_root"
+      - offset: 1.0
+        duration: 1.0
+        velocity_factor: 0.8
+        type: "octave_root"
+      - offset: 2.0
+        duration: 1.0
+        velocity_factor: 0.9
+        type: "octave_root"
+      - offset: 3.0
+        duration: 1.0
+        velocity_factor: 0.75
+        type: "octave_root"
+
+  piano_lh_alberti_bass_eighths:
+    description: "LH Alberti bass style with eighth notes (Root-Fifth-Third-Fifth or similar)."
+    time_signature: "4/4"
+    pattern_type: "arpeggio_indices" # インデント修正: スカラー値として記述
+    length_beats: 4.0
+    note_duration_ql: 0.5
+    arpeggio_indices: [0, 2, 1, 2]
+    arpeggio_type: "custom_indices"
+    velocity_base: 60
+    tags: ["piano", "lh", "classical_influence", "alberti_bass", "eighth_note"]
+
+  piano_lh_ballad_roots_gentle:
+    description: "LH gentle root notes, often syncopated or with varied durations for ballads."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 55
+    tags: ["piano", "lh", "ballad", "gentle", "root"]
+    pattern:
+      - offset: 0.0
+        duration: 2.5
+        velocity_factor: 0.9
+        type: "root"
+      - offset: 2.5
+        duration: 1.5
+        velocity_factor: 0.8
+        type: "fifth_or_root"
+
+  # --- Right Hand (RH) Specific Patterns ---
+  piano_rh_block_chords_quarters:
+    description: "RH plays block chords as quarter notes."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 65
+    tags: ["piano", "rh", "comping", "block_chord", "quarter_note"]
+    pattern:
+      - offset: 0.0
+        duration: 1.0
+        velocity_factor: 1.0
+        type: "chord"
+      - offset: 1.0
+        duration: 1.0
+        velocity_factor: 0.85
+        type: "chord"
+      - offset: 2.0
+        duration: 1.0
+        velocity_factor: 0.9
+        type: "chord"
+      - offset: 3.0
+        duration: 1.0
+        velocity_factor: 0.8
+        type: "chord"
+
+  piano_rh_arpeggio_eighths_up:
+    description: "RH plays ascending arpeggio with eighth notes."
+    time_signature: "4/4"
+    pattern_type: "arpeggio_indices"
+    length_beats: 4.0
+    note_duration_ql: 0.5
+    arpeggio_type: "up"
+    velocity_base: 60
+    tags: ["piano", "rh", "arpeggio", "eighth_note", "ascending"]
+
+  piano_rh_arpeggio_sixteenths_up_down:
+    description: "RH plays faster up-and-down arpeggio with sixteenth notes."
+    time_signature: "4/4"
+    pattern_type: "arpeggio_indices"
+    length_beats: 4.0
+    note_duration_ql: 0.25
+    arpeggio_type: "up_down"
+    velocity_base: 68
+    tags: ["piano", "rh", "arpeggio", "sixteenth_note", "energetic"]
+
+  piano_rh_syncopated_chords_pop:
+    description: "RH plays syncopated chord rhythm common in Pop music."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 70
+    tags: ["piano", "rh", "comping", "syncopated", "pop"]
+    pattern:
+      - offset: 0.0
+        duration: 0.75
+        velocity_factor: 1.0
+        type: "chord"
+      - offset: 1.0
+        duration: 0.75
+        velocity_factor: 0.9
+        type: "chord"
+      - offset: 2.0
+        duration: 0.5
+        velocity_factor: 1.0
+        type: "chord"
+      - offset: 2.5
+        duration: 1.0
+        velocity_factor: 0.95
+        type: "chord"
+      - offset: 3.5
+        duration: 0.5
+        velocity_factor: 0.85
+        type: "chord"
+
+  piano_rh_gentle_pads_whole:
+    description: "RH plays sustained chord pads, like a string section."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 50
+    tags: ["piano", "rh", "pad", "sustained", "ballad", "gentle"]
+    pattern:
+      - offset: 0.0
+        duration: 4.0
+        velocity_factor: 1.0
+        type: "chord_high_voices"
+
+  # --- Waltz / 3/4 Time Patterns ---
+  piano_lh_waltz_bass_root_chord:
+    description: "LH standard waltz pattern (Root on 1, Chords on 2 & 3)."
+    time_signature: "3/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 3.0
+    velocity_base: 65
+    tags: ["piano", "lh", "waltz", "3/4"]
+    pattern:
+      - offset: 0.0
+        duration: 1.0
+        velocity_factor: 1.0
+        type: "root"
+      - offset: 1.0
+        duration: 1.0
+        velocity_factor: 0.7
+        type: "chord_mid_voices"
+      - offset: 2.0
+        duration: 1.0
+        velocity_factor: 0.7
+        type: "chord_mid_voices"
+
+  piano_rh_waltz_melody_chords:
+    description: "RH waltz pattern, often with a slight melodic emphasis or light chords."
+    time_signature: "3/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 3.0
+    velocity_base: 60
+    tags: ["piano", "rh", "waltz", "3/4"]
+    pattern:
+      - offset: 0.0
+        duration: 1.0
+        velocity_factor: 0.9
+        type: "chord_top_note_emphasis"
+      - offset: 1.0
+        duration: 1.0
+        velocity_factor: 0.8
+        type: "chord"
+      - offset: 2.0
+        duration: 1.0
+        velocity_factor: 0.8
+        type: "chord"
+
+  # --- More Expressive / Algorithmic (Potentially) ---
+  piano_reflective_arpeggio_sparse_rh:
+    description: "RH sparse and reflective arpeggio, with space."
+    time_signature: "4/4"
+    pattern_type: "arpeggio_indices"
+    length_beats: 4.0
+    note_duration_ql: 0.75
+    arpeggio_type: "random_walk_gentle"
+    arpeggio_indices: [0, 2, 1, 3]
+    velocity_base: 55
+    tags: ["piano", "rh", "arpeggio", "reflective", "sparse", "ballad"]
+
+  piano_tense_ostinato_lh:
+    description: "LH creates a tense ostinato figure using low chord tones."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 2.0
+    velocity_base: 70
+    tags: ["piano", "lh", "ostinato", "tension", "cinematic"]
+    pattern:
+      - offset: 0.0
+        duration: 0.5
+        velocity_factor: 1.0
+        type: "root_octave_down"
+      - offset: 0.5
+        duration: 0.5
+        velocity_factor: 0.9
+        type: "minor_third_low"
+      - offset: 1.0
+        duration: 0.5
+        velocity_factor: 1.0
+        type: "fifth_low"
+      - offset: 1.5
+        duration: 0.5
+        velocity_factor: 0.9
+        type: "minor_third_low"
+
+
+bass_patterns:
+  bass_quarter_notes:
+    description: "Simple quarter-note roots (default)."
+    tags: ["bass", "default", "quarter_notes", "root", "4_4"]
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 72
+    target_octave: 2
+    pattern:
+      - offset: 0.0
+        duration: 1.0
+        velocity_factor: 0.75
+        type: "root"
+      - offset: 1.0
+        duration: 1.0
+        velocity_factor: 0.70
+        type: "root"
+      - offset: 2.0
+        duration: 1.0
+        velocity_factor: 0.75
+        type: "root"
+      - offset: 3.0
+        duration: 1.0
+        velocity_factor: 0.70
+        type: "root"
+
+  root_only:
+    description: "Whole- or half-note roots only (very low intensity)."
+    tags: ["bass", "simple", "long_notes", "root", "algorithmic", "4_4"]
+    time_signature: "4/4"
+    pattern_type: "algorithmic_root_only"
+    length_beats: 4.0
+    velocity_base: 65
+    target_octave: 2
+
+  root_fifth:
+    description: "Root-fifth alternation pattern (ballad feel)."
+    tags: ["bass", "ballad", "root_fifth", "algorithmic", "4_4"]
+    time_signature: "4/4"
+    pattern_type: "algorithmic_root_fifth"
+    length_beats: 4.0
+    velocity_base: 70
+    target_octave: 2
+
+  walking: # エラーで指摘された 'walking' キー
+    description: "Standard 4-beat walking bass line (algorithmic or fixed)."
+    time_signature: "4/4"
+    pattern_type: "algorithmic_walking" # BassGenerator側でこのタイプを処理できるようにする必要あり
+    length_beats: 4.0
+    velocity_base: 75 # パターン全体の推奨基本ベロシティ
+    target_octave: 2
+    tags: [bass, walking, jazz, algorithmic, "4_4"]
+    options: # アルゴリズム用オプションの例
+      approach_style: "diatonic_or_chromatic"
+      randomness_factor: 0.1 # 歩き方のランダム性など
+
+  bass_walking_8ths:
+    description: "Swing-feel walking bass in straight 8ths (root -> approach -> chord-tone -> approach)."
+    tags: ["bass", "walking", "swing", "eighth_notes", "algorithmic", "4_4"]
+    time_signature: "4/4"
+    pattern_type: "walking_8ths"
+    length_beats: 4.0
+    velocity_base: 70
+    target_octave: 2
+    options:
+      approach_note_prob: 0.4
+      swing_ratio: 0.0
+
+  bass_walking_blues:
+    description: "8分音符のスウィング・ウォーキング (Blues)."
+    tags:
+      [
+        "bass",
+        "walking",
+        "blues",
+        "eighth_notes",
+        "algorithmic",
+        "swing",
+        "4_4",
+      ]
+    time_signature: "4/4"
+    pattern_type: "walking_blues"
+    length_beats: 4.0
+    velocity_base: 72
+    target_octave: 2
+    options:
+      swing_ratio: 0.67
+
+  bass_funk_octave:
+    description: "ファンク的な2オクターブ跳躍リック"
+    tags: ["bass", "funk", "octave", "algorithmic", "rhythmic", "4_4"]
+    time_signature: "4/4"
+    pattern_type: "funk_octave_pops"
+    length_beats: 4.0
+    velocity_base: 80
+    target_octave: 2
+
+  bass_latin_tumbao:
+    description: "ラテン系トゥンバオ (例: 2-3クラーベのシンコペーションベース)"
+    tags: ["bass", "latin", "tumbao", "algorithmic", "syncopated", "4_4"]
+    time_signature: "4/4"
+    pattern_type: "latin_tumbao"
+    length_beats: 4.0
+    velocity_base: 75
+    target_octave: 2
+
+  bass_half_time_pop:
+    description: "Half-time pop groove: long roots with eighth-anticipation pickup on beat 4&."
+    tags: ["bass", "pop", "half_time", "algorithmic", "syncopated", "4_4"]
+    time_signature: "4/4"
+    pattern_type: "half_time_pop"
+    length_beats: 4.0
+    velocity_base: 75
+    target_octave: 2
+    options:
+      ghost_on_beat_2_and_a_half: true
+
+  bass_syncopated_rnb:
+    description: "16th-syncopated R&B / neo-soul motif with ghost 16ths."
+    tags:
+      [
+        "bass",
+        "rnb",
+        "neosoul",
+        "syncopated",
+        "sixteenth_notes",
+        "algorithmic",
+        "4_4",
+      ]
+    time_signature: "4/4"
+    pattern_type: "syncopated_rnb"
+    length_beats: 4.0
+    velocity_base: 78
+    target_octave: 2
+    options:
+      ghost_velocity_ratio: 0.5
+
+  bass_pump_8th_octaves:
+    description: "Driving 8th-note root-octave pump (rock chorus staple)."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 83
+    target_octave: 2
+    tags: ["bass", "pump", "octave", "eighth_notes", "chorus", "rock", "4_4"]
+    pattern:
+      - { offset: 0.0, duration: 0.5, velocity_factor: 1.00, type: "root" }
+      - {
+          offset: 0.5,
+          duration: 0.5,
+          velocity_factor: 0.95,
+          type: "octave_up_root",
+        }
+      - { offset: 1.0, duration: 0.5, velocity_factor: 1.00, type: "root" }
+      - {
+          offset: 1.5,
+          duration: 0.5,
+          velocity_factor: 0.95,
+          type: "octave_up_root",
+        }
+      - { offset: 2.0, duration: 0.5, velocity_factor: 1.00, type: "root" }
+      - {
+          offset: 2.5,
+          duration: 0.5,
+          velocity_factor: 0.95,
+          type: "octave_up_root",
+        }
+      - { offset: 3.0, duration: 0.5, velocity_factor: 1.00, type: "root" }
+      - {
+          offset: 3.5,
+          duration: 0.5,
+          velocity_factor: 0.95,
+          type: "octave_up_root",
+        }
+
+  bass_reggae_offbeat:
+    description: "Reggae one-drop off-beat 8ths with muted pickup."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 75
+    target_octave: 2
+    tags: ["bass", "reggae", "offbeat", "fixed_pattern", "syncopated", "4_4"]
+    pattern:
+      - { offset: 1.0, duration: 0.5, velocity_factor: 0.85, type: "root" }
+      - { offset: 1.5, duration: 0.5, velocity_factor: 0.80, type: "fifth" }
+      - {
+          offset: 2.5,
+          duration: 0.5,
+          velocity_factor: 0.90,
+          type: "root",
+          accent: true,
+        }
+      - { offset: 3.5, duration: 0.5, velocity_factor: 0.85, type: "fifth" }
+
+  bass_808_trap:
+    description: "808 slide & hold pattern for modern trap."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 82
+    target_octave: 1
+    tags: ["bass", "trap", "808", "slide", "fixed_pattern", "electronic", "4_4"]
+    pattern:
+      - {
+          offset: 0.0,
+          duration: 1.0,
+          velocity_factor: 1.00,
+          type: "root",
+          glide_to_next: true,
+        }
+      - { offset: 1.0, duration: 0.5, velocity_factor: 0.95, type: "fifth" }
+      - {
+          offset: 1.5,
+          duration: 0.5,
+          velocity_factor: 0.90,
+          type: "approach_chromatic_down",
+        }
+      - {
+          offset: 2.0,
+          duration: 2.0,
+          velocity_factor: 1.00,
+          type: "root",
+          glide_to_next: false,
+        }
+
+  bass_algo_walk_8ths:
+    description: "Scale-walk 8ths based on chord progression."
+    time_signature: "4/4"
+    pattern_type: "scale_walk"
+    length_beats: 4.0
+    velocity_base: 70
+    target_octave: 2
+    tags: ["bass", "algorithmic", "scale_walk", "eighth_notes", "4_4"]
+    options:
+      note_resolution_ql: 0.5
+      direction: "up_down"
+      start_on: "root"
+      max_range_octaves: 1
+      approach_style: "chromatic"
+
+  bass_algo_syncopated_octave_jump:
+    description: "Syncopated root + octave jumps for pop/rock."
+    time_signature: "4/4"
+    pattern_type: "octave_jump"
+    length_beats: 4.0
+    velocity_base: 78
+    target_octave: 2
+    tags:
+      ["bass", "algorithmic", "octave_jump", "syncopated", "pop", "rock", "4_4"]
+    options:
+      pattern_offsets_ql: [0.0, 1.5, 2.0, 3.0]
+      accent_velocity_boost: 10
+      humanize_timing_factor: 0.02
+
+  pedal_half:
+    description: "Pedal tone on tonic every half-note (minimal verse)."
+    time_signature: "4/4"
+    pattern_type: "algorithmic_pedal"
+    length_beats: 4.0
+    note_duration_ql: 2.0
+    velocity_base: 78
+    target_octave: 2
+    tags: ["bass", "pedal", "half_notes", "verse", "minimal", "4_4"]
+
+  bass_algo_desc_fifths_quarters:
+    description: "Descending fifths in quarter notes for cadence."
+    time_signature: "4/4"
+    pattern_type: "descending_fifths"
+    length_beats: 4.0
+    velocity_base: 74
+    target_octave: 2
+    tags:
+      [
+        "bass",
+        "algorithmic",
+        "descending_fifths",
+        "quarter_notes",
+        "cadence",
+        "4_4",
+      ]
+    options:
+      note_resolution_ql: 1.0
+      velocity_curve: "crescendo"
+
+  bass_algo_modal_pedal:
+    description: "Modal pedal tone for ballads/film score."
+    time_signature: "4/4"
+    pattern_type: "pedal_tone"
+    length_beats: 8.0
+    velocity_base: 70
+    target_octave: 2
+    tags:
+      [
+        "bass",
+        "algorithmic",
+        "pedal_tone",
+        "modal",
+        "ballad",
+        "film_score",
+        "4_4",
+      ]
+    options:
+      pedal_choice: "tonic"
+      fill_every_n_measures: 2
+      humanize_velocity_range: 5
+
+guitar_patterns:
+  guitar_ballad_arpeggio: # 既に存在しているはずですが、内容を確認・統一
+    description: "Gentle 6-note P-I-M-A style arpeggio, fits 4/4 and 6/8 ballads."
+    time_signature: "4/4"
+    pattern_type: "arpeggio_indices"
+    execution_style: "arpeggio_from_indices" # 奏法を明示
+    length_beats: 4.0
+    arpeggio_indices: [0, 3, 2, 1, 3, 2]
+    note_duration_ql: 0.66
+    strum_width_sec: 0.040 # 指弾きの微妙なズレとして解釈
+    velocity_base: 72
+    tags: [guitar, arpeggio, ballad, gentle, fingerstyle, "4_4"]
+    # pattern: [] # pattern_typeがarpeggio_indicesなので不要
+
+  guitar_slow_arpeggio:
+    description: "Slow 4‑beat arpeggio (P I M A style) – ideal for pre‑chorus build‑ups or intros."
+    tags: [guitar, arpeggio, slow, ballad, pre_chorus, fingerstyle, 4_4]
+    time_signature: "4/4"
+    pattern_type: "arpeggio_indices"
+    execution_style: "arpeggio_from_indices"
+    length_beats: 4.0
+    arpeggio_indices: [0, 3, 2, 1, 3, 2, 1, 0]
+    note_duration_ql: 0.5
+    strum_width_sec: 0.050
+    velocity_base: 68
+
+  guitar_suspense_swell:
+    description: "Tension‑building guitar swell pattern with increasing velocity."
+    tags: [guitar, suspense, swell, build, emotional, dynamic, 4_4]
+    time_signature: "4/4"
+    pattern_type: "explicit"
+    length_beats: 4.0
+    velocity_base: 64
+    target_octave: 4
+    pattern:
+      - { beat: 0.0, duration: 0.25, velocity_factor: 0.60 }
+      - { beat: 0.5, duration: 0.25, velocity_factor: 0.70 }
+      - { beat: 1.0, duration: 0.5, velocity_factor: 0.85 }
+      - { beat: 2.0, duration: 0.5, velocity_factor: 0.90 }
+      - { beat: 3.0, duration: 1.0, velocity_factor: 1.00 }
+  guitar_folk_strum_simple:
+    description: "Folk pattern D _ D U _ D _ (feel = 1-&-2-&-3-&-4-)."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    execution_style: "strum_basic" # 奏法を明示
+    length_beats: 4.0
+    velocity_base: 70
+    strum_width_sec: 0.035
+    tags: ["guitar", "folk", "strum", "acoustic", "4_4"]
+    pattern:
+      - {
+          offset: 0.0,
+          duration: 1.0,
+          velocity_factor: 0.90,
+          strum_direction: "down",
+        }
+      - {
+          offset: 1.5,
+          duration: 0.5,
+          velocity_factor: 0.70,
+          strum_direction: "down",
+        }
+      - {
+          offset: 2.0,
+          duration: 0.5,
+          velocity_factor: 0.80,
+          strum_direction: "up",
+        }
+      - {
+          offset: 3.0,
+          duration: 1.0,
+          velocity_factor: 0.85,
+          strum_direction: "down",
+        }
+
+
+  guitar_power_chord_8ths:
+    description: "Classic 8th-note power-chord driving rhythm – alternating down/up strums."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 85
+    strum_width_sec: 0.028
+    palm_mute_level_recommended: 0.75
+    tags: ["guitar", "power_chord", "eighth_notes", "rock", "metal", "driving"]
+    pattern:
+      - {
+          offset: 0.0,
+          duration: 0.5,
+          velocity_factor: 1.00,
+          strum_direction: "down",
+        }
+      - {
+          offset: 0.5,
+          duration: 0.5,
+          velocity_factor: 0.90,
+          strum_direction: "up",
+        }
+      - {
+          offset: 1.0,
+          duration: 0.5,
+          velocity_factor: 1.00,
+          strum_direction: "down",
+        }
+      - {
+          offset: 1.5,
+          duration: 0.5,
+          velocity_factor: 0.90,
+          strum_direction: "up",
+        }
+      - {
+          offset: 2.0,
+          duration: 0.5,
+          velocity_factor: 1.00,
+          strum_direction: "down",
+        }
+      - {
+          offset: 2.5,
+          duration: 0.5,
+          velocity_factor: 0.90,
+          strum_direction: "up",
+        }
+      - {
+          offset: 3.0,
+          duration: 0.5,
+          velocity_factor: 1.00,
+          strum_direction: "down",
+        }
+      - {
+          offset: 3.5,
+          duration: 0.5,
+          velocity_factor: 0.90,
+          strum_direction: "up",
+        }
+
+  guitar_funk_16th_chop:
+    description: "16th note funk strumming with ghost notes/chops."
+    time_signature: "4/4"
+    pattern_type: "algorithmic_mute_chop"
+    length_beats: 4.0
+    velocity_base: 78
+    tags: ["guitar", "funk", "16th_notes", "chop", "cutting", "rhythmic"]
+    options:
+      accent_offsets_ql: [0.0, 1.0, 2.5, 3.5]
+      swing_ratio: 0.55
+      mute_probability: 0.6
+
+  guitar_rock_mute_16th:
+    description: "Palm-muted 16th-note chugging rhythm (typically all down-picks)."
+    time_signature: "4/4"
+    pattern_type: "mute_fixed_step"
+    length_beats: 4.0
+    step_duration_ql: 0.25
+    note_articulation_factor: 0.35
+    strum_direction_cycle: ["down"]
+    velocity_base: 80
+    palm_mute_level_recommended: 0.9
+    tags:
+      [
+        "guitar",
+        "rock",
+        "metal",
+        "mute",
+        "16th_notes",
+        "chugging",
+        "downpicking",
+      ]
+
+  guitar_slow_arpeggio: # 既に存在しているはずですが、内容を確認・統一
+    description: "Slow 4-beat arpeggio (P I M A style) – ideal for pre-chorus build-ups or intros."
+    time_signature: "4/4"
+    pattern_type: "arpeggio_indices"
+    execution_style: "arpeggio_from_indices" # 奏法を明示
+    length_beats: 4.0
+    arpeggio_indices: [0, 3, 2, 1, 3, 2, 1, 0]
+    note_duration_ql: 0.5
+    strum_width_sec: 0.050
+    velocity_base: 68
+    tags: [guitar, arpeggio, slow, ballad, pre_chorus, fingerstyle, "4_4"]
+    # pattern: [] # pattern_typeがarpeggio_indicesなので不要
+
+  guitar_suspense_swell:
+    description: "Crescendo tremolo swell on a single chord – cinematic bridge or suspenseful moment."
+    time_signature: "4/4"
+    pattern_type: "tremolo_crescendo"
+    length_beats: 4.0
+    duration_beats: 4.0
+    tremolo_rate_hz: 10
+    crescendo_curve: "exponential"
+    velocity_start: 40
+    velocity_end: 100
+    velocity_base: 70
+    tags:
+      [
+        "guitar",
+        "swell",
+        "tremolo",
+        "crescendo",
+        "bridge",
+        "cinematic",
+        "effect",
+      ]
+
+  guitar_transition_strum:
+    description: "Hybrid down-strum with rising anticipation towards bar-end accent."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 75
+    strum_width_sec: 0.040
+    tags: ["guitar", "transition", "strum", "anticipation", "crescendo_feeling"]
+    pattern:
+      - {
+          offset: 0.0,
+          duration: 1.0,
+          velocity_factor: 0.80,
+          strum_direction: "down",
+        }
+      - {
+          offset: 1.0,
+          duration: 1.0,
+          velocity_factor: 0.82,
+          strum_direction: "down",
+        }
+      - {
+          offset: 2.0,
+          duration: 1.0,
+          velocity_factor: 0.85,
+          strum_direction: "down",
+        }
+      - {
+          offset: 3.0,
+          duration: 1.0,
+          velocity_factor: 1.00,
+          strum_direction: "down",
+          accent: true,
+        }
+
+  guitar_default_quarters:
+    description: "Default quarter note strums/hits for guitar (Global Fallback)."
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    velocity_base: 70
+    strum_width_sec: 0.030
+    tags: ["guitar", "default", "strum", "quarter_notes", "fallback"]
+    pattern:
+      - {
+          offset: 0.0,
+          duration: 1.0,
+          velocity_factor: 0.85,
+          strum_direction: "down",
+        }
+      - {
+          offset: 1.0,
+          duration: 1.0,
+          velocity_factor: 0.75,
+          strum_direction: "down",
+        }
+      - {
+          offset: 2.0,
+          duration: 1.0,
+          velocity_factor: 0.80,
+          strum_direction: "down",
+        }
+      - {
+          offset: 3.0,
+          duration: 1.0,
+          velocity_factor: 0.70,
+          strum_direction: "down",
+        }
+
+  # --- Piano Patterns Snippet 追加 ---
+  piano_rh_ambient_pad:
+    description: "High‑voiced pad – whole‑note sustain."
+    pattern_type: fixed_pattern
+    execution_style: chord_high_voices
+    pattern:
+      - {offset: 0.0, duration: 4.0, type: chord_high_voices, velocity_factor: 0.9}
+    tags: [rh, pad, calm]
+
+  piano_rh_block_chords_quarters:
+    description: "Quarter‑note block chords."
+    pattern_type: fixed_pattern
+    execution_style: chord_block
+    pattern:
+      - {offset: 0.0, duration: 1.0, type: chord_block, velocity_factor: 0.85}
+      - {offset: 1.0, duration: 1.0, type: chord_block, velocity_factor: 0.80}
+      - {offset: 2.0, duration: 1.0, type: chord_block, velocity_factor: 0.85}
+      - {offset: 3.0, duration: 1.0, type: chord_block, velocity_factor: 0.80}
+    tags: [rh, block, medium]
+
+  piano_rh_syncopated_chords_pop:
+    description: "8th‑syncopated pop stabs."
+    pattern_type: fixed_pattern
+    execution_style: chord_block
+    pattern:
+      - {offset: 0.0, duration: 0.5, type: chord_block, velocity_factor: 0.9}
+      - {offset: 1.5, duration: 0.5, type: chord_block, velocity_factor: 0.95}
+      - {offset: 2.0, duration: 0.5, type: chord_block, velocity_factor: 0.9}
+      - {offset: 3.5, duration: 0.5, type: chord_block, velocity_factor: 1.0}
+    tags: [rh, syncopated, groove]
+
+  piano_rh_arpeggio_sixteenths_up_down:
+    description: "16th‑note arpeggio up‑down cycle."
+    pattern_type: arpeggio_indices
+    arpeggio_indices: [0,1,2,3,2,1]
+    note_duration_ql: 0.25
+    tags: [rh, arpeggio, energetic]
+
+  piano_rh_grace_fill_triplet:
+    description: "Triplet grace‑note fill before beat 1."
+    pattern_type: grace_fill
+    offset_prebeat_ql: 0.25
+    tags: [rh, fill, ornament]
+
+  # ---------- LH (Left Hand) Patterns ----------
+  piano_lh_roots_whole:
+    description: "Whole‑note roots only."
+    pattern_type: fixed_pattern
+    pattern:
+      - {offset: 0.0, duration: 4.0, type: root, velocity_factor: 0.7}
+    tags: [lh, simple, calm]
+
+  piano_lh_roots_half:
+    description: "Half‑note roots."
+    pattern_type: fixed_pattern
+    pattern:
+      - {offset: 0.0, duration: 2.0, type: root, velocity_factor: 0.75}
+      - {offset: 2.0, duration: 2.0, type: root, velocity_factor: 0.70}
+    tags: [lh, ballad, medium]
+
+  piano_lh_octaves_quarters:
+    description: "Quartet root octaves drive."
+    pattern_type: fixed_pattern
+    pattern:
+      - {offset: 0.0, duration: 1.0, type: octave_root, velocity_factor: 0.8}
+      - {offset: 1.0, duration: 1.0, type: octave_root, velocity_factor: 0.78}
+      - {offset: 2.0, duration: 1.0, type: octave_root, velocity_factor: 0.8}
+      - {offset: 3.0, duration: 1.0, type: octave_root, velocity_factor: 0.78}
+    tags: [lh, pulse, groove]
+
+  piano_lh_alberti_bass_eighths:
+    description: "Alberti bass 8ths (1‑5‑3‑5)."
+    pattern_type: alberti_bass
+    note_duration_ql: 0.5
+    tags: [lh, alberti, energetic]
+
+  piano_lh_walk_quarters:
+    description: "Walking bass 4ths/5ths (algorithmic)."
+    pattern_type: algorithmic_walk
+    options:
+      note_resolution_ql: 1.0
+      max_range_octaves: 1
+    tags: [lh, walking, groove]
+
+  piano_lh_pedal_octave:
+    description: "Pedal point octave sustain."
+    pattern_type: pedal_octave
+    duration_beats: 8
+    tags: [lh, pedal, calm]

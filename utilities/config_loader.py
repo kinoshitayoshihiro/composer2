@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Mapping
 from utilities import humanizer
 
+# from some_chordmap_loader import load_chordmap  # 既存の関数 (もしあれば)
+
 logger = logging.getLogger("otokotoba.config_loader")
 
 # -- デフォルト必須キー一覧（存在しない場合は補完 or エラー） --
@@ -212,3 +214,34 @@ def _merge_section_override(cfg: Dict[str, Any], section_name: str) -> Dict[str,
     override = cfg.get("section_overrides", {}).get(section_name, {})
     merged = {**cfg["global_settings"], **override}  # 後勝ち
     return merged
+
+
+# 既存の load_chordmap を load_chordmap_yaml という名前でも呼べるようエイリアス
+# (もし load_chordmap がこのファイル内にあれば、それを直接使うか、
+#  別ファイルにあれば from .some_module import load_chordmap のように読み込む)
+
+# 例: このファイル内に load_chordmap があると仮定
+# def load_chordmap(path: Path, ...):
+#     # ... 既存のChordMap読み込み処理 ...
+#     pass
+
+
+def load_chordmap_yaml(path: Path | str) -> Any:  # ChordMapの型に合わせて修正
+    """
+    YAML 形式の ChordMap を読み込む。(実際の処理は既存関数を呼び出すか、ここに実装)
+    """
+    # もし既存の load_chordmap があれば:
+    # return load_chordmap(path)
+
+    # ここに直接YAMLを読み込む処理を実装する場合:
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Chordmap file not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        # ここでは単純にyaml.safe_loadを呼ぶ例。
+        # 実際にはChordMapオブジェクトを返すなど、適切な処理が必要。
+        data = yaml.safe_load(f)
+    # 必要であればここでChordMapオブジェクトに変換する処理などを追加
+    # from data_models.chordmap import ChordMap  # 例
+    # return ChordMap(**data) # Pydanticモデルなどを使っている場合
+    return data  # とりあえずパースした辞書を返す例

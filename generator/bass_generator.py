@@ -146,24 +146,30 @@ BUCKET_TO_PATTERN_BASS: dict[tuple[str, str], str] = {
 class BassGenerator(BasePartGenerator):
     def __init__(
         self,
-        part_name: str,
-        part_parameters: Dict[str, Any],
-        main_cfg: Dict[str, Any],
-        groove_profile: Optional[Dict[str, Any]] = None,
-        global_time_signature_obj=None,  # run_composition から渡される
+        *,
+        global_settings=None,
+        default_instrument=None,
+        global_tempo=None,
+        global_time_signature=None,
+        global_key_signature_tonic=None,
+        global_key_signature_mode=None,
+        main_cfg=None,
+        **kwargs,
     ):
         super().__init__(
-            part_name=part_name,
-            part_parameters=part_parameters,
-            main_cfg=main_cfg,
-            groove_profile=groove_profile,
-            # global_tempo_val などは main_cfg から BasePartGenerator が取得
+            global_settings=global_settings,
+            default_instrument=default_instrument,
+            global_tempo=global_tempo,
+            global_time_signature=global_time_signature,
+            global_key_signature_tonic=global_key_signature_tonic,
+            global_key_signature_mode=global_key_signature_mode,
+            **kwargs,
         )
-        self.rng = random.Random()
-        if self.main_cfg.get("rng_seed") is not None:
-            self.rng.seed(self.main_cfg["rng_seed"])
-
-        # 以前の__init__にあった独自の初期化処理はここに残す
+        self.logger = logging.getLogger("modular_composer.bass_generator")
+        self.part_parameters = kwargs.get("part_parameters", {})
+        self.main_cfg = main_cfg
+        # ここで global_ts_str をセット
+        self.global_ts_str = global_time_signature
         self.global_time_signature_obj = get_time_signature_object(self.global_ts_str)
         self.global_key_tonic = self.main_cfg.get("global_settings", {}).get(
             "key_tonic"
@@ -174,6 +180,12 @@ class BassGenerator(BasePartGenerator):
             self.logger.warning(
                 "BassGenerator: global_time_signature_obj が設定されていません。"
             )
+        self.measure_duration = (
+            self.global_time_signature_obj.barDuration.quarterLength
+            if self.global_time_signature_obj
+            and hasattr(self.global_time_signature_obj, "barDuration")
+            else 4.0
+        )
         self._add_internal_default_patterns()
 
     def _add_internal_default_patterns(self):

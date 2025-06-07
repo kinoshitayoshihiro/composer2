@@ -4,7 +4,8 @@ from music21 import volume
 
 
 class StringsGenerator(MelodyGenerator):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, main_cfg=None, **kwargs):
+        self.main_cfg = main_cfg
         # Pop any instrument_name passed from config to avoid duplicate
         config_instrument = kwargs.pop("instrument_name", None)
         # Enforce default instrument for this generator
@@ -13,8 +14,8 @@ class StringsGenerator(MelodyGenerator):
         super().__init__(*args, instrument_name=instrument_name, **kwargs)
 
     def compose(self, section_data, next_section_data=None):
-        # 既存の compose ロジックを継承
-        return super().compose(section_data, next_section_data)
+        # 既存の compose ロジックを継承する際に、next_section_data を渡さず section_data のみ渡す
+        return super().compose(section_data)
 
     def _postprocess_stream(self, part):
         """pad 用: 音長を 4 倍・legato・低 velocity など簡易調整"""

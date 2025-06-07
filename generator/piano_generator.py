@@ -104,13 +104,10 @@ BUCKET_TO_PATTERN_PIANO = {
 
 
 class PianoGenerator(BasePartGenerator):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, main_cfg=None, **kwargs):
+        self.main_cfg = main_cfg
         super().__init__(*args, **kwargs)
-        self.chord_voicer = self.main_cfg.get("chord_voicer_instance")
-        if not self.chord_voicer:
-            logger.warning(
-                "PianoGenerator: ChordVoicer instance not found in main_cfg. Voicing will be basic."
-            )
+        # ...他の初期化処理...
 
     def _get_pattern_keys(
         self, musical_intent: Dict[str, Any], overrides: Optional[PartOverride]

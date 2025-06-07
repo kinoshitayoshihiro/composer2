@@ -1,3 +1,4 @@
+from .base_part_generator import BasePartGenerator
 from generator.melody_generator import MelodyGenerator
 
 
@@ -18,3 +19,10 @@ class SaxGenerator(MelodyGenerator):
         # スコア全体
         if global_profile:
             humanizer.apply(score, global_profile)
+
+
+class PianoGenerator(BasePartGenerator):
+    def __init__(self, *args, main_cfg=None, **kwargs):
+        self.main_cfg = main_cfg
+        super().__init__(*args, **kwargs)
+        # ...他の初期化処理...

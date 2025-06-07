@@ -223,17 +223,29 @@ def load_heatmap_data(heatmap_path: Optional[str]) -> Dict[int, int]:
 class DrumGenerator(BasePartGenerator):
     def __init__(
         self,
-        part_name: str,
-        part_parameters: Dict[str, Any],
-        main_cfg: Dict[str, Any],
-        groove_profile: Optional[Dict[str, Any]] = None,
+        *,
+        global_settings=None,
+        default_instrument=None,
+        global_tempo=None,
+        global_time_signature=None,
+        global_key_signature_tonic=None,
+        global_key_signature_mode=None,
+        main_cfg=None,
+        **kwargs,
     ):
+        self.main_cfg = main_cfg
         super().__init__(
-            part_name=part_name,
-            part_parameters=part_parameters,
-            main_cfg=main_cfg,
-            groove_profile=groove_profile,
+            global_settings=global_settings,
+            default_instrument=default_instrument,
+            global_tempo=global_tempo,
+            global_time_signature=global_time_signature,
+            global_key_signature_tonic=global_key_signature_tonic,
+            global_key_signature_mode=global_key_signature_mode,
+            **kwargs,
         )
+        # ここに他の初期化処理をまとめて書く
+        self.logger = logging.getLogger("modular_composer.drum_generator")
+        self.part_parameters = kwargs.get("part_parameters", {})
         # もし、この後に独自の初期化処理があれば、ここに残してください。
         # 例：
         # if self.part_name == "bass":

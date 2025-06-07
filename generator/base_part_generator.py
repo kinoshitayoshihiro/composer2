@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 from music21 import stream
 import logging
+import random
 from music21 import instrument as m21instrument
 
 try:
@@ -55,6 +56,16 @@ class BasePartGenerator(ABC):
     ):
         # ここを追加
         self.global_settings = global_settings or {}
+        self.part_name = kwargs.get("part_name")
+        self.default_instrument = default_instrument
+        self.global_tempo = global_tempo
+        self.global_time_signature = global_time_signature
+        self.global_key_signature_tonic = global_key_signature_tonic
+        self.global_key_signature_mode = global_key_signature_mode
+        self.rng = rng or random.Random()
+        # 各ジェネレーター固有のロガー
+        name = self.part_name or self.__class__.__name__.lower()
+        self.logger = logging.getLogger(f"modular_composer.{name}")
 
     def compose(
         self,

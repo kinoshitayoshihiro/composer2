@@ -6,6 +6,7 @@ from generator.drum_generator import DrumGenerator
 from generator.strings_generator import StringsGenerator
 from generator.melody_generator import MelodyGenerator
 from generator.sax_generator import SaxGenerator
+from music21 import instrument as m21instrument
 
 ROLE_MAP = {
     "melody": MelodyGenerator,
@@ -32,11 +33,22 @@ class GenFactory:
             GenCls = ROLE_MAP[role]
             cleaned_part_cfg = dict(part_cfg)
             cleaned_part_cfg.pop("main_cfg", None)
+            inst_spec = cleaned_part_cfg.get("default_instrument", part_name)
+            if isinstance(inst_spec, str):
+                try:
+                    inst_obj = m21instrument.fromString(inst_spec)
+                except Exception:
+                    try:
+                        inst_obj = m21instrument.fromString(part_name)
+                    except Exception:
+                        inst_obj = m21instrument.Percussion()
+            else:
+                inst_obj = inst_spec
+
             gens[part_name] = GenCls(
                 global_settings=global_settings,
-                default_instrument=cleaned_part_cfg.get(
-                    "default_instrument", part_name
-                ),
+                default_instrument=inst_obj,
+                part_name=part_name,
                 global_tempo=global_settings.get("tempo_bpm"),
                 global_time_signature=global_settings.get("time_signature", "4/4"),
                 global_key_signature_tonic=global_settings.get("key_tonic"),

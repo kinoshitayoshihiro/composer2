@@ -163,7 +163,11 @@ class GuitarStyleSelector:
 class GuitarGenerator(BasePartGenerator):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.style_selector = GuitarStyleSelector()
+        # ここから self.part_parameters を参照・初期化する
+        if not hasattr(self, "part_parameters"):
+            self.part_parameters = {}
+        # 以降、self.part_parameters を安全に使える
+
         # 安全なフォールバック
         if "guitar_default_quarters" not in self.part_parameters:
             self.part_parameters["guitar_default_quarters"] = {

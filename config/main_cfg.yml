@@ -25,12 +25,12 @@ global_settings:
 
 # ------------------- 2. Paths -----------------------
 paths:
-  chordmap_path: "data/processed_chordmap_with_emotion.yaml"
-  rhythm_library_path: "data/rhythm_library.yml"
-  arrangement_overrides_path: "data/arrangement_overrides.json"
-  vocal_heatmap_path: "data/heatmap.json"
-  vocal_note_data_path: "data/vocal_note_data_ore.json"
-  output_dir: "midi_output"
+  chordmap_path: "../data/processed_chordmap_with_emotion.yaml"
+  rhythm_library_path: "../data/rhythm_library.yml"
+  arrangement_overrides_path: "../data/arrangement_overrides.json"
+  vocal_heatmap_path: "../data/heatmap.json"
+  vocal_note_data_path: "../data/vocal_note_data_ore.json"
+  output_dir: "../midi_output"
 
 # ---------------- 3. Part Defaults ------------------
 part_defaults:
@@ -111,33 +111,49 @@ section_overrides:
   "Outro":
     humanize_profile: "gentle_push"
 
+# ---------------- 2. Sections to Generate ----------------
+sections_to_generate:
+  - "Verse 1"
+  - "Pre-Chorus 1"
+  - "Chorus 1"
+  - "Verse 2"
+  - "Chorus 2"
+  - "Interlude"
+  - "Bridge 1"
+  - "Verse 3"
+  - "Pre-Chorus 2"
+  - "Chorus 3"
+  - "Bridge 2"
+  - "Verse 4"
+  - "Chorus 4"
+
 # ------ 5. Humanize Profiles (central registry) ------
 # humanizer.py で参照される辞書キーと対応。ここにまとめて記述しておくと
 # YAML だけで全体バランスを調整できる。
 humanize_profiles:
   soft_reflective:
     offset_ms: { mean: 0.0, stdev: 12.0 }
-    velocity:  { mean: -6.0, stdev: 4.0 }
+    velocity: { mean: -6.0, stdev: 4.0 }
     duration_pct: { mean: 102, stdev: 3 }
   gentle_push:
     offset_ms: { mean: -10, stdev: 5 }
-    velocity:  { mean: 0, stdev: 3 }
+    velocity: { mean: 0, stdev: 3 }
     duration_pct: { mean: 95, stdev: 2 }
   excited_drive:
     offset_ms: { mean: -8.0, stdev: 8.0 }
-    velocity:  { mean: +10.0, stdev: 8.0 }
+    velocity: { mean: +10.0, stdev: 8.0 }
     duration_pct: { mean: 96, stdev: 5 }
   oddmeter_drift:
     offset_ms: { mean: +3.0, stdev: 14.0 }
-    velocity:  { mean: -2.0, stdev: 5.0 }
+    velocity: { mean: -2.0, stdev: 5.0 }
     duration_pct: { mean: 101, stdev: 6 }
   my_custom_profile:
     offset_ms: { mean: -10.0, stdev: 4.0 }
-    velocity:  { mean: +6.0, stdev: 2.0 }
+    velocity: { mean: +6.0, stdev: 2.0 }
     duration_pct: { mean: 97, stdev: 3 }
   super_drive:
     offset_ms: { mean: -12.0, stdev: 10.0 }
-    velocity:  { mean: +14.0, stdev: 8.0 }
+    velocity: { mean: +14.0, stdev: 8.0 }
     duration_pct: { mean: 94, stdev: 6 }
 
 # ---------------- 6. Reserved ------------------------
@@ -156,3 +172,4 @@ reserved:
 #   time‑varying BPM を適用し、セクション開始点でのスナップとして
 #   overrides.tempo_bpm を使うのが推奨ワークフローです。
 # ----------------------------------------------------
+# modular_composer.py の main_cli() 関数内、または引数パーサー設定部分

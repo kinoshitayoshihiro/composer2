@@ -275,4 +275,14 @@ class VocalGenerator:
         return vocal_part
 
 
+from .base_part_generator import BasePartGenerator
+
+
+class PianoGenerator(BasePartGenerator):
+    def __init__(self, *args, main_cfg=None, **kwargs):
+        self.main_cfg = main_cfg
+        super().__init__(*args, **kwargs)
+        # ...他の初期化処理...
+
+
 # --- END OF FILE generator/vocal_generator.py ---

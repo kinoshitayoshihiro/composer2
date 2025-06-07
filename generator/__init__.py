@@ -1,4 +1,3 @@
-# --- START OF FILE generator/__init__.py (修正案) ---
 """
 generator package -- 各楽器パートの音楽生成ロジック（ジェネレータ）を提供
 --------------------------------------------------------------------------
@@ -21,6 +20,7 @@ music21 の Part オブジェクトを生成して返します。
 """
 
 # --- 各楽器ジェネレータクラスとChordVoicerを再エクスポート ---
+from .base_part_generator import BasePartGenerator
 from .piano_generator import PianoGenerator
 from .guitar_generator import GuitarGenerator   # ファイル名が guitar_generator.py であることを確認
 from .bass_generator import BassGenerator
@@ -29,13 +29,8 @@ from .drum_generator import DrumGenerator
 from .vocal_generator import VocalGenerator
 from .chord_voicer import ChordVoicer
 
-# --- 楽器固有の低レベルユーティリティ (bass_utils, melody_utils) ---
-# これらは通常、対応するジェネレータ内部から直接インポートされるため、
-# ここで明示的に再エクスポートするかは設計次第です。
-# from .bass_utils import generate_bass_measure # 例
-# from .melody_utils import generate_melodic_pitches # 例
-
 __all__ = [
+    "BasePartGenerator",
     "PianoGenerator",
     "GuitarGenerator",
     "BassGenerator",
@@ -43,6 +38,4 @@ __all__ = [
     "DrumGenerator",
     "VocalGenerator",
     "ChordVoicer",
-    # もし bass_utils や melody_utils の関数を公開するならここに追加
 ]
-# --- END OF FILE generator/__init__.py ---

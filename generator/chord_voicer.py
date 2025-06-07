@@ -15,6 +15,7 @@ import music21.tempo as tempo
 import music21.key as key
 import music21.chord as m21chord
 import music21.volume as m21volume
+from .base_part_generator import BasePartGenerator
 from music21 import expressions
 from music21 import articulations  # 明示的にインポート
 import re  # 正規表現を使用する場合
@@ -768,6 +769,18 @@ class ChordVoicer:
             f"CV.compose: Finished. Part '{chord_part.id}' contains {len(list(chord_part.flatten().notesAndRests))} elements."
         )
         return chord_part
+
+
+class PianoGenerator(BasePartGenerator):
+    def __init__(self, rhythm_lib, chord_voicer=None, main_cfg=None, **kwargs):
+        super().__init__("piano", rhythm_lib)
+        # Safe-fallback chord voicer
+        if chord_voicer is None:
+            from chord_voicer import ChordVoicer  # 軽量ヘルパー
+
+            chord_voicer = ChordVoicer(mode="triad_drop2")
+        self.chord_voicer = chord_voicer
+        self.main_cfg = main_cfg or {}
 
 
 # --- END OF FILE generators/chord_voicer.py ---

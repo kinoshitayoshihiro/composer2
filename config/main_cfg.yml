@@ -1,0 +1,158 @@
+# OtoKotoba Engine – Global Configuration (main_cfg.yml)
+# ----------------------------------------------------
+#  ✓ modular_composer.py の `--main-cfg` で読み込み
+#  ✓ 各ジェネレーターへ共通パラメータを供給
+#  ✓ Section Overrides で拍子/テンポ/ヒューマナイズを上書き可
+# ----------------------------------------------------
+
+# ---------------- 1. Global Settings ----------------
+global_settings:
+  # 楽曲基本情報
+  song_title: "OreNoNyoubou_Shudaika"
+  time_signature: "4/4" # ← デフォルト拍子
+  tempo_bpm: 88 # ← デフォルトテンポ
+  key_tonic: "F"
+  key_mode: "major"
+
+  # 演奏フィール
+  swing_ratio: 0.0 # 0 = ストレート, 0.5 = 完全スウィング
+  humanize_profile: "soft_reflective" # ▼ fallback (profiles は後述の humanize_profiles セクションに定義)
+  default_dynamics_profile: "mp"
+
+  # 外部プロファイル / マップ
+  groove_profile_path: "data/groove_profile.json" # 微小タイミング揺らぎの統計
+  tempo_map_path: "data/tempo_map.json" # rit. / accel. を含む細粒度 BPM 変化
+
+# ------------------- 2. Paths -----------------------
+paths:
+  chordmap_path: "data/processed_chordmap_with_emotion.yaml"
+  rhythm_library_path: "data/rhythm_library.yml"
+  arrangement_overrides_path: "data/arrangement_overrides.json"
+  vocal_heatmap_path: "data/heatmap.json"
+  vocal_note_data_path: "data/vocal_note_data_ore.json"
+  output_dir: "midi_output"
+
+# ---------------- 3. Part Defaults ------------------
+part_defaults:
+  piano:
+    apply_pedal: true
+    rh_velocity: 65
+    lh_velocity: 60
+    rh_style_keyword: "piano_rh_block_chords_quarters"
+    lh_style_keyword: "piano_lh_roots_half"
+    humanize_profile: ""
+    dynamics_profile: ""
+    articulation: "sustain"
+
+  guitar:
+    rhythm_key: "guitar_ballad_arpeggio"
+    velocity: 74
+    palm_mute: false
+    strum_direction_cycle: "down,down,up,up"
+    humanize_profile: ""
+    dynamics_profile: ""
+    articulation: "fingerstyle"
+
+  bass:
+    rhythm_key: "bass_pump_8th_octaves"
+    velocity: 80
+    weak_beat_style: "none"
+    humanize_profile: ""
+    dynamics_profile: ""
+    articulation: "finger"
+
+  drums:
+    style_key: "ballad_soft_kick_snare_8th_hat"
+    ghost_hat_on_offbeat: true
+    additional_kick_density: 0.2
+    humanize_profile: ""
+    dynamics_profile: ""
+
+  strings:
+    role: "pad"
+    instrument_name: "Orchestral Strings" # ← 追加
+    rhythm_key: "strings_melody_basic"
+    humanize_profile: "gentle_push"
+
+  sax:
+    role: "melody"
+    instrument_name: "Alto Saxophone" # ← 追加
+    rhythm_key: "sax_melody_basic"
+
+# ---------- 4. Section Overrides (拍子/テンポ/HZ) ----------
+# processed_chordmap_with_emotion.yaml でセクションを定義している場合、
+# ここで *拍子*・*テンポ*・*humanize_profile* を上書きできます。
+# キーはセクションラベルに一致させてください（スペース可）。
+section_overrides:
+  "Verse 1":
+    time_signature: "4/4" # ← 変更しない場合は省略可
+    tempo_bpm: 88 # 88bpm ストレート
+    humanize_profile: "soft_reflective"
+
+  "Pre‑Chorus 1":
+    time_signature: "3/4" # 3拍子へ転調！
+    tempo_bpm: 93 # ほんのり加速
+    humanize_profile: "gentle_push"
+
+  "Chorus 1":
+    time_signature: "4/4"
+    tempo_bpm: 104 # アップテンポ
+    humanize_profile: "super_drive"
+
+  "Bridge":
+    time_signature: "5/4" # 変拍子で緊張感
+    tempo_bpm: 92
+    humanize_profile: "oddmeter_drift"
+    strings:
+      humanize_profile: "soft_reflective"
+
+  "Intro":
+    humanize_profile: "soft_reflective"
+  "Outro":
+    humanize_profile: "gentle_push"
+
+# ------ 5. Humanize Profiles (central registry) ------
+# humanizer.py で参照される辞書キーと対応。ここにまとめて記述しておくと
+# YAML だけで全体バランスを調整できる。
+humanize_profiles:
+  soft_reflective:
+    offset_ms: { mean: 0.0, stdev: 12.0 }
+    velocity:  { mean: -6.0, stdev: 4.0 }
+    duration_pct: { mean: 102, stdev: 3 }
+  gentle_push:
+    offset_ms: { mean: -10, stdev: 5 }
+    velocity:  { mean: 0, stdev: 3 }
+    duration_pct: { mean: 95, stdev: 2 }
+  excited_drive:
+    offset_ms: { mean: -8.0, stdev: 8.0 }
+    velocity:  { mean: +10.0, stdev: 8.0 }
+    duration_pct: { mean: 96, stdev: 5 }
+  oddmeter_drift:
+    offset_ms: { mean: +3.0, stdev: 14.0 }
+    velocity:  { mean: -2.0, stdev: 5.0 }
+    duration_pct: { mean: 101, stdev: 6 }
+  my_custom_profile:
+    offset_ms: { mean: -10.0, stdev: 4.0 }
+    velocity:  { mean: +6.0, stdev: 2.0 }
+    duration_pct: { mean: 97, stdev: 3 }
+  super_drive:
+    offset_ms: { mean: -12.0, stdev: 10.0 }
+    velocity:  { mean: +14.0, stdev: 8.0 }
+    duration_pct: { mean: 94, stdev: 6 }
+
+# ---------------- 6. Reserved ------------------------
+reserved:
+  midi_export_settings: {}
+  audio_rendering: {}
+  lyrics_handling: {}
+  future_parts: {}
+# ---------------- Notes ------------------------------
+# * section_overrides は processed_chordmap
+#   とラベル一致させることで自動で適用されます。
+# * humanize_profiles をカスタム追加すれば、各 Section / Part
+#   で `humanize_profile: "custom_key"` と書くだけで適用可。
+# * tempo_map.json は 1/8 音符粒度で BPM を記録したリスト形式。
+#   section_overrides と併用する場合は、tempo_map を優先して
+#   time‑varying BPM を適用し、セクション開始点でのスナップとして
+#   overrides.tempo_bpm を使うのが推奨ワークフローです。
+# ----------------------------------------------------

@@ -504,86 +504,36 @@ class DrumGenerator(BasePartGenerator):
         return part
 
     def compose(
-        self, blocks: List[Dict[str, Any]], overrides: Optional[Any] = None
+        self,
+        *,
+        section_data: Optional[Dict[str, Any]] = None,
+        overrides_root: Optional[Any] = None,
+        groove_profile_path: Optional[str] = None,
+        next_section_data: Optional[Dict[str, Any]] = None,
+        part_specific_humanize_params: Optional[Dict[str, Any]] = None,
     ) -> stream.Part:
-        # (前回と同様の compose メソッドの冒頭部分)
-        part = stream.Part(id="Drums")
-        part.insert(0, copy.deepcopy(self.instrument))
-        part.insert(0, tempo.MetronomeMark(number=self.global_tempo))
-        current_ts_obj = (
-            self.global_ts if self.global_ts else meter.TimeSignature("4/4")
-        )
-        part.insert(0, copy.deepcopy(current_ts_obj))
-        if not blocks:
-            return part
-        logger.info(f"DrumGen compose: Starting for {len(blocks)} blocks.")
-        resolved_blocks = []
-        for blk_idx, blk_data_original in enumerate(blocks):
-            blk = copy.deepcopy(blk_data_original)
-            current_section_name = blk.get("section_name", f"UnnamedSection_{blk_idx}")
-            part_specific_overrides_model: Optional[DummyPartOverride] = None
-            if overrides:
-                part_specific_overrides_model = get_part_override(
-                    overrides, current_section_name, "drums"
-                )
-            blk.setdefault("part_params", {}).setdefault("drums", {})
-            drum_params_from_chordmap = blk["part_params"]["drums"]
-            final_drum_params = drum_params_from_chordmap.copy()
-            if part_specific_overrides_model and hasattr(
-                part_specific_overrides_model, "model_dump"
-            ):
-                override_dict = part_specific_overrides_model.model_dump(
-                    exclude_unset=True
-                )
-                chordmap_options = final_drum_params.get("options", {})
-                override_options = override_dict.pop("options", None)
-                if isinstance(chordmap_options, dict) and isinstance(
-                    override_options, dict
-                ):
-                    merged_options = chordmap_options.copy()
-                    merged_options.update(override_options)
-                    final_drum_params["options"] = merged_options
-                elif isinstance(override_options, dict) and override_options:
-                    final_drum_params["options"] = override_options
-                final_drum_params.update(override_dict)
-            blk["part_params"]["drums"] = final_drum_params
-            emo = blk.get("musical_intent", {}).get("emotion", "default").lower()
-            inten = blk.get("musical_intent", {}).get("intensity", "medium").lower()
-            style_key_from_override = final_drum_params.get("rhythm_key")
-            if (
-                style_key_from_override
-                and style_key_from_override in self.raw_pattern_lib
-            ):
-                final_style_key = style_key_from_override
-                logger.debug(
-                    f"DrumGen compose: Blk {blk_idx+1} using style '{final_style_key}' from overrides."
-                )
-            else:
-                explicit_style_key_chordmap = final_drum_params.get(
-                    "drum_style_key", final_drum_params.get("style_key")
-                )
-                if (
-                    explicit_style_key_chordmap
-                    and explicit_style_key_chordmap in self.raw_pattern_lib
-                ):
-                    final_style_key = explicit_style_key_chordmap
-                    logger.debug(
-                        f"DrumGen compose: Blk {blk_idx+1} using explicit style '{final_style_key}' from chordmap."
-                    )
-                else:
-                    final_style_key = _resolve_style(emo, inten, self.raw_pattern_lib)
-                    logger.debug(
-                        f"DrumGen compose: Blk {blk_idx+1} (E:'{emo}',I:'{inten}') using auto-resolved style '{final_style_key}'"
-                    )
-            blk["part_params"]["drums"]["final_style_key_for_render"] = final_style_key
-            resolved_blocks.append(blk)
-        self._render(resolved_blocks, part)
-        logger.info(
-            f"DrumGen compose: Finished. Part has {len(list(part.flatten().notesAndRests))} elements."
-        )
-        return part
+        """
+        mode == "independent" : ボーカル熱マップ主導で全曲を一括生成
+        mode == "chord"      : chordmap のセクション単位で生成
+        共通APIを維持しつつ、必要なときだけ独自処理を挟む。
+        """
+        if getattr(self, "mode", "chord") == "independent":
+            return self._render_whole_song()
 
-    def _render(self, blocks: Sequence[Dict[str, Any]], part: stream.Part):
+        # それ以外は BasePartGenerator に委譲
+        return super().compose(
+            section_data=section_data,
+            overrides_root=overrides_root,
+            groove_profile_path=groove_profile_path,
+            next_section_data=next_section_data,
+            part_specific_humanize_params=part_specific_humanize_params,
+        )
+
+    def _render(
+        self,
+        blocks: Sequence[Dict[str, Any]],
+        part: stream.Part,
+    ):
         ms_since_fill = 0
         for blk_idx, blk_data in enumerate(blocks):
             log_render_prefix = f"DrumGen.Render.Blk{blk_idx+1}"  # 1-indexed for logs
@@ -981,44 +931,6 @@ class DrumGenerator(BasePartGenerator):
             t += 0.25  # 16th note = quarterLength/4
         return part
 
-    def compose(
-        self,
-        section: Optional[Dict[str, Any]],
-        overrides: Optional[Any] = None,
-        groove_path: Optional[str] = None,
-    ) -> stream.Part:
-        """
-        mode="independent": chordmap無視で全曲分をヒートマップで生成
-        mode="chord": chordmapセクションごとに生成
-        """
-        if self.mode == "independent":
-            logger.info(
-                "DrumGen: Running in INDEPENDENT mode (vocal heatmap driven, chordmap ignored)."
-            )
-            part = self._render_whole_song()
-        else:
-            logger.info("DrumGen: Running in CHORD mode (chordmap section driven).")
-            part = super().compose(
-                section=section, overrides=overrides, groove_path=groove_path
-            )
-        return part
-
-    def _render_whole_song(self) -> stream.Part:
-        """ヒートマップ全体を使って全曲分のドラムを生成"""
-        # 曲長をヒートマップやMIDIから自動推定
-        if self.heatmap:
-            max_grid = max(int(k) for k in self.heatmap.keys())
-            song_length_ql = (max_grid + 1) / RESOLUTION + 1.0  # 1小節余裕
-        else:
-            song_length_ql = 32.0  # fallback
-        dummy_section = {
-            "absolute_offset": 0,
-            "length_in_measures": int(song_length_ql // 4) + 1,
-            "musical_intent": {"emotion": "default", "intensity": "medium"},
-            "overrides": {},
-        }
-        return self._render_part(dummy_section)
-
     def __init__(self, *args, **kwargs):
         """全てのジェネレーターで統一された初期化メソッド"""
         super().__init__(*args, **kwargs)
@@ -1170,6 +1082,18 @@ class DrumGenerator(BasePartGenerator):
                 part.insert(final_offset, n)
             else:
                 logger.warning(f"Unknown drum instrument: '{inst_name}'")
+
+        profile_name = (
+            self.cfg.get("humanize_profile")
+            or section_data.get("humanize_profile")
+            or self.global_settings.get("humanize_profile")
+        )
+        if profile_name:
+            humanizer.apply(part, profile_name)
+
+        # スコア全体
+        if global_profile:
+            humanizer.apply(score, global_profile)
 
         return part
 

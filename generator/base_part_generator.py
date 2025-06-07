@@ -43,50 +43,18 @@ class BasePartGenerator(ABC):
 
     def __init__(
         self,
-        part_name: str,
-        part_parameters: Dict[str, Any],
-        main_cfg: Dict[str, Any],
-        groove_profile: Optional[Dict[str, Any]] = None,
+        *,
+        global_settings: dict = None,
+        default_instrument,
+        global_tempo,
+        global_time_signature,
+        global_key_signature_tonic,
+        global_key_signature_mode,
+        rng=None,
+        **kwargs,
     ):
-        self.part_name = part_name
-        self.part_parameters = part_parameters or {}
-        self.main_cfg = main_cfg or {}
-        self.groove_profile = groove_profile
-        self.logger = logging.getLogger(f"modular_composer.{self.part_name}_generator")
-
-        g_settings = self.main_cfg.get("global_settings", {})
-        self.global_tempo = g_settings.get("tempo", 120)
-        self.global_ts_str = g_settings.get("time_signature", "4/4")
-        self.global_key_tonic = g_settings.get("key_tonic", "C")
-        self.global_key_mode = g_settings.get("key_mode", "major")
-
-        self.measure_duration = 4.0
-        try:
-            ts_obj = meter.TimeSignature(self.global_ts_str)
-            self.measure_duration = ts_obj.barDuration.quarterLength
-        except Exception:
-            self.logger.warning(
-                f"Could not parse time signature '{self.global_ts_str}'. Defaulting measure duration to 4.0."
-            )
-
-        part_default_cfg = self.main_cfg.get("default_part_parameters", {}).get(
-            self.part_name, {}
-        )
-        instrument_name = part_default_cfg.get("instrument", "Piano")
-        try:
-            if self.part_name == "drums":
-                self.default_instrument = m21instrument.Percussion()
-                if hasattr(self.default_instrument, "midiChannel"):
-                    self.default_instrument.midiChannel = 9
-            else:
-                self.default_instrument = m21instrument.fromString(instrument_name)
-        except Exception:
-            self.logger.warning(
-                f"Could not create instrument '{instrument_name}'. Using Piano as fallback."
-            )
-            self.default_instrument = m21instrument.Piano()
-
-        self.overrides: Optional[PartOverride] = None
+        # ここを追加
+        self.global_settings = global_settings or {}
 
     def compose(
         self,
@@ -155,6 +123,14 @@ class BasePartGenerator(ABC):
         next_section_data: Optional[Dict[str, Any]] = None,
     ) -> stream.Part:
         raise NotImplementedError
+
+
+def prepare_main_cfg(main_cfg: dict, default_ts: str = "4/4"):
+    if "global_settings" not in main_cfg:
+        main_cfg["global_settings"] = {}
+    if "time_signature" not in main_cfg["global_settings"]:
+        main_cfg["global_settings"]["time_signature"] = default_ts
+    return main_cfg
 
 
 # --- END OF FILE generator/base_part_generator.py ---

@@ -1426,6 +1426,17 @@ class BassGenerator(BasePartGenerator):
                 self.logger.debug(
                     f"{log_blk_prefix}: Final note for {m21_cs_obj.figure} at {current_note_abs_offset_in_block:.2f} too short ({note_obj_to_add.duration.quarterLength:.3f}ql). Skipping."
                 )
+        profile_name = (
+            self.cfg.get("humanize_profile")
+            or section_data.get("humanize_profile")
+            or self.global_settings.get("humanize_profile")
+        )
+        if profile_name:
+            humanizer.apply(part, profile_name)
+
+        # スコア全体
+        if global_profile:
+            humanizer.apply(score, global_profile)
         return bass_part
 
 

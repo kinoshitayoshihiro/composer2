@@ -688,6 +688,19 @@ class GuitarGenerator(BasePartGenerator):
         logger.info(
             f"{log_blk_prefix}: Finished processing. Part has {len(list(guitar_part.flatten().notesAndRests))} elements before groove/humanize."
         )
+
+        profile_name = (
+            self.cfg.get("humanize_profile")
+            or section_data.get("humanize_profile")
+            or self.global_settings.get("humanize_profile")
+        )
+        if profile_name:
+            humanizer.apply(part, profile_name)
+
+        # スコア全体
+        if global_profile:
+            humanizer.apply(score, global_profile)
+
         return guitar_part
 
     def _add_internal_default_patterns(self):

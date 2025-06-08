@@ -71,7 +71,17 @@ def main_cli() -> None:
 
     section_names: list[str] = main_cfg["sections_to_generate"]
     raw_sections: dict[str, Dict[str, Any]] = chordmap["sections"]
-    sections = [raw_sections[n] for n in section_names if n in raw_sections]
+    sections: list[Dict[str, Any]] = []
+    for name in section_names:
+        sec = raw_sections.get(name)
+        if not sec:
+            logging.warning(f"Section '{name}' not found in chordmap")
+            continue
+        # ラベルを明示的に保持しておく
+        sec_copy = dict(sec)
+        sec_copy["label"] = name
+        sections.append(sec_copy)
+
     if not sections:
         logging.error("指定セクションが chordmap に見つかりませんでした")
         return

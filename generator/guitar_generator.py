@@ -23,6 +23,7 @@ import logging
 import math
 
 from .base_part_generator import BasePartGenerator
+from utilities import humanizer
 
 try:
     from utilities.safe_get import safe_get
@@ -163,6 +164,14 @@ class GuitarStyleSelector:
 class GuitarGenerator(BasePartGenerator):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        from utilities.core_music_utils import get_time_signature_object
+
+        ts_obj = get_time_signature_object(self.global_time_signature)
+        self.measure_duration = (
+            ts_obj.barDuration.quarterLength if ts_obj else 4.0
+        )
+        self.cfg: dict = kwargs.copy()
+        self.style_selector = GuitarStyleSelector()
         # ここから self.part_parameters を参照・初期化する
         if not hasattr(self, "part_parameters"):
             self.part_parameters = {}
@@ -699,11 +708,7 @@ class GuitarGenerator(BasePartGenerator):
             or self.global_settings.get("humanize_profile")
         )
         if profile_name:
-            humanizer.apply(part, profile_name)
-
-        # スコア全体
-        if global_profile:
-            humanizer.apply(score, global_profile)
+            humanizer.apply(guitar_part, profile_name)
 
         return guitar_part
 

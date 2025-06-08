@@ -22,6 +22,7 @@ import copy
 import math
 
 from .base_part_generator import BasePartGenerator
+from utilities import humanizer
 
 try:
     from utilities.safe_get import safe_get
@@ -165,6 +166,7 @@ class BassGenerator(BasePartGenerator):
             global_key_signature_mode=global_key_signature_mode,
             **kwargs,
         )
+        self.cfg: dict = kwargs.copy()
         self.logger = logging.getLogger("modular_composer.bass_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
         self.main_cfg = main_cfg
@@ -1444,11 +1446,8 @@ class BassGenerator(BasePartGenerator):
             or self.global_settings.get("humanize_profile")
         )
         if profile_name:
-            humanizer.apply(part, profile_name)
+            humanizer.apply(bass_part, profile_name)
 
-        # スコア全体
-        if global_profile:
-            humanizer.apply(score, global_profile)
         return bass_part
 
 

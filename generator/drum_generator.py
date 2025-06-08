@@ -272,7 +272,9 @@ class DrumGenerator(BasePartGenerator):
 
         # (初期化ロジックは前回と同様)
         self.raw_pattern_lib = (
-            copy.deepcopy(part_parameters) if part_parameters is not None else {}
+            copy.deepcopy(self.part_parameters)
+            if self.part_parameters is not None
+            else {}
         )
         self.pattern_lib_cache: Dict[str, Dict[str, Any]] = {}
         logger.info(
@@ -943,13 +945,7 @@ class DrumGenerator(BasePartGenerator):
             t += 0.25  # 16th note = quarterLength/4
         return part
 
-    def __init__(self, *args, **kwargs):
-        """全てのジェネレーターで統一された初期化メソッド"""
-        super().__init__(*args, **kwargs)
-        self.rng = random.Random()
-        if self.main_cfg.get("rng_seed") is not None:
-            self.rng.seed(self.main_cfg["rng_seed"])
-        self._add_internal_default_patterns()
+
 
     def _add_internal_default_patterns(self):
         """ライブラリに必須パターンがなければ、最低限のフォールバックを追加"""

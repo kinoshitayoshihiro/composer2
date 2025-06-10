@@ -18,4 +18,8 @@ python tools/test_timesig.py
 pytest -q
 ```
 
-Use `modular_composer.py` to generate MIDI after installing dependencies.
+Use `modular_composer.py` to generate MIDI after installing dependencies. Run the main script and verify that no warnings appear:
+
+```bash
+python3 modular_composer.py --main-cfg config/main_cfg.yml
+```

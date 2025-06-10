@@ -202,7 +202,7 @@ def apply_groove_pretty(
         )
         return part
 
-    for n_note_m21 in part.flat.notes:  # 変数名を n_note_m21 に変更
+    for n_note_m21 in part.flatten().notes:  # 変数名を n_note_m21 に変更
         # 既に適用されたオフセットを考慮せず、元のグリッドからのズレとして計算する方が良い場合もあるが、
         # ここでは単純に現在のオフセットに揺らぎを加える。
         jitter_sec = random.gauss(mean_shift_sec, stdev_shift_sec)

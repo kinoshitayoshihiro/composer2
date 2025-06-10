@@ -1,6 +1,6 @@
 music21>=9.6.0
 pretty_midi>=0.2.10
-numpy>=1.27.0
+numpy>=1.27.0,<2.0.0
 PyYAML>=6.0
 pydantic>=2.7
 pydub>=0.25

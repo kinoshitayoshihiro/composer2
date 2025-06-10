@@ -24,8 +24,18 @@ ROLE_MAP = {
 
 class GenFactory:
     @staticmethod
-    def build_from_config(main_cfg):
-        """main_cfg['part_defaults'] を読み取り各 Generator を初期化"""
+    def build_from_config(main_cfg, rhythm_lib=None):
+        """main_cfg['part_defaults'] を読み取り各 Generator を初期化
+
+        Parameters
+        ----------
+        main_cfg : dict
+            Parsed configuration dictionary from ``load_main_cfg``.
+        rhythm_lib : RhythmLibrary | None
+            Optional rhythm library object providing pattern dictionaries for
+            each part. If provided, the corresponding pattern set is passed to
+            each generator via ``part_parameters``.
+        """
         global_settings = main_cfg.get("global_settings", {})
         gens = {}
         for part_name, part_cfg in main_cfg["part_defaults"].items():
@@ -44,6 +54,28 @@ class GenFactory:
                         inst_obj = m21instrument.Percussion()
             else:
                 inst_obj = inst_spec
+
+            lib_params = {}
+            if rhythm_lib is not None:
+                if part_name == "drums":
+                    lib_params = getattr(rhythm_lib, "drum_patterns", {}) or {}
+                elif part_name == "bass":
+                    lib_params = getattr(rhythm_lib, "bass_patterns", {}) or {}
+                elif part_name == "piano":
+                    lib_params = getattr(rhythm_lib, "piano_patterns", {}) or {}
+                elif part_name in ("guitar", "rhythm"):
+                    lib_params = getattr(rhythm_lib, "guitar", {}) or {}
+
+            if lib_params and not isinstance(next(iter(lib_params.values()), {}), dict):
+                lib_params = {
+                    k: v.model_dump() if hasattr(v, "model_dump") else dict(v)
+                    for k, v in lib_params.items()
+                }
+
+            part_params = cleaned_part_cfg.get("part_parameters", {})
+            if lib_params:
+                part_params = {**lib_params, **part_params}
+            cleaned_part_cfg["part_parameters"] = part_params
 
             gens[part_name] = GenCls(
                 global_settings=global_settings,

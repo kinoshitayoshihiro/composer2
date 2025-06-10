@@ -16,6 +16,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict
 from utilities.config_loader import load_chordmap_yaml, load_main_cfg
+from utilities.rhythm_library_loader import load_rhythm_library
 from music21 import instrument as m21inst, meter, stream, tempo
 
 # --- project utilities ----------------------------------------------------
@@ -68,6 +69,7 @@ def main_cli() -> None:
     # 1) 設定 & データロード -------------------------------------------------
     main_cfg = load_main_cfg(args.main_cfg)
     chordmap = load_chordmap_yaml(Path(main_cfg["paths"]["chordmap_path"]))
+    rhythm_lib = load_rhythm_library(main_cfg["paths"].get("rhythm_library_path"))
 
     section_names: list[str] = main_cfg["sections_to_generate"]
     raw_sections: dict[str, Dict[str, Any]] = chordmap["sections"]
@@ -90,7 +92,7 @@ def main_cli() -> None:
     beats_per_measure = ts.numerator
 
     # 2) Generator 初期化 ----------------------------------------------------
-    part_gens = GenFactory.build_from_config(main_cfg)
+    part_gens = GenFactory.build_from_config(main_cfg, rhythm_lib)
 
     # 楽器ごとの単一 Part
     part_streams: dict[str, stream.Part] = {}

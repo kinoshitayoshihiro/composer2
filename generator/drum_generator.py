@@ -17,6 +17,7 @@ from music21 import (
 from .base_part_generator import BasePartGenerator
 from utilities.core_music_utils import get_time_signature_object, MIN_NOTE_DURATION_QL
 from utilities.onset_heatmap import build_heatmap, RESOLUTION
+from utilities import humanizer
 
 logger = logging.getLogger("modular_composer.drum_generator")
 
@@ -188,7 +189,7 @@ def extract_tempo_map_from_midi(vocal_midi_path: str) -> List[Tuple[float, float
     tempo_map = []
     try:
         midi_stream = converter.parse(vocal_midi_path)
-        for element in midi_stream.flat.notes:
+        for element in midi_stream.flatten().notes:
             if isinstance(element, note.Note):
                 tempo_qn = element.quarterLength
                 if element.duration and element.duration.quarterLength > 0:
@@ -247,12 +248,24 @@ class DrumGenerator(BasePartGenerator):
         self.logger = logging.getLogger("modular_composer.drum_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
         # もし、この後に独自の初期化処理があれば、ここに残してください。
-        # 例：
-        # if self.part_name == "bass":
-        #     self._add_internal_default_patterns()
+        # 必須のデフォルトパターンが不足している場合に補充
+        self._add_internal_default_patterns()
 
-        self.vocal_midi_path = self.main_cfg.get("vocal_midi_path_for_drums")
+        # Use path settings from main_cfg, falling back to general paths
+        self.vocal_midi_path = (
+            self.main_cfg.get("vocal_midi_path_for_drums")
+            or self.main_cfg.get("paths", {}).get("vocal_note_data_path")
+        )
+
         heatmap_json_path = self.main_cfg.get("heatmap_json_path_for_drums")
+        if not heatmap_json_path:
+            heatmap_json_path = self.main_cfg.get("paths", {}).get(
+                "vocal_heatmap_path"
+            )
+        if not heatmap_json_path:
+            heatmap_json_path = str(Path("data/heatmap.json").resolve())
+
+        heatmap_json_path = str(Path(heatmap_json_path).expanduser().resolve())
         self.heatmap = load_heatmap_data(heatmap_json_path)
         self.rng = random.Random()
         if self.main_cfg.get("rng_seed") is not None:
@@ -389,9 +402,22 @@ class DrumGenerator(BasePartGenerator):
         if hasattr(self.instrument, "midiChannel"):
             self.instrument.midiChannel = 9
 
-        # drum_patterns.yml をロード
-        with open("data/drum_patterns.yml", encoding="utf-8") as f:
-            drum_patterns = yaml.safe_load(f)
+        # drum_patterns.yml をロードして raw_pattern_lib にマージ
+        try:
+            with open("data/drum_patterns.yml", encoding="utf-8") as f:
+                drum_patterns = yaml.safe_load(f) or {}
+                if isinstance(drum_patterns, dict):
+                    patterns_dict = drum_patterns.get("drum_patterns", drum_patterns)
+                    if isinstance(patterns_dict, dict):
+                        self.raw_pattern_lib.update(patterns_dict)
+                        logger.info(
+                            f"DrumGen __init__: loaded {len(patterns_dict)} patterns from data/drum_patterns.yml"
+                        )
+        except Exception as e:
+            logger.warning(f"DrumGen __init__: failed to load drum_patterns.yml: {e}")
+
+        # 最終的なパターン辞書を part_parameters に適用
+        self.part_parameters = self.raw_pattern_lib
 
     def _choose_pattern_key(self, emotion: str | None, intensity: str | None) -> str:
         emo = (emotion or "default").lower()
@@ -1092,16 +1118,12 @@ class DrumGenerator(BasePartGenerator):
                 logger.warning(f"Unknown drum instrument: '{inst_name}'")
 
         profile_name = (
-            self.cfg.get("humanize_profile")
+            self.main_cfg.get("humanize_profile")
             or section_data.get("humanize_profile")
             or self.global_settings.get("humanize_profile")
         )
         if profile_name:
             humanizer.apply(part, profile_name)
-
-        # スコア全体
-        if global_profile:
-            humanizer.apply(score, global_profile)
 
         return part
 

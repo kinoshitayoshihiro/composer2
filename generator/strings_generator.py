@@ -19,7 +19,7 @@ class StringsGenerator(MelodyGenerator):
 
     def _postprocess_stream(self, part):
         """pad 用: 音長を 4 倍・legato・低 velocity など簡易調整"""
-        for n in part.flat.notes:
+        for n in part.flatten().notes:
             n.quarterLength *= 4
             if n.volume is None:
                 n.volume = volume.Volume()

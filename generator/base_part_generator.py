@@ -14,29 +14,10 @@ try:
         PartOverride,
     )
     from utilities.humanizer import apply_humanization_to_part
-except ImportError:
-    logging.warning(
-        "BasePartGenerator: Could not import some utilities. Features might be limited."
-    )
-
-    def apply_groove_pretty(part, groove_profile):
-        return part
-
-    def load_groove_profile(path):
-        return None
-
-    class PartOverride:
-        def model_dump(self, exclude_unset=True):
-            return {}
-
-    def get_part_override(overrides, section_label, part_name):
-        return None
-
-    def apply_humanization_to_part(part, template_name=None, custom_params=None):
-        return part
-
-    class OverrideModelType:
-        root: Dict = {}
+except ModuleNotFoundError as e:
+    raise ModuleNotFoundError(
+        "Missing optional utilities. Please install dependencies via 'pip install -r requirements.txt'."
+    ) from e
 
 
 class BasePartGenerator(ABC):

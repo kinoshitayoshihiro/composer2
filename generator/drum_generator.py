@@ -20,6 +20,10 @@ from utilities.onset_heatmap import build_heatmap, RESOLUTION
 
 logger = logging.getLogger("modular_composer.drum_generator")
 
+# Hat suppression: omit hi-hat hits when relative vocal activity exceeds this
+# threshold (0-1 scale based on heatmap weight).
+HAT_SUPPRESSION_THRESHOLD = 0.6
+
 GM_DRUM_MAP: Dict[str, int] = {
     "kick": 36,
     "bd": 36,
@@ -938,10 +942,15 @@ class DrumGenerator(BasePartGenerator):
                 part.insert(t, note.Unpitched(36, quarterLength=0.25, velocity=100))
             elif rel > 0.3 and grid_idx % 4 == 2:
                 part.insert(t, note.Unpitched(38, quarterLength=0.25, velocity=95))
-            # Hi-Hat
-            if random.random() < (ghost_density if rel < 0.3 else 1.0):
+            # Hi-Hat suppressed when vocal activity is high
+            if rel < HAT_SUPPRESSION_THRESHOLD and (
+                random.random() < (ghost_density if rel < 0.3 else 1.0)
+            ):
                 vel = 60 if rel < 0.2 else 75
-                part.insert(t, note.Unpitched(42, quarterLength=0.25, velocity=vel))
+                part.insert(
+                    t,
+                    note.Unpitched(42, quarterLength=0.25, velocity=vel),
+                )
             t += 0.25  # 16th note = quarterLength/4
         return part
 

@@ -25,6 +25,8 @@ global_settings:
   onset_heatmap_json: "data/vocal_onset_heatmap.json" # ボーカル発音のヒートマップ
   heatmap_resolution: 16 # ヒートマップ解像度（省略可）
   heatmap_threshold: 2  # 強度判定の閾値（省略可）
+  accent_threshold: 0.6
+  ghost_density_range: [0.3, 0.8]
 
 # ------------------- 2. Paths -----------------------
 paths:

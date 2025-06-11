@@ -154,6 +154,7 @@ class BassGenerator(BasePartGenerator):
         global_time_signature=None,
         global_key_signature_tonic=None,
         global_key_signature_mode=None,
+        mirror_melody: bool = False,
         main_cfg=None,
         **kwargs,
     ):
@@ -167,6 +168,7 @@ class BassGenerator(BasePartGenerator):
             **kwargs,
         )
         self.cfg: dict = kwargs.copy()
+        self.mirror_melody = mirror_melody
         self.logger = logging.getLogger("modular_composer.bass_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
         self.main_cfg = main_cfg
@@ -432,7 +434,7 @@ class BassGenerator(BasePartGenerator):
             )
             if actual_duration_ql < MIN_NOTE_DURATION_QL / 4.0:
                 continue
-            note_type = p_event.get("type", "root").lower()
+            note_type = (p_event.get("type") or "root").lower()
             final_velocity = max(1, min(127, int(block_base_velocity * vel_factor)))
             chosen_pitch_base: Optional[pitch.Pitch] = None
             if note_type == "root" and root_pitch_obj:

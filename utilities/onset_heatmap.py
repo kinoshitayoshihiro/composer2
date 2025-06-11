@@ -10,7 +10,10 @@ from music21 import converter, note, chord, meter
 RESOLUTION = 16  # number of grid bins per measure
 
 
-def build_heatmap(midi_path: str, resolution: int = RESOLUTION) -> List[int]:
+from typing import Dict
+
+
+def build_heatmap(midi_path: str, resolution: int = RESOLUTION) -> Dict[int, int]:
     """Parse a MIDI file and count note onsets per measure.
 
     Parameters
@@ -34,7 +37,7 @@ def build_heatmap(midi_path: str, resolution: int = RESOLUTION) -> List[int]:
     first_ts = ts[0]
     beats_per_measure = first_ts.numerator
     beat_unit = first_ts.denominator
-    quarter_per_measure = beats_per_measure * (4.0 / beat_unit)
+    quarter_per_measure = (beats_per_measure * (4.0 / beat_unit)) / 2
 
     onset_offsets: List[float] = []
     for el in score.recurse():
@@ -58,13 +61,17 @@ def build_heatmap(midi_path: str, resolution: int = RESOLUTION) -> List[int]:
         if 0 <= grid_index < len(heatmap_counts):
             heatmap_counts[grid_index] += 1
 
-    return heatmap_counts
+    collapsed: Dict[int, int] = {}
+    for idx, cnt in enumerate(heatmap_counts):
+        if cnt > 0:
+            collapsed[idx % resolution] = collapsed.get(idx % resolution, 0) + cnt
+    return collapsed
 
 
 def save_heatmap_json(midi_path: str, out_json: str, resolution: int = RESOLUTION) -> None:
     """Save heatmap as a JSON file compatible with :func:`load_heatmap_data`."""
     counts = build_heatmap(midi_path, resolution)
-    data = [{"grid_index": idx, "count": cnt} for idx, cnt in enumerate(counts)]
+    data = [{"grid_index": idx, "count": cnt} for idx, cnt in counts.items()]
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 

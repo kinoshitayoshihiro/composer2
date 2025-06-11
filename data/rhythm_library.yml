@@ -1013,3 +1013,21 @@ guitar_patterns:
     pattern_type: pedal_octave
     duration_beats: 8
     tags: [lh, pedal, calm]
+
+  fill_16th_toms:
+    description: "Rapid 16th tom fill"
+    pattern_type: drum_fill
+    pattern:
+      - {offset: 3.0, instrument: tom1}
+      - {offset: 3.25, instrument: tom2}
+      - {offset: 3.5, instrument: tom3}
+      - {offset: 3.75, instrument: tom2}
+      - {offset: 4.0, instrument: crash}
+
+  fill_8th_crash:
+    description: "Crash hits on 8ths"
+    pattern_type: drum_fill
+    pattern:
+      - {offset: 3.0, instrument: crash}
+      - {offset: 3.5, instrument: crash}
+      - {offset: 4.0, instrument: crash}

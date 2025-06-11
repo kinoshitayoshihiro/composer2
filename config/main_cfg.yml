@@ -56,6 +56,7 @@ part_defaults:
   bass:
     rhythm_key: "bass_pump_8th_octaves"
     velocity: 80
+    mirror_melody: false
     weak_beat_style: "none"
     humanize_profile: ""
     dynamics_profile: ""

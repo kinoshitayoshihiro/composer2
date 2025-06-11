@@ -1,25 +1,41 @@
-# Composer Project
+# OtoKotoba Composer
 
-This project generates music and poetry with dynamic arrangements.
+This project blends poetic Japanese narration with emotive musical arrangements.  
+It automatically generates chords, melodies and instrumental parts for each chapter of a text, allowing verse, chorus and bridge sections to be arranged with human-like expressiveness.
+
+---
 
 ## Setup
 
-Install the required Python packages:
+1. **Create & activate a venv**  
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
 
-```bash
-pip install -r requirements.txt
-```
-These requirements include packages such as `pydantic`, `music21`, and `PyYAML`. Ensure they are installed so that all generators work correctly.
 
-Run the helper script to verify configuration and execute the small test suite:
+# OtoKotoba Composer
 
-```bash
-python tools/test_timesig.py
-pytest -q
-```
+This project blends poetic Japanese narration with emotive musical arrangements.  
+It automatically generates chords, melodies and instrumental parts for each chapter of a text, allowing verse, chorus and bridge sections to be arranged with human-like expressiveness.
 
-Use `modular_composer.py` to generate MIDI after installing dependencies. Run the main script and verify that no warnings appear:
+---
 
-```bash
-python3 modular_composer.py --main-cfg config/main_cfg.yml
-```
+## Setup
+
+1. **Create & activate a venv**  
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+
+global_settings:
+  time_signature: "4/4"
+  tempo_bpm: 88
+
+paths:
+  chordmap_path: "../data/processed_chordmap_with_emotion.yaml"
+  rhythm_library_path: "../data/rhythm_library.yml"
+  output_dir: "../midi_output"
+
+sections_to_generate:
+  - "Verse 1"
+  - "Chorus 1"

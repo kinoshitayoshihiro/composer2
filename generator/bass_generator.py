@@ -156,6 +156,7 @@ class BassGenerator(BasePartGenerator):
         global_key_signature_mode=None,
         mirror_melody: bool = False,
         main_cfg=None,
+        mirror_melody: bool = False,
         **kwargs,
     ):
         super().__init__(
@@ -172,6 +173,7 @@ class BassGenerator(BasePartGenerator):
         self.logger = logging.getLogger("modular_composer.bass_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
         self.main_cfg = main_cfg
+        self.mirror_melody = mirror_melody
         # ここで global_ts_str をセット
         self.global_ts_str = global_time_signature
         self.global_time_signature_obj = get_time_signature_object(self.global_ts_str)

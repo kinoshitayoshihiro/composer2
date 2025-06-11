@@ -33,14 +33,10 @@ try:
         MIN_NOTE_DURATION_QL,
     )
     from utilities.override_loader import PartOverride
-except ImportError:
-    # 開発環境用のフォールバック
-    from ..utilities.core_music_utils import (
-        get_time_signature_object,
-        sanitize_chord_label,
-        MIN_NOTE_DURATION_QL,
-    )
-    from ..utilities.override_loader import PartOverride
+except ModuleNotFoundError as e:
+    raise ModuleNotFoundError(
+        "Required dependencies are missing. Please run 'pip install -r requirements.txt'."
+    ) from e
 
 
 logger = logging.getLogger("modular_composer.piano_generator")

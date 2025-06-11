@@ -60,7 +60,7 @@ def apply(part_stream, profile_name: str) -> None:
     vel = prof.get("velocity", {})
     dur = prof.get("duration_pct", {})
 
-    for n in part_stream.flat.notes:
+    for n in part_stream.flatten().notes:
         # (a) onset shift
         if off:
             jitter = random.normalvariate(off.get("mean", 0.0), off.get("stdev", 0.0))

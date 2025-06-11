@@ -62,6 +62,7 @@ part_defaults:
   bass:
     rhythm_key: "bass_pump_8th_octaves"
     velocity: 80
+    mirror_melody: false
     weak_beat_style: "none"
     humanize_profile: ""
     dynamics_profile: ""
@@ -80,10 +81,6 @@ part_defaults:
     rhythm_key: "strings_melody_basic"
     humanize_profile: "gentle_push"
 
-  sax:
-    role: "melody"
-    instrument_name: "Alto Saxophone" # ← 追加
-    rhythm_key: "sax_melody_basic"
 
 # ---------- 4. Section Overrides (拍子/テンポ/HZ) ----------
 # processed_chordmap_with_emotion.yaml でセクションを定義している場合、

@@ -154,7 +154,9 @@ class BassGenerator(BasePartGenerator):
         global_time_signature=None,
         global_key_signature_tonic=None,
         global_key_signature_mode=None,
+        mirror_melody: bool = False,
         main_cfg=None,
+        mirror_melody: bool = False,
         **kwargs,
     ):
         super().__init__(
@@ -167,9 +169,11 @@ class BassGenerator(BasePartGenerator):
             **kwargs,
         )
         self.cfg: dict = kwargs.copy()
+        self.mirror_melody = mirror_melody
         self.logger = logging.getLogger("modular_composer.bass_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
         self.main_cfg = main_cfg
+        self.mirror_melody = mirror_melody
         # ここで global_ts_str をセット
         self.global_ts_str = global_time_signature
         self.global_time_signature_obj = get_time_signature_object(self.global_ts_str)
@@ -432,7 +436,7 @@ class BassGenerator(BasePartGenerator):
             )
             if actual_duration_ql < MIN_NOTE_DURATION_QL / 4.0:
                 continue
-            note_type = p_event.get("type", "root").lower()
+            note_type = (p_event.get("type") or "root").lower()
             final_velocity = max(1, min(127, int(block_base_velocity * vel_factor)))
             chosen_pitch_base: Optional[pitch.Pitch] = None
             if note_type == "root" and root_pitch_obj:
@@ -1138,10 +1142,38 @@ class BassGenerator(BasePartGenerator):
                 )
                 n_obj.volume.velocity = final_base_velocity_for_algo
                 notes_tuples.append((0.0, n_obj))
+        elif pattern_type == "half_time_pop":
+            self.logger.info(
+                f"BassGen: Generating half_time_pop for {m21_cs.figure} with options {algo_pattern_options}"
+            )
+            ghost = algo_pattern_options.get("ghost_on_beat_2_and_a_half", False)
+            ghost_ratio = safe_get(
+                algo_pattern_options,
+                "ghost_velocity_ratio",
+                default=0.5,
+                cast_to=float,
+            )
+            pattern_events = [
+                (0.0, 2.0, root_note_obj, 1.0),
+                (2.0, 1.5, root_note_obj, 1.0),
+            ]
+            if ghost:
+                pattern_events.append((2.5, 0.5, root_note_obj, ghost_ratio))
+            anticipation_pitch = next_chord_root if next_chord_root else root_note_obj
+            pattern_events.append((block_duration - 0.5, 0.5, anticipation_pitch, 1.0))
+            for rel_offset, dur, pitch_obj, vel_factor in pattern_events:
+                if rel_offset >= block_duration - (MIN_NOTE_DURATION_QL / 16.0):
+                    continue
+                dur = min(dur, block_duration - rel_offset)
+                if dur < MIN_NOTE_DURATION_QL:
+                    continue
+                midi_val = self._get_bass_pitch_in_octave(pitch_obj, target_octave)
+                n_obj = note.Note(pitch.Pitch(midi=midi_val), quarterLength=dur)
+                n_obj.volume.velocity = max(1, int(final_base_velocity_for_algo * vel_factor))
+                notes_tuples.append((rel_offset, n_obj))
         elif pattern_type in [
             "walking_blues",
             "latin_tumbao",
-            "half_time_pop",
             "syncopated_rnb",
             "scale_walk",
             "octave_jump",

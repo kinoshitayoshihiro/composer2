@@ -9,7 +9,6 @@ import music21.harmony as harmony
 import music21.pitch as pitch
 import music21.meter as meter
 import music21.duration as music21_duration
-import music21.instrument as m21instrument
 import music21.interval as interval
 import music21.tempo as tempo
 import music21.chord as m21chord
@@ -17,7 +16,6 @@ import music21.articulations as articulations
 import music21.volume as m21volume
 from music21 import instrument as m21instrument
 
-# ...existing code...
 import random
 import logging
 import math

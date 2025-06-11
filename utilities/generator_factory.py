@@ -6,21 +6,8 @@ from generator.drum_generator import DrumGenerator
 from generator.strings_generator import StringsGenerator
 from generator.melody_generator import MelodyGenerator
 from generator.sax_generator import SaxGenerator
+from generator.base_part_generator import BasePartGenerator
 from music21 import instrument as m21instrument
-
-ROLE_MAP = {
-    "melody": MelodyGenerator,
-    "counter": MelodyGenerator,
-    "pad": StringsGenerator,
-    "riff": MelodyGenerator,
-    "rhythm": GuitarGenerator,
-    "guitar": GuitarGenerator,  # ← これを追加
-    "bass": BassGenerator,
-    "unison": StringsGenerator,
-    "drums": DrumGenerator,
-    "piano": PianoGenerator,
-}
-
 
 class GenFactory:
     @staticmethod
@@ -40,7 +27,7 @@ class GenFactory:
         gens = {}
         for part_name, part_cfg in main_cfg["part_defaults"].items():
             role = part_cfg.get("role", part_name)  # role が無ければ楽器名と同じ
-            GenCls = ROLE_MAP[role]
+            GenCls = ROLE_DISPATCH[role]
             cleaned_part_cfg = dict(part_cfg)
             cleaned_part_cfg.pop("main_cfg", None)
             inst_spec = cleaned_part_cfg.get("default_instrument", part_name)
@@ -89,3 +76,20 @@ class GenFactory:
                 **cleaned_part_cfg,
             )
         return gens
+
+
+# === Explicit role → generator mapping ===
+ROLE_DISPATCH: dict[str, type[BasePartGenerator]] = {
+    "melody": MelodyGenerator,
+    "counter": MelodyGenerator,
+    "pad": StringsGenerator,
+    "riff": MelodyGenerator,
+    "rhythm": GuitarGenerator,
+    "guitar": GuitarGenerator,
+    "bass": BassGenerator,
+    "unison": StringsGenerator,
+    "drums": DrumGenerator,
+    "piano": PianoGenerator,
+    "strings": StringsGenerator,
+    "sax": SaxGenerator,
+}

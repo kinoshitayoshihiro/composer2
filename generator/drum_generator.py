@@ -540,6 +540,16 @@ class DrumGenerator(BasePartGenerator):
         if getattr(self, "mode", "chord") == "independent":
             return self._render_whole_song()
 
+        # Configuration for heatmap processing
+        self.heatmap_resolution = (
+            (self.main_cfg or {}).get("heatmap_resolution")
+            or self.global_settings.get("heatmap_resolution", RESOLUTION)
+        )
+        self.heatmap_threshold = (
+            (self.main_cfg or {}).get("heatmap_threshold")
+            or self.global_settings.get("heatmap_threshold", 0.5)
+        )
+
         # それ以外は BasePartGenerator に委譲
         return super().compose(
             section_data=section_data,
@@ -942,21 +952,26 @@ class DrumGenerator(BasePartGenerator):
         measures = section["length_in_measures"]
         end = start + measures * bar_len
 
+        resolution = getattr(self, "heatmap_resolution", RESOLUTION)
+        threshold = getattr(self, "heatmap_threshold", 0.5)
+
         ghost_density = section.get("overrides", {}).get("ghost_hat_density", 0.5)
         t = start
         while t < end:
-            grid_idx = int((t * RESOLUTION) % RESOLUTION)
+            grid_idx = int((t * resolution) % resolution)
             weight = self.heatmap.get(str(grid_idx), 0)
-            rel = weight / max(self.heatmap.values()) if self.heatmap else 0  # 0-1
-            # Kick on high weight / Snare on mid weight / HH every grid
-            if rel > 0.6 and grid_idx % 4 == 0:
+            rel = weight / max(self.heatmap.values()) if self.heatmap else 0
+            if rel > threshold and grid_idx % 4 == 0:
                 part.insert(t, note.Unpitched(36, quarterLength=0.25, velocity=100))
-            elif rel > 0.3 and grid_idx % 4 == 2:
+            elif rel > threshold / 2 and grid_idx % 4 == 2:
                 part.insert(t, note.Unpitched(38, quarterLength=0.25, velocity=95))
-            # Hi-Hat suppressed when vocal activity is high
-            if rel < HAT_SUPPRESSION_THRESHOLD and (
-                random.random() < (ghost_density if rel < 0.3 else 1.0)
-            ):
+             # Hi-Hat: 歌のオンセットが多い（rel < threshold/2）ならゴーストハットを抑制
+            if random.random() < (ghost_density if rel < threshold / 2 else 1.0):
+            if ev.type == "hat_closed" and rel < threshold / 2:
+                # 抑制確率は ghost_density（main_cfg で調整済み）
+                if random.random() < ghost_density:
+                    continue
+
                 vel = 60 if rel < 0.2 else 75
                 part.insert(
                     t,

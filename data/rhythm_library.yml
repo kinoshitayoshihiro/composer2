@@ -452,15 +452,13 @@ bass_patterns:
     target_octave: 2
 
   bass_half_time_pop:
-    description: "Half-time pop groove: long roots with eighth-anticipation pickup on beat 4&."
-    tags: ["bass", "pop", "half_time", "algorithmic", "syncopated", "4_4"]
+    description: "Half-time pop roots"
     time_signature: "4/4"
-    pattern_type: "half_time_pop"
+    pattern_type: fixed_pattern
     length_beats: 4.0
-    velocity_base: 75
-    target_octave: 2
-    options:
-      ghost_on_beat_2_and_a_half: true
+    pattern:
+      - {offset: 0.0, duration: 1.0, velocity_factor: 0.95}
+      - {offset: 2.0, duration: 1.0, velocity_factor: 0.90}
 
   bass_syncopated_rnb:
     description: "16th-syncopated R&B / neo-soul motif with ghost 16ths."
@@ -653,18 +651,17 @@ bass_patterns:
       humanize_velocity_range: 5
 
 guitar_patterns:
-  guitar_ballad_arpeggio: # 既に存在しているはずですが、内容を確認・統一
-    description: "Gentle 6-note P-I-M-A style arpeggio, fits 4/4 and 6/8 ballads."
+  guitar_ballad_arpeggio:
+    description: "Ballad arpeggio 6-8-10"
     time_signature: "4/4"
-    pattern_type: "arpeggio_indices"
-    execution_style: "arpeggio_from_indices" # 奏法を明示
+    pattern_type: fixed_pattern
+    strum_width_sec: 0.035
     length_beats: 4.0
-    arpeggio_indices: [0, 3, 2, 1, 3, 2]
-    note_duration_ql: 0.66
-    strum_width_sec: 0.040 # 指弾きの微妙なズレとして解釈
-    velocity_base: 72
-    tags: [guitar, arpeggio, ballad, gentle, fingerstyle, "4_4"]
-    # pattern: [] # pattern_typeがarpeggio_indicesなので不要
+    pattern:
+      - {offset: 0.0, duration: 0.5, velocity_factor: 0.85, strum_direction: "down"}
+      - {offset: 1.0, duration: 0.5, velocity_factor: 0.80, strum_direction: "down"}
+      - {offset: 2.0, duration: 0.5, velocity_factor: 0.78, strum_direction: "down"}
+      - {offset: 3.0, duration: 0.5, velocity_factor: 0.75, strum_direction: "up"}
 
   guitar_slow_arpeggio:
     description: "Slow 4‑beat arpeggio (P I M A style) – ideal for pre‑chorus build‑ups or intros."
@@ -1013,3 +1010,24 @@ guitar_patterns:
     pattern_type: pedal_octave
     duration_beats: 8
     tags: [lh, pedal, calm]
+
+drum_patterns:
+  ballad_soft_kick_snare_8th_hat:
+    description: "Soft ballad groove with kick on 1&3, snare on 2&4, steady eighth hats."
+    time_signature: "4/4"
+    pattern_type: fixed_pattern
+    length_beats: 4.0
+    velocity_base: 70
+    pattern:
+      - {beat: 0.0, duration: 0.1, instrument: kick}
+      - {beat: 1.0, duration: 0.1, instrument: snare}
+      - {beat: 2.0, duration: 0.1, instrument: kick}
+      - {beat: 3.0, duration: 0.1, instrument: snare}
+      - {beat: 0.0, duration: 0.5, instrument: hat_closed, velocity_factor: 0.7}
+      - {beat: 0.5, duration: 0.5, instrument: hat_closed, velocity_factor: 0.65}
+      - {beat: 1.0, duration: 0.5, instrument: hat_closed, velocity_factor: 0.7}
+      - {beat: 1.5, duration: 0.5, instrument: hat_closed, velocity_factor: 0.65}
+      - {beat: 2.0, duration: 0.5, instrument: hat_closed, velocity_factor: 0.7}
+      - {beat: 2.5, duration: 0.5, instrument: hat_closed, velocity_factor: 0.65}
+      - {beat: 3.0, duration: 0.5, instrument: hat_closed, velocity_factor: 0.7}
+      - {beat: 3.5, duration: 0.5, instrument: hat_closed, velocity_factor: 0.65}

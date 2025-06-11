@@ -1,5 +1,10 @@
-import music21
-from music21 import pitch, harmony, key, meter, stream, note, chord, interval # interval を追加
+try:
+    import music21
+    from music21 import pitch, harmony, key, meter, stream, note, chord, interval
+except ModuleNotFoundError as e:  # pragma: no cover - dependency check
+    raise ModuleNotFoundError(
+        "music21 is required. Please run 'pip install -r requirements.txt'."
+    ) from e
 import re
 import logging
 from typing import List, Dict, Optional, Any, Tuple, Union, cast, Sequence

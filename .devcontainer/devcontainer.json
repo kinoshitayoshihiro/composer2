@@ -1,0 +1,17 @@
+{
+  "name": "composer-dev",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "settings": {
+    "terminal.integrated.defaultProfile.linux": "bash"
+  },
+  "extensions": [
+    "ms-python.python",
+    "ms-toolsai.jupyter",
+    "ms-azuretools.vscode-docker"
+  ],
+  "forwardPorts": [8888],  // Jupyterなど用
+  "remoteUser": "vscode",
+  "postCreateCommand": "pip install -r requirements.txt"
+}

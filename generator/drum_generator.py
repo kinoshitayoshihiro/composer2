@@ -335,6 +335,18 @@ class DrumGenerator(BasePartGenerator):
         )
         self.ghost_hat_on_offbeat = self.main_cfg.get("ghost_hat_on_offbeat", True)
 
+        # apply groove pretty
+        global_cfg = self.main_cfg.get("global_settings", {})
+        groove_path = global_cfg.get("groove_profile_path")
+        self.groove_strength = float(global_cfg.get("groove_strength", 1.0))
+        self.groove_profile = {}
+        if groove_path:
+            try:
+                with open(groove_path, "r", encoding="utf-8") as f:
+                    self.groove_profile = json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load groove profile from {groove_path}: {e}")
+
         # 楽器設定
         part_default_cfg = self.main_cfg.get("default_part_parameters", {}).get(
             self.part_name, {}
@@ -1172,6 +1184,16 @@ class DrumGenerator(BasePartGenerator):
 
         block_duration = section_data.get("q_length", 4.0)
         pattern_events = pattern_def.get("pattern", [])
+        # apply groove pretty
+        adjusted_events = []
+        resolution = RESOLUTION
+        for ev in pattern_events:
+            ev_copy = ev.copy()
+            bin_idx = int(float(ev_copy.get("offset", 0.0)) * resolution)
+            groove_offset = self.groove_profile.get(str(bin_idx), 0)
+            ev_copy["offset"] = float(ev_copy.get("offset", 0.0)) + groove_offset * self.groove_strength
+            adjusted_events.append(ev_copy)
+        pattern_events = adjusted_events
         pattern_ref_duration = float(pattern_def.get("length_beats", 4.0))
         time_scale_factor = (
             block_duration / pattern_ref_duration if pattern_ref_duration > 0 else 1.0
@@ -1205,16 +1227,12 @@ class DrumGenerator(BasePartGenerator):
                 logger.warning(f"Unknown drum instrument: '{inst_name}'")
 
         profile_name = (
-            self.cfg.get("humanize_profile")
+            (self.main_cfg or {}).get("humanize_profile")
             or section_data.get("humanize_profile")
             or self.global_settings.get("humanize_profile")
         )
         if profile_name:
             humanizer.apply(part, profile_name)
-
-        # スコア全体
-        if global_profile:
-            humanizer.apply(score, global_profile)
 
         return part
 

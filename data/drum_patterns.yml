@@ -16,6 +16,34 @@ calm_backbeat:
     - instrument: hh
       offset: 3.0
 
+brush_light_loop:
+  description: "Soft brush groove"
+  pattern_type: "simple"
+  pattern:
+    - {instrument: kick, offset: 0.0}
+    - {instrument: snare, offset: 2.0}
+    - {instrument: chh, offset: 0.0}
+    - {instrument: chh, offset: 1.0}
+    - {instrument: chh, offset: 2.0}
+    - {instrument: chh, offset: 3.0}
+
+brush_build_loop:
+  description: "Brush build with extra hits"
+  pattern_type: "simple"
+  pattern:
+    - {instrument: kick, offset: 0.0}
+    - {instrument: snare, offset: 2.0}
+    - {instrument: kick, offset: 2.75}
+    - {instrument: snare, offset: 3.0}
+    - {instrument: chh, offset: 0.0}
+    - {instrument: chh, offset: 0.5}
+    - {instrument: chh, offset: 1.0}
+    - {instrument: chh, offset: 1.5}
+    - {instrument: chh, offset: 2.0}
+    - {instrument: chh, offset: 2.5}
+    - {instrument: chh, offset: 3.0}
+    - {instrument: chh, offset: 3.5}
+
 groove_pocket:
   description: "8分裏キックでグルーヴ感を演出"
   pattern_type: "simple"
@@ -91,6 +119,38 @@ neo_soul_pocket:
       offset: 1.75
     - instrument: ghost
       offset: 2.75
+
+rock_backbeat:
+  description: "Straight rock backbeat"
+  pattern_type: "simple"
+  pattern:
+    - {instrument: kick, offset: 0.0}
+    - {instrument: snare, offset: 2.0}
+    - {instrument: chh, offset: 0.0}
+    - {instrument: chh, offset: 0.5}
+    - {instrument: chh, offset: 1.0}
+    - {instrument: chh, offset: 1.5}
+    - {instrument: chh, offset: 2.0}
+    - {instrument: chh, offset: 2.5}
+    - {instrument: chh, offset: 3.0}
+    - {instrument: chh, offset: 3.5}
+
+rock_drive_loop:
+  description: "Driving rock beat"
+  pattern_type: "simple"
+  pattern:
+    - {instrument: kick, offset: 0.0}
+    - {instrument: kick, offset: 1.5}
+    - {instrument: snare, offset: 1.0}
+    - {instrument: snare, offset: 3.0}
+    - {instrument: chh, offset: 0.0}
+    - {instrument: chh, offset: 0.5}
+    - {instrument: chh, offset: 1.0}
+    - {instrument: chh, offset: 1.5}
+    - {instrument: chh, offset: 2.0}
+    - {instrument: chh, offset: 2.5}
+    - {instrument: chh, offset: 3.0}
+    - {instrument: chh, offset: 3.5}
 
 rock_anthem:
   description: "サビや盛り上がりで使える王道ロック"

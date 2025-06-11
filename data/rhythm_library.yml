@@ -1031,3 +1031,21 @@ drum_patterns:
       - {beat: 2.5, duration: 0.5, instrument: hat_closed, velocity_factor: 0.65}
       - {beat: 3.0, duration: 0.5, instrument: hat_closed, velocity_factor: 0.7}
       - {beat: 3.5, duration: 0.5, instrument: hat_closed, velocity_factor: 0.65}
+
+  fill_16th_toms:
+    description: "Rapid 16th tom fill"
+    pattern_type: drum_fill
+    pattern:
+      - {offset: 3.0, instrument: tom1}
+      - {offset: 3.25, instrument: tom2}
+      - {offset: 3.5, instrument: tom3}
+      - {offset: 3.75, instrument: tom2}
+      - {offset: 4.0, instrument: crash}
+
+  fill_8th_crash:
+    description: "Crash hits on 8ths"
+    pattern_type: drum_fill
+    pattern:
+      - {offset: 3.0, instrument: crash}
+      - {offset: 3.5, instrument: crash}
+      - {offset: 4.0, instrument: crash}

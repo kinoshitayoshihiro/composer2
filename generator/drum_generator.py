@@ -20,6 +20,10 @@ from utilities.onset_heatmap import build_heatmap, RESOLUTION
 
 logger = logging.getLogger("modular_composer.drum_generator")
 
+# Hat suppression: omit hi-hat hits when relative vocal activity exceeds this
+# threshold (0-1 scale based on heatmap weight).
+HAT_SUPPRESSION_THRESHOLD = 0.6
+
 GM_DRUM_MAP: Dict[str, int] = {
     "kick": 36,
     "bd": 36,
@@ -254,6 +258,8 @@ class DrumGenerator(BasePartGenerator):
         self.vocal_midi_path = self.main_cfg.get("vocal_midi_path_for_drums")
         heatmap_json_path = self.main_cfg.get("heatmap_json_path_for_drums")
         self.heatmap = load_heatmap_data(heatmap_json_path)
+        self.heatmap_resolution = self.main_cfg.get("heatmap_resolution", RESOLUTION)
+        self.heatmap_threshold = self.main_cfg.get("heatmap_threshold", 1)
         self.rng = random.Random()
         if self.main_cfg.get("rng_seed") is not None:
             self.rng.seed(self.main_cfg["rng_seed"])
@@ -377,12 +383,12 @@ class DrumGenerator(BasePartGenerator):
                 logger.info(
                     f"DrumGen __init__: Added silent placeholder for undefined style '{style_key}' (from LUT)."
                 )
-        self.global_tempo = main_cfg.get("tempo", 120)
-        self.global_time_signature_str = main_cfg.get("time_signature", "4/4")
+        self.global_tempo = self.main_cfg.get("tempo", 120)
+        self.global_time_signature_str = self.main_cfg.get("time_signature", "4/4")
         self.global_ts = get_time_signature_object(self.global_time_signature_str)
         if not self.global_ts:
             logger.warning(
-                f"DrumGen __init__: Failed to parse global time_sig '{time_sig}'. Defaulting to 4/4."
+                f"DrumGen __init__: Failed to parse global time_sig '{self.global_time_signature_str}'. Defaulting to 4/4."
             )
             self.global_ts = meter.TimeSignature("4/4")
         self.instrument = m21instrument.Percussion()
@@ -870,6 +876,15 @@ class DrumGenerator(BasePartGenerator):
             final_insert_offset_in_score = (
                 bar_start_abs_offset + rel_offset_in_pattern + time_delta_from_humanizer
             )
+            bin_idx = int(
+                (final_insert_offset_in_score * self.heatmap_resolution)
+            ) % self.heatmap_resolution
+            bin_count = self.heatmap.get(bin_idx, 0)
+            if inst_name in {"ghost", "ghost_hat"} and bin_count >= self.heatmap_threshold:
+                logger.debug(
+                    f"{log_event_prefix}: Skip ghost hat at {final_insert_offset_in_score:.3f} (bin {bin_idx} count {bin_count})"
+                )
+                continue
             drum_hit_note.offset = 0.0
             part.insert(final_insert_offset_in_score, drum_hit_note)
 
@@ -950,10 +965,18 @@ class DrumGenerator(BasePartGenerator):
                 part.insert(t, note.Unpitched(36, quarterLength=0.25, velocity=100))
             elif rel > threshold / 2 and grid_idx % 4 == 2:
                 part.insert(t, note.Unpitched(38, quarterLength=0.25, velocity=95))
-            # Hi-Hat
+             # Hi-Hat: 歌のオンセットが多い（rel < threshold/2）ならゴーストハットを抑制
             if random.random() < (ghost_density if rel < threshold / 2 else 1.0):
+            if ev.type == "hat_closed" and rel < threshold / 2:
+                # 抑制確率は ghost_density（main_cfg で調整済み）
+                if random.random() < ghost_density:
+                    continue
+
                 vel = 60 if rel < 0.2 else 75
-                part.insert(t, note.Unpitched(42, quarterLength=0.25, velocity=vel))
+                part.insert(
+                    t,
+                    note.Unpitched(42, quarterLength=0.25, velocity=vel),
+                )
             t += 0.25  # 16th note = quarterLength/4
         return part
 

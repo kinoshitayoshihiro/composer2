@@ -1,21 +1,27 @@
-# Composer Project
+# OtoKotoba Composer
 
-This repository combines Japanese poetry readings with emotional original music. The goal is to divide stories or poems into chapters and automatically generate and integrate chord progressions, melodies, arrangements, and human-like expression for each section.
+This project blends poetic Japanese narration with emotive musical arrangements.  
+It automatically generates chords, melodies and instrumental parts for each chapter of a text, allowing verse, chorus and bridge sections to be arranged with human-like expressiveness.
+
+---
 
 ## Setup
 
-1. Create and activate a Python virtual environment:
+1. **Create & activate a venv**  
    ```bash
-   python3 -m venv .venv && source .venv/bin/activate
-   ```
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt pyyaml
-   ```
-3. Run the test script and the full test suite:
-   ```bash
-   python tools/test_timesig.py
-   pytest -q
-   ```
+   python3 -m venv .venv
+   source .venv/bin/activate
 
-These steps will ensure the environment is configured to run the project tools and tests.
+# config/main_cfg.yml
+global_settings:
+  time_signature: "4/4"
+  tempo_bpm: 88
+
+paths:
+  chordmap_path: "../data/processed_chordmap_with_emotion.yaml"
+  rhythm_library_path: "../data/rhythm_library.yml"
+  output_dir: "../midi_output"
+
+sections_to_generate:
+  - "Verse 1"
+  - "Chorus 1"

@@ -17,12 +17,22 @@ from music21 import (
 from .base_part_generator import BasePartGenerator
 from utilities.core_music_utils import get_time_signature_object, MIN_NOTE_DURATION_QL
 from utilities.onset_heatmap import build_heatmap, RESOLUTION
+from utilities.humanizer import apply_humanization_to_element
+from utilities.safe_get import safe_get
 
 logger = logging.getLogger("modular_composer.drum_generator")
 
 # Hat suppression: omit hi-hat hits when relative vocal activity exceeds this
 # threshold (0-1 scale based on heatmap weight).
 HAT_SUPPRESSION_THRESHOLD = 0.6
+
+# Emotion/Intensity to drum style LUT
+EMOTION_INTENSITY_LUT = {
+    ("soft_reflective", "low"): "brush_light_loop",
+    ("soft_reflective", "high"): "brush_build_loop",
+    ("super_drive", "low"): "rock_backbeat",
+    ("super_drive", "high"): "rock_drive_loop",
+}
 
 GM_DRUM_MAP: Dict[str, int] = {
     "kick": 36,
@@ -108,6 +118,60 @@ GM_DRUM_MAP: Dict[str, int] = {
     "ghost_snare": 38,
 }
 GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
+
+
+class AccentMapper:
+    """Map accent strength and ghost-hat density using vocal heatmap."""
+
+    def __init__(self, threshold: float = 0.6, ghost_density_range=(0.3, 0.8)) -> None:
+        self.threshold = threshold
+        self.ghost_density_range = ghost_density_range
+
+    def accent(self, rel: float, velocity: int) -> int:
+        if rel >= self.threshold:
+            return min(127, int(velocity * 1.2))
+        return velocity
+
+    def ghost_density(self, rel: float) -> float:
+        low, high = self.ghost_density_range
+        return high if rel < self.threshold else low
+
+
+class FillInserter:
+    """Insert drum fills at section boundaries."""
+
+    def __init__(self, pattern_lib: Dict[str, Any]) -> None:
+        self.pattern_lib = pattern_lib
+
+    def insert(
+        self, part: stream.Part, section_data: Dict[str, Any], fill_key: Optional[str] = None
+    ) -> None:
+        key = fill_key or section_data.get("drum_fill_at_end")
+        if not key:
+            return
+        fill_def = self.pattern_lib.get(key, {})
+        events = fill_def.get("pattern", [])
+        if not events:
+            return
+        start = (
+            section_data.get("absolute_offset", 0.0)
+            + section_data.get("q_length", 4.0)
+            - 4.0
+        )
+        for ev in events:
+            inst = ev.get("instrument")
+            if not inst:
+                continue
+            midi_pitch = GM_DRUM_MAP.get(inst)
+            if midi_pitch is None:
+                continue
+            n = note.Note()
+            n.pitch = pitch.Pitch(midi=midi_pitch)
+            n.duration = m21duration.Duration(ev.get("duration", 0.25))
+            n.volume = m21volume.Volume(
+                velocity=int(80 * ev.get("velocity_factor", 1.0))
+            )
+            part.insert(start + float(ev.get("offset", 0.0)), n)
 
 EMOTION_TO_BUCKET: Dict[str, str] = {  # (前回と同様)
     "quiet_pain_and_nascent_strength": "ballad_soft",
@@ -258,11 +322,18 @@ class DrumGenerator(BasePartGenerator):
         self.vocal_midi_path = self.main_cfg.get("vocal_midi_path_for_drums")
         heatmap_json_path = self.main_cfg.get("heatmap_json_path_for_drums")
         self.heatmap = load_heatmap_data(heatmap_json_path)
+        self.max_heatmap_value = max(self.heatmap.values()) if self.heatmap else 0
         self.heatmap_resolution = self.main_cfg.get("heatmap_resolution", RESOLUTION)
         self.heatmap_threshold = self.main_cfg.get("heatmap_threshold", 1)
         self.rng = random.Random()
         if self.main_cfg.get("rng_seed") is not None:
             self.rng.seed(self.main_cfg["rng_seed"])
+
+        self.accent_mapper = AccentMapper(
+            self.main_cfg.get("accent_threshold", 0.6),
+            tuple(self.main_cfg.get("ghost_density_range", [0.3, 0.8])),
+        )
+        self.ghost_hat_on_offbeat = self.main_cfg.get("ghost_hat_on_offbeat", True)
 
         # 楽器設定
         part_default_cfg = self.main_cfg.get("default_part_parameters", {}).get(
@@ -286,6 +357,7 @@ class DrumGenerator(BasePartGenerator):
         logger.info(
             f"DrumGen __init__: Initialized with {len(self.raw_pattern_lib)} raw drum patterns."
         )
+        self.fill_inserter = FillInserter(self.raw_pattern_lib)
         core_defaults = {
             "default_drum_pattern": {
                 "description": "Default fallback pattern",
@@ -550,14 +622,26 @@ class DrumGenerator(BasePartGenerator):
             or self.global_settings.get("heatmap_threshold", 0.5)
         )
 
-        # それ以外は BasePartGenerator に委譲
-        return super().compose(
+        if section_data and section_data.get("expression_details"):
+            expr = section_data["expression_details"]
+            key = (expr.get("emotion_bucket"), expr.get("intensity"))
+            mapped = EMOTION_INTENSITY_LUT.get(key)
+            if mapped:
+                section_data.setdefault("part_params", {}).setdefault(self.part_name, {})[
+                    "rhythm_key"
+                ] = mapped
+
+        part = super().compose(
             section_data=section_data,
             overrides_root=overrides_root,
             groove_profile_path=groove_profile_path,
             next_section_data=next_section_data,
             part_specific_humanize_params=part_specific_humanize_params,
         )
+
+        if section_data:
+            self.fill_inserter.insert(part, section_data)
+        return part
 
     def _render(
         self,
@@ -834,6 +918,28 @@ class DrumGenerator(BasePartGenerator):
             )
             final_event_velocity = max(1, min(127, final_event_velocity))
 
+            final_insert_offset_in_score = bar_start_abs_offset + rel_offset_in_pattern
+            bin_idx = int((final_insert_offset_in_score * self.heatmap_resolution)) % self.heatmap_resolution
+            bin_count = self.heatmap.get(bin_idx, 0)
+            rel = bin_count / self.max_heatmap_value if self.max_heatmap_value else 0
+
+            if inst_name in {"ghost", "ghost_hat"} and bin_count >= self.heatmap_threshold:
+                logger.debug(
+                    f"{log_event_prefix}: Skip ghost hat at {final_insert_offset_in_score:.3f} (bin {bin_idx} count {bin_count})"
+                )
+                continue
+            if inst_name in {"ghost", "ghost_hat"}:
+                density = self.accent_mapper.ghost_density(rel)
+                if not self.ghost_hat_on_offbeat:
+                    beat_pos = (final_insert_offset_in_score * 2) % 1.0
+                    if abs(beat_pos) < 1e-3:
+                        continue
+                if self.rng.random() > density:
+                    continue
+
+            if inst_name in {"kick", "snare"}:
+                final_event_velocity = self.accent_mapper.accent(rel, final_event_velocity)
+
             drum_hit_note = self._make_hit(
                 inst_name, final_event_velocity, clipped_duration_ql
             )
@@ -867,24 +973,12 @@ class DrumGenerator(BasePartGenerator):
                     humanize_custom_for_hit = drum_block_params.get("custom_params", {})
             time_delta_from_humanizer = 0.0
             if humanize_this_hit:
-                original_hit_offset_before_humanize = drum_hit_note.offset
                 drum_hit_note = apply_humanization_to_element(
                     drum_hit_note,
                     template_name=humanize_template_for_hit,
                     custom_params=humanize_custom_for_hit,
-                )  # human_custom_for_hit -> humanize_custom_for_hit
-            final_insert_offset_in_score = (
-                bar_start_abs_offset + rel_offset_in_pattern + time_delta_from_humanizer
-            )
-            bin_idx = int(
-                (final_insert_offset_in_score * self.heatmap_resolution)
-            ) % self.heatmap_resolution
-            bin_count = self.heatmap.get(bin_idx, 0)
-            if inst_name in {"ghost", "ghost_hat"} and bin_count >= self.heatmap_threshold:
-                logger.debug(
-                    f"{log_event_prefix}: Skip ghost hat at {final_insert_offset_in_score:.3f} (bin {bin_idx} count {bin_count})"
                 )
-                continue
+            final_insert_offset_in_score += time_delta_from_humanizer
             drum_hit_note.offset = 0.0
             part.insert(final_insert_offset_in_score, drum_hit_note)
 
@@ -945,40 +1039,6 @@ class DrumGenerator(BasePartGenerator):
         n.offset = 0.0
         return n
 
-    def _render_part(self, section: Dict[str, Any]) -> stream.Part:
-        part = stream.Part(id="Drums")
-        bar_len = self.ts_obj.barDuration.quarterLength if self.ts_obj else 4.0
-        start = section["absolute_offset"]
-        measures = section["length_in_measures"]
-        end = start + measures * bar_len
-
-        resolution = getattr(self, "heatmap_resolution", RESOLUTION)
-        threshold = getattr(self, "heatmap_threshold", 0.5)
-
-        ghost_density = section.get("overrides", {}).get("ghost_hat_density", 0.5)
-        t = start
-        while t < end:
-            grid_idx = int((t * resolution) % resolution)
-            weight = self.heatmap.get(str(grid_idx), 0)
-            rel = weight / max(self.heatmap.values()) if self.heatmap else 0
-            if rel > threshold and grid_idx % 4 == 0:
-                part.insert(t, note.Unpitched(36, quarterLength=0.25, velocity=100))
-            elif rel > threshold / 2 and grid_idx % 4 == 2:
-                part.insert(t, note.Unpitched(38, quarterLength=0.25, velocity=95))
-             # Hi-Hat: 歌のオンセットが多い（rel < threshold/2）ならゴーストハットを抑制
-            if random.random() < (ghost_density if rel < threshold / 2 else 1.0):
-            if ev.type == "hat_closed" and rel < threshold / 2:
-                # 抑制確率は ghost_density（main_cfg で調整済み）
-                if random.random() < ghost_density:
-                    continue
-
-                vel = 60 if rel < 0.2 else 75
-                part.insert(
-                    t,
-                    note.Unpitched(42, quarterLength=0.25, velocity=vel),
-                )
-            t += 0.25  # 16th note = quarterLength/4
-        return part
 
 
 
@@ -1037,11 +1097,25 @@ class DrumGenerator(BasePartGenerator):
                 self.part_parameters[key] = val
 
     def _resolve_style_key(
-        self, musical_intent: Dict[str, Any], overrides: Dict[str, Any]
+        self,
+        musical_intent: Dict[str, Any],
+        overrides: Dict[str, Any],
+        section_data: Optional[Dict[str, Any]] = None,
     ) -> str:
         """オーバーライドと感情から最終的なリズムキーを決定する"""
         if overrides and overrides.get("rhythm_key"):
             return overrides["rhythm_key"]
+
+        expr = None
+        if section_data:
+            expr = section_data.get("expression_details")
+        if not expr:
+            expr = musical_intent.get("expression_details")
+        if expr:
+            key = (expr.get("emotion_bucket"), expr.get("intensity"))
+            lut_style = EMOTION_INTENSITY_LUT.get(key)
+            if lut_style and lut_style in self.part_parameters:
+                return lut_style
 
         emotion = musical_intent.get("emotion", "default").lower()
         intensity = musical_intent.get("intensity", "medium").lower()
@@ -1082,7 +1156,11 @@ class DrumGenerator(BasePartGenerator):
         drum_params = section_data.get("part_params", {}).get(self.part_name, {})
         musical_intent = section_data.get("musical_intent", {})
 
-        style_key = self._resolve_style_key(musical_intent, drum_params)
+        style_key = self._resolve_style_key(
+            musical_intent,
+            drum_params,
+            section_data,
+        )
         pattern_def = self.part_parameters.get(style_key)
 
         if not pattern_def or not pattern_def.get("pattern"):

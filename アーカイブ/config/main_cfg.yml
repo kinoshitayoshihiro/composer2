@@ -20,7 +20,7 @@ global_settings:
   default_dynamics_profile: "mp"
 
   # 外部プロファイル / マップ
-  groove_profile_path: "data/groove_profile.json" # 微小タイミング揺らぎの統計
+  groove_profile_path: "../data/groove_profile.json" # 微小タイミング揺らぎの統計
   tempo_map_path: "data/tempo_map.json" # rit. / accel. を含む細粒度 BPM 変化
 
 # ------------------- 2. Paths -----------------------

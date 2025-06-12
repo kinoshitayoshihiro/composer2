@@ -11,6 +11,8 @@ global_settings:
   song_title: "OreNoNyoubou_Shudaika"
   time_signature: "4/4" # ← デフォルト拍子
   tempo_bpm: 88 # ← デフォルトテンポ
+  # ↓ パッチ前からお使いの方でも互換性を保つようにしておく
+  # （CLI で上書きしなければこの default が使われます）
   key_tonic: "F"
   key_mode: "major"
 
@@ -20,7 +22,7 @@ global_settings:
   default_dynamics_profile: "mp"
 
   # 外部プロファイル / マップ
-  groove_profile_path: "data/groove_profile.json" # 微小タイミング揺らぎの統計
+  groove_profile_path: "../data/groove_profile.json" # 微小タイミング揺らぎの統計
   groove_strength: 1.0  # 0.0-1.0 のスケールで強度調整
   tempo_map_path: "data/tempo_map.json" # rit. / accel. を含む細粒度 BPM 変化
   onset_heatmap_json: "data/vocal_onset_heatmap.json" # ボーカル発音のヒートマップ

@@ -1254,9 +1254,7 @@ class DrumGenerator(BasePartGenerator):
                 logger.warning(f"Unknown drum instrument: '{inst_name}'")
 
         profile_name = (
-            self.main_cfg.get("humanize_profile")
             (self.main_cfg or {}).get("humanize_profile")
-
             or section_data.get("humanize_profile")
             or self.global_settings.get("humanize_profile")
         )

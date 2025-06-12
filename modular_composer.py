@@ -60,16 +60,48 @@ def normalise_chords_to_relative(chords: list[Dict[str, Any]]) -> list[Dict[str,
 # -------------------------------------------------------------------------
 
 
+def build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="OtoKotoba Modular Composer")
+    # 必須
+    p.add_argument(
+        "--main-cfg", "-m", required=True,
+        help="YAML: 共通設定ファイル (config/main_cfg.yml)"
+    )
+    # 任意で上書き可能な入力ファイル
+    p.add_argument(
+        "--chordmap", "-c",
+        help="YAML: processed_chordmap_with_emotion.yaml のパス"
+    )
+    p.add_argument(
+        "--rhythm", "-r",
+        help="YAML: rhythm_library.yml のパス"
+    )
+    # 出力先を変更したいとき
+    p.add_argument(
+        "--output-dir", "-o",
+        help="MIDI 出力ディレクトリを上書き"
+    )
+    p.add_argument("--dry-run", action="store_true", help="動作検証のみ")
+    return p
+
+
 def main_cli() -> None:
-    parser = argparse.ArgumentParser(description="OtoKotoba Modular Composer")
-    parser.add_argument("--main-cfg", required=True, type=Path)
-    parser.add_argument("--dry-run", action="store_true")
-    args = parser.parse_args()
+    args = build_arg_parser().parse_args()
 
     # 1) 設定 & データロード -------------------------------------------------
-    main_cfg = load_main_cfg(args.main_cfg)
-    chordmap = load_chordmap_yaml(Path(main_cfg["paths"]["chordmap_path"]))
-    rhythm_lib = load_rhythm_library(main_cfg["paths"].get("rhythm_library_path"))
+    main_cfg = load_main_cfg(Path(args.main_cfg))
+    # 2. CLI 引数があれば main_cfg['paths'] を上書き
+    paths = main_cfg.setdefault("paths", {})
+    if args.chordmap:
+        paths["chordmap_path"] = args.chordmap
+    if args.rhythm:
+        paths["rhythm_library_path"] = args.rhythm
+    if args.output_dir:
+        paths["output_dir"] = args.output_dir
+
+    # 3. ファイル読み込み
+    chordmap = load_chordmap_yaml(Path(paths["chordmap_path"]))
+    rhythm_lib = load_rhythm_library(paths["rhythm_library_path"]) 
 
     section_names: list[str] = main_cfg["sections_to_generate"]
     raw_sections: dict[str, Dict[str, Any]] = chordmap["sections"]

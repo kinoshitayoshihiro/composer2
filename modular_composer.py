@@ -24,6 +24,7 @@ from utilities.generator_factory import GenFactory  # type: ignore
 import utilities.humanizer as humanizer  # type: ignore
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------------
 # helper
@@ -98,6 +99,9 @@ def main_cli() -> None:
         paths["rhythm_library_path"] = args.rhythm
     if args.output_dir:
         paths["output_dir"] = args.output_dir
+
+    logger.info("使用 chordmap_path = %s", paths["chordmap_path"])
+    logger.info("使用 rhythm_library_path = %s", paths["rhythm_library_path"])
 
     # 3. ファイル読み込み
     chordmap = load_chordmap_yaml(Path(paths["chordmap_path"]))

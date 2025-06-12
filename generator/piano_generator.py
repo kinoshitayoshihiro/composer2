@@ -25,6 +25,7 @@ from music21.expressions import PedalMark
 
 
 from .base_part_generator import BasePartGenerator
+from utilities import humanizer
 
 try:
     from utilities.core_music_utils import (
@@ -102,7 +103,12 @@ BUCKET_TO_PATTERN_PIANO = {
 class PianoGenerator(BasePartGenerator):
     def __init__(self, *args, main_cfg=None, **kwargs):
         self.main_cfg = main_cfg
+        self.part_parameters = kwargs.get("part_parameters", {})
+        self.chord_voicer = None
+        ts_obj = get_time_signature_object(kwargs.get("global_time_signature", "4/4"))
+        self.measure_duration = ts_obj.barDuration.quarterLength if ts_obj else 4.0
         super().__init__(*args, **kwargs)
+        self.cfg: dict = kwargs.copy()
         # ...他の初期化処理...
 
     def _get_pattern_keys(
@@ -307,12 +313,12 @@ class PianoGenerator(BasePartGenerator):
             or self.global_settings.get("humanize_profile")
         )
         if profile_name:
-            humanizer.apply(part, profile_name)
+            humanizer.apply(piano_part, profile_name)
 
         global_profile = self.cfg.get(
             "global_humanize_profile"
         ) or self.global_settings.get("global_humanize_profile")
         if global_profile:
-            humanizer.apply(score, global_profile)
+            humanizer.apply(piano_part, global_profile)
 
         return piano_part

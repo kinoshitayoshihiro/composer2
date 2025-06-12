@@ -151,44 +151,49 @@ def main_cli() -> None:
             logging.warning(f"Section '{label}' に chord イベントがありません")
             continue
 
-        # セクション開始拍 (曲全体の絶対値)
         section_start_q = chords_abs[0]["absolute_offset_beats"]
 
-        # セクション内相対オフセットへ正規化
-        chords_rel = normalise_chords_to_relative(chords_abs)
+        for idx, ch_ev in enumerate(chords_abs):
+            next_ev = chords_abs[idx + 1] if idx + 1 < len(chords_abs) else None
 
-        # セクション長を実データから算出
-        last_evt = chords_abs[-1]
-        length_q = (
-            last_evt["absolute_offset_beats"]
-            + last_evt["humanized_duration_beats"]
-            - section_start_q
-        )
-        # フォールバック
-        if length_q <= 0:
-            length_q = sec.get("length_in_measures", 0) * beats_per_measure
+            block_start = ch_ev["absolute_offset_beats"] - section_start_q
+            block_length = ch_ev.get("humanized_duration_beats", ch_ev.get("original_duration_beats", 4.0))
 
-        base_sec_data: Dict[str, Any] = {
-            "musical_intent": {
+            base_block_data: Dict[str, Any] = {
                 "section_name": label,
-                "chords": chords_rel,
-                "emotion": sec["musical_intent"].get("emotion", "neutral"),
-                "start_q": 0.0,  # Generator 視点では 0 から始まる
-                "vocal_notes": [],
-            },
-            "q_length": length_q,
-        }
+                "absolute_offset": block_start,
+                "q_length": block_length,
+                "chord_symbol_for_voicing": ch_ev.get("chord_symbol_for_voicing"),
+                "specified_bass_for_voicing": ch_ev.get("specified_bass_for_voicing"),
+                "original_chord_label": ch_ev.get("original_chord_label"),
+                "musical_intent": {
+                    "section_name": label,
+                    "chords": [ch_ev],
+                    "emotion": sec["musical_intent"].get("emotion", "neutral"),
+                    "start_q": block_start,
+                    "vocal_notes": [],
+                },
+            }
 
-        for part_name, gen in part_gens.items():
-            part_cfg = main_cfg["part_defaults"].get(part_name, {})
-            sec_data = deepcopy(base_sec_data)
-            sec_data["part_params"] = part_cfg
+            next_block_data = None
+            if next_ev:
+                next_block_data = {
+                    "chord_symbol_for_voicing": next_ev.get("chord_symbol_for_voicing"),
+                    "specified_bass_for_voicing": next_ev.get("specified_bass_for_voicing"),
+                    "original_chord_label": next_ev.get("original_chord_label"),
+                    "q_length": next_ev.get("humanized_duration_beats", next_ev.get("original_duration_beats", 4.0)),
+                }
 
-            part_sec_stream = gen.compose(section_data=sec_data)
-            for elem in part_sec_stream.flatten().notesAndRests:
-                part_streams[part_name].insert(
-                    section_start_q + elem.offset, clone_element(elem)
-                )
+            for part_name, gen in part_gens.items():
+                part_cfg = main_cfg["part_defaults"].get(part_name, {})
+                blk_data = deepcopy(base_block_data)
+                blk_data["part_params"] = part_cfg
+
+                part_blk_stream = gen.compose(section_data=blk_data, next_section_data=next_block_data)
+                for elem in part_blk_stream.flatten().notesAndRests:
+                    part_streams[part_name].insert(
+                        section_start_q + block_start + elem.offset, clone_element(elem)
+                    )
 
     # 4) Humanizer -----------------------------------------------------------
     for name, p_stream in part_streams.items():

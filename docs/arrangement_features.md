@@ -16,6 +16,15 @@ bass_part:
 
 If disabled or omitted, the bass follows its normal pattern selection based on emotion buckets and intensity.
 
+You can enable this behaviour for all sections by adding `mirror_melody: true`
+under `part_defaults.bass` in your `main_cfg.yml`:
+
+```yaml
+part_defaults:
+  bass:
+    mirror_melody: true
+```
+
 ## `guitar_emotion_arpeggio` Rhythm Key
 
 The rhythm library includes a pattern named `guitar_emotion_arpeggio`. It selects arpeggio note ordering depending on the current emotion bucket. Each bucket (e.g., `calm`, `groovy`, `energetic`) maps to a different set of arpeggio indices, giving subtly different movement for gentle versus intense passages.

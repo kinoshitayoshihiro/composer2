@@ -158,6 +158,15 @@ class BassGenerator(BasePartGenerator):
         main_cfg=None,
         **kwargs,
     ):
+        """Create a bass part generator.
+
+        Parameters
+        ----------
+        mirror_melody : bool, optional
+            If ``True``, invert the melody line around the tonic when generating
+            bass notes. Default is ``False``.  Set this in ``main_cfg.yml`` under
+            ``part_defaults.bass`` to apply globally.
+        """
         super().__init__(
             global_settings=global_settings,
             default_instrument=default_instrument,
@@ -168,10 +177,10 @@ class BassGenerator(BasePartGenerator):
             **kwargs,
         )
         self.cfg: dict = kwargs.copy()
-        self.mirror_melody = mirror_melody
         self.logger = logging.getLogger("modular_composer.bass_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
         self.main_cfg = main_cfg
+        # Whether to mirror the main melody when generating the bass line
         self.mirror_melody = mirror_melody
         # ここで global_ts_str をセット
         self.global_ts_str = global_time_signature

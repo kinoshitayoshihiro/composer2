@@ -70,17 +70,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     # 任意で上書き可能な入力ファイル
     p.add_argument(
-        "--chordmap", "-c",
-        help="YAML: processed_chordmap_with_emotion.yaml のパス"
+        "--chordmap",
+        "-c",
+        help="YAML: processed_chordmap_with_emotion.yaml のパス",
     )
     p.add_argument(
-        "--rhythm", "-r",
-        help="YAML: rhythm_library.yml のパス"
+        "--rhythm",
+        "-r",
+        help="YAML: rhythm_library.yml のパス",
     )
     # 出力先を変更したいとき
     p.add_argument(
-        "--output-dir", "-o",
-        help="MIDI 出力ディレクトリを上書き"
+        "--output-dir",
+        "-o",
+        help="MIDI 出力ディレクトリを上書き",
     )
     p.add_argument("--dry-run", action="store_true", help="動作検証のみ")
     return p
@@ -91,14 +94,14 @@ def main_cli() -> None:
 
     # 1) 設定 & データロード -------------------------------------------------
     main_cfg = load_main_cfg(Path(args.main_cfg))
-    # 2. CLI 引数があれば main_cfg['paths'] を上書き
     paths = main_cfg.setdefault("paths", {})
-    if args.chordmap:
-        paths["chordmap_path"] = args.chordmap
-    if args.rhythm:
-        paths["rhythm_library_path"] = args.rhythm
-    if args.output_dir:
-        paths["output_dir"] = args.output_dir
+    for k, v in (
+        ("chordmap_path", args.chordmap),
+        ("rhythm_library_path", args.rhythm),
+        ("output_dir", args.output_dir),
+    ):
+        if v:
+            paths[k] = v
 
     logger.info("使用 chordmap_path = %s", paths["chordmap_path"])
     logger.info("使用 rhythm_library_path = %s", paths["rhythm_library_path"])

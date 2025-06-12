@@ -65,13 +65,19 @@ def _get_role_dispatch():
 
         return {}
 
+    # Include core instrument roles as well as specialized mappings
     return {
+        "piano": PianoGenerator,
+        "drums": DrumGenerator,
+        "bass": BassGenerator,
+        "guitar": GuitarGenerator,
+        "strings": StringsGenerator,
+        # specialized roles
         "melody": MelodyGenerator,
         "counter": MelodyGenerator,
         "pad": StringsGenerator,
         "riff": MelodyGenerator,
         "rhythm": GuitarGenerator,
-        "bass": BassGenerator,
         "unison": StringsGenerator,
         "sax": SaxGenerator,
     }

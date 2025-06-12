@@ -156,7 +156,6 @@ class BassGenerator(BasePartGenerator):
         global_key_signature_mode=None,
         mirror_melody: bool = False,
         main_cfg=None,
-        mirror_melody: bool = False,
         **kwargs,
     ):
         super().__init__(

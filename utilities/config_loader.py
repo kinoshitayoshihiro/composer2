@@ -39,42 +39,11 @@ ALLOWED_ROLES = [
 ]
 
 
-# --- 役割ディスパッチマップ（ここで定義しておく） ---
+# --- 役割ディスパッチマップ（GeneratorFactory と共有） ---
 def _get_role_dispatch():
-    try:
-        from generator.piano_generator import PianoGenerator
-        from generator.guitar_generator import GuitarGenerator
-        from generator.bass_generator import BassGenerator
-        from generator.drum_generator import DrumGenerator
-        from generator.strings_generator import StringsGenerator
-        from generator.melody_generator import MelodyGenerator
-        from generator.sax_generator import SaxGenerator
-    except ImportError as e:
-        logger.warning(f"ROLE_DISPATCH: Could not import some generators: {e}")
-
-        # fallback: MelodyGeneratorのみ
-        class Dummy:
-            pass
-
-        MelodyGenerator = Dummy
-        StringsGenerator = Dummy
-        GuitarGenerator = Dummy
-        BassGenerator = Dummy
-        DrumGenerator = Dummy
-        SaxGenerator = Dummy
-
-        return {}
-
-    return {
-        "melody": MelodyGenerator,
-        "counter": MelodyGenerator,
-        "pad": StringsGenerator,
-        "riff": MelodyGenerator,
-        "rhythm": GuitarGenerator,
-        "bass": BassGenerator,
-        "unison": StringsGenerator,
-        "sax": SaxGenerator,
-    }
+    """GeneratorFactory と同じマッピングを返すだけ (単一責任)"""
+    from utilities.generator_factory import ROLE_DISPATCH  # 遅延 import
+    return ROLE_DISPATCH
 
 
 # ------------------------------------------------------------

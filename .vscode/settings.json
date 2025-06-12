@@ -1,0 +1,6 @@
+{
+  "autogitcommit.enable": true,
+  "autogitcommit.push": true,
+  "autogitcommit.commitMessage": "Auto-save ✓",
+  "autogitcommit.branch": "main"
+}

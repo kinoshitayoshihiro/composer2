@@ -25,9 +25,13 @@ class GenFactory:
         """
         global_settings = main_cfg.get("global_settings", {})
         gens = {}
+        role_dispatch = main_cfg.get("role_dispatch", ROLE_DISPATCH)
         for part_name, part_cfg in main_cfg["part_defaults"].items():
             role = part_cfg.get("role", part_name)  # role が無ければ楽器名と同じ
-            GenCls = ROLE_DISPATCH[role]
+            try:
+                GenCls = role_dispatch[role]
+            except KeyError as e:
+                raise KeyError(f"Unknown role '{role}' for part '{part_name}'") from e
             cleaned_part_cfg = dict(part_cfg)
             cleaned_part_cfg.pop("main_cfg", None)
             inst_spec = cleaned_part_cfg.get("default_instrument", part_name)

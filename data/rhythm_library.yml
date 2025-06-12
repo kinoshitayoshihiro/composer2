@@ -456,9 +456,12 @@ bass_patterns:
     time_signature: "4/4"
     pattern_type: fixed_pattern
     length_beats: 4.0
+    velocity_base: 72
+    target_octave: 2
+    tags: ["bass", "half_time", "pop", "fixed_pattern", "4_4"]
     pattern:
-      - {offset: 0.0, duration: 1.0, velocity_factor: 0.95}
-      - {offset: 2.0, duration: 1.0, velocity_factor: 0.90}
+      - {offset: 0.0, duration: 1.0, velocity_factor: 0.95, type: "root"}
+      - {offset: 2.0, duration: 1.0, velocity_factor: 0.90, type: "root"}
 
   bass_syncopated_rnb:
     description: "16th-syncopated R&B / neo-soul motif with ghost 16ths."
@@ -657,6 +660,8 @@ guitar_patterns:
     pattern_type: fixed_pattern
     strum_width_sec: 0.035
     length_beats: 4.0
+    velocity_base: 68
+    tags: ["guitar", "ballad", "arpeggio", "4_4"]
     pattern:
       - {offset: 0.0, duration: 0.5, velocity_factor: 0.85, strum_direction: "down"}
       - {offset: 1.0, duration: 0.5, velocity_factor: 0.80, strum_direction: "down"}
@@ -1018,6 +1023,7 @@ drum_patterns:
     pattern_type: fixed_pattern
     length_beats: 4.0
     velocity_base: 70
+    tags: ["drum", "ballad", "soft", "8th_hat", "4_4"]
     pattern:
       - {beat: 0.0, duration: 0.1, instrument: kick}
       - {beat: 1.0, duration: 0.1, instrument: snare}

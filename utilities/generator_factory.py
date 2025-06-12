@@ -81,20 +81,20 @@ class GenFactory:
         return gens
 
 
-# === Explicit role → generator mapping ===
-# (extended as new instruments are implemented)
+# ---- Single-Source Role Mapping ----
 ROLE_DISPATCH: dict[str, type[BasePartGenerator]] = {
-    "piano": PianoGenerator,
-    "drums": DrumGenerator,
-    "bass": BassGenerator,
-    "guitar": GuitarGenerator,
+    # Core instruments
+    "piano":   PianoGenerator,
+    "drums":   DrumGenerator,
+    "bass":    BassGenerator,
+    "guitar":  GuitarGenerator,
     "strings": StringsGenerator,
-    # specialized roles
-    "melody": MelodyGenerator,
+    # Specialized / legacy logical roles
+    "melody":  MelodyGenerator,
     "counter": MelodyGenerator,
-    "pad": StringsGenerator,
-    "riff": MelodyGenerator,
-    "rhythm": GuitarGenerator,
-    "unison": StringsGenerator,
-    "sax": SaxGenerator,
+    "pad":     StringsGenerator,
+    "riff":    MelodyGenerator,
+    "rhythm":  GuitarGenerator,
+    "unison":  StringsGenerator,
+    "sax":     SaxGenerator,
 }

@@ -297,15 +297,44 @@ class PianoGenerator(BasePartGenerator):
     def _insert_pedal(self, part: stream.Part, section_data: Dict[str, Any]):
         intensity = section_data.get("musical_intent", {}).get("intensity", "medium")
         end_offset = section_data.get("q_length", 4.0)
-        sustain_beats = {"low": 4.0, "medium": 2.0, "high": 1.0}.get(intensity, 2.0)
         if not part.flatten().notes:
             return
+
+        measure_len = self.measure_duration or 4.0
+        pedal_value = 127 if intensity == "high" else 64
+        cc_events = []
         t = 0.0
         while t < end_offset:
-            ped = PedalMark()  # ← Pedal() から PedalMark() へ
-            ped.type = "start"
+            ped = PedalMark()
+            ped.pedalType = expressions.PedalType.Sustain
+            ped.pedalForm = expressions.PedalForm.Line
             part.insert(t, ped)
-            t += sustain_beats
+            cc_events.append({"time": t, "number": 64, "value": pedal_value})
+            cc_events.append({"time": min(t + measure_len, end_offset), "number": 64, "value": 0})
+            t += measure_len
+
+        part.extra_cc = getattr(part, "extra_cc", []) + cc_events
+
+    def _insert_cc11_curves(self, part: stream.Part):
+        notes = sorted(part.flatten().notes, key=lambda n: n.offset)
+        if len(notes) < 2:
+            return
+        cc_events = getattr(part, "extra_cc", [])
+        for idx, cur in enumerate(notes[:-1]):
+            nxt = notes[idx + 1]
+            start_val = cur.volume.velocity or 64
+            end_val = nxt.volume.velocity or 64
+            start_t = cur.offset
+            end_t = nxt.offset
+            if end_t <= start_t:
+                continue
+            steps = max(2, int((end_t - start_t) * 4))
+            for s in range(steps + 1):
+                frac = s / steps
+                t = start_t + frac * (end_t - start_t)
+                val = int(round(start_val + (end_val - start_val) * frac))
+                cc_events.append({"time": t, "number": 11, "value": max(0, min(127, val))})
+        part.extra_cc = cc_events
 
     def _apply_weak_beat(self, part: stream.Part, style: str) -> stream.Part:
         if style in (None, "none"):
@@ -399,6 +428,7 @@ class PianoGenerator(BasePartGenerator):
             piano_part.insert(element.offset, element)
 
         self._insert_pedal(piano_part, section_data)
+        self._insert_cc11_curves(piano_part)
         piano_part.insert(0, self.default_instrument)
 
         profile_name = (

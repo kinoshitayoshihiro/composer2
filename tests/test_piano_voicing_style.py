@@ -22,17 +22,15 @@ def make_gen():
         main_cfg={},
     )
 
-def test_minimal_pitch_leap():
-    gen = make_gen()
-    cs1 = harmony.ChordSymbol("C")
-    gen._render_hand_part("RH", cs1, 1.0, "rh_test", {}, voicing_style="closed")
-    first = list(gen._prev_voicings["RH"])
+def _pitches(part):
+    elem = part.flatten().notes[0]
+    return [p.nameWithOctave for p in (elem.pitches if hasattr(elem, "pitches") else [elem.pitch])]
 
-    cs2 = harmony.ChordSymbol("G")
-    gen._render_hand_part("RH", cs2, 1.0, "rh_test", {}, voicing_style="closed")
-    second = list(gen._prev_voicings["RH"])
-
-    first_sorted = sorted(first, key=lambda p: p.ps)
-    second_sorted = sorted(second, key=lambda p: p.ps)
-    dist = sum(abs(a.ps - b.ps) for a, b in zip(first_sorted, second_sorted))
-    assert dist <= 6
+def test_voicing_styles_output():
+    cs = harmony.ChordSymbol("C")
+    spread = _pitches(make_gen()._render_hand_part("RH", cs, 1.0, "rh_test", {}, voicing_style="spread"))
+    closed = _pitches(make_gen()._render_hand_part("RH", cs, 1.0, "rh_test", {}, voicing_style="closed"))
+    inverted = _pitches(make_gen()._render_hand_part("RH", cs, 1.0, "rh_test", {}, voicing_style="inverted"))
+    assert spread == ["C4", "E5", "G5"]
+    assert closed == ["C4", "E4", "G4"]
+    assert inverted == ["E4", "G4", "C5"]

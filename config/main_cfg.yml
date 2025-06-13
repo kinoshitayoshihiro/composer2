@@ -38,6 +38,7 @@ paths:
   arrangement_overrides_path: "../data/arrangement_overrides.json"
   vocal_heatmap_path: "../data/heatmap.json"
   vocal_note_data_path: "../data/vocal_note_data_ore.json"
+  drum_pattern_files: ["data/drum_patterns.yml"]
   output_dir: "../midi_output"
 
 # ---------------- 3. Part Defaults ------------------

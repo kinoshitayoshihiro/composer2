@@ -68,52 +68,57 @@ class BasePartGenerator(ABC):
         self.logger.info(
             f"Rendering part for section: '{section_label}' with overrides: {self.overrides.model_dump(exclude_unset=True) if self.overrides and hasattr(self.overrides, 'model_dump') else 'None'}"
         )
-        part = self._render_part(section_data, next_section_data)
+        parts = self._render_part(section_data, next_section_data)
 
-        if not isinstance(part, stream.Part):
+        if not isinstance(parts, (stream.Part, dict)):
             self.logger.error(
-                f"_render_part for {self.part_name} did not return a valid music21.stream.Part. Returning empty part."
+                f"_render_part for {self.part_name} did not return a valid stream.Part or dict. Returning empty part."
             )
             return stream.Part(id=self.part_name)
 
-        if groove_profile_path and part.flatten().notes:
-            try:
-                gp = load_groove_profile(groove_profile_path)
-                if gp:
-                    part = apply_groove_pretty(part, gp)
-                    self.logger.info(
-                        f"Applied groove from '{groove_profile_path}' to {self.part_name}."
+        def process_one(p: stream.Part) -> stream.Part:
+            if groove_profile_path and p.flatten().notes:
+                try:
+                    gp = load_groove_profile(groove_profile_path)
+                    if gp:
+                        p = apply_groove_pretty(p, gp)
+                        self.logger.info(
+                            f"Applied groove from '{groove_profile_path}' to {self.part_name}."
+                        )
+                except Exception as e:
+                    self.logger.error(
+                        f"Error applying groove to {self.part_name}: {e}", exc_info=True
                     )
-            except Exception as e:
-                self.logger.error(
-                    f"Error applying groove to {self.part_name}: {e}", exc_info=True
-                )
 
-        # ヒューマナイズ処理で part_specific_humanize_params を使用する
-        humanize_params = part_specific_humanize_params or {}
-        if humanize_params.get("enable", False) and part.flatten().notes:
-            try:
-                template = humanize_params.get("template_name", "default_subtle")
-                custom = humanize_params.get("custom_params", {})
-                part = apply_humanization_to_part(
-                    part, template_name=template, custom_params=custom
-                )
-                self.logger.info(
-                    f"Applied final touch humanization (template: {template}) to {self.part_name}."
-                )
-            except Exception as e:
-                self.logger.error(
-                    f"Error during final touch humanization for {self.part_name}: {e}",
-                    exc_info=True,
-                )
-        return part
+            humanize_params = part_specific_humanize_params or {}
+            if humanize_params.get("enable", False) and p.flatten().notes:
+                try:
+                    template = humanize_params.get("template_name", "default_subtle")
+                    custom = humanize_params.get("custom_params", {})
+                    p = apply_humanization_to_part(
+                        p, template_name=template, custom_params=custom
+                    )
+                    self.logger.info(
+                        f"Applied final touch humanization (template: {template}) to {self.part_name}."
+                    )
+                except Exception as e:
+                    self.logger.error(
+                        f"Error during final touch humanization for {self.part_name}: {e}",
+                        exc_info=True,
+                    )
+            return p
+
+        if isinstance(parts, dict):
+            return {k: process_one(v) for k, v in parts.items()}
+        else:
+            return process_one(parts)
 
     @abstractmethod
     def _render_part(
         self,
         section_data: Dict[str, Any],
         next_section_data: Optional[Dict[str, Any]] = None,
-    ) -> stream.Part:
+    ) -> stream.Part | Dict[str, stream.Part]:
         raise NotImplementedError
 
 

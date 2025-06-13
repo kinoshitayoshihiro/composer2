@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from music21 import instrument
+from music21 import instrument, stream
 from generator.piano_generator import PianoGenerator
 from utilities.override_loader import load_overrides
 
@@ -35,8 +35,8 @@ def test_dorian_minor_third_lh(rhythm_library):
         "part_params": {"piano": {"rhythm_key_lh": "piano_tense_ostinato_lh"}},
         "mode": "dorian",
     }
-    part = gen.compose(section_data=section)
-    lh_notes = [n for n in part.flat.notes if n.stemDirection == "down"]
+    parts = gen.compose(section_data=section)
+    lh_notes = [n for n in parts["piano_lh"].flat.notes]
     names = {n.pitch.name for n in lh_notes}
     assert "B-" in names
 
@@ -56,6 +56,6 @@ def test_override_changes_pattern(tmp_path: Path, rhythm_library):
         "part_params": {"piano": {"rhythm_key_lh": "piano_tense_ostinato_lh"}},
         "mode": "dorian",
     }
-    part = gen.compose(section_data=section, overrides_root=ov_model)
-    names = {n.pitch.name for n in part.flat.notes if n.stemDirection == "down"}
+    parts = gen.compose(section_data=section, overrides_root=ov_model)
+    names = {n.pitch.name for n in parts["piano_lh"].flat.notes}
     assert "B-" not in names

@@ -232,15 +232,33 @@ def main_cli() -> None:
                 blk_data = deepcopy(base_block_data)
                 blk_data["part_params"] = part_cfg
 
-                part_blk_stream = gen.compose(
+                result_stream = gen.compose(
                     section_data=blk_data,
                     overrides_root=overrides_model,
                     next_section_data=next_block_data,
                 )
-                for elem in part_blk_stream.flatten().notesAndRests:
-                    part_streams[part_name].insert(
-                        section_start_q + block_start + elem.offset, clone_element(elem)
-                    )
+
+                if isinstance(result_stream, dict):
+                    for key, part_blk_stream in result_stream.items():
+                        if key not in part_streams:
+                            p = stream.Part(id=key)
+                            try:
+                                p.insert(0, m21inst.fromString(key))
+                            except Exception:
+                                p.partName = key
+                            part_streams[key] = p
+                        for elem in part_blk_stream.flatten().notesAndRests:
+                            part_streams[key].insert(
+                                section_start_q + block_start + elem.offset,
+                                clone_element(elem),
+                            )
+                else:
+                    part_blk_stream = result_stream
+                    for elem in part_blk_stream.flatten().notesAndRests:
+                        part_streams[part_name].insert(
+                            section_start_q + block_start + elem.offset,
+                            clone_element(elem),
+                        )
 
     # 4) Humanizer -----------------------------------------------------------
     for name, p_stream in part_streams.items():

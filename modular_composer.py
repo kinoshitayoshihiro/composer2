@@ -26,6 +26,18 @@ import utilities.humanizer as humanizer  # type: ignore
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+
+def configure_logging(args: argparse.Namespace) -> None:
+    """Configure global logging level based on CLI args."""
+    level = logging.WARNING
+    if getattr(args, "verbose", False):
+        level = logging.INFO
+    if getattr(args, "log_level", None):
+        level = getattr(logging, args.log_level)
+    logging.getLogger().setLevel(level)
+    logger.setLevel(level)
+
+
 # -------------------------------------------------------------------------
 # helper
 # -------------------------------------------------------------------------
@@ -65,8 +77,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="OtoKotoba Modular Composer")
     # 必須
     p.add_argument(
-        "--main-cfg", "-m", required=True,
-        help="YAML: 共通設定ファイル (config/main_cfg.yml)"
+        "--main-cfg",
+        "-m",
+        required=True,
+        help="YAML: 共通設定ファイル (config/main_cfg.yml)",
     )
     # 任意で上書き可能な入力ファイル
     p.add_argument(
@@ -86,16 +100,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="MIDI 出力ディレクトリを上書き",
     )
     p.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="詳しいログ(INFO)を表示"
+        "--verbose", "-v", action="store_true", help="詳しいログ(INFO)を表示"
     )
     p.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         type=str.upper,
-        help="ログレベルを指定"
+        help="ログレベルを指定",
     )
     p.add_argument("--dry-run", action="store_true", help="動作検証のみ")
     return p
@@ -103,14 +114,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main_cli() -> None:
     args = build_arg_parser().parse_args()
-
-    level = logging.WARNING
-    if args.verbose:
-        level = logging.INFO
-    if args.log_level:
-        level = getattr(logging, args.log_level)
-    logging.getLogger().setLevel(level)
-    logger.setLevel(level)
+    configure_logging(args)
 
     # 1) 設定 & データロード -------------------------------------------------
     main_cfg = load_main_cfg(Path(args.main_cfg))
@@ -128,7 +132,7 @@ def main_cli() -> None:
 
     # 3. ファイル読み込み
     chordmap = load_chordmap_yaml(Path(paths["chordmap_path"]))
-    rhythm_lib = load_rhythm_library(paths["rhythm_library_path"]) 
+    rhythm_lib = load_rhythm_library(paths["rhythm_library_path"])
 
     section_names: list[str] = main_cfg["sections_to_generate"]
     raw_sections: dict[str, Dict[str, Any]] = chordmap["sections"]
@@ -177,7 +181,9 @@ def main_cli() -> None:
             next_ev = chords_abs[idx + 1] if idx + 1 < len(chords_abs) else None
 
             block_start = ch_ev["absolute_offset_beats"] - section_start_q
-            block_length = ch_ev.get("humanized_duration_beats", ch_ev.get("original_duration_beats", 4.0))
+            block_length = ch_ev.get(
+                "humanized_duration_beats", ch_ev.get("original_duration_beats", 4.0)
+            )
 
             base_block_data: Dict[str, Any] = {
                 "section_name": label,
@@ -199,9 +205,14 @@ def main_cli() -> None:
             if next_ev:
                 next_block_data = {
                     "chord_symbol_for_voicing": next_ev.get("chord_symbol_for_voicing"),
-                    "specified_bass_for_voicing": next_ev.get("specified_bass_for_voicing"),
+                    "specified_bass_for_voicing": next_ev.get(
+                        "specified_bass_for_voicing"
+                    ),
                     "original_chord_label": next_ev.get("original_chord_label"),
-                    "q_length": next_ev.get("humanized_duration_beats", next_ev.get("original_duration_beats", 4.0)),
+                    "q_length": next_ev.get(
+                        "humanized_duration_beats",
+                        next_ev.get("original_duration_beats", 4.0),
+                    ),
                 }
 
             for part_name, gen in part_gens.items():
@@ -209,7 +220,9 @@ def main_cli() -> None:
                 blk_data = deepcopy(base_block_data)
                 blk_data["part_params"] = part_cfg
 
-                part_blk_stream = gen.compose(section_data=blk_data, next_section_data=next_block_data)
+                part_blk_stream = gen.compose(
+                    section_data=blk_data, next_section_data=next_block_data
+                )
                 for elem in part_blk_stream.flatten().notesAndRests:
                     part_streams[part_name].insert(
                         section_start_q + block_start + elem.offset, clone_element(elem)

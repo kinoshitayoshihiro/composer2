@@ -110,6 +110,7 @@ class PianoGenerator(BasePartGenerator):
         self.measure_duration = ts_obj.barDuration.quarterLength if ts_obj else 4.0
         super().__init__(*args, **kwargs)
         self.cfg: dict = kwargs.copy()
+        self._prev_voicings = {"RH": None, "LH": None}
         # ...他の初期化処理...
 
     def _get_pattern_keys(
@@ -166,7 +167,9 @@ class PianoGenerator(BasePartGenerator):
             f"default_{hand.lower()}_voicing_style",
             "spread_upper" if hand == "RH" else "closed_low",
         )
-        voiced_pitches = self._get_voiced_pitches(cs, num_voices, octave, voicing_style)
+        voiced_pitches = self._voice_minimal_leap(
+            hand, cs, num_voices, octave, voicing_style
+        )
 
         if not voiced_pitches:
             part.insert(0, note.Rest(quarterLength=duration_ql))
@@ -222,6 +225,42 @@ class PianoGenerator(BasePartGenerator):
             if num_voices is not None and len(pitches) > num_voices
             else pitches
         )
+
+    def _voice_minimal_leap(
+        self,
+        hand: str,
+        cs: harmony.ChordSymbol,
+        num_voices: int,
+        octave: int,
+        style: str,
+    ) -> List[pitch.Pitch]:
+        base_voicing = self._get_voiced_pitches(cs, num_voices, octave, style)
+        if not base_voicing:
+            return []
+        prev = self._prev_voicings.get(hand)
+        if prev is None:
+            self._prev_voicings[hand] = base_voicing
+            return base_voicing
+
+        candidates: List[List[pitch.Pitch]] = []
+        n = len(base_voicing)
+        # generate inversions
+        for inv in range(n):
+            inv_pitches = []
+            for i, p in enumerate(base_voicing):
+                inv_pitches.append(p.transpose(12) if i < inv else p)
+            for shift in (-12, 0, 12):
+                candidates.append([pp.transpose(shift) for pp in inv_pitches])
+
+        def distance(cand: List[pitch.Pitch]) -> float:
+            cand_sorted = sorted(cand, key=lambda p: p.ps)
+            prev_sorted = sorted(prev, key=lambda p: p.ps)
+            m = min(len(cand_sorted), len(prev_sorted))
+            return sum(abs(cand_sorted[i].ps - prev_sorted[i].ps) for i in range(m))
+
+        best = min(candidates, key=distance)
+        self._prev_voicings[hand] = best
+        return best
 
     def _create_music_element(
         self, event_type: str, pitches: List[pitch.Pitch], duration_ql: float, hand: str

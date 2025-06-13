@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import List
+from pathlib import Path
 
 from music21 import converter, note, chord, meter
 
@@ -11,6 +12,29 @@ RESOLUTION = 16  # number of grid bins per measure
 
 
 from typing import Dict
+
+
+def load_heatmap(json_path: str) -> Dict[int, int]:
+    """Load onset heatmap from a JSON file.
+
+    Parameters
+    ----------
+    json_path:
+        Path to a JSON file produced by :func:`save_heatmap_json`.
+
+    Returns
+    -------
+    Dict[int, int]
+        Mapping of ``grid_index`` to ``count``.
+    """
+    if not json_path or not Path(json_path).exists():
+        return {}
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {int(d["grid_index"]): int(d["count"]) for d in data}
+    except Exception:
+        return {}
 
 
 def build_heatmap(midi_path: str, resolution: int = RESOLUTION) -> Dict[int, int]:

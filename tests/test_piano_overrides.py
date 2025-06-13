@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from music21 import instrument
+from music21 import instrument, stream
 
 from generator.piano_generator import PianoGenerator
 from utilities.override_loader import load_overrides
@@ -63,8 +63,10 @@ def test_piano_override_merge(tmp_path: Path):
         "part_params": {},
     }
 
-    part = gen.compose(section_data=section, overrides_root=ov_model)
-    shift = float(round(list(part.flatten().notes)[0].offset, 2))
+    parts = gen.compose(section_data=section, overrides_root=ov_model)
+    rh_part = parts["piano_rh"]
+    notes = list(rh_part.flatten().notes)
+    shift = float(round(notes[0].offset, 2))
     expected = sorted({float(round(0 + shift, 2)), float(round(2 + shift, 2)), float(round(3.5 + shift, 2))})
-    offsets = sorted({float(round(float(n.offset), 2)) for n in part.flatten().notes})
+    offsets = sorted({float(round(float(n.offset), 2)) for n in notes})
     assert offsets == expected

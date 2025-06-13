@@ -590,45 +590,6 @@ class DrumGenerator(BasePartGenerator):
         self.pattern_lib_cache[style_key] = copy.deepcopy(pattern_def)
         return pattern_def
 
-    def _render_part(
-        self,
-        section_data: Dict[str, Any],
-        next_section_data: Optional[Dict[str, Any]] = None,
-    ) -> stream.Part:
-        part = stream.Part(id=self.part_name)
-        part.insert(0, self.default_instrument)
-
-        # (前回 drum_generator.py の _render_part に実装したロジックをここに記述)
-        # ... ヒートマップとパターンに基づいてドラムヒットを生成 ...
-        log_prefix = (
-            f"DrumGen._render_part (Sec: {section_data.get('section_name', 'Unk')})"
-        )
-
-        # パラメータ取得
-        drum_params = section_data.get("part_params", {}).get(self.part_name, {})
-
-        # パターン選択
-        musical_intent = section_data.get("musical_intent", {})
-        # ... (emotion/intensity からパターンキーを選択するロジック) ...
-
-        # リズム生成
-        start_offset = section_data.get("absolute_offset", 0.0)
-        duration_ql = section_data.get("q_length", 4.0)
-        end_offset = start_offset + duration_ql
-
-        # 仮のシンプルなロジック
-        t = 0.0
-        while t < duration_ql:
-            kick = note.Note("C2")  # Kick
-            kick.duration.quarterLength = 0.5
-            part.insert(t, kick)
-            t += 1.0
-
-        logger.info(
-            f"{log_prefix}: Finished rendering. Part has {len(part.flatten().notes)} notes."
-        )
-        return part
-
     def compose(
         self,
         *,

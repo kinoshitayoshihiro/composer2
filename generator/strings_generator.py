@@ -13,8 +13,17 @@ class StringsGenerator(MelodyGenerator):
         instrument_name = config_instrument or default_name
         super().__init__(*args, instrument_name=instrument_name, **kwargs)
 
-    def compose(self, section_data, next_section_data=None):
-        # 既存の compose ロジックを継承する際に、next_section_data を渡さず section_data のみ渡す
+    def compose(
+        self,
+        *,
+        section_data,
+        overrides_root=None,
+        groove_profile_path=None,
+        next_section_data=None,
+        part_specific_humanize_params=None,
+    ):
+        """Wrapper to keep interface compatible with BasePartGenerator."""
+        _ = overrides_root, groove_profile_path, next_section_data, part_specific_humanize_params
         return super().compose(section_data)
 
     def _postprocess_stream(self, part):

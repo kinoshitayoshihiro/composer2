@@ -106,6 +106,86 @@ def sanitize_chord_label(label: Optional[str]) -> Optional[str]:
     return s
 
 
+def parse_chord_symbol(symbol: str, base_octave: int = 4) -> List[pitch.Pitch]:
+    """Parse a chord symbol string into a list of ``music21.pitch.Pitch``.
+
+    This lightweight parser recognises basic triad qualities and a few
+    extensions such as ``add9``, ``sus2``, ``m7`` and ``6``.  It is meant as
+    a minimal fallback when ``music21`` cannot correctly interpret the chord
+    symbol on its own.
+
+    Parameters
+    ----------
+    symbol:
+        Chord symbol such as ``"Cadd9"`` or ``"Am7"``.
+    base_octave:
+        Octave for the root note.  Other tones are built relative to this.
+
+    Returns
+    -------
+    List[pitch.Pitch]
+        Pitches describing the chord.  Empty list if the symbol could not be
+        parsed.
+    """
+
+    sanitized = sanitize_chord_label(symbol)
+    if sanitized is None or sanitized.lower() == "rest":
+        return []
+
+    m_root = re.match(r"^([A-G](?:[#-])?)(.*)$", sanitized)
+    if not m_root:
+        return []
+
+    root_str, remainder = m_root.group(1), m_root.group(2)
+
+    base_intervals = [0, 4, 7]  # major triad by default
+    extra_intervals: List[int] = []
+
+    # Quality detection
+    if remainder.startswith("m7b5"):
+        base_intervals = [0, 3, 6]
+        extra_intervals.append(10)
+        remainder = remainder[4:]
+    elif remainder.startswith("maj7"):
+        extra_intervals.append(11)
+        remainder = remainder[4:]
+    elif remainder.startswith("m7"):
+        base_intervals = [0, 3, 7]
+        extra_intervals.append(10)
+        remainder = remainder[2:]
+    elif remainder.startswith("dim"):
+        base_intervals = [0, 3, 6]
+        remainder = remainder[3:]
+    elif remainder.startswith("aug") or remainder.startswith("+"):
+        base_intervals = [0, 4, 8]
+        remainder = remainder[3:] if remainder.startswith("aug") else remainder[1:]
+    elif remainder.startswith("sus2"):
+        base_intervals = [0, 2, 7]
+        remainder = remainder[4:]
+    elif remainder.startswith("sus4") or remainder.startswith("sus"):
+        base_intervals = [0, 5, 7]
+        remainder = remainder[4:] if remainder.startswith("sus4") else remainder[3:]
+    elif remainder.startswith("m"):
+        base_intervals = [0, 3, 7]
+        remainder = remainder[1:]
+
+    # Tensions
+    if "add9" in remainder:
+        extra_intervals.append(14)
+        remainder = remainder.replace("add9", "")
+    if "6" in remainder:
+        extra_intervals.append(9)
+        remainder = remainder.replace("6", "")
+    if "7" in remainder:
+        extra_intervals.append(10)
+        remainder = remainder.replace("7", "")
+
+    root_pitch = pitch.Pitch(root_str)
+    root_pitch.octave = base_octave
+    intervals = base_intervals + sorted(extra_intervals)
+    return [root_pitch.transpose(i) for i in intervals]
+
+
 DEFAULT_CHORD_TARGET_OCTAVE_BOTTOM: int = 3
 VOICING_STYLE_CLOSED = "closed"
 VOICING_STYLE_OPEN = "open"

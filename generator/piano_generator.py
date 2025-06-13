@@ -143,6 +143,7 @@ class PianoGenerator(BasePartGenerator):
         params: Dict[str, Any],
         voicing_style: Optional[str] = None,
         mode: Optional[str] = None,
+        velocity_shift: Optional[int] = None,
     ) -> stream.Part:
         part = stream.Part(id=f"Piano_{hand}")
         pattern_data = self.part_parameters.get(rhythm_key) or {}
@@ -205,6 +206,9 @@ class PianoGenerator(BasePartGenerator):
                 continue
             vel_factor = float(p_event.get("velocity_factor", 1.0))
             velocity = int(base_velocity * vel_factor)
+            if velocity_shift is not None:
+                velocity += int(velocity_shift)
+            velocity = max(1, min(127, velocity))
             event_type = p_event.get("type", "chord")
             element_to_add = self._create_music_element(
                 event_type, voiced_pitches, duration, hand, scale_pitches
@@ -443,19 +447,24 @@ class PianoGenerator(BasePartGenerator):
         self,
         section_data: Dict[str, Any],
         next_section_data: Optional[Dict[str, Any]] = None,
-    ) -> stream.Part:
-        piano_part = stream.Part(id=f"Piano_Part_{section_data.get('absolute_offset')}")
+    ) -> Dict[str, stream.Part]:
+        rh_part = stream.Part(id=f"Piano_RH_{section_data.get('absolute_offset')}")
+        lh_part = stream.Part(id=f"Piano_LH_{section_data.get('absolute_offset')}")
         chord_label = section_data.get("chord_symbol_for_voicing", "Rest")
 
         if not chord_label or chord_label == "Rest":
-            piano_part.insert(0, note.Rest(quarterLength=section_data.get("q_length", 4.0)))
-            return piano_part
+            dur = section_data.get("q_length", 4.0)
+            rh_part.insert(0, note.Rest(quarterLength=dur))
+            lh_part.insert(0, note.Rest(quarterLength=dur))
+            return {"piano_rh": rh_part, "piano_lh": lh_part}
         try:
             cs = harmony.ChordSymbol(chord_label)
         except Exception as e:
             logger.error(f"Failed to parse chord '{chord_label}': {e}. Inserting Rest.")
-            piano_part.insert(0, note.Rest(quarterLength=section_data.get("q_length", 4.0)))
-            return piano_part
+            dur = section_data.get("q_length", 4.0)
+            rh_part.insert(0, note.Rest(quarterLength=dur))
+            lh_part.insert(0, note.Rest(quarterLength=dur))
+            return {"piano_rh": rh_part, "piano_lh": lh_part}
 
         duration_ql = section_data.get("q_length", 4.0)
         musical_intent = section_data.get("musical_intent", {})
@@ -504,14 +513,28 @@ class PianoGenerator(BasePartGenerator):
         self._style_cycle_index["LH"] += 1
 
         mode = section_data.get("mode", self.global_key_signature_mode)
+        ov = self.overrides.model_dump(exclude_unset=True) if self.overrides else {}
         rh_part = self._render_hand_part(
-            "RH", cs, duration_ql, rh_key, piano_params, voicing_style=rh_style, mode=mode
+            "RH",
+            cs,
+            duration_ql,
+            rh_key,
+            piano_params,
+            voicing_style=rh_style,
+            mode=mode,
+            velocity_shift=ov.get("velocity_shift_rh"),
         )
         lh_part = self._render_hand_part(
-            "LH", cs, duration_ql, lh_key, piano_params, voicing_style=lh_style, mode=mode
+            "LH",
+            cs,
+            duration_ql,
+            lh_key,
+            piano_params,
+            voicing_style=lh_style,
+            mode=mode,
+            velocity_shift=ov.get("velocity_shift_lh"),
         )
 
-        ov = self.overrides.model_dump(exclude_unset=True) if self.overrides else {}
         rh_part = self._apply_weak_beat(rh_part, ov.get("weak_beat_style_rh", "none"))
         lh_part = self._apply_weak_beat(lh_part, ov.get("weak_beat_style_lh", "none"))
         if ov.get("fill_on_4th"):
@@ -526,27 +549,29 @@ class PianoGenerator(BasePartGenerator):
 
         for element in rh_part.flatten().notesAndRests:
             element.stemDirection = "up"
-            piano_part.insert(element.offset, element)
         for element in lh_part.flatten().notesAndRests:
             element.stemDirection = "down"
-            piano_part.insert(element.offset, element)
 
-        self._insert_pedal(piano_part, section_data)
-        self._insert_cc11_curves(piano_part)
-        piano_part.insert(0, self.default_instrument)
+        for part in (rh_part, lh_part):
+            self._insert_pedal(part, section_data)
+            self._insert_cc11_curves(part)
+            part.insert(0, self.default_instrument)
 
         profile_name = (
             self.cfg.get("humanize_profile")
             or section_data.get("humanize_profile")
             or self.global_settings.get("humanize_profile")
         )
-        if profile_name:
-            humanizer.apply(piano_part, profile_name)
+        for part in (rh_part, lh_part):
+            if profile_name:
+                humanizer.apply(part, profile_name)
 
         global_profile = self.cfg.get("global_humanize_profile") or self.global_settings.get("global_humanize_profile")
-        if global_profile:
-            humanizer.apply(piano_part, global_profile)
+        for part in (rh_part, lh_part):
+            if global_profile:
+                humanizer.apply(part, global_profile)
 
-        self._apply_measure_rubato(piano_part)
+        for part in (rh_part, lh_part):
+            self._apply_measure_rubato(part)
 
-        return piano_part
+        return {"piano_rh": rh_part, "piano_lh": lh_part}

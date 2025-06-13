@@ -109,6 +109,7 @@ class PianoGenerator(BasePartGenerator):
         super().__init__(*args, **kwargs)
         self.cfg: dict = kwargs.copy()
         self._prev_voicings = {"RH": None, "LH": None}
+        self._prev_last_pitch = {"RH": None, "LH": None}
         # ...他の初期化処理...
 
     def _get_pattern_keys(self, musical_intent: Dict[str, Any], overrides: Optional[PartOverride]) -> Tuple[str, str]:
@@ -241,24 +242,39 @@ class PianoGenerator(BasePartGenerator):
     ) -> Optional[stream.GeneralNote]:
         if not pitches:
             return None
+
+        def choose_pitch() -> pitch.Pitch:
+            last = self._prev_last_pitch.get(hand)
+            if last is None:
+                return min(pitches, key=lambda p: p.ps)
+            candidates = [p.transpose(oct) for p in pitches for oct in (-12, 0, 12)]
+            return min(candidates, key=lambda p: abs(p.ps - last.ps))
+
+        selected_pitch = choose_pitch()
+
         if event_type in ("octave_root", "octave"):
-            root_pitch = min(pitches, key=lambda p: p.ps)
-            return m21chord.Chord([root_pitch, root_pitch.transpose(12)], quarterLength=duration_ql)
+            elem = m21chord.Chord([selected_pitch, selected_pitch.transpose(12)], quarterLength=duration_ql)
         elif event_type == "root":
-            root_pitch = min(pitches, key=lambda p: p.ps)
-            return note.Note(root_pitch, quarterLength=duration_ql)
+            elem = note.Note(selected_pitch, quarterLength=duration_ql)
         elif event_type == "chord_high_voices":
             high_pitches = sorted(pitches, key=lambda p: p.ps)[-3:] if len(pitches) >= 3 else pitches
-            return m21chord.Chord(high_pitches, quarterLength=duration_ql)
+            elem = m21chord.Chord(high_pitches, quarterLength=duration_ql)
+            selected_pitch = min(high_pitches, key=lambda p: abs(p.ps - selected_pitch.ps))
         elif event_type == "chord":
-            return m21chord.Chord(pitches, quarterLength=duration_ql)
+            elem = m21chord.Chord(pitches, quarterLength=duration_ql)
         else:
             logger.warning(f"Unknown pattern event type: '{event_type}'. Using default for {hand}.")
             if hand == "RH":
-                return m21chord.Chord(pitches, quarterLength=duration_ql)
+                elem = m21chord.Chord(pitches, quarterLength=duration_ql)
             else:
-                root_pitch = min(pitches, key=lambda p: p.ps)
-                return note.Note(root_pitch, quarterLength=duration_ql)
+                elem = note.Note(selected_pitch, quarterLength=duration_ql)
+
+        if isinstance(elem, m21chord.Chord):
+            chosen = min(elem.pitches, key=lambda p: abs(p.ps - selected_pitch.ps))
+        else:
+            chosen = elem.pitch
+        self._prev_last_pitch[hand] = chosen
+        return elem
 
     def _insert_pedal(self, part: stream.Part, section_data: Dict[str, Any]):
         intensity = section_data.get("musical_intent", {}).get("intensity", "medium")

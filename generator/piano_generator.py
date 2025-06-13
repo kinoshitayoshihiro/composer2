@@ -110,6 +110,8 @@ class PianoGenerator(BasePartGenerator):
         self.cfg: dict = kwargs.copy()
         self._prev_voicings = {"RH": None, "LH": None}
         self._prev_last_pitch = {"RH": None, "LH": None}
+        self._style_cycle_index = {"RH": 0, "LH": 0}
+        self._current_cycle_section = None
         # ...他の初期化処理...
 
     def _get_pattern_keys(self, musical_intent: Dict[str, Any], overrides: Optional[PartOverride]) -> Tuple[str, str]:
@@ -133,6 +135,7 @@ class PianoGenerator(BasePartGenerator):
         duration_ql: float,
         rhythm_key: str,
         params: Dict[str, Any],
+        voicing_style: Optional[str] = None,
     ) -> stream.Part:
         part = stream.Part(id=f"Piano_{hand}")
         pattern_data = self.part_parameters.get(rhythm_key) or {}
@@ -149,12 +152,15 @@ class PianoGenerator(BasePartGenerator):
             ]
 
         octave = params.get(f"default_{hand.lower()}_target_octave", 4 if hand == "RH" else 2)
+        if params.get("random_octave_shift"):
+            octave += self.rng.choice([-1, 1])
         num_voices = params.get(f"default_{hand.lower()}_num_voices", 4 if hand == "RH" else 2)
-        voicing_style = params.get(
+        default_style = "spread" if hand == "RH" else "closed"
+        chosen_style = voicing_style or params.get(
             f"default_{hand.lower()}_voicing_style",
-            "spread_upper" if hand == "RH" else "closed_low",
+            default_style,
         )
-        voiced_pitches = self._voice_minimal_leap(hand, cs, num_voices, octave, voicing_style)
+        voiced_pitches = self._voice_minimal_leap(hand, cs, num_voices, octave, chosen_style)
 
         if not voiced_pitches:
             part.insert(0, note.Rest(quarterLength=duration_ql))
@@ -192,13 +198,17 @@ class PianoGenerator(BasePartGenerator):
         cs_copy.closedPosition(inPlace=True)
         if not cs_copy.pitches:
             return []
-        bottom_pitch = cs_copy.pitches[0]
+        pitches = list(cs_copy.pitches)
+        if style == "spread" and len(pitches) > 1:
+            pitches = [pitches[0]] + [p.transpose(12) for p in pitches[1:]]
+        elif style == "inverted" and len(pitches) > 0:
+            pitches = pitches[1:] + [pitches[0].transpose(12)]
 
+        bottom_pitch = pitches[0]
         target_pitch_ref = note.Note(bottom_pitch.name, octave=octave)
         transpose_interval = interval.Interval(bottom_pitch, target_pitch_ref)
-        cs_copy.transpose(transpose_interval, inPlace=True)
+        pitches = [p.transpose(transpose_interval) for p in pitches]
 
-        pitches = list(cs_copy.pitches)
         return pitches[:num_voices] if num_voices is not None and len(pitches) > num_voices else pitches
 
     def _voice_minimal_leap(
@@ -414,8 +424,19 @@ class PianoGenerator(BasePartGenerator):
         piano_params = section_data.get("part_params", {}).get("piano", {})
         rh_key, lh_key = self._get_pattern_keys(musical_intent, self.overrides)
 
-        rh_part = self._render_hand_part("RH", cs, duration_ql, rh_key, piano_params)
-        lh_part = self._render_hand_part("LH", cs, duration_ql, lh_key, piano_params)
+        section_name = section_data.get("section_name")
+        if section_name != self._current_cycle_section:
+            self._style_cycle_index = {"RH": 0, "LH": 0}
+            self._current_cycle_section = section_name
+        style_sequence = piano_params.get("voicing_style_sequence", ["spread", "closed", "inverted"])
+
+        rh_style = style_sequence[self._style_cycle_index["RH"] % len(style_sequence)]
+        lh_style = style_sequence[self._style_cycle_index["LH"] % len(style_sequence)]
+        self._style_cycle_index["RH"] += 1
+        self._style_cycle_index["LH"] += 1
+
+        rh_part = self._render_hand_part("RH", cs, duration_ql, rh_key, piano_params, voicing_style=rh_style)
+        lh_part = self._render_hand_part("LH", cs, duration_ql, lh_key, piano_params, voicing_style=lh_style)
 
         ov = self.overrides.model_dump(exclude_unset=True) if self.overrides else {}
         rh_part = self._apply_weak_beat(rh_part, ov.get("weak_beat_style_rh", "none"))

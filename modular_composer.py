@@ -23,7 +23,7 @@ from music21 import instrument as m21inst, meter, stream, tempo
 from utilities.generator_factory import GenFactory  # type: ignore
 import utilities.humanizer as humanizer  # type: ignore
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------------
@@ -85,12 +85,32 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "-o",
         help="MIDI 出力ディレクトリを上書き",
     )
+    p.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="詳しいログ(INFO)を表示"
+    )
+    p.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        type=str.upper,
+        help="ログレベルを指定"
+    )
     p.add_argument("--dry-run", action="store_true", help="動作検証のみ")
     return p
 
 
 def main_cli() -> None:
     args = build_arg_parser().parse_args()
+
+    level = logging.WARNING
+    if args.verbose:
+        level = logging.INFO
+    if args.log_level:
+        level = getattr(logging, args.log_level)
+    logging.getLogger().setLevel(level)
+    logger.setLevel(level)
 
     # 1) 設定 & データロード -------------------------------------------------
     main_cfg = load_main_cfg(Path(args.main_cfg))

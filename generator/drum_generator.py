@@ -16,7 +16,7 @@ from music21 import (
 
 from .base_part_generator import BasePartGenerator
 from utilities.core_music_utils import get_time_signature_object, MIN_NOTE_DURATION_QL
-from utilities.onset_heatmap import build_heatmap, RESOLUTION
+from utilities.onset_heatmap import build_heatmap, RESOLUTION, load_heatmap
 from utilities import humanizer
 from utilities.humanizer import apply_humanization_to_element
 from utilities.safe_get import safe_get
@@ -130,9 +130,12 @@ class AccentMapper:
         self.ghost_density_range = ghost_density_range
 
     def accent(self, rel: float, velocity: int) -> int:
+        return self.get_velocity(rel, velocity)
+
+    def get_velocity(self, rel: float, base_velocity: int) -> int:
         if rel >= self.threshold:
-            return min(127, int(velocity * 1.2))
-        return velocity
+            return min(127, int(base_velocity * 1.2))
+        return base_velocity
 
     def ghost_density(self, rel: float) -> float:
         low, high = self.ghost_density_range
@@ -335,7 +338,7 @@ class DrumGenerator(BasePartGenerator):
             heatmap_json_path = str(Path("data/heatmap.json").resolve())
 
         heatmap_json_path = str(Path(heatmap_json_path).expanduser().resolve())
-        self.heatmap = load_heatmap_data(heatmap_json_path)
+        self.heatmap = load_heatmap(heatmap_json_path)
         self.max_heatmap_value = max(self.heatmap.values()) if self.heatmap else 0
         self.heatmap_resolution = self.main_cfg.get("heatmap_resolution", RESOLUTION)
         self.heatmap_threshold = self.main_cfg.get("heatmap_threshold", 1)
@@ -1233,6 +1236,15 @@ class DrumGenerator(BasePartGenerator):
 
             final_dur = event_dur * time_scale_factor
             final_velocity = max(1, min(127, int(base_velocity * vel_factor)))
+
+            bin_idx = int((final_offset * self.heatmap_resolution)) % self.heatmap_resolution
+            heat_val = self.heatmap.get(bin_idx, 0)
+            rel = heat_val / self.max_heatmap_value if self.max_heatmap_value else 0
+            final_velocity = self.accent_mapper.get_velocity(rel, final_velocity)
+            if "chh" in inst_name.lower():
+                if self.rng.random() > self.accent_mapper.ghost_density(rel):
+                    continue
+
             midi_pitch = GM_DRUM_MAP.get(inst_name.lower())
 
             if midi_pitch:

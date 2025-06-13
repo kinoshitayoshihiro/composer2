@@ -79,7 +79,8 @@ def sanitize_chord_label(label: Optional[str]) -> Optional[str]:
     s = s.replace("dim", "dim")
     s = s.replace("aug", "+")
     s = s.replace("(", "").replace(")", "")
-    s = s.replace("add9", "add9")
+    s = re.sub(r"add\s*9", "add9", s, flags=re.IGNORECASE)
+    s = re.sub(r"sus\s*2", "sus2", s, flags=re.IGNORECASE)
 
     if "/" in s:
         parts = s.split("/")

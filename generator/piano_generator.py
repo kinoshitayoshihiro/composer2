@@ -582,9 +582,9 @@ class PianoGenerator(BasePartGenerator):
         for part in (rh_part, lh_part):
             self._apply_measure_rubato(part)
 
-        rh_part.id = "piano_rh"
+        # 結合して 1 Part を返していたコードを削除
+        rh_part.id  = "piano_rh"
         rh_part.partName = "Piano RH"
-        lh_part.id = "piano_lh"
+        lh_part.id  = "piano_lh"
         lh_part.partName = "Piano LH"
-
         return {"piano_rh": rh_part, "piano_lh": lh_part}

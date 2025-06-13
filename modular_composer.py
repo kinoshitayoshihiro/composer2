@@ -3,7 +3,7 @@
 # - chordmap(YAML) をロード
 # - 各楽器ごとに 1 つだけ Part を用意
 # - chordmap に含まれる **absolute_offset_beats** を唯一の座標系として採用
-#   * Generator には "セクション内 0 拍起点" でデータを渡す
+#   * Generator には "セクション内 0 拍点" でデータを渡す
 #   * Score へ入れる時のみ section_start_q を加算
 # - Humanizer を part → global の順に適用
 # ---------------------------------------------------------

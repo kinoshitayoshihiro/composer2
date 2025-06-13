@@ -238,20 +238,34 @@ def main_cli() -> None:
                     next_section_data=next_block_data,
                 )
 
-                def _ensure_part(key: str) -> stream.Part:
-                    if key not in part_streams:
-                        p = stream.Part(id=key)
-                        try:
-                            p.insert(0, m21inst.fromString(key))
-                        except Exception:
-                            p.partName = key
-                        part_streams[key] = p
-                    return part_streams[key]
+                # result_stream が dict/list/tuple かを判定して
+                # 全部のパートを確実に挿入する新ロジック
+                if isinstance(result_stream, dict):
+                    items = result_stream.items()
+                elif isinstance(result_stream, (list, tuple)):
+                    items = []
+                    for idx, sub in enumerate(result_stream):
+                        pid = getattr(sub, "id", f"{part_name}_{idx}")
+                        items.append((pid, sub))
+                else:
+                    items = [(part_name, result_stream)]
 
-                def _insert_stream(target_key: str, part_blk_stream: stream.Stream) -> None:
-                    part_dest = _ensure_part(target_key)
-                    for elem in part_blk_stream.flatten().notesAndRests:
-                        part_dest.insert(
+                # 各パートを初期化＆ノート挿入
+                for pid, sub_stream in items:
+                    if pid not in part_streams:
+                        p = stream.Part(id=pid)
+                        try:
+                            p.insert(0, m21inst.fromString(pid))
+                        except Exception:
+                            p.partName = pid
+                        part_streams[pid] = p
+                    dest = part_streams[pid]
+                    for el in sub_stream.flatten().notesAndRests:
+                        dest.insert(
+                            section_start_q + block_start + el.offset,
+                            clone_element(el),
+                        )
+
                             section_start_q + block_start + elem.offset,
                             clone_element(elem),
                         )

@@ -494,7 +494,9 @@ class DrumGenerator(BasePartGenerator):
             self.instrument.midiChannel = 9
 
         # drum_patterns.yml をロードして raw_pattern_lib にマージ
-        lib_from_files = self._load_pattern_lib(["data/drum_patterns.yml"])
+        lib_from_files = self._load_pattern_lib(
+            self.main_cfg["paths"]["drum_pattern_files"]
+        )
         if lib_from_files:
             self.raw_pattern_lib.update(lib_from_files)
             logger.info(

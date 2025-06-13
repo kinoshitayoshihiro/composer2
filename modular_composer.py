@@ -238,27 +238,33 @@ def main_cli() -> None:
                     next_section_data=next_block_data,
                 )
 
-                if isinstance(result_stream, dict):
-                    for key, part_blk_stream in result_stream.items():
-                        if key not in part_streams:
-                            p = stream.Part(id=key)
-                            try:
-                                p.insert(0, m21inst.fromString(key))
-                            except Exception:
-                                p.partName = key
-                            part_streams[key] = p
-                        for elem in part_blk_stream.flatten().notesAndRests:
-                            part_streams[key].insert(
-                                section_start_q + block_start + elem.offset,
-                                clone_element(elem),
-                            )
-                else:
-                    part_blk_stream = result_stream
+                def _ensure_part(key: str) -> stream.Part:
+                    if key not in part_streams:
+                        p = stream.Part(id=key)
+                        try:
+                            p.insert(0, m21inst.fromString(key))
+                        except Exception:
+                            p.partName = key
+                        part_streams[key] = p
+                    return part_streams[key]
+
+                def _insert_stream(target_key: str, part_blk_stream: stream.Stream) -> None:
+                    part_dest = _ensure_part(target_key)
                     for elem in part_blk_stream.flatten().notesAndRests:
-                        part_streams[part_name].insert(
+                        part_dest.insert(
                             section_start_q + block_start + elem.offset,
                             clone_element(elem),
                         )
+
+                if isinstance(result_stream, dict):
+                    for key, part_blk_stream in result_stream.items():
+                        _insert_stream(key, part_blk_stream)
+                elif isinstance(result_stream, (list, tuple)):
+                    for idx, part_blk_stream in enumerate(result_stream):
+                        stream_id = getattr(part_blk_stream, "id", None) or f"{part_name}_{idx}"
+                        _insert_stream(stream_id, part_blk_stream)
+                else:
+                    _insert_stream(part_name, result_stream)
 
     # 4) Humanizer -----------------------------------------------------------
     for name, p_stream in part_streams.items():

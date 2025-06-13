@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 class PartOverride(BaseModel):
     # Common overrides
     rhythm_key: Optional[str] = None
+    rhythm_key_rh: Optional[str] = None
+    rhythm_key_lh: Optional[str] = None
     velocity: Optional[int] = Field(None, ge=1, le=127)
     humanize_opt: Optional[bool] = None
     template_name: Optional[str] = None

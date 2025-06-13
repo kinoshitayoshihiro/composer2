@@ -192,6 +192,7 @@ def main_cli() -> None:
                 "chord_symbol_for_voicing": ch_ev.get("chord_symbol_for_voicing"),
                 "specified_bass_for_voicing": ch_ev.get("specified_bass_for_voicing"),
                 "original_chord_label": ch_ev.get("original_chord_label"),
+                "mode": sec.get("expression_details", {}).get("section_mode"),
                 "musical_intent": {
                     "section_name": label,
                     "chords": [ch_ev],

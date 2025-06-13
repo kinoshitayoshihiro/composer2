@@ -34,6 +34,7 @@ try:
         MIN_NOTE_DURATION_QL,
     )
     from utilities.override_loader import PartOverride
+    from utilities.scale_registry import ScaleRegistry
 except ModuleNotFoundError as e:
     raise ModuleNotFoundError("Required dependencies are missing. Please run 'pip install -r requirements.txt'.") from e
 
@@ -114,9 +115,14 @@ class PianoGenerator(BasePartGenerator):
         self._current_cycle_section = None
         # ...他の初期化処理...
 
+    def _find_pattern_by_tags(self, tags: List[str], hand: str) -> Optional[str]:
+        for key, data in self.part_parameters.items():
+            pat_tags = data.get("tags") or []
+            if hand.lower() in pat_tags and all(t in pat_tags for t in tags):
+                return key
+        return None
+
     def _get_pattern_keys(self, musical_intent: Dict[str, Any], overrides: Optional[PartOverride]) -> Tuple[str, str]:
-        if overrides and getattr(overrides, "rhythm_key_rh", None) and getattr(overrides, "rhythm_key_lh", None):
-            return overrides.rhythm_key_rh, overrides.rhythm_key_lh
         emotion = musical_intent.get("emotion", "default")
         intensity = musical_intent.get("intensity", "medium")
         bucket = EMO_TO_BUCKET_PIANO.get(emotion, "default")
@@ -136,6 +142,7 @@ class PianoGenerator(BasePartGenerator):
         rhythm_key: str,
         params: Dict[str, Any],
         voicing_style: Optional[str] = None,
+        mode: Optional[str] = None,
     ) -> stream.Part:
         part = stream.Part(id=f"Piano_{hand}")
         pattern_data = self.part_parameters.get(rhythm_key) or {}
@@ -162,6 +169,24 @@ class PianoGenerator(BasePartGenerator):
         )
         voiced_pitches = self._voice_minimal_leap(hand, cs, num_voices, octave, chosen_style)
 
+        scale_pitches = None
+        if mode and cs.root():
+            try:
+                scl = ScaleRegistry.get(cs.root().name, mode)
+                root_pitch = cs.root().transpose(0)
+                root_pitch.octave = octave
+                int_third = interval.Interval(scl.pitchFromDegree(1), scl.pitchFromDegree(3))
+                int_fifth = interval.Interval(scl.pitchFromDegree(1), scl.pitchFromDegree(5))
+                scale_pitches = {
+                    "root": root_pitch,
+                    "third": root_pitch.transpose(int_third),
+                    "fifth": root_pitch.transpose(int_fifth),
+                }
+                logger.debug(f"Scale pitches for {hand}: {scale_pitches}")
+            except Exception as e:
+                logger.debug(f"scale pitch calc failed: {e}")
+                scale_pitches = None
+
         if not voiced_pitches:
             part.insert(0, note.Rest(quarterLength=duration_ql))
             return part
@@ -181,7 +206,9 @@ class PianoGenerator(BasePartGenerator):
             vel_factor = float(p_event.get("velocity_factor", 1.0))
             velocity = int(base_velocity * vel_factor)
             event_type = p_event.get("type", "chord")
-            element_to_add = self._create_music_element(event_type, voiced_pitches, duration, hand)
+            element_to_add = self._create_music_element(
+                event_type, voiced_pitches, duration, hand, scale_pitches
+            )
             if element_to_add:
                 element_to_add.volume = m21volume.Volume(velocity=velocity)
                 part.insert(offset, element_to_add)
@@ -248,7 +275,12 @@ class PianoGenerator(BasePartGenerator):
         return best
 
     def _create_music_element(
-        self, event_type: str, pitches: List[pitch.Pitch], duration_ql: float, hand: str
+        self,
+        event_type: str,
+        pitches: List[pitch.Pitch],
+        duration_ql: float,
+        hand: str,
+        scale_pitches: Optional[Dict[str, pitch.Pitch]] = None,
     ) -> Optional[stream.GeneralNote]:
         if not pitches:
             return None
@@ -266,6 +298,12 @@ class PianoGenerator(BasePartGenerator):
             elem = m21chord.Chord([selected_pitch, selected_pitch.transpose(12)], quarterLength=duration_ql)
         elif event_type == "root":
             elem = note.Note(selected_pitch, quarterLength=duration_ql)
+        elif event_type == "root_octave_down" and scale_pitches:
+            elem = note.Note(scale_pitches["root"].transpose(-12), quarterLength=duration_ql)
+        elif event_type == "minor_third_low" and scale_pitches:
+            elem = note.Note(scale_pitches["third"].transpose(-12), quarterLength=duration_ql)
+        elif event_type == "fifth_low" and scale_pitches:
+            elem = note.Note(scale_pitches["fifth"].transpose(-12), quarterLength=duration_ql)
         elif event_type == "chord_high_voices":
             high_pitches = sorted(pitches, key=lambda p: p.ps)[-3:] if len(pitches) >= 3 else pitches
             elem = m21chord.Chord(high_pitches, quarterLength=duration_ql)
@@ -422,7 +460,37 @@ class PianoGenerator(BasePartGenerator):
         duration_ql = section_data.get("q_length", 4.0)
         musical_intent = section_data.get("musical_intent", {})
         piano_params = section_data.get("part_params", {}).get("piano", {})
-        rh_key, lh_key = self._get_pattern_keys(musical_intent, self.overrides)
+
+        rh_key = None
+        lh_key = None
+        if self.overrides:
+            rh_key = (
+                getattr(self.overrides, "rhythm_key_rh", None)
+                or getattr(self.overrides, "rhythm_key", None)
+            )
+            lh_key = (
+                getattr(self.overrides, "rhythm_key_lh", None)
+                or getattr(self.overrides, "rhythm_key", None)
+            )
+
+        if not rh_key:
+            rh_key = piano_params.get("rhythm_key_rh") or piano_params.get("rhythm_key")
+        if not lh_key:
+            lh_key = piano_params.get("rhythm_key_lh") or piano_params.get("rhythm_key")
+
+        if not rh_key or not lh_key:
+            def_rh, def_lh = self._get_pattern_keys(musical_intent, None)
+            rh_key = rh_key or def_rh
+            lh_key = lh_key or def_lh
+
+        if rh_key not in self.part_parameters:
+            cand = self._find_pattern_by_tags(rh_key.split(), "rh")
+            if cand:
+                rh_key = cand
+        if lh_key not in self.part_parameters:
+            cand = self._find_pattern_by_tags(lh_key.split(), "lh")
+            if cand:
+                lh_key = cand
 
         section_name = section_data.get("section_name")
         if section_name != self._current_cycle_section:
@@ -435,8 +503,13 @@ class PianoGenerator(BasePartGenerator):
         self._style_cycle_index["RH"] += 1
         self._style_cycle_index["LH"] += 1
 
-        rh_part = self._render_hand_part("RH", cs, duration_ql, rh_key, piano_params, voicing_style=rh_style)
-        lh_part = self._render_hand_part("LH", cs, duration_ql, lh_key, piano_params, voicing_style=lh_style)
+        mode = section_data.get("mode", self.global_key_signature_mode)
+        rh_part = self._render_hand_part(
+            "RH", cs, duration_ql, rh_key, piano_params, voicing_style=rh_style, mode=mode
+        )
+        lh_part = self._render_hand_part(
+            "LH", cs, duration_ql, lh_key, piano_params, voicing_style=lh_style, mode=mode
+        )
 
         ov = self.overrides.model_dump(exclude_unset=True) if self.overrides else {}
         rh_part = self._apply_weak_beat(rh_part, ov.get("weak_beat_style_rh", "none"))

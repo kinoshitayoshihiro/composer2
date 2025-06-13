@@ -239,23 +239,25 @@ def main_cli() -> None:
                 )
 
                 if isinstance(result_stream, dict):
-                    for key, part_blk_stream in result_stream.items():
-                        if key not in part_streams:
-                            p = stream.Part(id=key)
-                            try:
-                                p.insert(0, m21inst.fromString(key))
-                            except Exception:
-                                p.partName = key
-                            part_streams[key] = p
-                        for elem in part_blk_stream.flatten().notesAndRests:
-                            part_streams[key].insert(
-                                section_start_q + block_start + elem.offset,
-                                clone_element(elem),
-                            )
+                    iter_items = result_stream.items()
+                elif isinstance(result_stream, (list, tuple)):
+                    iter_items = []
+                    for idx, p_stream in enumerate(result_stream):
+                        key = getattr(p_stream, "id", f"{part_name}_{idx}")
+                        iter_items.append((key, p_stream))
                 else:
-                    part_blk_stream = result_stream
+                    iter_items = [(part_name, result_stream)]
+
+                for key, part_blk_stream in iter_items:
+                    if key not in part_streams:
+                        p = stream.Part(id=key)
+                        try:
+                            p.insert(0, m21inst.fromString(key))
+                        except Exception:
+                            p.partName = key
+                        part_streams[key] = p
                     for elem in part_blk_stream.flatten().notesAndRests:
-                        part_streams[part_name].insert(
+                        part_streams[key].insert(
                             section_start_q + block_start + elem.offset,
                             clone_element(elem),
                         )

@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 midi_output/*.mid
+
+heatmap.json
+modular_composer.egg-info/

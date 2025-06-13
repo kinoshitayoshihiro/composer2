@@ -494,18 +494,13 @@ class DrumGenerator(BasePartGenerator):
             self.instrument.midiChannel = 9
 
         # drum_patterns.yml をロードして raw_pattern_lib にマージ
-        try:
-            with open("data/drum_patterns.yml", encoding="utf-8") as f:
-                drum_patterns = yaml.safe_load(f) or {}
-                if isinstance(drum_patterns, dict):
-                    patterns_dict = drum_patterns.get("drum_patterns", drum_patterns)
-                    if isinstance(patterns_dict, dict):
-                        self.raw_pattern_lib.update(patterns_dict)
-                        logger.info(
-                            f"DrumGen __init__: loaded {len(patterns_dict)} patterns from data/drum_patterns.yml"
-                        )
-        except Exception as e:
-            logger.warning(f"DrumGen __init__: failed to load drum_patterns.yml: {e}")
+        lib_from_files = self._load_pattern_lib(["data/drum_patterns.yml"])
+        if lib_from_files:
+            self.raw_pattern_lib.update(lib_from_files)
+            logger.info(
+                "DrumGen __init__: loaded %d patterns from data/drum_patterns.yml",
+                len(lib_from_files),
+            )
 
         # 最終的なパターン辞書を part_parameters に適用
         self.part_parameters = self.raw_pattern_lib
@@ -1134,6 +1129,41 @@ class DrumGenerator(BasePartGenerator):
         for key, val in defaults.items():
             if key not in self.part_parameters:
                 self.part_parameters[key] = val
+
+    def _load_pattern_lib(self, paths: List[str | Path]) -> Dict[str, Any]:
+        """Load drum pattern definitions from YAML files.
+
+        Parameters
+        ----------
+        paths : list of str or Path
+            One or more YAML files containing pattern definitions. Each file may
+            contain multiple YAML documents. Documents may either provide a top
+            level ``drum_patterns`` mapping or the mapping itself.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Combined pattern dictionary keyed by style name.
+        """
+
+        library: Dict[str, Any] = {}
+        for p in paths:
+            try:
+                with Path(p).open("r", encoding="utf-8") as fh:
+                    for doc in yaml.safe_load_all(fh):
+                        if not isinstance(doc, dict):
+                            continue
+                        if "drum_patterns" in doc and isinstance(doc["drum_patterns"], dict):
+                            library.update(doc["drum_patterns"])
+                        else:
+                            library.update(doc)
+            except FileNotFoundError:
+                logger.warning(f"DrumGen _load_pattern_lib: file not found: {p}")
+            except Exception as exc:
+                logger.warning(
+                    f"DrumGen _load_pattern_lib: failed to load '{p}': {exc}"
+                )
+        return library
 
     def _resolve_style_key(
         self,

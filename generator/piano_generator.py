@@ -456,6 +456,10 @@ class PianoGenerator(BasePartGenerator):
             dur = section_data.get("q_length", 4.0)
             rh_part.insert(0, note.Rest(quarterLength=dur))
             lh_part.insert(0, note.Rest(quarterLength=dur))
+            rh_part.id = "piano_rh"
+            rh_part.partName = "Piano RH"
+            lh_part.id = "piano_lh"
+            lh_part.partName = "Piano LH"
             return {"piano_rh": rh_part, "piano_lh": lh_part}
         try:
             cs = harmony.ChordSymbol(chord_label)
@@ -464,6 +468,10 @@ class PianoGenerator(BasePartGenerator):
             dur = section_data.get("q_length", 4.0)
             rh_part.insert(0, note.Rest(quarterLength=dur))
             lh_part.insert(0, note.Rest(quarterLength=dur))
+            rh_part.id = "piano_rh"
+            rh_part.partName = "Piano RH"
+            lh_part.id = "piano_lh"
+            lh_part.partName = "Piano LH"
             return {"piano_rh": rh_part, "piano_lh": lh_part}
 
         duration_ql = section_data.get("q_length", 4.0)
@@ -573,5 +581,10 @@ class PianoGenerator(BasePartGenerator):
 
         for part in (rh_part, lh_part):
             self._apply_measure_rubato(part)
+
+        rh_part.id = "piano_rh"
+        rh_part.partName = "Piano RH"
+        lh_part.id = "piano_lh"
+        lh_part.partName = "Piano LH"
 
         return {"piano_rh": rh_part, "piano_lh": lh_part}

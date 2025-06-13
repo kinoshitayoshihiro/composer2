@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from music21 import instrument, expressions
+from music21 import instrument, expressions, stream
 from generator.piano_generator import PianoGenerator
 from utilities.override_loader import load_overrides
 
@@ -42,7 +42,11 @@ def test_mordent_and_grace(tmp_path: Path):
         "musical_intent": {},
         "part_params": {},
     }
-    part = gen.compose(section_data=section, overrides_root=ov_model)
-    notes = list(part.recurse().notes)
+    parts = gen.compose(section_data=section, overrides_root=ov_model)
+    combined = stream.Stream()
+    for p in parts.values():
+        for n in p.recurse().notes:
+            combined.insert(n.offset, n)
+    notes = list(combined.recurse().notes)
     assert any(n.duration.isGrace for n in notes)
     assert any(any(isinstance(a, expressions.Mordent) for a in n.expressions) for n in notes)

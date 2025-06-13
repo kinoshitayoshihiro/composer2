@@ -1,4 +1,4 @@
-from music21 import instrument
+from music21 import instrument, stream
 from generator.piano_generator import PianoGenerator
 
 
@@ -42,8 +42,12 @@ def test_measure_rubato_shift():
         "musical_intent": {},
         "part_params": {},
     }
-    part = gen.compose(section_data=section)
-    offs = [float(n.offset) for n in part.recurse().notes]
+    parts = gen.compose(section_data=section)
+    combined = stream.Stream()
+    for p in parts.values():
+        for n in p.recurse().notes:
+            combined.insert(n.offset, n)
+    offs = [float(n.offset) for n in combined.recurse().notes]
     first = min(offs, key=lambda x: x)
     second = min((o for o in offs if o > 3.5), default=None)
     assert -0.04 <= first <= 0.04

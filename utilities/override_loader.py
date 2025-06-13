@@ -57,6 +57,8 @@ class PartOverride(BaseModel):
     weak_beat_style_lh: Optional[str] = None
     fill_on_4th: Optional[bool] = None
     fill_length_beats: Optional[float] = None
+    velocity_shift_rh: Optional[int] = None
+    velocity_shift_lh: Optional[int] = None
 
     # Drum specific
     ghost_hat_on_offbeat: Optional[bool] = None

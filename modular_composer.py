@@ -134,6 +134,17 @@ def main_cli() -> None:
     chordmap = load_chordmap_yaml(Path(paths["chordmap_path"]))
     rhythm_lib = load_rhythm_library(paths["rhythm_library_path"])
 
+    overrides_model = None
+    overrides_path = paths.get("arrangement_overrides_path")
+    if overrides_path:
+        try:
+            from utilities.override_loader import load_overrides  # type: ignore
+
+            overrides_model = load_overrides(overrides_path)
+            logger.info("Loaded arrangement overrides from %s", overrides_path)
+        except Exception as e:
+            logger.error("Failed to load arrangement overrides: %s", e)
+
     section_names: list[str] = main_cfg["sections_to_generate"]
     raw_sections: dict[str, Dict[str, Any]] = chordmap["sections"]
     sections: list[Dict[str, Any]] = []
@@ -222,7 +233,9 @@ def main_cli() -> None:
                 blk_data["part_params"] = part_cfg
 
                 part_blk_stream = gen.compose(
-                    section_data=blk_data, next_section_data=next_block_data
+                    section_data=blk_data,
+                    overrides_root=overrides_model,
+                    next_section_data=next_block_data,
                 )
                 for elem in part_blk_stream.flatten().notesAndRests:
                     part_streams[part_name].insert(

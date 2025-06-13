@@ -106,6 +106,7 @@ class PianoGenerator(BasePartGenerator):
         self.part_parameters = kwargs.get("part_parameters", {})
         self.chord_voicer = None
         ts_obj = get_time_signature_object(kwargs.get("global_time_signature", "4/4"))
+        self.global_time_signature_obj = ts_obj
         self.measure_duration = ts_obj.barDuration.quarterLength if ts_obj else 4.0
         super().__init__(*args, **kwargs)
         self.cfg: dict = kwargs.copy()
@@ -267,6 +268,53 @@ class PianoGenerator(BasePartGenerator):
             part.insert(t, ped)
             t += sustain_beats
 
+    def _apply_weak_beat(self, part: stream.Part, style: str) -> stream.Part:
+        if style in (None, "none"):
+            return part
+        beats = (
+            self.global_time_signature_obj.beatCount
+            if self.global_time_signature_obj
+            else 4
+        )
+        beat_len = (
+            self.global_time_signature_obj.beatDuration.quarterLength
+            if self.global_time_signature_obj
+            else 1.0
+        )
+        new_part = stream.Part(id=part.id)
+        for elem in part.flatten().notesAndRests:
+            rel = elem.offset
+            beat_pos = rel / beat_len
+            is_on_beat = abs(beat_pos - round(beat_pos)) < 0.001
+            beat_idx = int(round(beat_pos))
+            is_weak = False
+            if is_on_beat:
+                if beats == 4 and (beat_idx == 1 or beat_idx == 3):
+                    is_weak = True
+                elif beats == 3 and (beat_idx == 1 or beat_idx == 2):
+                    is_weak = True
+            if is_weak:
+                if style == "rest":
+                    continue
+                elif style == "ghost":
+                    base_vel = (
+                        elem.volume.velocity if elem.volume and elem.volume.velocity else 64
+                    )
+                    elem.volume = m21volume.Volume(velocity=max(1, int(base_vel * 0.4)))
+            new_part.insert(elem.offset, elem)
+        return new_part
+
+    def _add_fill(self, part: stream.Part, cs: harmony.ChordSymbol, length_beats: float) -> stream.Part:
+        if length_beats <= 0:
+            return part
+        offset = self.measure_duration - length_beats
+        if offset < 0:
+            return part
+        fill_chord = m21chord.Chord(cs.pitches, quarterLength=length_beats)
+        fill_chord.volume = m21volume.Volume(velocity=80)
+        part.insert(offset, fill_chord)
+        return part
+
     def _render_part(
         self,
         section_data: Dict[str, Any],
@@ -296,6 +344,13 @@ class PianoGenerator(BasePartGenerator):
 
         rh_part = self._render_hand_part("RH", cs, duration_ql, rh_key, piano_params)
         lh_part = self._render_hand_part("LH", cs, duration_ql, lh_key, piano_params)
+
+        ov = self.overrides.model_dump(exclude_unset=True) if self.overrides else {}
+        rh_part = self._apply_weak_beat(rh_part, ov.get("weak_beat_style_rh", "none"))
+        lh_part = self._apply_weak_beat(lh_part, ov.get("weak_beat_style_lh", "none"))
+        if ov.get("fill_on_4th"):
+            fill_len = float(ov.get("fill_length_beats", 0.5))
+            rh_part = self._add_fill(rh_part, cs, fill_len)
 
         for element in rh_part.flatten().notesAndRests:
             element.stemDirection = "up"

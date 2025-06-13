@@ -238,29 +238,47 @@ def main_cli() -> None:
                     next_section_data=next_block_data,
                 )
 
+                # result_stream が dict/list/tuple かを判定して
+                # 全部のパートを確実に挿入する新ロジック
                 if isinstance(result_stream, dict):
-                    iter_items = result_stream.items()
+                    items = result_stream.items()
                 elif isinstance(result_stream, (list, tuple)):
-                    iter_items = []
-                    for idx, p_stream in enumerate(result_stream):
-                        key = getattr(p_stream, "id", f"{part_name}_{idx}")
-                        iter_items.append((key, p_stream))
+                    items = []
+                    for idx, sub in enumerate(result_stream):
+                        pid = getattr(sub, "id", f"{part_name}_{idx}")
+                        items.append((pid, sub))
                 else:
-                    iter_items = [(part_name, result_stream)]
+                    items = [(part_name, result_stream)]
 
-                for key, part_blk_stream in iter_items:
-                    if key not in part_streams:
-                        p = stream.Part(id=key)
+                # 各パートを初期化＆ノート挿入
+                for pid, sub_stream in items:
+                    if pid not in part_streams:
+                        p = stream.Part(id=pid)
                         try:
-                            p.insert(0, m21inst.fromString(key))
+                            p.insert(0, m21inst.fromString(pid))
                         except Exception:
-                            p.partName = key
-                        part_streams[key] = p
-                    for elem in part_blk_stream.flatten().notesAndRests:
-                        part_streams[key].insert(
+                            p.partName = pid
+                        part_streams[pid] = p
+                    dest = part_streams[pid]
+                    for el in sub_stream.flatten().notesAndRests:
+                        dest.insert(
+                            section_start_q + block_start + el.offset,
+                            clone_element(el),
+                        )
+
                             section_start_q + block_start + elem.offset,
                             clone_element(elem),
                         )
+
+                if isinstance(result_stream, dict):
+                    for key, part_blk_stream in result_stream.items():
+                        _insert_stream(key, part_blk_stream)
+                elif isinstance(result_stream, (list, tuple)):
+                    for idx, part_blk_stream in enumerate(result_stream):
+                        stream_id = getattr(part_blk_stream, "id", None) or f"{part_name}_{idx}"
+                        _insert_stream(stream_id, part_blk_stream)
+                else:
+                    _insert_stream(part_name, result_stream)
 
     # 4) Humanizer -----------------------------------------------------------
     for name, p_stream in part_streams.items():

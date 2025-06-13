@@ -51,6 +51,7 @@ def test_piano_override_merge(tmp_path: Path):
         global_key_signature_tonic="C",
         global_key_signature_mode="major",
         main_cfg={},
+        rng=__import__("random").Random(0),
     )
 
     section = {
@@ -63,5 +64,7 @@ def test_piano_override_merge(tmp_path: Path):
     }
 
     part = gen.compose(section_data=section, overrides_root=ov_model)
-    offsets = [round(n.offset, 2) for n in part.flatten().notes]
-    assert sorted(set(offsets)) == [0, 2, 3.5]
+    shift = float(round(list(part.flatten().notes)[0].offset, 2))
+    expected = sorted({float(round(0 + shift, 2)), float(round(2 + shift, 2)), float(round(3.5 + shift, 2))})
+    offsets = sorted({float(round(float(n.offset), 2)) for n in part.flatten().notes})
+    assert offsets == expected

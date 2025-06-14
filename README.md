@@ -49,9 +49,14 @@ By default the resulting MIDI is written to the directory specified by `paths.ou
 
 ## Advanced Bass Features
 
-| Feature | Override Key | Example |
-|---------|--------------|---------|
-| Mirror vocal melody | `mirror_melody` | `mirror_melody: true` |
-| Kick-lock velocity | `velocity_shift_on_kick` | `velocity_shift_on_kick: 12` |
-| II–V build-up | `approach_style_on_4th` | `approach_style_on_4th: subdom_dom` |
-| Velocity envelope | `velocity_envelope` | `velocity_envelope: [[0.0,60],[2.0,90]]` |
+| Feature               | Override Key              | Example                                          |
+|-----------------------|---------------------------|--------------------------------------------------|
+| Mirror vocal melody   | `mirror_melody`           | `mirror_melody: true`                            |
+| Kick-lock velocity    | `velocity_shift_on_kick`  | `velocity_shift_on_kick: 12`                     |
+| II–V build-up         | `approach_style_on_4th`   | `approach_style_on_4th: subdom_dom`              |
+| Velocity envelope     | `velocity_envelope`       | `velocity_envelope: [[0.0,60],[2.0,90]]`         |
+
+## Humanize – intensity envelope / swing override
+
+Velocity scaling now follows each section’s `musical_intent.intensity`.  
+Overrides may specify `swing_ratio` to shift off-beats with a custom feel.

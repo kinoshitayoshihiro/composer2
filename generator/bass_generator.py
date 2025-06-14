@@ -773,6 +773,31 @@ class BassGenerator(BasePartGenerator):
             for measure_idx in range(num_measures_in_block):
                 measure_offset = measure_idx * self.measure_duration
                 measure_notes_raw: List[Tuple[float, note.Note]] = []
+                remaining_in_section = block_duration - measure_offset
+                approach_on_4th_this = approach_on_4th_final or (
+                    remaining_in_section <= self.measure_duration * 2
+                )
+                root_for_measure = root_note_obj
+                target_for_approach = next_chord_root
+                if (
+                    approach_style_final == "subdom_dom"
+                    and remaining_in_section <= self.measure_duration * 2
+                ):
+                    if remaining_in_section > self.measure_duration:
+                        try:
+                            root_for_measure = current_scale.pitchFromDegree(2)
+                        except Exception:
+                            root_for_measure = root_note_obj
+                        try:
+                            target_for_approach = current_scale.pitchFromDegree(5)
+                        except Exception:
+                            target_for_approach = next_chord_root
+                    else:
+                        try:
+                            root_for_measure = current_scale.pitchFromDegree(5)
+                        except Exception:
+                            root_for_measure = root_note_obj
+                        target_for_approach = next_chord_root
                 for beat_idx in range(beats_per_measure):
                     current_rel_offset_in_measure = beat_idx * beat_duration_ql
                     abs_offset_in_block_current_note = (
@@ -786,7 +811,7 @@ class BassGenerator(BasePartGenerator):
                     current_note_velocity = final_base_velocity_for_algo
                     note_duration_ql = beat_duration_ql
                     if beat_idx == 0:
-                        chosen_pitch_base = root_note_obj
+                        chosen_pitch_base = root_for_measure
                         current_note_velocity = min(
                             127, final_base_velocity_for_algo + strong_beat_vel_boost
                         )
@@ -803,7 +828,7 @@ class BassGenerator(BasePartGenerator):
                             final_base_velocity_for_algo + (strong_beat_vel_boost // 2),
                         )
                     else:
-                        chosen_pitch_base = root_note_obj
+                        chosen_pitch_base = root_for_measure
                         current_note_velocity = max(
                             1, final_base_velocity_for_algo - off_beat_vel_reduction
                         )
@@ -829,8 +854,7 @@ class BassGenerator(BasePartGenerator):
                     measure_notes_raw, weak_beat_style_final
                 )
                 is_last_measure_in_block = measure_idx == num_measures_in_block - 1
-                if approach_on_4th_final and next_chord_root:
-                    target_for_approach = next_chord_root
+                if approach_on_4th_this and target_for_approach:
                     processed_measure_notes = self._insert_approach_note_to_measure(
                         processed_measure_notes,
                         m21_cs,

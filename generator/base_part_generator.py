@@ -110,7 +110,8 @@ class BasePartGenerator(ABC):
             humanize_params = part_specific_humanize_params or {}
             if humanize_params.get("enable", False) and p.flatten().notes:
                 try:
-                    template = humanize_params.get("template_name", "default_subtle")
+                    template = humanize_params.get(
+                        "template_name", "default_subtle")
                     custom = humanize_params.get("custom_params", {})
                     p = apply_humanization_to_part(
                         p, template_name=template, custom_params=custom
@@ -125,20 +126,22 @@ class BasePartGenerator(ABC):
                     )
             return p
 
-        intensity = section_data.get("musical_intent", {}).get("intensity", "medium")
-        scale = {"low": 0.9, "medium": 1.0, "high": 1.1, "very_high": 1.2}.get(intensity, 1.0)
+        intensity = section_data.get(
+            "musical_intent", {}).get("intensity", "medium")
+        scale = {"low": 0.9, "medium": 1.0, "high": 1.1,
+                 "very_high": 1.2}.get(intensity, 1.0)
 
-        def final_process(p: stream.Part) -> stream.Part:
+        def final_process(p: stream.Part, ratio: float | None = None) -> stream.Part:
             part = process_one(p)
-            # ① swing_ratio があれば必ず humanizer.apply でオフビートずらしを実行
-            if swing is not None:
-                humanize_apply(
-                    part,
-                    profile_name=None,
-                    swing_ratio=float(swing)
-                )
-            # ② その後にベロシティ・エンベロープを適用
-            apply_envelope(part, 0, int(section_data.get("q_length", 0)), scale)
+            humanize_apply(part, None)          # 基本ヒューマナイズ
+            if ratio is not None:               # Swing が指定されていれば適用
+                apply_swing(part, float(ratio))
+            apply_envelope(                      # intensity → Velocity スケール
+                part,
+                0,
+                int(section_data.get("q_length", 0)),
+                scale,
+            )
             return part
 
         if isinstance(parts, dict):

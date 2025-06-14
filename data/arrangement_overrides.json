@@ -156,5 +156,10 @@
       "palm_mute": true,
       "humanize_timing_sec": 0.010
     }
+  },
+  "Bridge": {
+    "bass": {
+      "mirror_melody": true
+    }
   }
 }

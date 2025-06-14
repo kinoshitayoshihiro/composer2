@@ -372,15 +372,6 @@ def main_cli() -> None:
                             clone_element(el),
                         )
 
-                if isinstance(result_stream, dict):
-                    for key, part_blk_stream in result_stream.items():
-                        _insert_stream(key, part_blk_stream)
-                elif isinstance(result_stream, (list, tuple)):
-                    for idx, part_blk_stream in enumerate(result_stream):
-                        stream_id = getattr(part_blk_stream, "id", None) or f"{part_name}_{idx}"
-                        _insert_stream(stream_id, part_blk_stream)
-                else:
-                    _insert_stream(part_name, result_stream)
 
     # 4) Humanizer -----------------------------------------------------------
     for name, p_stream in part_streams.items():

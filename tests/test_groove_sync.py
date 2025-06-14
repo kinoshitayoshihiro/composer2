@@ -26,7 +26,7 @@ def test_groove_offsets(tmp_path: Path, rhythm_library):
         "global_settings": {"groove_profile_path": str(gp_path), "groove_strength": 1.0},
         "vocal_midi_path_for_drums": "",
         "heatmap_json_path_for_drums": str(heatmap_path),
-        "paths": {"drum_pattern_files": ["data/drum_patterns.yml"]},
+        "paths": {"rhythm_library_path": "data/rhythm_library.yml"},
     }
     pattern_lib = rhythm_library.drum_patterns or {}
     pattern_lib["simple"] = {

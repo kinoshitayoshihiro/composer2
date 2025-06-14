@@ -43,7 +43,7 @@ def test_hat_suppressed_by_heatmap(tmp_path: Path, rhythm_library):
         "vocal_midi_path_for_drums": "",
         "heatmap_json_path_for_drums": str(heatmap_path),
         "rng_seed": 0,
-        "paths": {"drum_pattern_files": ["data/drum_patterns.yml"]},
+        "paths": {"rhythm_library_path": "data/rhythm_library.yml"},
     }
     drum = SimpleDrumGenerator(
         main_cfg=cfg,

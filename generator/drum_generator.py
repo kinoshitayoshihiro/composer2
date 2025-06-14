@@ -1117,8 +1117,12 @@ class DrumGenerator(BasePartGenerator):
 
         library: Dict[str, Any] = {}
         for p in paths:
+            p = Path(p)
+            if not p.is_absolute():
+                repo_root = Path(__file__).resolve().parents[1]
+                p = repo_root / p
             try:
-                with Path(p).open("r", encoding="utf-8") as fh:
+                with p.open("r", encoding="utf-8") as fh:
                     for doc in yaml.safe_load_all(fh):
                         if not isinstance(doc, dict):
                             continue

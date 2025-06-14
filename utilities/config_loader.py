@@ -125,10 +125,12 @@ def load_main_cfg(path: str | Path, *, strict: bool = True) -> Dict[str, Any]:
     return cfg
 
 
-def _abspath(base_dir: Path, path_or_none: Optional[str]) -> Optional[str]:
+def _abspath(base_dir: Path, path_or_none: Optional[str | list[str]]) -> Optional[str | list[str]]:
     """相対パスなら base_dir を前置して絶対パス文字列にする"""
     if path_or_none is None:
         return None
+    if isinstance(path_or_none, list):
+        return [str((base_dir / Path(p)).resolve()) for p in path_or_none]
     p = Path(path_or_none)
     return str((base_dir / p).resolve()) if not p.is_absolute() else str(p)
 

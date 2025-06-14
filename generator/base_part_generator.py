@@ -16,7 +16,7 @@ try:
     from utilities.humanizer import (
         apply_humanization_to_part,
         apply_envelope,
-        _apply_swing,
+        apply as humanize_apply,
     )
 except ModuleNotFoundError as e:
     raise ModuleNotFoundError(
@@ -73,11 +73,10 @@ class BasePartGenerator(ABC):
         else:
             self.overrides = None
 
-        swing = None
-        if self.overrides and self.overrides.swing_ratio is not None:
-            swing = self.overrides.swing_ratio
-        else:
-            swing = section_data.get("part_params", {}).get("swing_ratio")
+        swing = (
+            (self.overrides and getattr(self.overrides, "swing_ratio", None))
+            or section_data.get("part_params", {}).get("swing_ratio")
+        )
         if swing is not None:
             part_specific_humanize_params = {"swing_ratio": float(swing)}
 
@@ -129,8 +128,7 @@ class BasePartGenerator(ABC):
 
         def final_process(p: stream.Part) -> stream.Part:
             part = process_one(p)
-            if swing is not None:
-                _apply_swing(part, float(swing))
+            humanize_apply(part, None, swing_ratio=float(swing) if swing is not None else None)
             apply_envelope(part, 0, int(section_data.get("q_length", 0)), scale)
             return part
 

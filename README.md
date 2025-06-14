@@ -58,5 +58,26 @@ By default the resulting MIDI is written to the directory specified by `paths.ou
 
 ## Humanize – intensity envelope / swing override
 
-Velocity scaling now follows each section’s `musical_intent.intensity`.  
+Velocity scaling now follows each section’s `musical_intent.intensity`.
 Overrides may specify `swing_ratio` to shift off-beats with a custom feel.
+
+## Demo MIDI Generation
+
+After fixing drum pattern durations you can generate test MIDIs with the helper
+script:
+
+```bash
+bash run_generate_demo.sh
+```
+
+Alternatively run `make` directly:
+
+```bash
+bash -c "make demo && echo 'OK'"
+```
+
+If the command finishes without errors you should see the message:
+
+```
+drum_patterns の duration 欠損が解消されました
+```

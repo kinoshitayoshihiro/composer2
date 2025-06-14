@@ -56,7 +56,11 @@ class BasePartGenerator(ABC):
         groove_profile_path: Optional[str] = None,
         next_section_data: Optional[Dict[str, Any]] = None,
         part_specific_humanize_params: Optional[Dict[str, Any]] = None,
+        shared_tracks: Dict[str, Any] | None = None,
     ) -> stream.Part:
+        shared_tracks = shared_tracks or {}
+        section_data.setdefault("shared_tracks", {}).update(shared_tracks)
+
         section_label = section_data.get("section_name", "UnknownSection")
         if overrides_root:
             self.overrides = get_part_override(

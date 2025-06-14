@@ -319,6 +319,7 @@ class DrumGenerator(BasePartGenerator):
         # ここに他の初期化処理をまとめて書く
         self.logger = logging.getLogger("modular_composer.drum_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
+        self.kick_offsets: List[float] = []
         # もし、この後に独自の初期化処理があれば、ここに残してください。
         # 必須のデフォルトパターンが不足している場合に補充
         self._add_internal_default_patterns()
@@ -603,6 +604,7 @@ class DrumGenerator(BasePartGenerator):
         groove_profile_path: Optional[str] = None,
         next_section_data: Optional[Dict[str, Any]] = None,
         part_specific_humanize_params: Optional[Dict[str, Any]] = None,
+        shared_tracks: Dict[str, Any] | None = None,
     ) -> stream.Part:
         """
         mode == "independent" : ボーカル熱マップ主導で全曲を一括生成
@@ -637,6 +639,7 @@ class DrumGenerator(BasePartGenerator):
             groove_profile_path=groove_profile_path,
             next_section_data=next_section_data,
             part_specific_humanize_params=part_specific_humanize_params,
+            shared_tracks=shared_tracks,
         )
 
         if section_data:
@@ -1250,6 +1253,9 @@ class DrumGenerator(BasePartGenerator):
             midi_pitch = GM_DRUM_MAP.get(inst_name.lower())
 
             if midi_pitch:
+                if inst_name.lower() in {"kick", "bd", "acoustic_bass_drum"}:
+                    abs_off = section_data.get("absolute_offset", 0.0) + final_offset
+                    self.kick_offsets.append(abs_off)
                 n = note.Note()
                 n.pitch = pitch.Pitch(midi=midi_pitch)
                 n.duration.quarterLength = final_dur
@@ -1267,6 +1273,9 @@ class DrumGenerator(BasePartGenerator):
             humanizer.apply(part, profile_name)
 
         return part
+
+    def get_kick_offsets(self) -> List[float]:
+        return list(self.kick_offsets)
 
 
 # --- END OF FILE ---

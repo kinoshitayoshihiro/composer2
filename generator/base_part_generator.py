@@ -128,11 +128,16 @@ class BasePartGenerator(ABC):
         intensity = section_data.get("musical_intent", {}).get("intensity", "medium")
         scale = {"low": 0.9, "medium": 1.0, "high": 1.1, "very_high": 1.2}.get(intensity, 1.0)
 
-        def final_process(p: stream.Part, ratio: float) -> stream.Part:
+        def final_process(p: stream.Part) -> stream.Part:
             part = process_one(p)
-            humanize_apply(part, None)
-            if ratio:
-                apply_swing(part, float(ratio))
+            # ① swing_ratio があれば必ず humanizer.apply でオフビートずらしを実行
+            if swing is not None:
+                humanize_apply(
+                    part,
+                    profile_name=None,
+                    swing_ratio=float(swing)
+                )
+            # ② その後にベロシティ・エンベロープを適用
             apply_envelope(part, 0, int(section_data.get("q_length", 0)), scale)
             return part
 

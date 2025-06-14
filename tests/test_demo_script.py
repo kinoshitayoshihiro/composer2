@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 import yaml
 import subprocess
@@ -19,4 +18,4 @@ def test_generate_demo(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.chdir(tmp_path)
     generate(str(cfg_path))
-    assert (tmp_path / "demos" / "demo_Verse_1.mid").exists()
+    assert Path("demos/demo_Verse_1.mid").exists()

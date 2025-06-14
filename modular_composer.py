@@ -200,6 +200,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="MIDI 出力ディレクトリを上書き",
     )
     p.add_argument(
+        "--output-filename",
+        help="MIDI ファイル名 (default: output.mid)",
+    )
+    p.add_argument(
         "--verbose", "-v", action="store_true", help="詳しいログ(INFO)を表示"
     )
     p.add_argument(
@@ -226,6 +230,8 @@ def main_cli() -> None:
     ):
         if v:
             paths[k] = v
+    if args.output_filename:
+        paths["output_filename"] = args.output_filename
 
     logger.info("使用 chordmap_path = %s", paths["chordmap_path"])
     logger.info("使用 rhythm_library_path = %s", paths["rhythm_library_path"])

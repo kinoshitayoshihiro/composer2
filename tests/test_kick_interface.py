@@ -22,7 +22,7 @@ def test_drum_kick_offsets(tmp_path):
     cfg = {
         "vocal_midi_path_for_drums": "",
         "heatmap_json_path_for_drums": str(heatmap_path),
-        "paths": {"drum_pattern_files": []},
+        "paths": {"rhythm_library_path": "data/rhythm_library.yml"},
     }
     drum = EightKickDrum(
         main_cfg=cfg,
@@ -42,7 +42,7 @@ def test_compose_shared_kicks(tmp_path):
         "global_settings": {"time_signature": "4/4", "tempo_bpm": 120},
         "sections_to_generate": ["A"],
         "part_defaults": {"drums": {"role": "drums"}, "bass": {"role": "bass"}},
-        "paths": {"drum_pattern_files": []},
+        "paths": {"rhythm_library_path": "data/rhythm_library.yml"},
     }
     chordmap = {
         "sections": {

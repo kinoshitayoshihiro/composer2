@@ -12,7 +12,7 @@ def make_gen(rng=None):
     patterns = {
         "rh_test": {
             "pattern": [
-                {"offset": i, "duration": 1.0, "type": "chord"} for i in range(4)
+                {"offset": i * 0.5, "duration": 0.5, "type": "chord"} for i in range(8)
             ],
             "length_beats": 4.0,
             "velocity": 60,

@@ -42,3 +42,4 @@ sections_to_generate:
 
 ### Bass advanced – mirror_melody
 Set `mirror_melody: true` to invert the vocal melody when creating the bass line.
+Kick-lock velocity boosts bass notes when they align with kick drums.

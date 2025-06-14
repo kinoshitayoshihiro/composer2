@@ -77,13 +77,7 @@ def compose(
     part_gens = GenFactory.build_from_config(main_cfg, rhythm_lib)
 
     part_streams: dict[str, stream.Part] = {}
-    for part_name in part_gens:
-        p = stream.Part(id=part_name)
-        try:
-            p.insert(0, m21inst.fromString(part_name))
-        except Exception:
-            p.partName = part_name
-        part_streams[part_name] = p
+    used_ids: set[str] = set()
 
     sections_to_gen: list[str] = main_cfg["sections_to_generate"]
     raw_sections: dict[str, Dict[str, Any]] = chordmap.get("sections", {})
@@ -141,16 +135,52 @@ def compose(
                     kick_map[part_name] = gen.get_kick_offsets()
 
                 if isinstance(result, dict):
-                    items = result.items()
+                    items = list(result.items())
                 elif isinstance(result, (list, tuple)):
+                    seq = list(result)
                     items = []
-                    for i, sub in enumerate(result):
-                        pid = getattr(sub, "id", f"{part_name}_{i}")
+                    for i, sub in enumerate(seq):
+                        pid = getattr(sub, "id", None)
+                        if not pid:
+                            pid = f"{part_name}_{i}"
+                            try:
+                                sub.id = pid
+                            except Exception:
+                                pass
                         items.append((pid, sub))
                 else:
-                    items = [(getattr(result, "id", part_name), result)]
+                    pid = getattr(result, "id", None)
+                    if not pid:
+                        pid = f"{part_name}_0"
+                        try:
+                            result.id = pid
+                        except Exception:
+                            pass
+                    items = [(pid, result)]
 
-                for pid, sub_stream in items:
+                fixed_items = []
+                for base_pid, sub_stream in items:
+                    pid = base_pid
+                    if pid in used_ids or pid == "":
+                        base = pid if pid else f"{part_name}_0"
+                        suffix = ""
+                        count = 0
+                        while True:
+                            candidate = base + suffix
+                            if candidate not in used_ids:
+                                pid = candidate
+                                break
+                            count += 1
+                            suffix = "_dup" if count == 1 else f"_dup{count}"
+                    used_ids.add(pid)
+                    try:
+                        if getattr(sub_stream, "id", None) in (None, ""):
+                            sub_stream.id = pid
+                    except Exception:
+                        pass
+                    fixed_items.append((pid, sub_stream))
+
+                for pid, sub_stream in fixed_items:
                     if pid not in part_streams:
                         p = stream.Part(id=pid)
                         try:

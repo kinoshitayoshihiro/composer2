@@ -148,7 +148,7 @@ def compose(
                         pid = getattr(sub, "id", f"{part_name}_{i}")
                         items.append((pid, sub))
                 else:
-                    items = [(part_name, result)]
+                    items = [(getattr(result, "id", part_name), result)]
 
                 for pid, sub_stream in items:
                     if pid not in part_streams:
@@ -354,7 +354,7 @@ def main_cli() -> None:
                         pid = getattr(sub, "id", f"{part_name}_{idx}")
                         items.append((pid, sub))
                 else:
-                    items = [(part_name, result_stream)]
+                    items = [(getattr(result_stream, "id", part_name), result_stream)]
 
                 # 各パートを初期化＆ノート挿入
                 for pid, sub_stream in items:

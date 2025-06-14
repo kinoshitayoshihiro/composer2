@@ -1343,3 +1343,20 @@ drum_patterns:
       fill_density: 0.7
       allow_snare: true
       max_velocity_factor: 1.22
+
+  eight_beat_full:
+    description: "Basic eight-beat with hats on eighths"
+    pattern_type: "simple"
+    pattern:
+      - {instrument: kick, offset: 0.0, duration: 1.0}
+      - {instrument: snare, offset: 1.0, duration: 1.0}
+      - {instrument: kick, offset: 2.0, duration: 1.0}
+      - {instrument: snare, offset: 3.0, duration: 1.0}
+      - {instrument: hh, offset: 0.0, duration: 1.0}
+      - {instrument: hh, offset: 0.5, duration: 1.0}
+      - {instrument: hh, offset: 1.0, duration: 1.0}
+      - {instrument: hh, offset: 1.5, duration: 1.0}
+      - {instrument: hh, offset: 2.0, duration: 1.0}
+      - {instrument: hh, offset: 2.5, duration: 1.0}
+      - {instrument: hh, offset: 3.0, duration: 1.0}
+      - {instrument: hh, offset: 3.5, duration: 1.0}

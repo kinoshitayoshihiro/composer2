@@ -17,6 +17,9 @@
       "palm_mute": false,
       "humanize_timing_sec": 0.015,
       "strum_direction_cycle": "down,down,up,up"
+    },
+    "drums": {
+      "rhythm_key": "eight_beat_full"
     }
   },
   "Pre-Chorus 1": {

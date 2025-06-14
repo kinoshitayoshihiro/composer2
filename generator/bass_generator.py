@@ -100,6 +100,7 @@ except ImportError as e:
         model_config = {}
         model_fields = {}
         velocity_shift: Optional[int] = None
+        velocity_shift_on_kick: Optional[int] = None
         velocity: Optional[int] = None
         options: Optional[Dict[str, Any]] = None
         rhythm_key: Optional[str] = None
@@ -187,6 +188,7 @@ class BassGenerator(BasePartGenerator):
         self.cfg: dict = kwargs.copy()
         self.logger = logging.getLogger("modular_composer.bass_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
+        self.vel_shift_on_kick = self.part_parameters.get("velocity_shift_on_kick", 10)
         self.main_cfg = main_cfg
         # Whether to mirror the main melody when generating the bass line
         self.mirror_melody = mirror_melody
@@ -241,7 +243,7 @@ class BassGenerator(BasePartGenerator):
                 bass_part.insert(vn.offset, n)
             return bass_part
 
-        return super().compose(
+        result = super().compose(
             section_data=section_data,
             overrides_root=overrides_root,
             groove_profile_path=groove_profile_path,
@@ -249,6 +251,31 @@ class BassGenerator(BasePartGenerator):
             part_specific_humanize_params=part_specific_humanize_params,
             shared_tracks=shared_tracks,
         )
+
+        if self.overrides and self.overrides.velocity_shift_on_kick is not None:
+            self.vel_shift_on_kick = self.overrides.velocity_shift_on_kick
+
+        def apply_shift(part: stream.Part):
+            self._postprocess_notes_for_kick_lock(part.flatten().notes, self.kick_offsets)
+            return part
+
+        if isinstance(result, dict):
+            for p in result.values():
+                apply_shift(p)
+            return result
+        else:
+            return apply_shift(result)
+
+    def _postprocess_notes_for_kick_lock(
+        self, notes: List[note.Note], kick_offsets: Sequence[float], eps: float = 0.03
+    ) -> None:
+        if not kick_offsets:
+            return
+        for n in notes:
+            if any(abs(float(n.offset) - k) < eps for k in kick_offsets):
+                if n.volume is None:
+                    n.volume = m21volume.Volume()
+                n.volume.velocity = min(127, (n.volume.velocity or 64) + self.vel_shift_on_kick)
 
     def _add_internal_default_patterns(self):
         # (変更なし)

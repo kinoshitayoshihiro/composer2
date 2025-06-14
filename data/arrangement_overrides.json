@@ -38,7 +38,8 @@
     },
     "bass": {
       "rhythm_key": "bass_pump_8th_octaves",
-      "velocity": 85
+      "velocity": 85,
+      "velocity_shift_on_kick": 12
     },
     "guitar": {
       "rhythm_key": "guitar_power_chord_8ths",

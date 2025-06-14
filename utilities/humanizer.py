@@ -126,19 +126,26 @@ def apply(
                 n.offset = beat_start
 
 
-def _apply_swing(part_stream: stream.Part, swing_ratio: float) -> None:
-    """Eighth-note swing shifting in-place."""
-    if abs(swing_ratio - 0.5) < 1e-3:
+def _apply_swing(part_stream: stream.Part, swing_ratio: float, subdiv: int = 8) -> None:
+    """Shift off-beats according to swing_ratio and subdivision."""
+    if subdiv <= 0 or abs(swing_ratio - 0.5) < 1e-3:
         return
     beat_len = 1.0
-    subdivision = beat_len / 2.0
-    effective = subdivision * 2.0
-    for n in part_stream.flatten().notes:
+    step = (4.0 / subdiv)
+    pair = step * 2.0
+    for n in part_stream.recurse().notes:
         rel = float(n.offset)
-        beat_num = math.floor(rel / effective)
-        offset_within = rel - beat_num * effective
-        if abs(offset_within - subdivision) < subdivision * 0.1:
-            n.offset = beat_num * effective + effective * swing_ratio
+        beat_num = math.floor(rel / pair)
+        offset_within = rel - beat_num * pair
+        if abs(offset_within - step) < step * 0.1:
+            n.offset = beat_num * pair + pair * (swing_ratio + 0.1)
+
+
+def apply_swing(part: stream.Part, ratio: float, subdiv: int = 8) -> None:
+    """Public API to apply swing in-place."""
+    if ratio is None or abs(ratio) < 1e-6:
+        return
+    _apply_swing(part, float(ratio), subdiv=subdiv)
 
 
 def apply_envelope(part: stream.Part, start: int, end: int, scale: float) -> None:

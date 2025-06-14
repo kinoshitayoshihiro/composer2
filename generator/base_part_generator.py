@@ -17,6 +17,7 @@ try:
         apply_humanization_to_part,
         apply_envelope,
         apply as humanize_apply,
+        apply_swing,
     )
 except ModuleNotFoundError as e:
     raise ModuleNotFoundError(
@@ -76,9 +77,10 @@ class BasePartGenerator(ABC):
         swing = (
             (self.overrides and getattr(self.overrides, "swing_ratio", None))
             or section_data.get("part_params", {}).get("swing_ratio")
+            or 0.0
         )
-        if swing is not None:
-            part_specific_humanize_params = {"swing_ratio": float(swing)}
+        swing_rh = self.overrides.swing_ratio_rh if self.overrides else None
+        swing_lh = self.overrides.swing_ratio_lh if self.overrides else None
 
         self.logger.info(
             f"Rendering part for section: '{section_label}' with overrides: {self.overrides.model_dump(exclude_unset=True) if self.overrides and hasattr(self.overrides, 'model_dump') else 'None'}"
@@ -126,16 +128,28 @@ class BasePartGenerator(ABC):
         intensity = section_data.get("musical_intent", {}).get("intensity", "medium")
         scale = {"low": 0.9, "medium": 1.0, "high": 1.1, "very_high": 1.2}.get(intensity, 1.0)
 
-        def final_process(p: stream.Part) -> stream.Part:
+        def final_process(p: stream.Part, ratio: float) -> stream.Part:
             part = process_one(p)
-            humanize_apply(part, None, swing_ratio=float(swing) if swing is not None else None)
+            humanize_apply(part, None)
+            if ratio:
+                apply_swing(part, float(ratio))
             apply_envelope(part, 0, int(section_data.get("q_length", 0)), scale)
             return part
 
         if isinstance(parts, dict):
-            return {k: final_process(v) for k, v in parts.items()}
+            return {
+                k: final_process(
+                    v,
+                    (
+                        swing_rh if "rh" in k.lower() and swing_rh is not None
+                        else swing_lh if "lh" in k.lower() and swing_lh is not None
+                        else swing
+                    ),
+                )
+                for k, v in parts.items()
+            }
         else:
-            return final_process(parts)
+            return final_process(parts, swing)
 
     @abstractmethod
     def _render_part(

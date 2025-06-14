@@ -202,6 +202,31 @@ class BassGenerator(BasePartGenerator):
         )
         self._add_internal_default_patterns()
 
+        self.kick_offsets: List[float] = []
+
+    def compose(
+        self,
+        *,
+        section_data: Dict[str, Any],
+        overrides_root: Optional[Any] = None,
+        groove_profile_path: Optional[str] = None,
+        next_section_data: Optional[Dict[str, Any]] = None,
+        part_specific_humanize_params: Optional[Dict[str, Any]] = None,
+        shared_tracks: Dict[str, Any] | None = None,
+    ) -> stream.Part:
+        if shared_tracks and "kick_offsets" in shared_tracks:
+            self.kick_offsets = list(shared_tracks["kick_offsets"])
+        else:
+            self.kick_offsets = []
+        return super().compose(
+            section_data=section_data,
+            overrides_root=overrides_root,
+            groove_profile_path=groove_profile_path,
+            next_section_data=next_section_data,
+            part_specific_humanize_params=part_specific_humanize_params,
+            shared_tracks=shared_tracks,
+        )
+
     def _add_internal_default_patterns(self):
         # (変更なし)
         defaults_to_add = {

@@ -497,16 +497,11 @@ class DrumGenerator(BasePartGenerator):
         if hasattr(self.instrument, "midiChannel"):
             self.instrument.midiChannel = 9
 
-        # drum_patterns.yml をロードして raw_pattern_lib にマージ
-        lib_from_files = self._load_pattern_lib(
-            self.main_cfg["paths"]["drum_pattern_files"]
+        # rhythm_library.yml 内の drum_patterns をロードして raw_pattern_lib にマージ
+        lib = yaml.safe_load(
+            open(self.main_cfg["paths"]["rhythm_library_path"], "r", encoding="utf-8")
         )
-        if lib_from_files:
-            self.raw_pattern_lib.update(lib_from_files)
-            logger.info(
-                "DrumGen __init__: loaded %d patterns from data/drum_patterns.yml",
-                len(lib_from_files),
-            )
+        self.raw_pattern_lib.update(lib.get("drum_patterns", {}))
 
         # 最終的なパターン辞書を part_parameters に適用
         self.part_parameters = self.raw_pattern_lib

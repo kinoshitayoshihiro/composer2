@@ -37,6 +37,16 @@ except Exception:  # pragma: no cover - optional dependency
 
     quantize = _DummyQuantize()
 
+class _QuantizeConfig:
+    def __init__(self) -> None:
+        self.swing_ratio = 0.5
+
+    def setSwingRatio(self, ratio: float) -> None:
+        self.swing_ratio = float(ratio)
+
+# quantizeモジュールの代替として常にこのインスタンスを使う
+quantize = _QuantizeConfig()
+
 # 既存の関数があれば残しつつ、下記を追記 -----------------------
 # ------------------------------------------------------------
 # 1) グローバルプロファイル・レジストリ

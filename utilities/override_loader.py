@@ -42,6 +42,7 @@ class PartOverride(BaseModel):
     custom_params: Optional[Dict[str, Any]] = None
     velocity_shift: Optional[int] = None # ★★★ BassGenerator用に追加 ★★★
     velocity_shift_on_kick: Optional[int] = None  # default 10
+    swing_ratio: Optional[float] = None
 
     # Guitar specific
     palm_mute: Optional[bool] = None

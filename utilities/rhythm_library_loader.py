@@ -24,7 +24,9 @@ class PatternEvent(BaseModel):
         ge=0,
     )
     duration: float = Field(
-        ..., description="Duration of the event in quarter lengths.", gt=0
+        1.0,
+        description="Duration of the event in quarter lengths.",
+        ge=0.0,
     )
     velocity: Optional[int] = Field(
         None,

@@ -23,16 +23,9 @@ class StringsGenerator(MelodyGenerator):
         part_specific_humanize_params=None,
         shared_tracks=None,
     ):
-        """Wrapper to keep interface compatible with BasePartGenerator."""
-        _ = overrides_root, groove_profile_path, next_section_data, part_specific_humanize_params
-        return super().compose(
-            section_data=section_data,
-            overrides_root=overrides_root,
-            groove_profile_path=groove_profile_path,
-            next_section_data=next_section_data,
-            part_specific_humanize_params=part_specific_humanize_params,
-            shared_tracks=shared_tracks or {},
-        )
+        """Delegate to MelodyGenerator.compose while ignoring extra args."""
+        _ = overrides_root, groove_profile_path, next_section_data, part_specific_humanize_params, shared_tracks
+        return super().compose(section_data)
 
     def _postprocess_stream(self, part):
         """pad 用: 音長を 4 倍・legato・低 velocity など簡易調整"""

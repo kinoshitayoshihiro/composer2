@@ -68,6 +68,106 @@ def normalise_chords_to_relative(chords: list[Dict[str, Any]]) -> list[Dict[str,
     return rel_chords
 
 
+def compose(
+    main_cfg: Dict[str, Any],
+    chordmap: Dict[str, Any],
+    rhythm_lib,
+    overrides_model: Any | None = None,
+) -> tuple[stream.Score, list[Dict[str, Any]]]:
+    part_gens = GenFactory.build_from_config(main_cfg, rhythm_lib)
+
+    part_streams: dict[str, stream.Part] = {}
+    for part_name in part_gens:
+        p = stream.Part(id=part_name)
+        try:
+            p.insert(0, m21inst.fromString(part_name))
+        except Exception:
+            p.partName = part_name
+        part_streams[part_name] = p
+
+    sections_to_gen: list[str] = main_cfg["sections_to_generate"]
+    raw_sections: dict[str, Dict[str, Any]] = chordmap.get("sections", {})
+    sections: list[Dict[str, Any]] = []
+    for name in sections_to_gen:
+        sec = raw_sections.get(name)
+        if not sec:
+            continue
+        sec_copy = dict(sec)
+        sec_copy["label"] = name
+        sections.append(sec_copy)
+
+    for sec in sections:
+        label = sec["label"]
+        chords_abs = sec.get("processed_chord_events", [])
+        if not chords_abs:
+            continue
+        section_start_q = chords_abs[0]["absolute_offset_beats"]
+        kick_map: Dict[str, list[float]] = {}
+        for idx, ch_ev in enumerate(chords_abs):
+            next_ev = chords_abs[idx + 1] if idx + 1 < len(chords_abs) else None
+            block_start = ch_ev["absolute_offset_beats"] - section_start_q
+            block_length = ch_ev.get("humanized_duration_beats", ch_ev.get("original_duration_beats", 4.0))
+
+            base_block: Dict[str, Any] = {
+                "section_name": label,
+                "absolute_offset": block_start,
+                "q_length": block_length,
+                "chord_symbol_for_voicing": ch_ev.get("chord_symbol_for_voicing"),
+                "specified_bass_for_voicing": ch_ev.get("specified_bass_for_voicing"),
+                "original_chord_label": ch_ev.get("original_chord_label"),
+            }
+
+            next_block = None
+            if next_ev:
+                next_block = {
+                    "chord_symbol_for_voicing": next_ev.get("chord_symbol_for_voicing"),
+                    "specified_bass_for_voicing": next_ev.get("specified_bass_for_voicing"),
+                    "original_chord_label": next_ev.get("original_chord_label"),
+                    "q_length": next_ev.get("humanized_duration_beats", next_ev.get("original_duration_beats", 4.0)),
+                }
+
+            for part_name, gen in part_gens.items():
+                part_cfg = main_cfg["part_defaults"].get(part_name, {})
+                blk = deepcopy(base_block)
+                blk["part_params"] = part_cfg
+                blk.setdefault("shared_tracks", {})["kick_offsets"] = [o for lst in kick_map.values() for o in lst]
+                result = gen.compose(
+                    section_data=blk,
+                    overrides_root=overrides_model,
+                    next_section_data=next_block,
+                    shared_tracks=blk["shared_tracks"],
+                )
+                if hasattr(gen, "get_kick_offsets"):
+                    kick_map[part_name] = gen.get_kick_offsets()
+
+                if isinstance(result, dict):
+                    items = result.items()
+                elif isinstance(result, (list, tuple)):
+                    items = []
+                    for i, sub in enumerate(result):
+                        pid = getattr(sub, "id", f"{part_name}_{i}")
+                        items.append((pid, sub))
+                else:
+                    items = [(part_name, result)]
+
+                for pid, sub_stream in items:
+                    if pid not in part_streams:
+                        p = stream.Part(id=pid)
+                        try:
+                            p.insert(0, m21inst.fromString(pid))
+                        except Exception:
+                            p.partName = pid
+                        part_streams[pid] = p
+                    dest = part_streams[pid]
+                    for el in sub_stream.flatten().notesAndRests:
+                        dest.insert(section_start_q + block_start + el.offset, clone_element(el))
+
+        sec.setdefault("shared_tracks", {})["kick_offsets"] = [o for lst in kick_map.values() for o in lst]
+
+    score = stream.Score(list(part_streams.values()))
+    return score, sections
+
+
 # -------------------------------------------------------------------------
 # main
 # -------------------------------------------------------------------------
@@ -264,10 +364,6 @@ def main_cli() -> None:
                         dest.insert(
                             section_start_q + block_start + el.offset,
                             clone_element(el),
-                        )
-
-                            section_start_q + block_start + elem.offset,
-                            clone_element(elem),
                         )
 
                 if isinstance(result_stream, dict):

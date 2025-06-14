@@ -106,20 +106,24 @@ def apply(
             )
             n.quarterLength *= factor
 
+    if swing_ratio is None and profile_name:
+        swing_ratio = cast(float | None, PROFILES.get(profile_name, {}).get("swing"))
+
     if swing_ratio is not None:
-        _apply_swing(part_stream, swing_ratio)
         try:
             quantize.setSwingRatio(swing_ratio)
         except Exception:
             pass
-    elif profile_name:
-        sr = cast(float | None, PROFILES.get(profile_name, {}).get("swing"))
-        if sr is not None:
-            _apply_swing(part_stream, sr)
-            try:
-                quantize.setSwingRatio(sr)
-            except Exception:
-                pass
+        swing_offset = round(swing_ratio * 0.5, 2)
+        for n in part_stream.recurse().notesAndRests:
+            if n.quarterLength >= 1.0:
+                continue
+            beat_pos = float(n.offset) % 1.0
+            beat_start = n.offset - beat_pos
+            if abs(beat_pos - 0.5) < 0.05:
+                n.offset = beat_start + swing_offset
+            elif beat_pos < 0.05 or beat_pos > 0.95:
+                n.offset = beat_start
 
 
 def _apply_swing(part_stream: stream.Part, swing_ratio: float) -> None:

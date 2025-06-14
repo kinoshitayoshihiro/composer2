@@ -73,7 +73,7 @@ def get_approach_note(
     from_pitch: pitch.Pitch,
     to_pitch: pitch.Pitch,
     scale_obj: Optional[m21_scale.ConcreteScale],
-    approach_style: str = "chromatic_or_diatonic", # "chromatic_优先", "diatonic_only", "chromatic_only"
+    approach_style: str = "chromatic_or_diatonic", # "chromatic_优先", "diatonic_only", "chromatic_only", "subdom_dom"
     max_step: int = 2, # 半音単位での最大距離 (2なら全音まで)
     preferred_direction: Optional[str] = None # "above", "below", None (近い方)
 ) -> Optional[pitch.Pitch]:
@@ -85,6 +85,14 @@ def get_approach_note(
         return None
 
     candidates: List[Tuple[int, pitch.Pitch]] = [] # (優先度, ピッチ) - 数値が小さいほど高優先度
+
+    if approach_style == "subdom_dom":
+        if scale_obj:
+            try:
+                return scale_obj.pitchFromDegree(2)
+            except Exception:
+                pass
+        return None
 
     for step in range(1, max_step + 1):
         # 下からのアプローチ

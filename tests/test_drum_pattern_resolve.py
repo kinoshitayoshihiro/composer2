@@ -12,7 +12,11 @@ def test_relative_path_resolved(monkeypatch, tmp_path):
     cfg = {
         "vocal_midi_path_for_drums": "",
         "heatmap_json_path_for_drums": str(Path("data/heatmap.json").resolve()),
-        "paths": {"drum_pattern_files": []},
+        "paths": {
+            "rhythm_library_path": str(
+                Path(__file__).resolve().parents[1] / "data" / "rhythm_library.yml"
+            )
+        },
     }
     drum = DummyDrum(
         main_cfg=cfg,

@@ -160,7 +160,8 @@
   },
   "Bridge": {
     "bass": {
-      "mirror_melody": true
+      "mirror_melody": true,
+      "approach_style_on_4th": "subdom_dom"
     }
   }
 }

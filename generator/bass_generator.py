@@ -53,6 +53,7 @@ try:
         MIN_NOTE_DURATION_QL,
     )
     from utilities.scale_registry import ScaleRegistry
+    from . import bass_utils
     from .bass_utils import get_approach_note
     from utilities.override_loader import (
         PartOverride,
@@ -87,6 +88,13 @@ except ImportError as e:
         if from_p:
             return from_p
         return pitch.Pitch("C4")
+
+    class DummyBassUtils:
+        @staticmethod
+        def mirror_pitches(vocal_notes, tonic_pitch, target_octave=2):
+            return [tonic_pitch for _ in vocal_notes]
+
+    bass_utils = DummyBassUtils()
 
     class PartOverride:  # type: ignore
         model_config = {}
@@ -218,6 +226,21 @@ class BassGenerator(BasePartGenerator):
             self.kick_offsets = list(shared_tracks["kick_offsets"])
         else:
             self.kick_offsets = []
+
+        if self.mirror_melody and section_data.get("vocal_notes"):
+            tonic_str = section_data.get("tonic_of_section", self.global_key_tonic) or "C"
+            tonic_pitch = pitch.Pitch(tonic_str)
+            mirrored = bass_utils.mirror_pitches(
+                section_data.get("vocal_notes", []), tonic_pitch
+            )
+            bass_part = stream.Part(id=self.part_name)
+            inst = copy.deepcopy(self.default_instrument)
+            bass_part.insert(0, inst)
+            for vn, mp in zip(section_data["vocal_notes"], mirrored):
+                n = note.Note(mp, quarterLength=vn.quarterLength)
+                bass_part.insert(vn.offset, n)
+            return bass_part
+
         return super().compose(
             section_data=section_data,
             overrides_root=overrides_root,

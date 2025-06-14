@@ -39,3 +39,6 @@ paths:
 sections_to_generate:
   - "Verse 1"
   - "Chorus 1"
+
+### Bass advanced – mirror_melody
+Set `mirror_melody: true` to invert the vocal melody when creating the bass line.

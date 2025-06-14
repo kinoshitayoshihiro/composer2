@@ -376,7 +376,6 @@ drum_patterns:
       - instrument: ghost
         offset: 2.75
         duration: 1.0
-=======
 # --- 基本グルーヴパターン ---
 calm_backbeat:
   description: "シンプルなバラード/静かなAメロ向け"

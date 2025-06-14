@@ -196,6 +196,11 @@ def load_rhythm_library(
     if extra_dir_resolved:
         raw = _merge_extra_patterns(raw, extra_dir_resolved)
 
+    for name, pat in raw.get("drum_patterns", {}).items():
+        for ev in pat.get("pattern", []):
+            if "duration" not in ev:
+                ev["duration"] = 1.0
+
     try:
         # Pydanticモデルによるバリデーションと型変換
         # ここで alias="guitar_patterns" が機能し、raw["guitar_patterns"] が lib.guitar にマッピングされる

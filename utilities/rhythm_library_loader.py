@@ -87,6 +87,8 @@ class BasePatternDef(BaseModel):
             description="Reference duration of the pattern in quarter lengths. If None, often calculated from length_beats and time_signature.",
         )
     )
+    swing_ratio: Optional[float] = None
+    offset_profile: Optional[str] = None
     pattern_type: Optional[str] = "fixed_pattern"
     velocity_base: Optional[int] = Field(None, ge=1, le=127)
     options: Optional[Dict[str, Any]] = Field(default_factory=dict)

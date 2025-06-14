@@ -66,5 +66,6 @@ def test_swing_ratio_override(tmp_path):
         "part_params": {"piano": {"velocity": 60}},
     }
     parts = gen.compose(section_data=section, overrides_root=overrides)
-    offsets = sorted({round(float(n.offset % 0.5), 2) for n in parts["piano_rh"].flatten().notes})
-    assert len(offsets) == 2
+    offsets = {round(float(n.offset % 0.5), 2) for n in parts["piano_rh"].flatten().notes}
+    assert any(abs(o - 0.0) < 0.05 for o in offsets)
+    assert any(abs(o - 0.25) < 0.05 for o in offsets)

@@ -1,45 +1,57 @@
 # OtoKotoba Composer
 
-This project blends poetic Japanese narration with emotive musical arrangements.  
-It automatically generates chords, melodies and instrumental parts for each chapter of a text, allowing verse, chorus and bridge sections to be arranged with human-like expressiveness.
+This project blends poetic Japanese narration with emotive musical arrangements.
 
----
+It automatically generates chords, melodies and instrumental parts for each chapter of a text, allowing verse, chorus and bridge sections to be arranged with human‑like expressiveness.
 
-## Setup
+## Required Libraries
+- **music21** – MIDI and score manipulation
+- **PyYAML** – YAML configuration loader
+- **pretty_midi** – MIDI export utilities
+- **pydub** (optional) – audio post‑processing
 
-1. **Create & activate a venv**  
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
+Install dependencies via pip:
 
+```bash
+pip install -r requirements.txt  # or install only the needed packages
+```
 
-# OtoKotoba Composer
+## Configuration Files
+The `config/` directory stores YAML files that control generation.  The main entry is **`main_cfg.yml`**, which defines global tempo, key and paths to input data.  Example excerpt:
 
-This project blends poetic Japanese narration with emotive musical arrangements.  
-It automatically generates chords, melodies and instrumental parts for each chapter of a text, allowing verse, chorus and bridge sections to be arranged with human-like expressiveness.
-
----
-
-## Setup
-
-1. **Create & activate a venv**  
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-
+```yaml
+# config/main_cfg.yml
 global_settings:
   time_signature: "4/4"
   tempo_bpm: 88
-
 paths:
   chordmap_path: "../data/processed_chordmap_with_emotion.yaml"
   rhythm_library_path: "../data/rhythm_library.yml"
   output_dir: "../midi_output"
-
 sections_to_generate:
   - "Verse 1"
   - "Chorus 1"
+```
 
-### Bass advanced – mirror_melody
-Set `mirror_melody: true` to invert the vocal melody when creating the bass line.
-Kick-lock velocity boosts bass notes when they align with kick drums.
+Edit these values to point to your chordmap and rhythm library, and list the section labels you wish to render.
+
+## Generating MIDI
+Run the main script with the configuration file:
+
+```bash
+python modular_composer.py --main-cfg config/main_cfg.yml
+```
+
+By default the resulting MIDI is written to the directory specified by `paths.output_dir` in the config.  Use the `--dry-run` flag to skip the final export while still performing generation.
+
+## Project Goal
+"OtoKotoba" aims to synchronize literary expression and music.  Chapters of narration are mapped to emotional states so that chords, melodies and arrangements resonate with the text, ready for import into VOCALOID or Synthesizer V.
+
+## Advanced Bass Features
+
+| Feature | Override Key | Example |
+|---------|--------------|---------|
+| Mirror vocal melody | `mirror_melody` | `mirror_melody: true` |
+| Kick-lock velocity | `velocity_shift_on_kick` | `velocity_shift_on_kick: 12` |
+| II–V build-up | `approach_style_on_4th` | `approach_style_on_4th: subdom_dom` |
+| Velocity envelope | `velocity_envelope` | `velocity_envelope: [[0.0,60],[2.0,90]]` |

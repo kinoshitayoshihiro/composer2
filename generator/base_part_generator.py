@@ -13,7 +13,11 @@ try:
         Overrides as OverrideModelType,
         PartOverride,
     )
-    from utilities.humanizer import apply_humanization_to_part
+    from utilities.humanizer import (
+        apply_humanization_to_part,
+        apply_envelope,
+        _apply_swing,
+    )
 except ModuleNotFoundError as e:
     raise ModuleNotFoundError(
         "Missing optional utilities. Please install dependencies via 'pip install -r requirements.txt'."
@@ -69,6 +73,14 @@ class BasePartGenerator(ABC):
         else:
             self.overrides = None
 
+        swing = None
+        if self.overrides and self.overrides.swing_ratio is not None:
+            swing = self.overrides.swing_ratio
+        else:
+            swing = section_data.get("part_params", {}).get("swing_ratio")
+        if swing is not None:
+            part_specific_humanize_params = {"swing_ratio": float(swing)}
+
         self.logger.info(
             f"Rendering part for section: '{section_label}' with overrides: {self.overrides.model_dump(exclude_unset=True) if self.overrides and hasattr(self.overrides, 'model_dump') else 'None'}"
         )
@@ -112,10 +124,20 @@ class BasePartGenerator(ABC):
                     )
             return p
 
+        intensity = section_data.get("musical_intent", {}).get("intensity", "medium")
+        scale = {"low": 0.9, "medium": 1.0, "high": 1.1, "very_high": 1.2}.get(intensity, 1.0)
+
+        def final_process(p: stream.Part) -> stream.Part:
+            part = process_one(p)
+            if swing is not None:
+                _apply_swing(part, float(swing))
+            apply_envelope(part, 0, int(section_data.get("q_length", 0)), scale)
+            return part
+
         if isinstance(parts, dict):
-            return {k: process_one(v) for k, v in parts.items()}
+            return {k: final_process(v) for k, v in parts.items()}
         else:
-            return process_one(parts)
+            return final_process(parts)
 
     @abstractmethod
     def _render_part(

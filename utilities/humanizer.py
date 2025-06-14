@@ -1,6 +1,7 @@
 # --- START OF FILE utilities/humanizer.py (役割特化版) ---
 import music21  # name 'music21' is not defined エラー対策
 import random, logging
+import math
 import copy
 from typing import List, Dict, Any, Union, Optional, cast
 from pathlib import Path
@@ -53,7 +54,11 @@ def get_profile(name: str) -> Dict[str, Any]:
 # ------------------------------------------------------------
 # 2) 適用関数
 # ------------------------------------------------------------
-def apply(part_stream, profile_name: str) -> None:
+def apply(
+    part_stream: stream.Part,
+    profile_name: str,
+    override_swing_ratio: Optional[float] = None,
+) -> None:
     """music21.stream.Part に in-place でヒューマナイズを適用"""
     prof = get_profile(profile_name)
     off = prof.get("offset_ms", {})  # {mean, stdev}
@@ -79,6 +84,31 @@ def apply(part_stream, profile_name: str) -> None:
                 random.normalvariate(dur.get("mean", 100), dur.get("stdev", 0)) / 100.0
             )
             n.quarterLength *= factor
+
+    if override_swing_ratio is not None:
+        _apply_swing(part_stream, override_swing_ratio)
+
+
+def _apply_swing(part_stream: stream.Part, swing_ratio: float) -> None:
+    """Eighth-note swing shifting in-place."""
+    if abs(swing_ratio - 0.5) < 1e-3:
+        return
+    beat_len = 1.0
+    subdivision = beat_len / 2.0
+    effective = subdivision * 2.0
+    for n in part_stream.flatten().notes:
+        rel = float(n.offset)
+        beat_num = math.floor(rel / effective)
+        offset_within = rel - beat_num * effective
+        if abs(offset_within - subdivision) < subdivision * 0.1:
+            n.offset = beat_num * effective + effective * swing_ratio
+
+
+def apply_envelope(part: stream.Part, start: int, end: int, scale: float) -> None:
+    """Scale note velocities between start and end beats."""
+    for n in part.recurse().notes:
+        if start <= n.offset < end and n.volume and n.volume.velocity is not None:
+            n.volume.velocity = int(max(1, min(127, round(n.volume.velocity * scale))))
 
 
 # ------------------------------------------------------------

@@ -25,6 +25,44 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+def mirror_pitches(
+    vocal_notes: List[note.Note],
+    tonic: pitch.Pitch,
+    target_octave: int = 2,
+) -> List[pitch.Pitch]:
+    """Return mirrored pitches of the given vocal melody.
+
+    Each note is reflected around ``tonic`` within a diatonic major scale and
+    placed near ``target_octave``.
+    """
+
+    if not vocal_notes:
+        return []
+
+    tonic_for_scale = pitch.Pitch(tonic.name)
+    tonic_for_scale.octave = max(0, target_octave - 1)
+    scl = m21_scale.MajorScale(tonic_for_scale)
+
+    mirrored: List[pitch.Pitch] = []
+    for vn in vocal_notes:
+        if not isinstance(vn, note.Note):
+            continue
+        v_pitch = vn.pitch
+        deg = scl.getScaleDegreeFromPitch(v_pitch)
+        if deg is None:
+            mp = pitch.Pitch()
+            mp.ps = 2 * tonic.ps - v_pitch.ps
+        else:
+            mirrored_deg = ((1 - deg) % 7) + 1
+            mp = scl.pitchFromDegree(mirrored_deg)
+        if mp.step == scl.tonic.step and mp.octave < target_octave:
+            mp.octave = target_octave
+        mirrored.append(mp)
+
+    return mirrored
+
+# ---------------------------------------------------------------------------
 # --- 定義: music21.scale.nextPitch() の direction 引数用 ---
 # bass_generator.py と同じ定数を定義
 DIRECTION_UP = 1

@@ -28,11 +28,21 @@ except ImportError:
 
 logger = logging.getLogger("otokotoba.humanizer")
 
+try:
+    import quantize  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    class _DummyQuantize:
+        def setSwingRatio(self, ratio: float) -> None:
+            pass
+
+    quantize = _DummyQuantize()
+
 # 既存の関数があれば残しつつ、下記を追記 -----------------------
 # ------------------------------------------------------------
 # 1) グローバルプロファイル・レジストリ
 # ------------------------------------------------------------
 _PROFILE_REGISTRY: Dict[str, Dict[str, Any]] = {}
+PROFILES = _PROFILE_REGISTRY
 
 
 def load_profiles(dict_like: Dict[str, Any]) -> None:
@@ -56,11 +66,12 @@ def get_profile(name: str) -> Dict[str, Any]:
 # ------------------------------------------------------------
 def apply(
     part_stream: stream.Part,
-    profile_name: str,
-    override_swing_ratio: Optional[float] = None,
+    profile_name: str | None = None,
+    *,
+    swing_ratio: Optional[float] = None,
 ) -> None:
     """music21.stream.Part に in-place でヒューマナイズを適用"""
-    prof = get_profile(profile_name)
+    prof = get_profile(profile_name) if profile_name else {}
     off = prof.get("offset_ms", {})  # {mean, stdev}
     vel = prof.get("velocity", {})
     dur = prof.get("duration_pct", {})
@@ -85,8 +96,20 @@ def apply(
             )
             n.quarterLength *= factor
 
-    if override_swing_ratio is not None:
-        _apply_swing(part_stream, override_swing_ratio)
+    if swing_ratio is not None:
+        _apply_swing(part_stream, swing_ratio)
+        try:
+            quantize.setSwingRatio(swing_ratio)
+        except Exception:
+            pass
+    elif profile_name:
+        sr = cast(float | None, PROFILES.get(profile_name, {}).get("swing"))
+        if sr is not None:
+            _apply_swing(part_stream, sr)
+            try:
+                quantize.setSwingRatio(sr)
+            except Exception:
+                pass
 
 
 def _apply_swing(part_stream: stream.Part, swing_ratio: float) -> None:

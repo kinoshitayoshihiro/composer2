@@ -1,3 +1,382 @@
+drum_patterns:
+  calm_backbeat:
+    description: "シンプルなバラード/静かなAメロ向け"
+    pattern_type: "simple"
+    pattern:
+      - instrument: kick
+        offset: 0.0
+        duration: 1.0
+      - instrument: snare
+        offset: 2.0
+        duration: 1.0
+      - instrument: hh
+        offset: 0.0
+        duration: 1.0
+      - instrument: hh
+        offset: 1.0
+        duration: 1.0
+      - instrument: hh
+        offset: 2.0
+        duration: 1.0
+      - instrument: hh
+        offset: 3.0
+        duration: 1.0
+
+  brush_light_loop:
+    description: "Soft brush groove"
+    pattern_type: "simple"
+    pattern:
+      - {instrument: kick, offset: 0.0, duration: 1.0}
+      - {instrument: snare, offset: 2.0, duration: 1.0}
+      - {instrument: chh, offset: 0.0, duration: 1.0}
+      - {instrument: chh, offset: 1.0, duration: 1.0}
+      - {instrument: chh, offset: 2.0, duration: 1.0}
+      - {instrument: chh, offset: 3.0, duration: 1.0}
+
+  brush_build_loop:
+    description: "Brush build with extra hits"
+    pattern_type: "simple"
+    pattern:
+      - {instrument: kick, offset: 0.0, duration: 1.0}
+      - {instrument: snare, offset: 2.0, duration: 1.0}
+      - {instrument: kick, offset: 2.75, duration: 1.0}
+      - {instrument: snare, offset: 3.0, duration: 1.0}
+      - {instrument: chh, offset: 0.0, duration: 1.0}
+      - {instrument: chh, offset: 0.5, duration: 1.0}
+      - {instrument: chh, offset: 1.0, duration: 1.0}
+      - {instrument: chh, offset: 1.5, duration: 1.0}
+      - {instrument: chh, offset: 2.0, duration: 1.0}
+      - {instrument: chh, offset: 2.5, duration: 1.0}
+      - {instrument: chh, offset: 3.0, duration: 1.0}
+      - {instrument: chh, offset: 3.5, duration: 1.0}
+
+  groove_pocket:
+    description: "8分裏キックでグルーヴ感を演出"
+    pattern_type: "simple"
+    pattern:
+      - instrument: kick
+        offset: 0.0
+        duration: 1.0
+      - instrument: kick
+        offset: 1.75
+        duration: 1.0
+      - instrument: snare
+        offset: 2.0
+        duration: 1.0
+      - instrument: hh
+        offset: 0.0
+        duration: 1.0
+      - instrument: hh
+        offset: 0.5
+        duration: 1.0
+      - instrument: hh
+        offset: 1.0
+        duration: 1.0
+      - instrument: hh
+        offset: 1.5
+        duration: 1.0
+      - instrument: hh
+        offset: 2.0
+        duration: 1.0
+      - instrument: hh
+        offset: 2.5
+        duration: 1.0
+      - instrument: hh
+        offset: 3.0
+        duration: 1.0
+      - instrument: hh
+        offset: 3.5
+        duration: 1.0
+
+  energetic_drive:
+    description: "16分ハイハットで疾走感"
+    pattern_type: "simple"
+    pattern:
+      - instrument: kick
+        offset: 0.0
+        duration: 1.0
+      - instrument: kick
+        offset: 1.0
+        duration: 1.0
+      - instrument: kick
+        offset: 2.0
+        duration: 1.0
+      - instrument: kick
+        offset: 2.5
+        duration: 1.0
+      - instrument: snare
+        offset: 1.5
+        duration: 1.0
+      - instrument: snare
+        offset: 3.0
+        duration: 1.0
+      # 16分ハイハットはall16などの記法を具体的なoffsetリストに展開してください
+
+  neo_soul_pocket:
+    description: "ゴーストノート多めのR&B/ネオソウル"
+    pattern_type: "simple"
+    pattern:
+      - instrument: kick
+        offset: 0.0
+        duration: 1.0
+      - instrument: kick
+        offset: 1.5
+        duration: 1.0
+      - instrument: snare
+        offset: 2.0
+        duration: 1.0
+      - instrument: hh
+        offset: 0.0
+        duration: 1.0
+      - instrument: hh
+        offset: 0.5
+        duration: 1.0
+      - instrument: hh
+        offset: 1.0
+        duration: 1.0
+      - instrument: hh
+        offset: 1.5
+        duration: 1.0
+      - instrument: hh
+        offset: 2.0
+        duration: 1.0
+      - instrument: hh
+        offset: 2.5
+        duration: 1.0
+      - instrument: hh
+        offset: 3.0
+        duration: 1.0
+      - instrument: hh
+        offset: 3.5
+        duration: 1.0
+      - instrument: ghost
+        offset: 1.75
+        duration: 1.0
+      - instrument: ghost
+        offset: 2.75
+        duration: 1.0
+
+  rock_backbeat:
+    description: "Straight rock backbeat"
+    pattern_type: "simple"
+    pattern:
+      - {instrument: kick, offset: 0.0, duration: 1.0}
+      - {instrument: snare, offset: 2.0, duration: 1.0}
+      - {instrument: chh, offset: 0.0, duration: 1.0}
+      - {instrument: chh, offset: 0.5, duration: 1.0}
+      - {instrument: chh, offset: 1.0, duration: 1.0}
+      - {instrument: chh, offset: 1.5, duration: 1.0}
+      - {instrument: chh, offset: 2.0, duration: 1.0}
+      - {instrument: chh, offset: 2.5, duration: 1.0}
+      - {instrument: chh, offset: 3.0, duration: 1.0}
+      - {instrument: chh, offset: 3.5, duration: 1.0}
+
+  rock_drive_loop:
+    description: "Driving rock beat"
+    pattern_type: "simple"
+    pattern:
+      - {instrument: kick, offset: 0.0, duration: 1.0}
+      - {instrument: kick, offset: 1.5, duration: 1.0}
+      - {instrument: snare, offset: 1.0, duration: 1.0}
+      - {instrument: snare, offset: 3.0, duration: 1.0}
+      - {instrument: chh, offset: 0.0, duration: 1.0}
+      - {instrument: chh, offset: 0.5, duration: 1.0}
+      - {instrument: chh, offset: 1.0, duration: 1.0}
+      - {instrument: chh, offset: 1.5, duration: 1.0}
+      - {instrument: chh, offset: 2.0, duration: 1.0}
+      - {instrument: chh, offset: 2.5, duration: 1.0}
+      - {instrument: chh, offset: 3.0, duration: 1.0}
+      - {instrument: chh, offset: 3.5, duration: 1.0}
+
+  rock_anthem:
+    description: "サビや盛り上がりで使える王道ロック"
+    pattern_type: "simple"
+    pattern:
+      - instrument: kick
+        offset: 0.0
+        duration: 1.0
+      - instrument: kick
+        offset: 2.0
+        duration: 1.0
+      - instrument: snare
+        offset: 1.0
+        duration: 1.0
+      - instrument: snare
+        offset: 3.0
+        duration: 1.0
+      - instrument: hh
+        offset: 0.0
+        duration: 1.0
+      - instrument: hh
+        offset: 1.0
+        duration: 1.0
+      - instrument: hh
+        offset: 2.0
+        duration: 1.0
+      - instrument: hh
+        offset: 3.0
+        duration: 1.0
+      - instrument: crash
+        offset: 0.0
+        duration: 1.0
+
+  tom_triplet_fill:
+    description: "セクション終端用の3連タム＋クラッシュ"
+    pattern_type: "fill"
+    pattern:
+      - instrument: tom1
+        offset: 3.0
+        duration: 1.0
+      - instrument: tom2
+        offset: 3.25
+        duration: 1.0
+      - instrument: tom3
+        offset: 3.5
+        duration: 1.0
+      - instrument: crash
+        offset: 4.0
+        duration: 1.0
+
+  snare_roll_fill:
+    description: "サビ前やブレイクで使えるスネアロール"
+    pattern_type: "fill"
+    pattern:
+      - instrument: snare
+        offset: 3.0
+        duration: 1.0
+      - instrument: snare
+        offset: 3.125
+        duration: 1.0
+      - instrument: snare
+        offset: 3.25
+        duration: 1.0
+      - instrument: snare
+        offset: 3.375
+        duration: 1.0
+      - instrument: snare
+        offset: 3.5
+        duration: 1.0
+      - instrument: snare
+        offset: 3.625
+        duration: 1.0
+      - instrument: snare
+        offset: 3.75
+        duration: 1.0
+      - instrument: snare
+        offset: 3.875
+        duration: 1.0
+      - instrument: crash
+        offset: 4.0
+        duration: 1.0
+
+  cymbal_swell_fill:
+    description: "盛り上げ用のクラッシュ連打"
+    pattern_type: "fill"
+    pattern:
+      - instrument: crash
+        offset: 3.5
+        duration: 1.0
+      - instrument: crash
+        offset: 3.75
+        duration: 1.0
+      - instrument: crash
+        offset: 4.0
+        duration: 1.0
+
+  ghost_hat_ballad:
+    description: "静かなバラードでの繊細な表現"
+    pattern_type: "simple"
+    pattern:
+      - instrument: kick
+        offset: 0.0
+        duration: 1.0
+      - instrument: snare
+        offset: 2.0
+        duration: 1.0
+      - instrument: hh
+        offset: 0.0
+        duration: 1.0
+      - instrument: hh
+        offset: 1.0
+        duration: 1.0
+      - instrument: hh
+        offset: 2.0
+        duration: 1.0
+      - instrument: hh
+        offset: 3.0
+        duration: 1.0
+      - instrument: hh
+        offset: 0.5
+        duration: 1.0
+      - instrument: hh
+        offset: 1.5
+        duration: 1.0
+      - instrument: hh
+        offset: 2.5
+        duration: 1.0
+      - instrument: hh
+        offset: 3.5
+        duration: 1.0
+      - instrument: ghost
+        offset: 0.75
+        duration: 1.0
+      - instrument: ghost
+        offset: 1.25
+        duration: 1.0
+      - instrument: ghost
+        offset: 2.25
+        duration: 1.0
+      - instrument: ghost
+        offset: 3.25
+        duration: 1.0
+
+  funky_syncop:
+    description: "シンコペーション強めのファンク"
+    pattern_type: "simple"
+    pattern:
+      - instrument: kick
+        offset: 0.0
+        duration: 1.0
+      - instrument: kick
+        offset: 1.5
+        duration: 1.0
+      - instrument: kick
+        offset: 2.5
+        duration: 1.0
+      - instrument: snare
+        offset: 2.0
+        duration: 1.0
+      - instrument: hh
+        offset: 0.0
+        duration: 1.0
+      - instrument: hh
+        offset: 0.5
+        duration: 1.0
+      - instrument: hh
+        offset: 1.0
+        duration: 1.0
+      - instrument: hh
+        offset: 1.5
+        duration: 1.0
+      - instrument: hh
+        offset: 2.0
+        duration: 1.0
+      - instrument: hh
+        offset: 2.5
+        duration: 1.0
+      - instrument: hh
+        offset: 3.0
+        duration: 1.0
+      - instrument: hh
+        offset: 3.5
+        duration: 1.0
+      - instrument: ghost
+        offset: 1.75
+        duration: 1.0
+      - instrument: ghost
+        offset: 2.75
+        duration: 1.0
+=======
 # --- 基本グルーヴパターン ---
 calm_backbeat:
   description: "シンプルなバラード/静かなAメロ向け"

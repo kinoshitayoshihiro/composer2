@@ -119,6 +119,14 @@ GM_DRUM_MAP: Dict[str, int] = {
     "low_agogo": 68,
     "ghost_snare": 38,
 }
+DRUM_ALIAS: Dict[str, str] = {
+    "hh": "closed_hi_hat",
+    "ohh": "open_hi_hat",
+    "shaker_soft": "shaker",
+    "chimes": "triangle",
+    "ride_cymbal_swell": "ride_cymbal_1",
+    "crash_cymbal_soft_swell": "crash_cymbal_1",
+}
 GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
 
 
@@ -867,6 +875,7 @@ class DrumGenerator(BasePartGenerator):
             inst_name = ev_def.get("instrument")
             if not inst_name:
                 continue
+            inst_name = DRUM_ALIAS.get(inst_name.lower(), inst_name).lower()
 
             rel_offset_in_pattern = safe_get(
                 ev_def,
@@ -1233,6 +1242,7 @@ class DrumGenerator(BasePartGenerator):
 
             if not inst_name:
                 continue
+            inst_name = DRUM_ALIAS.get(inst_name.lower(), inst_name).lower()
 
             final_offset = event_offset * time_scale_factor
             if final_offset >= block_duration:

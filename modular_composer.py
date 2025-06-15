@@ -280,6 +280,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="未知のドラムキーをエラーにする",
     )
+    from utilities.drum_map_registry import DRUM_MAPS
+    p.add_argument(
+        "--drum-map",
+        choices=DRUM_MAPS.keys(),
+        help="使用するドラムマッピングを選択",
+    )
     return p
 
 
@@ -291,6 +297,8 @@ def main_cli() -> None:
     main_cfg = load_main_cfg(Path(args.main_cfg))
     if args.strict_drum_map:
         main_cfg.setdefault("global_settings", {})["strict_drum_map"] = True
+    if args.drum_map:
+        main_cfg.setdefault("global_settings", {})["drum_map"] = args.drum_map
     paths = main_cfg.setdefault("paths", {})
     for k, v in (
         ("chordmap_path", args.chordmap),

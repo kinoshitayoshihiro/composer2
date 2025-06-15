@@ -17,7 +17,7 @@ from music21 import (
 from .base_part_generator import BasePartGenerator
 from utilities.core_music_utils import get_time_signature_object, MIN_NOTE_DURATION_QL
 from utilities.onset_heatmap import build_heatmap, RESOLUTION, load_heatmap
-from utilities import humanizer
+from utilities import humanizer, get_drum_map
 from utilities.humanizer import apply_humanization_to_element
 from utilities.safe_get import safe_get
 from utilities.drum_map import get_drum_map, GENERAL_MIDI_MAP
@@ -37,6 +37,9 @@ EMOTION_INTENSITY_LUT = {
     ("super_drive", "high"): "rock_drive_loop",
 }
 
+# codex/add---drum-map-argument-to-build_arg_parser
+GM_DRUM_MAP: Dict[str, int] = get_drum_map("ujam_legend")
+# main
 GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
 
 

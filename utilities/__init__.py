@@ -39,6 +39,8 @@ from .humanizer import (
 )
 from .drum_map import get_drum_map
 
+from .drum_map_registry import get_drum_map
+
 __all__ = [
     "MIN_NOTE_DURATION_QL", "get_time_signature_object", "sanitize_chord_label", # "get_music21_chord_object" を削除
     "build_scale_object", "ScaleRegistry",

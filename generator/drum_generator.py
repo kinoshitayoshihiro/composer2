@@ -123,6 +123,7 @@ GM_DRUM_MAP: Dict[str, int] = {
 }
 DRUM_ALIAS: Dict[str, str] = {
     "hh": "closed_hi_hat",
+    "hat_closed": "closed_hi_hat",
     "ohh": "open_hi_hat",
     "shaker_soft": "shaker",
     "chimes": "triangle",
@@ -134,6 +135,7 @@ GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
 # Fallback mapping for drum names missing from GM_DRUM_MAP
 MISSING_DRUM_MAP_FALLBACK: Dict[str, str] = {
     "hh": "chh",
+    "hat_closed": "chh",
     "ghost": "chh",
     "shaker_soft": "shaker",
     "chimes": "triangle",

@@ -2,5 +2,16 @@ __pycache__/
 *.pyc
 midi_output/*.mid
 
+# MacOS metadata and other OS-generated files
+.DS_Store
+
+# Backup and temporary files
+*.bak
+*.tmp
+*~
+
+# Generated file lists or temporary scripts
+filelist.txt
+
 heatmap.json
 modular_composer.egg-info/

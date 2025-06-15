@@ -4,7 +4,6 @@
 ./.DS_Store
 ./requirements.txt
 ./config/midi_output/output.mid
-./config/import yaml.py
 ./config/main_cfg.yml
 ./アーカイブ.zip
 ./modular_composer.py

@@ -338,6 +338,7 @@ class DrumGenerator(BasePartGenerator):
         self.logger = logging.getLogger("modular_composer.drum_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
         self.kick_offsets: List[float] = []
+        self.fill_offsets: List[float] = []
         self.strict_drum_map = bool((global_settings or {}).get("strict_drum_map", False))
         self._warned_missing_drum_map: set[str] = set()
         # もし、この後に独自の初期化処理があれば、ここに残してください。
@@ -608,6 +609,8 @@ class DrumGenerator(BasePartGenerator):
         pattern_def.setdefault("pattern", [])
         pattern_def.setdefault("fill_ins", {})
         pattern_def.setdefault("velocity_base", 80)
+        pattern_def.setdefault("fill_patterns", [])
+        pattern_def.setdefault("preferred_fill_positions", [])
         self.pattern_lib_cache[style_key] = copy.deepcopy(pattern_def)
         return pattern_def
 
@@ -667,6 +670,7 @@ class DrumGenerator(BasePartGenerator):
         part: stream.Part,
     ):
         ms_since_fill = 0
+        bars_since_section_start = 0
         for blk_idx, blk_data in enumerate(blocks):
             log_render_prefix = f"DrumGen.Render.Blk{blk_idx+1}"  # 1-indexed for logs
             drums_params = blk_data.get("part_params", {}).get("drums", {})
@@ -784,6 +788,7 @@ class DrumGenerator(BasePartGenerator):
 
             if blk_data.get("is_first_in_section", False) and blk_idx > 0:
                 ms_since_fill = 0
+                bars_since_section_start = 0
             current_pos_within_block = 0.0
             while remaining_ql_in_block > MIN_NOTE_DURATION_QL / 8.0:
                 # (フィルインロジック、パターンの適用は前回と同様、base_vel を _apply_pattern に渡す)
@@ -813,6 +818,27 @@ class DrumGenerator(BasePartGenerator):
                         logger.warning(
                             f"{log_render_prefix}: Override fill key '{override_fill_key}' not in fills for '{style_key}'."
                         )
+
+                preferred_positions = [int(p) for p in style_def.get("preferred_fill_positions", []) if isinstance(p, int)]
+                fill_keys = style_def.get("fill_patterns", [])
+                at_section_end = blk_idx == len(blocks) - 1 and is_last_pattern_iteration_in_block
+                bar_number = bars_since_section_start + 1
+                if (
+                    not fill_applied_this_iter
+                    and fill_keys
+                    and (bar_number in preferred_positions or at_section_end)
+                ):
+                    candidates = [
+                        fk
+                        for fk in fill_keys
+                        if self._get_effective_pattern_def(fk).get("length_beats", pattern_unit_length_ql)
+                        == pattern_unit_length_ql
+                    ]
+                    if candidates:
+                        fill_key = self.rng.choice(candidates)
+                        pattern_to_use_for_iteration = self._get_effective_pattern_def(fill_key).get("pattern", [])
+                        fill_applied_this_iter = True
+                        self.fill_offsets.append(offset_in_score + current_pos_within_block)
                 fill_interval_bars = safe_get(
                     drums_params,
                     "drum_fill_interval_bars",
@@ -839,6 +865,12 @@ class DrumGenerator(BasePartGenerator):
                                 logger.debug(
                                     f"{log_render_prefix}: Applied scheduled fill '{chosen_fill_key}' for style '{style_key}'."
                                 )
+                start_bin = int((offset_in_score + current_pos_within_block) * self.heatmap_resolution)
+                end_bin = int((offset_in_score + current_pos_within_block + current_pattern_iteration_ql) * self.heatmap_resolution)
+                max_bin_val = 0
+                for b in range(start_bin, end_bin):
+                    max_bin_val = max(max_bin_val, self.heatmap.get(b % self.heatmap_resolution, 0))
+                velocity_scale = 1.2 if max_bin_val > self.heatmap_threshold else 1.0
                 self._apply_pattern(
                     part,
                     pattern_to_use_for_iteration,
@@ -849,6 +881,7 @@ class DrumGenerator(BasePartGenerator):
                     swing_ratio_val,
                     pat_ts if pat_ts else self.global_ts,
                     drums_params,
+                    velocity_scale,
                 )
                 if fill_applied_this_iter:
                     ms_since_fill = 0
@@ -856,6 +889,7 @@ class DrumGenerator(BasePartGenerator):
                     ms_since_fill += 1
                 current_pos_within_block += current_pattern_iteration_ql
                 remaining_ql_in_block -= current_pattern_iteration_ql
+                bars_since_section_start += 1
 
     def _apply_pattern(
         self,
@@ -868,6 +902,7 @@ class DrumGenerator(BasePartGenerator):
         swing_ratio: float,
         current_pattern_ts: meter.TimeSignature,
         drum_block_params: Dict[str, Any],
+        velocity_scale: float = 1.0,
     ):
         log_apply_prefix = f"DrumGen.ApplyPattern"
         beat_len_ql = (
@@ -966,6 +1001,8 @@ class DrumGenerator(BasePartGenerator):
             if inst_name in {"kick", "snare"}:
                 final_event_velocity = self.accent_mapper.accent(rel, final_event_velocity)
 
+            final_event_velocity = max(1, min(127, int(final_event_velocity * velocity_scale)))
+
             drum_hit_note = self._make_hit(
                 inst_name, final_event_velocity, clipped_duration_ql
             )
@@ -1060,7 +1097,7 @@ class DrumGenerator(BasePartGenerator):
             return None
         n = note.Note()
         n.pitch = pitch.Pitch(midi=midi_pitch_val)
-        n.duration = m21dur.Duration(quarterLength=max(MIN_NOTE_DURATION_QL / 8.0, ql))
+        n.duration = m21duration.Duration(quarterLength=max(MIN_NOTE_DURATION_QL / 8.0, ql))
         n.volume = m21volume.Volume(velocity=max(1, min(127, vel)))
         n.offset = 0.0
         return n
@@ -1309,6 +1346,9 @@ class DrumGenerator(BasePartGenerator):
 
     def get_kick_offsets(self) -> List[float]:
         return list(self.kick_offsets)
+
+    def get_fill_offsets(self) -> List[float]:
+        return list(self.fill_offsets)
 
 
 # --- END OF FILE ---

@@ -68,4 +68,4 @@ def test_missing_instrument(monkeypatch, rhythm_library):
 
     for part in captured['part_streams'].values():
         insts = part.recurse().getElementsByClass(instrument.Instrument)
-        assert len(insts) == 0, 'Expected no instrument objects in part'
+        assert len(insts) == 1

@@ -20,7 +20,7 @@ from utilities.onset_heatmap import build_heatmap, RESOLUTION, load_heatmap
 from utilities import humanizer
 from utilities.humanizer import apply_humanization_to_element
 from utilities.safe_get import safe_get
-from utilities.drum_map_registry import DRUM_MAP
+from utilities.drum_map_registry import DRUM_MAP, get_drum_map, GM_DRUM_MAP
 
 
 logger = logging.getLogger("modular_composer.drum_generator")
@@ -189,7 +189,7 @@ class FillInserter:
             inst = ev.get("instrument")
             if not inst:
                 continue
-            gm_name, midi_pitch = DRUM_MAP.get(inst, (None, None))
+            gm_name, midi_pitch = self.drum_map.get(inst, (None, None))
             if midi_pitch is None:
                 logger.warning("Unknown drum label %s", inst)
                 continue
@@ -345,6 +345,13 @@ class DrumGenerator(BasePartGenerator):
         self.kick_offsets: List[float] = []
         self.fill_offsets: List[float] = []
         self.strict_drum_map = bool((global_settings or {}).get("strict_drum_map", False))
+        self.drum_map_name = (global_settings or {}).get("drum_map", "gm")
+        self.drum_map = get_drum_map(self.drum_map_name)
+        # Simplified mapping to MIDI note numbers for internal use
+        self.gm_pitch_map: Dict[str, int] = {}
+        for label, (gm_name, midi) in self.drum_map.items():
+            self.gm_pitch_map[label] = midi
+            self.gm_pitch_map[gm_name] = midi
         self._warned_missing_drum_map: set[str] = set()
         # もし、この後に独自の初期化処理があれば、ここに残してください。
         # 必須のデフォルトパターンが不足している場合に補充
@@ -929,7 +936,7 @@ class DrumGenerator(BasePartGenerator):
                 continue
             inst_name = MISSING_DRUM_MAP_FALLBACK.get(inst_name.lower(), inst_name.lower())
             inst_name = DRUM_ALIAS.get(inst_name, inst_name).lower()
-            if inst_name not in GM_DRUM_MAP:
+            if inst_name not in self.gm_pitch_map:
                 if self.strict_drum_map:
                     raise KeyError(f"Unknown drum instrument: '{inst_name}'")
                 if inst_name not in self._warned_missing_drum_map:
@@ -1094,7 +1101,7 @@ class DrumGenerator(BasePartGenerator):
         # (前回と同様)
         mapped_name = name.lower().replace(" ", "_").replace("-", "_")
         actual_name_for_midi = GHOST_ALIAS.get(mapped_name, mapped_name)
-        midi_pitch_val = GM_DRUM_MAP.get(actual_name_for_midi)
+        midi_pitch_val = self.gm_pitch_map.get(actual_name_for_midi)
         if midi_pitch_val is None:
             logger.warning(
                 f"DrumGen _make_hit: Unknown drum sound '{name}' (mapped to '{actual_name_for_midi}'). MIDI mapping not found. Skipping."
@@ -1303,7 +1310,7 @@ class DrumGenerator(BasePartGenerator):
 
             if not inst_name:
                 continue
-            gm_name, midi_pitch = DRUM_MAP.get(inst_name, (None, None))
+            gm_name, midi_pitch = self.drum_map.get(inst_name, (None, None))
             if midi_pitch is None:
                 logger.warning("Unknown drum label %s", inst_name)
                 continue
@@ -1326,7 +1333,7 @@ class DrumGenerator(BasePartGenerator):
                 if self.rng.random() > self.accent_mapper.ghost_density(rel):
                     continue
 
-            midi_pitch = GM_DRUM_MAP.get(inst_name.lower())
+            midi_pitch = self.gm_pitch_map.get(inst_name.lower())
 
             if midi_pitch:
                 if inst_name.lower() in {"kick", "bd", "acoustic_bass_drum"}:

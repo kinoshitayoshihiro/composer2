@@ -20,6 +20,7 @@ from utilities.onset_heatmap import build_heatmap, RESOLUTION, load_heatmap
 from utilities import humanizer
 from utilities.humanizer import apply_humanization_to_element
 from utilities.safe_get import safe_get
+from utilities.drum_map_registry import DRUM_MAP
 
 
 logger = logging.getLogger("modular_composer.drum_generator")
@@ -185,8 +186,9 @@ class FillInserter:
             inst = ev.get("instrument")
             if not inst:
                 continue
-            midi_pitch = GM_DRUM_MAP.get(inst)
+            gm_name, midi_pitch = DRUM_MAP.get(inst, (None, None))
             if midi_pitch is None:
+                logger.warning("Unknown drum label %s", inst)
                 continue
             n = note.Note()
             n.pitch = pitch.Pitch(midi=midi_pitch)
@@ -1298,6 +1300,11 @@ class DrumGenerator(BasePartGenerator):
 
             if not inst_name:
                 continue
+            gm_name, midi_pitch = DRUM_MAP.get(inst_name, (None, None))
+            if midi_pitch is None:
+                logger.warning("Unknown drum label %s", inst_name)
+                continue
+            inst_name = gm_name
             inst_name = MISSING_DRUM_MAP_FALLBACK.get(inst_name.lower(), inst_name.lower())
             inst_name = DRUM_ALIAS.get(inst_name, inst_name).lower()
             

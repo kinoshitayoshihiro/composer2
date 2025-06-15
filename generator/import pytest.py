@@ -126,7 +126,7 @@ def test_compose_single_part_basic(
 
     # final_process checks
     mock_humanize_apply_base.assert_called_once_with(rendered_part, None)
-    mock_apply_swing.assert_called_once_with(rendered_part, 0.0) # Default swing
+    mock_apply_swing.assert_called_once_with(rendered_part, 0.0, 8) # Default swing
     mock_apply_envelope.assert_called_once_with(rendered_part, 0, 4, 1.0) # Default intensity, q_length
 
     assert result_part is rendered_part # Part is modified in-place
@@ -170,9 +170,9 @@ def test_compose_dict_parts_with_hand_specific_swing_overrides(
     mock_humanize_apply_base.assert_any_call(part_lh, None)
 
     assert mock_apply_swing.call_count == 3
-    mock_apply_swing.assert_any_call(part_rh, 0.7) # swing_ratio_rh
-    mock_apply_swing.assert_any_call(part_lh, 0.6) # swing_ratio_lh
-    mock_apply_swing.assert_any_call(result_parts["other"], 0.5) # fallback to main swing_ratio
+    mock_apply_swing.assert_any_call(part_rh, 0.7, 8) # swing_ratio_rh
+    mock_apply_swing.assert_any_call(part_lh, 0.6, 8) # swing_ratio_lh
+    mock_apply_swing.assert_any_call(result_parts["other"], 0.5, 8) # fallback to main swing_ratio
 
     assert mock_apply_envelope.call_count == 3
     mock_apply_envelope.assert_any_call(part_rh, 0, 4, 1.0)
@@ -205,7 +205,7 @@ def test_compose_swing_ratio_from_section_params(
     test_generator.compose(section_data=section_data)
 
     # Assert
-    mock_apply_swing.assert_called_once_with(rendered_part, 0.65)
+    mock_apply_swing.assert_called_once_with(rendered_part, 0.65, 8)
 
 
 @patch(f"{BGP_PATH}.apply_groove_pretty")

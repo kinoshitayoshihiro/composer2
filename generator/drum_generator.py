@@ -1101,8 +1101,7 @@ class DrumGenerator(BasePartGenerator):
             rel_offset / effective_beat_for_swing_pair_ql
         )
         offset_within_effective_beat = rel_offset - (
-            beat_num_in_bar_for_swing_pair * effective_beat_for_swing_pair_ql
-        )
+            beat_num_in_bar_for_swing_pair * effective_beat_for_swing_pair_ql)
         epsilon = subdivision_duration_ql * 0.1
         if abs(offset_within_effective_beat - subdivision_duration_ql) < epsilon:
             new_offset_within_effective_beat = (

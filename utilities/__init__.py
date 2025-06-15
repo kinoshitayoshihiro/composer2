@@ -38,10 +38,12 @@ from .humanizer import (
     NUMPY_AVAILABLE,
 )
 
+from .drum_map_registry import get_drum_map
+
 __all__ = [
     "MIN_NOTE_DURATION_QL", "get_time_signature_object", "sanitize_chord_label", # "get_music21_chord_object" を削除
     "build_scale_object", "ScaleRegistry",
     "generate_fractional_noise", "apply_humanization_to_element", "apply_humanization_to_part",
-    "HUMANIZATION_TEMPLATES", "NUMPY_AVAILABLE",
+    "HUMANIZATION_TEMPLATES", "NUMPY_AVAILABLE", "get_drum_map",
 ]
 # --- END OF FILE utilities/__init__.py ---

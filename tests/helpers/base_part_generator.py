@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import Mock, patch, call
 from music21 import stream, note, instrument
 
-from .base_part_generator import BasePartGenerator #, OverrideModelType (type hint)
+from generator.base_part_generator import BasePartGenerator  # , OverrideModelType (type hint)
 
 # Path for mocks targeting the module where the tested function resides
 BGP_PATH = "generator.base_part_generator"

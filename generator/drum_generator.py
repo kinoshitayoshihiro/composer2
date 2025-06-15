@@ -4,6 +4,7 @@ import logging, random, json, copy
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from utilities.velocity_curve import resolve_velocity_curve
 from music21 import (
     stream,
     note,
@@ -696,6 +697,9 @@ class DrumGenerator(BasePartGenerator):
                 )
                 continue
 
+            style_options = style_def.get("options", {})
+            velocity_curve_list = resolve_velocity_curve(style_options.get("velocity_curve"))
+
             # --- base_vel の取得 (safe_get を使用) ---
             base_vel = safe_get(
                 drums_params,
@@ -894,6 +898,7 @@ class DrumGenerator(BasePartGenerator):
                     pat_ts if pat_ts else self.global_ts,
                     drums_params,
                     velocity_scale,
+                    velocity_curve_list,
                 )
                 if fill_applied_this_iter:
                     ms_since_fill = 0
@@ -915,6 +920,7 @@ class DrumGenerator(BasePartGenerator):
         current_pattern_ts: meter.TimeSignature,
         drum_block_params: Dict[str, Any],
         velocity_scale: float = 1.0,
+        velocity_curve: List[float] | None = None,
     ):
         log_apply_prefix = f"DrumGen.ApplyPattern"
         beat_len_ql = (
@@ -1012,6 +1018,15 @@ class DrumGenerator(BasePartGenerator):
 
             if inst_name in {"kick", "snare"}:
                 final_event_velocity = self.accent_mapper.accent(rel, final_event_velocity)
+
+            layer_idx = ev_def.get("velocity_layer")
+            if velocity_curve and layer_idx is not None:
+                try:
+                    idx = int(layer_idx)
+                    if 0 <= idx < len(velocity_curve):
+                        final_event_velocity = int(final_event_velocity * velocity_curve[idx])
+                except (TypeError, ValueError):
+                    pass
 
             final_event_velocity = max(1, min(127, int(final_event_velocity * velocity_scale)))
 

@@ -9,6 +9,7 @@ import music21.harmony as harmony
 import music21.pitch as pitch
 import music21.meter as meter
 import music21.duration as music21_duration
+from utilities.velocity_curve import resolve_velocity_curve
 import music21.interval as interval
 import music21.tempo as tempo
 import music21.chord as m21chord
@@ -552,21 +553,24 @@ class GuitarGenerator(BasePartGenerator):
                 logger.error(
                     f"{log_blk_prefix}: CRITICAL - Default guitar rhythm missing. Using minimal block."
                 )
-                rhythm_details = {
-                    "execution_style": EXEC_STYLE_BLOCK_CHORD,
-                    "pattern": [
-                        {
-                            "offset": 0,
-                            "duration": block_duration_ql,
-                            "velocity_factor": 0.7,
-                        }
-                    ],
-                    "reference_duration_ql": block_duration_ql,
-                }
+            rhythm_details = {
+                "execution_style": EXEC_STYLE_BLOCK_CHORD,
+                "pattern": [
+                    {
+                        "offset": 0,
+                        "duration": block_duration_ql,
+                        "velocity_factor": 0.7,
+                    }
+                ],
+                "reference_duration_ql": block_duration_ql,
+            }
 
         pattern_events = rhythm_details.get("pattern", [])
         if pattern_events is None:
             pattern_events = []
+
+        options = rhythm_details.get("options", {})
+        velocity_curve_list = resolve_velocity_curve(options.get("velocity_curve"))
 
         pattern_ref_duration = rhythm_details.get(
             "reference_duration_ql", self.measure_duration
@@ -674,6 +678,14 @@ class GuitarGenerator(BasePartGenerator):
                 block_base_velocity = 70
 
             final_event_velocity = int(block_base_velocity * event_velocity_factor)
+            layer_idx = event_def.get("velocity_layer")
+            if velocity_curve_list and layer_idx is not None:
+                try:
+                    idx = int(layer_idx)
+                    if 0 <= idx < len(velocity_curve_list):
+                        final_event_velocity = int(final_event_velocity * velocity_curve_list[idx])
+                except (TypeError, ValueError):
+                    pass
             final_event_velocity = max(1, min(127, final_event_velocity))
 
             # Palm Mute 判定 (パッチ参考)

@@ -18,6 +18,7 @@ from music21 import (
     duration as m21duration,
 )
 from typing import List, Dict, Optional, Any, Tuple, Union, cast, Sequence
+from utilities.velocity_curve import resolve_velocity_curve
 import copy
 import math
 
@@ -457,6 +458,7 @@ class BassGenerator(BasePartGenerator):
         block_duration: float,
         pattern_reference_duration_ql: float,
         current_scale: Optional[scale.ConcreteScale] = None,
+        velocity_curve: List[float] | None = None,
     ) -> List[Tuple[float, note.Note]]:
         # (変更なし)
         notes: List[Tuple[float, note.Note]] = []
@@ -521,6 +523,14 @@ class BassGenerator(BasePartGenerator):
                 continue
             note_type = (p_event.get("type") or "root").lower()
             final_velocity = max(1, min(127, int(block_base_velocity * vel_factor)))
+            layer_idx = p_event.get("velocity_layer")
+            if velocity_curve and layer_idx is not None:
+                try:
+                    idx = int(layer_idx)
+                    if 0 <= idx < len(velocity_curve):
+                        final_velocity = int(final_velocity * velocity_curve[idx])
+                except (TypeError, ValueError):
+                    pass
             chosen_pitch_base: Optional[pitch.Pitch] = None
             if note_type == "root" and root_pitch_obj:
                 chosen_pitch_base = root_pitch_obj
@@ -1176,6 +1186,7 @@ class BassGenerator(BasePartGenerator):
                 block_duration,
                 ref_dur_explicit,
                 current_scale,
+                velocity_curve_list,
             )
         elif pattern_type == "funk_octave_pops":
             self.logger.info(
@@ -1378,6 +1389,8 @@ class BassGenerator(BasePartGenerator):
             )
             return bass_part
 
+        velocity_curve_list = resolve_velocity_curve(pattern_details.get("options", {}).get("velocity_curve"))
+
         block_q_length = section_data.get("q_length", self.measure_duration)
         if block_q_length <= 0:
             block_q_length = self.measure_duration
@@ -1538,6 +1551,7 @@ class BassGenerator(BasePartGenerator):
                 block_q_length,
                 ref_dur_fixed,
                 current_m21_scale,
+                velocity_curve_list,
             )
         else:
             self.logger.warning(

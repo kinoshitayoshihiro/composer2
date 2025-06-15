@@ -18,6 +18,7 @@ def test_drum_alias_mapping(tmp_path, rhythm_library):
             "pattern": [
                 {"instrument": "hh", "offset": 0.0, "duration": 0.25},
                 {"instrument": "shaker_soft", "offset": 1.0, "duration": 0.25},
+                {"instrument": "hat_closed", "offset": 1.5, "duration": 0.25},
             ],
             "length_beats": 2.0,
         }
@@ -37,5 +38,5 @@ def test_drum_alias_mapping(tmp_path, rhythm_library):
     section = {"absolute_offset": 0.0, "q_length": 2.0, "musical_intent": {}, "part_params": {}}
     part = drum.compose(section_data=section)
     mids = [n.pitch.midi for n in part.flatten().notes]
-    assert GM_DRUM_MAP["closed_hi_hat"] in mids
+    assert mids.count(GM_DRUM_MAP["closed_hi_hat"]) == 2
     assert GM_DRUM_MAP["shaker"] in mids

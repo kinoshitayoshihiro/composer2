@@ -1368,33 +1368,5 @@ class DrumGenerator(BasePartGenerator):
         return list(self.fill_offsets)
 
 
-# --- END OF FILE ---
+# --- END OF FILE generator/drum_generator.py ---
 
-
-def test_independent_mode_creates_part():
-    drum_gen = DrumGenerator(
-        lib={"calm_backbeat": {"pattern": [{"offset": 0.0, "instrument": "kick"}]}},
-        vocal_midi_path="tests/data/test_vocal.midi",
-        heatmap_json_path="tests/data/test_heatmap.json",
-        mode="independent",
-    )
-    part = drum_gen.compose(section=None)
-    assert part is not None
-    assert len(list(part.flatten().notes)) > 0
-
-
-def test_chord_mode_creates_part():
-    drum_gen = DrumGenerator(
-        lib={"calm_backbeat": {"pattern": [{"offset": 0.0, "instrument": "kick"}]}},
-        vocal_midi_path="tests/data/test_vocal.midi",
-        heatmap_json_path="tests/data/test_heatmap.json",
-        mode="chord",
-    )
-    dummy_section = {
-        "absolute_offset": 0,
-        "length_in_measures": 2,
-        "musical_intent": {"emotion": "default", "intensity": "medium"},
-    }
-    part = drum_gen.compose(section=dummy_section)
-    assert part is not None
-    assert len(list(part.flatten().notes)) > 0

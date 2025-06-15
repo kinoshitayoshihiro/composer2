@@ -100,6 +100,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="MIDI 出力ディレクトリを上書き",
     )
     p.add_argument(
+        "--drum-map",
+        help="ドラムマップ名を指定 (global_settings.drum_map)",
+    )
+    p.add_argument(
         "--verbose", "-v", action="store_true", help="詳しいログ(INFO)を表示"
     )
     p.add_argument(
@@ -129,6 +133,9 @@ def main_cli() -> None:
 
     logger.info("使用 chordmap_path = %s", paths["chordmap_path"])
     logger.info("使用 rhythm_library_path = %s", paths["rhythm_library_path"])
+
+    drum_map_name = args.drum_map or main_cfg.get("global_settings", {}).get("drum_map")
+    main_cfg.setdefault("global_settings", {})["drum_map"] = drum_map_name
 
     # 3. ファイル読み込み
     chordmap = load_chordmap_yaml(Path(paths["chordmap_path"]))

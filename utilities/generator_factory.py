@@ -3,6 +3,7 @@ from generator.piano_generator import PianoGenerator
 from generator.guitar_generator import GuitarGenerator
 from generator.bass_generator import BassGenerator
 from generator.drum_generator import DrumGenerator
+from utilities.drum_map import get_drum_map
 from generator.strings_generator import StringsGenerator
 from generator.melody_generator import MelodyGenerator
 from generator.sax_generator import SaxGenerator
@@ -24,6 +25,7 @@ class GenFactory:
             each generator via ``part_parameters``.
         """
         global_settings = main_cfg.get("global_settings", {})
+        drum_map = get_drum_map(global_settings.get("drum_map"))
         gens = {}
         for part_name, part_cfg in main_cfg["part_defaults"].items():
             role = part_cfg.get("role", part_name)  # role が無ければ楽器名と同じ
@@ -66,6 +68,9 @@ class GenFactory:
             if lib_params:
                 part_params = {**lib_params, **part_params}
             cleaned_part_cfg["part_parameters"] = part_params
+
+            if part_name == "drums":
+                cleaned_part_cfg["drum_map"] = drum_map
 
             gens[part_name] = GenCls(
                 global_settings=global_settings,

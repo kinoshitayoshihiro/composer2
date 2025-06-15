@@ -1343,6 +1343,28 @@ drum_patterns:
       - instrument: crash
         offset: 4.0
         duration: 1.0
+
+  chorus_end_fill:
+    description: "Tom run and crash to close chorus"
+    pattern_type: "fill"
+    length_beats: 4.0
+    pattern:
+      - instrument: tom1
+        offset: 3.0
+        velocity_factor: 0.9
+        duration: 1.0
+      - instrument: tom2
+        offset: 3.25
+        velocity_factor: 1.0
+        duration: 1.0
+      - instrument: tom3
+        offset: 3.5
+        velocity_factor: 1.1
+        duration: 1.0
+      - instrument: crash
+        offset: 4.0
+        velocity_factor: 1.2
+        duration: 1.0
   
   # --- ゴーストノート多用型 ---
   ghost_hat_ballad:

@@ -6,14 +6,25 @@ It automatically generates chords, melodies and instrumental parts for each chap
 
 ## Required Libraries
 - **music21** – MIDI and score manipulation
-- **PyYAML** – YAML configuration loader
 - **pretty_midi** – MIDI export utilities
+- **numpy** – numerical routines
+- **PyYAML** – YAML configuration loader
+- **pydantic** – configuration models
 - **pydub** (optional) – audio post‑processing
+- **mido** – MIDI utilities
+- **scipy** – signal processing helpers
+- **tomli** – TOML parser
+- **pytest** – test runner
 
-Install dependencies via pip:
+The same list appears in [`requirements.txt`](requirements.txt) for reference.
+Install dependencies before running tests:
 
 ```bash
-pip install -r requirements.txt  # or install only the needed packages
+# preferred
+bash setup.sh
+
+# or equivalently
+pip install -r requirements.txt
 ```
 
 ## Configuration Files
@@ -88,6 +99,16 @@ If the command finishes without errors you should see the message:
 ```
 drum_patterns の duration 欠損が解消されました
 ```
+
+## Running Tests
+
+After installing the requirements you can verify the build by running:
+
+```bash
+pytest -q
+```
+
+Running the tests confirms that chord generation and instrument mappings behave as expected.
 
 ## License
 This project is licensed under the [MIT License](LICENSE).

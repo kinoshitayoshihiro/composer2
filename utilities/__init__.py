@@ -37,6 +37,7 @@ from .humanizer import (
     HUMANIZATION_TEMPLATES,
     NUMPY_AVAILABLE,
 )
+from .drum_map import get_drum_map
 
 from .drum_map_registry import get_drum_map
 

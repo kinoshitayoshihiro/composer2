@@ -20,6 +20,7 @@ from utilities.onset_heatmap import build_heatmap, RESOLUTION, load_heatmap
 from utilities import humanizer, get_drum_map
 from utilities.humanizer import apply_humanization_to_element
 from utilities.safe_get import safe_get
+from utilities.drum_map import get_drum_map, GENERAL_MIDI_MAP
 
 
 logger = logging.getLogger("modular_composer.drum_generator")
@@ -36,7 +37,9 @@ EMOTION_INTENSITY_LUT = {
     ("super_drive", "high"): "rock_drive_loop",
 }
 
+# codex/add---drum-map-argument-to-build_arg_parser
 GM_DRUM_MAP: Dict[str, int] = get_drum_map("ujam_legend")
+# main
 GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
 
 
@@ -85,7 +88,7 @@ class FillInserter:
             inst = ev.get("instrument")
             if not inst:
                 continue
-            midi_pitch = GM_DRUM_MAP.get(inst)
+            midi_pitch = self.drum_map.get(inst)
             if midi_pitch is None:
                 continue
             n = note.Note()
@@ -222,9 +225,11 @@ class DrumGenerator(BasePartGenerator):
         global_key_signature_tonic=None,
         global_key_signature_mode=None,
         main_cfg=None,
+        drum_map=None,
         **kwargs,
     ):
         self.main_cfg = main_cfg
+        self.drum_map = drum_map or GENERAL_MIDI_MAP
         super().__init__(
             global_settings=global_settings,
             default_instrument=default_instrument,
@@ -944,7 +949,7 @@ class DrumGenerator(BasePartGenerator):
         # (前回と同様)
         mapped_name = name.lower().replace(" ", "_").replace("-", "_")
         actual_name_for_midi = GHOST_ALIAS.get(mapped_name, mapped_name)
-        midi_pitch_val = GM_DRUM_MAP.get(actual_name_for_midi)
+        midi_pitch_val = self.drum_map.get(actual_name_for_midi)
         if midi_pitch_val is None:
             logger.warning(
                 f"DrumGen _make_hit: Unknown drum sound '{name}' (mapped to '{actual_name_for_midi}'). MIDI mapping not found. Skipping."
@@ -1165,7 +1170,7 @@ class DrumGenerator(BasePartGenerator):
                 if self.rng.random() > self.accent_mapper.ghost_density(rel):
                     continue
 
-            midi_pitch = GM_DRUM_MAP.get(inst_name.lower())
+            midi_pitch = self.drum_map.get(inst_name.lower())
 
             if midi_pitch:
                 n = note.Note()

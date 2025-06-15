@@ -43,6 +43,13 @@ python modular_composer.py --main-cfg config/main_cfg.yml
 ```
 
 By default the resulting MIDI is written to the directory specified by `paths.output_dir` in the config.  Use the `--dry-run` flag to skip the final export while still performing generation.
+To change the drum mapping, pass `--drum-map` with one of the registered names such as `ujam_legend`:
+
+```bash
+python modular_composer.py --main-cfg config/main_cfg.yml --drum-map ujam_legend
+```
+
+This value can also be set via `global_settings.drum_map` in your configuration file.
 
 ## Project Goal
 "OtoKotoba" aims to synchronize literary expression and music.  Chapters of narration are mapped to emotional states so that chords, melodies and arrangements resonate with the text, ready for import into VOCALOID or Synthesizer V.

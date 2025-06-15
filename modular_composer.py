@@ -17,7 +17,17 @@ from pathlib import Path
 from typing import Any, Dict
 from utilities.config_loader import load_chordmap_yaml, load_main_cfg
 from utilities.rhythm_library_loader import load_rhythm_library
-from music21 import instrument as m21inst, meter, stream, tempo
+from music21 import (
+    instrument as m21inst,
+    meter,
+    stream,
+    tempo,
+    key,
+    dynamics,
+    expressions,
+    chord,
+    note,
+)
 
 # --- project utilities ----------------------------------------------------
 from utilities.generator_factory import GenFactory  # type: ignore
@@ -189,8 +199,30 @@ def compose(
                             p.partName = pid
                         part_streams[pid] = p
                     dest = part_streams[pid]
-                    for el in sub_stream.flatten().notesAndRests:
-                        dest.insert(section_start_q + block_start + el.offset, clone_element(el))
+                    has_inst = bool(dest.recurse().getElementsByClass(m21inst.Instrument))
+                    inserted_inst = False
+                    for el in sub_stream.recurse():
+                        if isinstance(el, m21inst.Instrument):
+                            if not has_inst and not inserted_inst:
+                                dest.insert(0.0, clone_element(el))
+                                inserted_inst = True
+                            continue
+                        if isinstance(
+                            el,
+                            (
+                                note.GeneralNote,
+                                chord.Chord,
+                                note.Rest,
+                                tempo.MetronomeMark,
+                                key.KeySignature,
+                                dynamics.Dynamic,
+                                expressions.Expression,
+                            ),
+                        ):
+                            dest.insert(
+                                section_start_q + block_start + el.offset,
+                                clone_element(el),
+                            )
 
         sec.setdefault("shared_tracks", {})["kick_offsets"] = [o for lst in kick_map.values() for o in lst]
 
@@ -396,11 +428,30 @@ def main_cli() -> None:
                             p.partName = pid
                         part_streams[pid] = p
                     dest = part_streams[pid]
-                    for el in sub_stream.flatten().notesAndRests:
-                        dest.insert(
-                            section_start_q + block_start + el.offset,
-                            clone_element(el),
-                        )
+                    has_inst = bool(dest.recurse().getElementsByClass(m21inst.Instrument))
+                    inserted_inst = False
+                    for el in sub_stream.recurse():
+                        if isinstance(el, m21inst.Instrument):
+                            if not has_inst and not inserted_inst:
+                                dest.insert(0.0, clone_element(el))
+                                inserted_inst = True
+                            continue
+                        if isinstance(
+                            el,
+                            (
+                                note.GeneralNote,
+                                chord.Chord,
+                                note.Rest,
+                                tempo.MetronomeMark,
+                                key.KeySignature,
+                                dynamics.Dynamic,
+                                expressions.Expression,
+                            ),
+                        ):
+                            dest.insert(
+                                section_start_q + block_start + el.offset,
+                                clone_element(el),
+                            )
 
 
     # 4) Humanizer -----------------------------------------------------------

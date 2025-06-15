@@ -129,6 +129,16 @@ DRUM_ALIAS: Dict[str, str] = {
 }
 GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
 
+# Fallback mapping for drum names missing from GM_DRUM_MAP
+MISSING_DRUM_MAP_FALLBACK: Dict[str, str] = {
+    "hh": "chh",
+    "ghost": "chh",
+    "shaker_soft": "shaker",
+    "chimes": "triangle",
+    "ride_cymbal_swell": "ride_cymbal_1",
+    "crash_cymbal_soft_swell": "crash_cymbal_1",
+}
+
 
 class AccentMapper:
     """Map accent strength and ghost-hat density using vocal heatmap."""
@@ -328,6 +338,8 @@ class DrumGenerator(BasePartGenerator):
         self.logger = logging.getLogger("modular_composer.drum_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
         self.kick_offsets: List[float] = []
+        self.strict_drum_map = bool((global_settings or {}).get("strict_drum_map", False))
+        self._warned_missing_drum_map: set[str] = set()
         # もし、この後に独自の初期化処理があれば、ここに残してください。
         # 必須のデフォルトパターンが不足している場合に補充
         self._add_internal_default_patterns()
@@ -875,7 +887,14 @@ class DrumGenerator(BasePartGenerator):
             inst_name = ev_def.get("instrument")
             if not inst_name:
                 continue
-            inst_name = DRUM_ALIAS.get(inst_name.lower(), inst_name).lower()
+            inst_name = MISSING_DRUM_MAP_FALLBACK.get(inst_name.lower(), inst_name.lower())
+            inst_name = DRUM_ALIAS.get(inst_name, inst_name).lower()
+            if inst_name not in GM_DRUM_MAP:
+                if self.strict_drum_map:
+                    raise KeyError(f"Unknown drum instrument: '{inst_name}'")
+                if inst_name not in self._warned_missing_drum_map:
+                    logger.warning(f"Unknown drum instrument: '{inst_name}'")
+                    self._warned_missing_drum_map.add(inst_name)
 
             rel_offset_in_pattern = safe_get(
                 ev_def,
@@ -1242,8 +1261,9 @@ class DrumGenerator(BasePartGenerator):
 
             if not inst_name:
                 continue
-            inst_name = DRUM_ALIAS.get(inst_name.lower(), inst_name).lower()
-
+            inst_name = MISSING_DRUM_MAP_FALLBACK.get(inst_name.lower(), inst_name.lower())
+            inst_name = DRUM_ALIAS.get(inst_name, inst_name).lower()
+            
             final_offset = event_offset * time_scale_factor
             if final_offset >= block_duration:
                 continue
@@ -1271,7 +1291,11 @@ class DrumGenerator(BasePartGenerator):
                 n.volume = m21volume.Volume(velocity=final_velocity)
                 part.insert(final_offset, n)
             else:
-                logger.warning(f"Unknown drum instrument: '{inst_name}'")
+                if self.strict_drum_map:
+                    raise KeyError(f"Unknown drum instrument: '{inst_name}'")
+                if inst_name not in self._warned_missing_drum_map:
+                    logger.warning(f"Unknown drum instrument: '{inst_name}'")
+                    self._warned_missing_drum_map.add(inst_name)
 
         profile_name = (
             (self.main_cfg or {}).get("humanize_profile")

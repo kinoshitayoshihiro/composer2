@@ -275,6 +275,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="ログレベルを指定",
     )
     p.add_argument("--dry-run", action="store_true", help="動作検証のみ")
+    p.add_argument(
+        "--strict-drum-map",
+        action="store_true",
+        help="未知のドラムキーをエラーにする",
+    )
     return p
 
 
@@ -284,6 +289,8 @@ def main_cli() -> None:
 
     # 1) 設定 & データロード -------------------------------------------------
     main_cfg = load_main_cfg(Path(args.main_cfg))
+    if args.strict_drum_map:
+        main_cfg.setdefault("global_settings", {})["strict_drum_map"] = True
     paths = main_cfg.setdefault("paths", {})
     for k, v in (
         ("chordmap_path", args.chordmap),

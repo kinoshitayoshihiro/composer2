@@ -20,6 +20,7 @@ from utilities.onset_heatmap import build_heatmap, RESOLUTION, load_heatmap
 from utilities import humanizer
 from utilities.humanizer import apply_humanization_to_element
 from utilities.safe_get import safe_get
+from utilities.drum_map import get_drum_map, GENERAL_MIDI_MAP
 
 
 logger = logging.getLogger("modular_composer.drum_generator")
@@ -36,89 +37,6 @@ EMOTION_INTENSITY_LUT = {
     ("super_drive", "high"): "rock_drive_loop",
 }
 
-GM_DRUM_MAP: Dict[str, int] = {
-    "kick": 36,
-    "bd": 36,
-    "acoustic_bass_drum": 35,
-    "snare": 38,
-    "sd": 38,
-    "acoustic_snare": 38,
-    "electric_snare": 40,
-    "closed_hi_hat": 42,
-    "chh": 42,
-    "closed_hat": 42,
-    "pedal_hi_hat": 44,
-    "phh": 44,
-    "open_hi_hat": 46,
-    "ohh": 46,
-    "open_hat": 46,
-    "crash_cymbal_1": 49,
-    "crash": 49,
-    "crash_cymbal_2": 57,
-    "crash_cymbal_soft_swell": 49,  # ★★★ 確認: Crash Cymbal 1 (49) にマッピング ★★★
-    "ride_cymbal_1": 51,
-    "ride": 51,
-    "ride_cymbal_2": 59,
-    "ride_bell": 53,
-    "hand_clap": 39,
-    "claps": 39,
-    "side_stick": 37,
-    "rim": 37,
-    "rim_shot": 37,
-    "low_floor_tom": 41,
-    "tom_floor_low": 41,
-    "high_floor_tom": 43,
-    "tom_floor_high": 43,
-    "low_tom": 45,
-    "tom_low": 45,
-    "low_mid_tom": 47,
-    "tom_mid_low": 47,
-    "tom_mid": 47,
-    "high_mid_tom": 48,
-    "tom_mid_high": 48,
-    "tom1": 48,
-    "high_tom": 50,
-    "tom_hi": 50,
-    "tom2": 47,
-    "tom3": 45,
-    "hat": 42,
-    "stick": 31,
-    "tambourine": 54,
-    "splash": 55,
-    "splash_cymbal": 55,
-    "cowbell": 56,
-    "china": 52,
-    "china_cymbal": 52,
-    "shaker": 82,
-    "cabasa": 69,
-    "triangle": 81,
-    "wood_block_high": 76,
-    "high_wood_block": 76,
-    "wood_block_low": 77,
-    "low_wood_block": 77,
-    "guiro_short": 73,
-    "short_guiro": 73,
-    "guiro_long": 74,
-    "long_guiro": 74,
-    "claves": 75,
-    "bongo_high": 60,
-    "high_bongo": 60,
-    "bongo_low": 61,
-    "low_bongo": 61,
-    "conga_open": 62,
-    "mute_high_conga": 62,
-    "conga_slap": 63,
-    "open_high_conga": 63,
-    "timbale_high": 65,
-    "high_timbale": 65,
-    "timbale_low": 66,
-    "low_timbale": 66,
-    "agogo_high": 67,
-    "high_agogo": 67,
-    "agogo_low": 68,
-    "low_agogo": 68,
-    "ghost_snare": 38,
-}
 GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
 
 
@@ -167,7 +85,7 @@ class FillInserter:
             inst = ev.get("instrument")
             if not inst:
                 continue
-            midi_pitch = GM_DRUM_MAP.get(inst)
+            midi_pitch = self.drum_map.get(inst)
             if midi_pitch is None:
                 continue
             n = note.Note()
@@ -304,9 +222,11 @@ class DrumGenerator(BasePartGenerator):
         global_key_signature_tonic=None,
         global_key_signature_mode=None,
         main_cfg=None,
+        drum_map=None,
         **kwargs,
     ):
         self.main_cfg = main_cfg
+        self.drum_map = drum_map or GENERAL_MIDI_MAP
         super().__init__(
             global_settings=global_settings,
             default_instrument=default_instrument,
@@ -1026,7 +946,7 @@ class DrumGenerator(BasePartGenerator):
         # (前回と同様)
         mapped_name = name.lower().replace(" ", "_").replace("-", "_")
         actual_name_for_midi = GHOST_ALIAS.get(mapped_name, mapped_name)
-        midi_pitch_val = GM_DRUM_MAP.get(actual_name_for_midi)
+        midi_pitch_val = self.drum_map.get(actual_name_for_midi)
         if midi_pitch_val is None:
             logger.warning(
                 f"DrumGen _make_hit: Unknown drum sound '{name}' (mapped to '{actual_name_for_midi}'). MIDI mapping not found. Skipping."
@@ -1247,7 +1167,7 @@ class DrumGenerator(BasePartGenerator):
                 if self.rng.random() > self.accent_mapper.ghost_density(rel):
                     continue
 
-            midi_pitch = GM_DRUM_MAP.get(inst_name.lower())
+            midi_pitch = self.drum_map.get(inst_name.lower())
 
             if midi_pitch:
                 n = note.Note()

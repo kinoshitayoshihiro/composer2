@@ -173,7 +173,10 @@ class FillInserter:
         key = fill_key or section_data.get("drum_fill_at_end")
         if not key:
             return
-        fill_def = self.pattern_lib.get(key, {})
+        fill_def = self.pattern_lib.get(key)
+        if fill_def is None:
+            logger.warning("FillInserter.insert: fill pattern '%s' not found", key)
+            return
         events = fill_def.get("pattern", [])
         if not events:
             return

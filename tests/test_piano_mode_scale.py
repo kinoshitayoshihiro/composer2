@@ -36,7 +36,7 @@ def test_dorian_minor_third_lh(rhythm_library):
         "mode": "dorian",
     }
     parts = gen.compose(section_data=section)
-    lh_notes = [n for n in parts["piano_lh"].flat.notes]
+    lh_notes = [n for n in parts["piano_lh"].flatten().notes]
     names = {n.pitch.name for n in lh_notes}
     assert "B-" in names
 
@@ -57,5 +57,5 @@ def test_override_changes_pattern(tmp_path: Path, rhythm_library):
         "mode": "dorian",
     }
     parts = gen.compose(section_data=section, overrides_root=ov_model)
-    names = {n.pitch.name for n in parts["piano_lh"].flat.notes}
+    names = {n.pitch.name for n in parts["piano_lh"].flatten().notes}
     assert "B-" not in names

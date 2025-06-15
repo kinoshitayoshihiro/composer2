@@ -81,3 +81,6 @@ If the command finishes without errors you should see the message:
 ```
 drum_patterns の duration 欠損が解消されました
 ```
+
+## License
+This project is licensed under the [MIT License](LICENSE).

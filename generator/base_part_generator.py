@@ -134,14 +134,14 @@ class BasePartGenerator(ABC):
         def final_process(p: stream.Part, ratio: float | None = None) -> stream.Part:
             part = process_one(p)
             humanize_apply(part, None)          # 基本ヒューマナイズ
-            if ratio is not None:               # Swing が指定されていれば適用
-                apply_swing(part, float(ratio))
             apply_envelope(                      # intensity → Velocity スケール
                 part,
                 0,
                 int(section_data.get("q_length", 0)),
                 scale,
             )
+            if ratio is not None:               # Swing が指定されていれば適用
+                apply_swing(part, float(ratio), subdiv=8)
             return part
 
         if isinstance(parts, dict):

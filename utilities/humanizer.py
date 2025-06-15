@@ -127,24 +127,42 @@ def apply(
 
 
 def _apply_swing(part_stream: stream.Part, swing_ratio: float, subdiv: int = 8) -> None:
-    """Shift off-beats according to swing_ratio and subdivision."""
-    if subdiv <= 0 or abs(swing_ratio - 0.5) < 1e-3:
+    """Shift off-beats according to ``swing_ratio`` and grid ``subdiv``.
+
+    ``swing_ratio`` represents the relative position of the off-beat note
+    within a pair (0.5 means straight). ``subdiv`` describes the number of
+    divisions in a 4/4 measure. 8 results in eighth‑note swing.
+    """
+    if subdiv <= 0:
         return
-    beat_len = 1.0
-    step = (4.0 / subdiv)
-    pair = step * 2.0
+
+    step = 4.0 / subdiv  # length of the smallest grid
+    pair = step * 2.0    # span of an on/off pair
+    tol = step * 0.1
+
     for n in part_stream.recurse().notes:
-        rel = float(n.offset)
-        beat_num = math.floor(rel / pair)
-        offset_within = rel - beat_num * pair
-        if abs(offset_within - step) < step * 0.1:
-            n.offset = beat_num * pair + pair * (swing_ratio + 0.1)
+        pos = float(n.offset)
+        pair_start = math.floor(pos / pair) * pair
+        within = pos - pair_start
+        if abs(within - step) < tol:
+            n.offset = pair_start + pair * swing_ratio
 
 
 def apply_swing(part: stream.Part, ratio: float, subdiv: int = 8) -> None:
-    """Public API to apply swing in-place."""
+    """Public API to apply swing in-place.
+
+    Parameters
+    ----------
+    part : :class:`music21.stream.Part`
+        Target part to modify.
+    ratio : float
+        Relative position of the off-beat note (0.5 = straight).
+    subdiv : int
+        Number of grid subdivisions per measure. ``8`` for typical eighth swing.
+    """
     if ratio is None or abs(ratio) < 1e-6:
         return
+
     _apply_swing(part, float(ratio), subdiv=subdiv)
 
 

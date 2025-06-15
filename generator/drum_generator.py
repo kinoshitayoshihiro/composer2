@@ -122,6 +122,44 @@ GM_DRUM_MAP: Dict[str, int] = {
 GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
 
 
+def resolve_velocity_curve(curve_spec: Any) -> List[float]:
+    """Return list of velocity multipliers from specification.
+
+    Parameters
+    ----------
+    curve_spec : Any
+        Either a list of numbers or a named preset string.
+
+    Returns
+    -------
+    List[float]
+        Multipliers for each subdivision. Defaults to ``[1.0]``.
+    """
+    if not curve_spec:
+        return [1.0]
+
+    if isinstance(curve_spec, list):
+        curve = [float(v) for v in curve_spec if isinstance(v, (int, float))]
+        return curve or [1.0]
+
+    if isinstance(curve_spec, str):
+        spec = curve_spec.lower().strip()
+        presets = {
+            "crescendo": [0.8, 0.9, 1.0, 1.1, 1.2],
+            "decrescendo": [1.2, 1.1, 1.0, 0.9, 0.8],
+            "swell": [0.8, 1.0, 1.2, 1.0, 0.8],
+            "flat": [1.0],
+        }
+        if spec in presets:
+            return presets[spec]
+        try:
+            return [float(v) for v in spec.replace(",", " ").split()]
+        except Exception:
+            return [1.0]
+
+    return [1.0]
+
+
 class AccentMapper:
     """Map accent strength and ghost-hat density using vocal heatmap."""
 
@@ -592,6 +630,9 @@ class DrumGenerator(BasePartGenerator):
         pattern_def.setdefault("pattern", [])
         pattern_def.setdefault("fill_ins", {})
         pattern_def.setdefault("velocity_base", 80)
+        pattern_def["velocity_curve"] = resolve_velocity_curve(
+            pattern_def.get("velocity_curve")
+        )
         self.pattern_lib_cache[style_key] = copy.deepcopy(pattern_def)
         return pattern_def
 
@@ -831,6 +872,7 @@ class DrumGenerator(BasePartGenerator):
                     swing_ratio_val,
                     pat_ts if pat_ts else self.global_ts,
                     drums_params,
+                    style_def.get("velocity_curve", [1.0]),
                 )
                 if fill_applied_this_iter:
                     ms_since_fill = 0
@@ -850,11 +892,19 @@ class DrumGenerator(BasePartGenerator):
         swing_ratio: float,
         current_pattern_ts: meter.TimeSignature,
         drum_block_params: Dict[str, Any],
+        velocity_curve: Optional[List[float]] = None,
     ):
         log_apply_prefix = f"DrumGen.ApplyPattern"
         beat_len_ql = (
             current_pattern_ts.beatDuration.quarterLength if current_pattern_ts else 1.0
         )
+        if swing_type == "eighth":
+            subdivision_duration_ql = beat_len_ql / 2.0
+        elif swing_type == "sixteenth":
+            subdivision_duration_ql = beat_len_ql / 4.0
+        else:
+            subdivision_duration_ql = beat_len_ql
+        velocity_curve = velocity_curve or [1.0]
 
         for ev_idx, ev_def in enumerate(events):
             log_event_prefix = f"{log_apply_prefix}.Evt{ev_idx}"
@@ -886,6 +936,8 @@ class DrumGenerator(BasePartGenerator):
             ):
                 continue
 
+            velocity_idx = int(rel_offset_in_pattern / subdivision_duration_ql)
+
             hit_duration_ql_from_def = safe_get(
                 ev_def,
                 "duration",
@@ -916,6 +968,8 @@ class DrumGenerator(BasePartGenerator):
                 cast_to=int,
                 log_name=f"{log_event_prefix}.VelAbs",
             )
+            curve_mult = velocity_curve[velocity_idx % len(velocity_curve)]
+            final_event_velocity = int(final_event_velocity * curve_mult)
             final_event_velocity = max(1, min(127, final_event_velocity))
 
             final_insert_offset_in_score = bar_start_abs_offset + rel_offset_in_pattern
@@ -1119,10 +1173,16 @@ class DrumGenerator(BasePartGenerator):
                     for doc in yaml.safe_load_all(fh):
                         if not isinstance(doc, dict):
                             continue
+                        patterns = None
                         if "drum_patterns" in doc and isinstance(doc["drum_patterns"], dict):
-                            library.update(doc["drum_patterns"])
-                        else:
-                            library.update(doc)
+                            patterns = doc["drum_patterns"]
+                        elif any(isinstance(v, dict) for v in doc.values()):
+                            patterns = doc
+                        if patterns:
+                            for k, v in patterns.items():
+                                if isinstance(v, dict):
+                                    v["velocity_curve"] = resolve_velocity_curve(v.get("velocity_curve"))
+                            library.update(patterns)
             except FileNotFoundError:
                 logger.warning(f"DrumGen _load_pattern_lib: file not found: {p}")
             except Exception as exc:

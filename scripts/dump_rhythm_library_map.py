@@ -2,22 +2,29 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 import yaml
-from generator.drum_generator import GM_DRUM_MAP, MISSING_DRUM_MAP_FALLBACK
+import logging
+
+from generator.drum_generator import (
+    GM_DRUM_MAP,
+    DRUM_ALIAS,
+    MISSING_DRUM_MAP_FALLBACK,
+)
+
+logging.basicConfig(level=logging.WARNING)
 
 def collect_instruments(obj):
-    """Recursively collect instrument labels from 'pattern' or 'fill_patterns' lists."""
+    """Recursively collect all values of keys named ``instrument``."""
+
     labels = set()
     if isinstance(obj, dict):
-        for k, v in obj.items():
-            if k in {"pattern", "fill_patterns"} and isinstance(v, list):
-                for item in v:
-                    if isinstance(item, dict) and "instrument" in item:
-                        labels.add(str(item["instrument"]))
+        for key, value in obj.items():
+            if key == "instrument":
+                labels.add(str(value))
             else:
-                labels.update(collect_instruments(v))
+                labels.update(collect_instruments(value))
     elif isinstance(obj, list):
-        for x in obj:
-            labels.update(collect_instruments(x))
+        for item in obj:
+            labels.update(collect_instruments(item))
     return labels
 
 def main() -> int:
@@ -31,20 +38,23 @@ def main() -> int:
     rows = []
     warn = False
     for label in sorted(labels):
-        alias = MISSING_DRUM_MAP_FALLBACK.get(label)
-        inst = alias or label
-        pitch = GM_DRUM_MAP.get(inst)
+        alias = DRUM_ALIAS.get(label)
+        if alias is None:
+            alias = MISSING_DRUM_MAP_FALLBACK.get(label)
+        gm_name = alias or label
+        pitch = GM_DRUM_MAP.get(gm_name)
         if pitch is None:
+            logging.warning("Unmapped drum label: %s", label)
+            rows.append((label, alias, "–", "–"))
             warn = True
-        rows.append((label, alias, inst, pitch))
+            continue
+        rows.append((label, alias, gm_name, str(pitch)))
 
     print("| Label | Alias/Fallback | GM name | MIDI# |")
     print("|------|---------------|--------|------|")
-    for label, alias, inst, pitch in rows:
-        mark = " ⚠️" if pitch is None else ""
-        alias_disp = alias if alias is not None else ""
-        pitch_disp = "" if pitch is None else str(pitch)
-        print(f"| {label} | {alias_disp} | {inst} | {pitch_disp}{mark} |")
+    for label, alias, gm_name, pitch in rows:
+        alias_disp = alias or ""
+        print(f"| {label} | {alias_disp} | {gm_name} | {pitch} |")
 
     return 1 if warn else 0
 

@@ -8,7 +8,6 @@
 ./config/main_cfg.yml
 ./アーカイブ.zip
 ./modular_composer.py
-./generator/piano_generator.py.bak
 ./generator/.DS_Store
 ./generator/vocal_generator.py
 ./generator/__init__.py

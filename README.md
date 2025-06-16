@@ -62,6 +62,14 @@ python modular_composer.py --main-cfg config/main_cfg.yml --drum-map ujam_legend
 
 This value can also be set via `global_settings.drum_map` in your configuration file.
 
+Use `--strict-drum-map` if unknown drum instrument names should raise an error:
+
+```bash
+python modular_composer.py --main-cfg config/main_cfg.yml --strict-drum-map
+```
+
+The same behaviour can be enabled with `global_settings.strict_drum_map: true` in your configuration file.
+
 StudioOne labels C1 (MIDI 36) as B0. When exporting from that DAW the note
 names may therefore appear one octave lower than the mapping used here.
 

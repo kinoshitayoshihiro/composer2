@@ -555,6 +555,9 @@ class DrumGenerator(BasePartGenerator):
         mode == "chord"      : chordmap のセクション単位で生成
         共通APIを維持しつつ、必要なときだけ独自処理を挟む。
         """
+        # Reset stateful tracking of fills each time compose is called so
+        # consecutive invocations don't accumulate offsets.
+        self.fill_offsets.clear()
         if getattr(self, "mode", "chord") == "independent":
             return self._render_whole_song()
 

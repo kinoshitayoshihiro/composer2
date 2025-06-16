@@ -63,3 +63,47 @@ def test_fill_inserted_at_bar8(tmp_path):
     assert len(fill_notes) == 4
     velocities = {n.volume.velocity for n in fill_notes}
     assert len(velocities) >= 3
+
+
+def test_fill_offsets_reset_between_calls(tmp_path):
+    heatmap = [{"grid_index": i, "count": 0} for i in range(RESOLUTION)]
+    heatmap_path = tmp_path / "heatmap.json"
+    with open(heatmap_path, "w") as f:
+        json.dump(heatmap, f)
+
+    pattern_lib = {
+        "main": {
+            "pattern": [
+                {"instrument": "kick", "offset": 0.0},
+                {"instrument": "kick", "offset": 2.0},
+            ],
+            "length_beats": 4.0,
+            "fill_patterns": ["fill"],
+            "preferred_fill_positions": [8],
+        },
+        "fill": {
+            "pattern": [
+                {"instrument": "tom1", "offset": 0.0, "velocity_factor": 0.6},
+                {"instrument": "tom2", "offset": 1.0, "velocity_factor": 0.8},
+                {"instrument": "tom3", "offset": 2.0, "velocity_factor": 1.0},
+                {"instrument": "snare", "offset": 3.0, "velocity_factor": 1.2},
+            ],
+            "length_beats": 4.0,
+        },
+    }
+
+    cfg = {
+        "vocal_midi_path_for_drums": "",
+        "heatmap_json_path_for_drums": str(heatmap_path),
+        "paths": {"rhythm_library_path": "data/rhythm_library.yml"},
+        "rng_seed": 0,
+    }
+
+    drum = FillDrum(main_cfg=cfg, part_name="drums", part_parameters=pattern_lib)
+    section = {"absolute_offset": 0.0, "q_length": 32.0, "length_in_measures": 8, "part_params": {}}
+
+    drum.compose(section_data=section)
+    assert drum.get_fill_offsets() == [28.0]
+
+    drum.compose(section_data=section)
+    assert drum.get_fill_offsets() == [28.0]

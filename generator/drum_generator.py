@@ -1011,6 +1011,10 @@ class DrumGenerator(BasePartGenerator):
             if not drum_hit_note:
                 continue
 
+            drum_hit_note = apply_humanization_to_element(
+                drum_hit_note, "flam_legato_ghost"
+            )
+
             # (ヒューマナイズ処理は前回と同様)
             humanize_this_hit = False
             humanize_template_for_hit = "drum_tight"

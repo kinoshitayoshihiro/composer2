@@ -429,3 +429,33 @@ def test_compose_no_notes_skips_processing(
     mock_load_profile.assert_not_called() # Skipped because no notes
     mock_apply_groove.assert_not_called() # Skipped because no notes
     mock_apply_humanize.assert_not_called() # Skipped because no notes
+
+
+@patch(f"{BGP_PATH}.apply_offset_profile")
+@patch(f"{BGP_PATH}.apply_envelope")
+@patch(f"{BGP_PATH}.apply_swing")
+@patch(f"{BGP_PATH}.humanize_apply")
+@patch(f"{BGP_PATH}.get_part_override")
+def test_compose_offset_profile_hand_specific(
+    mock_get_override: Mock,
+    mock_humanize_apply: Mock,
+    mock_apply_swing: Mock,
+    mock_apply_envelope: Mock,
+    mock_apply_offset: Mock,
+    test_generator: ConcreteTestGenerator,
+    default_section_data: dict,
+    mock_logger: Mock,
+):
+    part_rh = stream.Part(id="rh_p"); part_rh.append(note.Note("C5"))
+    part_lh = stream.Part(id="lh_p"); part_lh.append(note.Note("C3"))
+    test_generator._render_part_mock_method.return_value = {"rh": part_rh, "lh": part_lh, "other": stream.Part()}
+
+    ov_obj = MockPydanticModel(offset_profile="main", offset_profile_rh="rh_prof", offset_profile_lh="lh_prof")
+    mock_get_override.return_value = ov_obj
+
+    result = test_generator.compose(section_data=default_section_data.copy(), overrides_root=Mock())
+
+    mock_apply_offset.assert_any_call(part_rh, "rh_prof")
+    mock_apply_offset.assert_any_call(part_lh, "lh_prof")
+    mock_apply_offset.assert_any_call(result["other"], "main")
+    assert mock_apply_offset.call_count == 3

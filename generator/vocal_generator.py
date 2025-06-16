@@ -29,17 +29,15 @@ import random
 # import math # mathモジュールも現在のロジックでは不要に
 
 # NumPy import attempt and flag
-NUMPY_AVAILABLE = False
-np = None
 try:
-    import numpy
-
-    np = numpy
+    import numpy as np
     NUMPY_AVAILABLE = True
     logging.info(
         "VocalGen(Humanizer): NumPy found. Fractional noise generation is enabled."
     )
 except ImportError:
+    np = None  # type: ignore
+    NUMPY_AVAILABLE = False
     logging.warning(
         "VocalGen(Humanizer): NumPy not found. Fractional noise will use Gaussian fallback."
     )

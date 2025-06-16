@@ -173,6 +173,44 @@ def apply_envelope(part: stream.Part, start: int, end: int, scale: float) -> Non
             n.volume.velocity = int(max(1, min(127, round(n.volume.velocity * scale))))
 
 
+def apply_offset_profile(part: stream.Part, profile_name: str | None) -> None:
+    """Shift note offsets according to a registered profile."""
+    if not profile_name:
+        return
+    try:
+        profile = get_profile(profile_name)
+    except KeyError:
+        logger.warning(f"Offset profile '{profile_name}' not found.")
+        return
+
+    if "shift_ql" in profile:
+        try:
+            shift = float(profile["shift_ql"])
+        except (TypeError, ValueError):
+            shift = 0.0
+        for n in part.recurse().notesAndRests:
+            n.offset += shift
+        for cc in getattr(part, "extra_cc", []):
+            cc["time"] += shift
+        return
+
+    pattern = profile.get("offsets_ql") or profile.get("pattern")
+    if not isinstance(pattern, (list, tuple)) or not pattern:
+        logger.warning(
+            f"Offset profile '{profile_name}' has no usable 'shift_ql' or 'offsets_ql'."
+        )
+        return
+
+    shifts = [float(x) for x in pattern]
+    notes = list(part.recurse().notesAndRests)
+    for idx, el in enumerate(notes):
+        shift = shifts[idx % len(shifts)]
+        el.offset += shift
+    for idx, cc in enumerate(getattr(part, "extra_cc", [])):
+        shift = shifts[idx % len(shifts)]
+        cc["time"] += shift
+
+
 # ------------------------------------------------------------
 # 3) CLI テスト用メイン（任意）
 # ------------------------------------------------------------

@@ -1360,3 +1360,10 @@ drum_patterns:
       - {instrument: hh, offset: 2.5, duration: 1.0}
       - {instrument: hh, offset: 3.0, duration: 1.0}
       - {instrument: hh, offset: 3.5, duration: 1.0}
+
+flam_test:
+  pattern_type: simple
+  pattern:
+    - {instrument: snare, offset: 0.5, type: flam}
+  length_beats: 1.0
+

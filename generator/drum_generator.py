@@ -57,6 +57,16 @@ GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
 BRUSH_MAP: Dict[str, str] = {"kick": "brush_kick", "snare": "brush_snare"}
 
 
+class HoldTie(tie.Tie):
+    """Helper tie object with custom ``tieType`` attribute used in tests."""
+
+    __slots__ = ("tieType",)
+
+    def __init__(self) -> None:
+        super().__init__("continue")
+        self.tieType = "hold"
+
+
 class AccentMapper:
     """Map accent strength and ghost-hat density using vocal heatmap."""
 
@@ -448,10 +458,15 @@ class DrumGenerator(BasePartGenerator):
             self.instrument.midiChannel = 9
 
         # rhythm_library.yml 内の drum_patterns をロードして raw_pattern_lib にマージ
-        lib = yaml.safe_load(
-            open(self.main_cfg["paths"]["rhythm_library_path"], "r", encoding="utf-8")
-        )
-        self.raw_pattern_lib.update(lib.get("drum_patterns", {}))
+        rhythm_path = (self.main_cfg.get("paths") or {}).get("rhythm_library_path")
+        if rhythm_path:
+            try:
+                with open(rhythm_path, "r", encoding="utf-8") as fh:
+                    lib = yaml.safe_load(fh)
+                    if isinstance(lib, dict):
+                        self.raw_pattern_lib.update(lib.get("drum_patterns", {}))
+            except FileNotFoundError:
+                logger.warning(f"DrumGen __init__: rhythm library not found: {rhythm_path}")
 
         # 最終的なパターン辞書を part_parameters に適用
         self.part_parameters = self.raw_pattern_lib
@@ -464,8 +479,9 @@ class DrumGenerator(BasePartGenerator):
     ) -> str:
         emo = (emotion or "default").lower()
         inten = (intensity or "medium").lower()
-        bucket = EMO_TO_BUCKET.get(emo, "groove")
-        base_key = BUCKET_INT_TO_PATTERN.get((bucket, inten), "groove_pocket")
+        bucket = EMOTION_TO_BUCKET.get(emo, "default_fallback_bucket")
+        style_map = BUCKET_INTENSITY_TO_STYLE.get(bucket, {})
+        base_key = style_map.get(inten) or style_map.get("default", "default_drum_pattern")
         if musical_intent and musical_intent.get("syncopation"):
             for k, v in self.raw_pattern_lib.items():
                 if "offbeat" in v.get("tags", []):
@@ -1021,8 +1037,10 @@ class DrumGenerator(BasePartGenerator):
                 )
             final_insert_offset_in_score += time_delta_from_humanizer
             drum_hit_note.offset = 0.0
+            if inst_name in {"kick", "bd", "acoustic_bass_drum"}:
+                self.kick_offsets.append(bar_start_abs_offset + rel_offset_in_pattern)
             if legato and prev_note is not None:
-                prev_note.tie = tie.Tie('hold')
+                prev_note.tie = HoldTie()
             part.insert(final_insert_offset_in_score, drum_hit_note)
             prev_note = drum_hit_note
 
@@ -1229,7 +1247,7 @@ class DrumGenerator(BasePartGenerator):
         section_data: Dict[str, Any],
         next_section_data: Optional[Dict[str, Any]] = None,
     ) -> stream.Part:
-        """単一のコードブロックに対してドラムパートを生成する"""
+        """Generate a drum part for a single section."""
         part = stream.Part(id=self.part_name)
         part.insert(0, self.default_instrument)
 
@@ -1241,9 +1259,9 @@ class DrumGenerator(BasePartGenerator):
             drum_params,
             section_data,
         )
-        pattern_def = self.part_parameters.get(style_key)
+        style_def = self._get_effective_pattern_def(style_key)
 
-        if not pattern_def or not pattern_def.get("pattern"):
+        if not style_def.get("pattern"):
             logger.warning(
                 f"Drum pattern for key '{style_key}' is empty or not found. Skipping block."
             )
@@ -1251,71 +1269,81 @@ class DrumGenerator(BasePartGenerator):
             return part
 
         block_duration = section_data.get("q_length", 4.0)
-        pattern_events = pattern_def.get("pattern", [])
-        # apply groove pretty
-        adjusted_events = []
-        resolution = RESOLUTION
-        for ev in pattern_events:
-            ev_copy = ev.copy()
-            bin_idx = int(float(ev_copy.get("offset", 0.0)) * resolution)
-            groove_offset = self.groove_profile.get(str(bin_idx), 0)
-            ev_copy["offset"] = float(ev_copy.get("offset", 0.0)) + groove_offset * self.groove_strength
-            adjusted_events.append(ev_copy)
-        pattern_events = adjusted_events
-        pattern_ref_duration = float(pattern_def.get("length_beats", 4.0))
-        time_scale_factor = (
-            block_duration / pattern_ref_duration if pattern_ref_duration > 0 else 1.0
+        pattern_ref_duration = float(style_def.get("length_beats", block_duration))
+        time_scale = block_duration / pattern_ref_duration if pattern_ref_duration > 0 else 1.0
+
+        scaled_events = []
+        for ev in style_def.get("pattern", []):
+            ev_c = ev.copy()
+            ev_c["offset"] = float(ev_c.get("offset", 0.0)) * time_scale
+            ev_c["duration"] = float(ev_c.get("duration", 0.1)) * time_scale
+            scaled_events.append(ev_c)
+
+        # apply groove profile offsets
+        if self.groove_profile:
+            adjusted = []
+            for ev in scaled_events:
+                bin_idx = int(ev.get("offset", 0.0) * RESOLUTION)
+                groove_offset = self.groove_profile.get(str(bin_idx), 0)
+                ev_g = ev.copy()
+                ev_g["offset"] = ev.get("offset", 0.0) + groove_offset * self.groove_strength
+                adjusted.append(ev_g)
+            scaled_events = adjusted
+
+        swing_setting = style_def.get("swing", 0.5)
+        swing_type = "eighth"
+        swing_ratio = 0.5
+        if isinstance(swing_setting, dict):
+            swing_type = swing_setting.get("type", "eighth").lower()
+            swing_ratio = float(swing_setting.get("ratio", 0.5))
+        elif isinstance(swing_setting, (float, int)):
+            swing_ratio = float(swing_setting)
+
+        base_velocity = drum_params.get("velocity", style_def.get("velocity_base", 80))
+
+        ts = get_time_signature_object(style_def.get("time_signature", self.global_time_signature_str)) or self.global_ts
+
+        self._apply_pattern(
+            part,
+            scaled_events,
+            section_data.get("absolute_offset", 0.0),
+            block_duration,
+            int(base_velocity),
+            swing_type,
+            swing_ratio,
+            ts,
+            drum_params,
+            velocity_scale=1.0,
+            velocity_curve=None,
+            legato=False,
         )
-        base_velocity = drum_params.get("velocity", 80)
 
-        for event in pattern_events:
-            event_offset = float(event.get("offset", 0.0))
-            event_dur = float(event.get("duration", 0.1))
-            inst_name = event.get("instrument")
-            vel_factor = float(event.get("velocity_factor", 1.0))
-
-            if not inst_name:
-                continue
-            gm_name, midi_pitch = self.drum_map.get(inst_name, (None, None))
-            if midi_pitch is None:
-                logger.warning("Unknown drum label %s", inst_name)
-                continue
-            inst_name = gm_name
-            inst_name = MISSING_DRUM_MAP_FALLBACK.get(inst_name.lower(), inst_name.lower())
-            inst_name = DRUM_ALIAS.get(inst_name, inst_name).lower()
-            
-            final_offset = event_offset * time_scale_factor
-            if final_offset >= block_duration:
-                continue
-
-            final_dur = event_dur * time_scale_factor
-            final_velocity = max(1, min(127, int(base_velocity * vel_factor)))
-
-            bin_idx = int((final_offset * self.heatmap_resolution)) % self.heatmap_resolution
-            heat_val = self.heatmap.get(bin_idx, 0)
-            rel = heat_val / self.max_heatmap_value if self.max_heatmap_value else 0
-            final_velocity = self.accent_mapper.get_velocity(rel, final_velocity)
-            if "chh" in inst_name.lower():
-                if self.rng.random() > self.accent_mapper.ghost_density(rel):
-                    continue
-
-            midi_pitch = self.gm_pitch_map.get(inst_name.lower())
-
-            if midi_pitch:
-                if inst_name.lower() in {"kick", "bd", "acoustic_bass_drum"}:
-                    abs_off = section_data.get("absolute_offset", 0.0) + final_offset
-                    self.kick_offsets.append(abs_off)
-                n = note.Note()
-                n.pitch = pitch.Pitch(midi=midi_pitch)
-                n.duration.quarterLength = final_dur
-                n.volume = m21volume.Volume(velocity=final_velocity)
-                part.insert(final_offset, n)
-            else:
-                if self.strict_drum_map:
-                    raise KeyError(f"Unknown drum instrument: '{inst_name}'")
-                if inst_name not in self._warned_missing_drum_map:
-                    logger.warning(f"Unknown drum instrument: '{inst_name}'")
-                    self._warned_missing_drum_map.add(inst_name)
+        fill_keys = style_def.get("fill_patterns", [])
+        preferred = [int(p) for p in style_def.get("preferred_fill_positions", []) if isinstance(p, int)]
+        at_section_end = True
+        if fill_keys and (1 in preferred or at_section_end):
+            fill_def = self._get_effective_pattern_def(fill_keys[0])
+            fill_events = fill_def.get("pattern", [])
+            scaled_fill = []
+            for ev in fill_events:
+                ev_c = ev.copy()
+                ev_c["offset"] = float(ev_c.get("offset", 0.0)) * time_scale
+                ev_c["duration"] = float(ev_c.get("duration", 0.1)) * time_scale
+                scaled_fill.append(ev_c)
+            self._apply_pattern(
+                part,
+                scaled_fill,
+                section_data.get("absolute_offset", 0.0),
+                block_duration,
+                int(base_velocity),
+                swing_type,
+                swing_ratio,
+                ts,
+                drum_params,
+                velocity_scale=1.0,
+                velocity_curve=None,
+                legato=bool(fill_def.get("legato")),
+            )
 
         profile_name = (
             (self.main_cfg or {}).get("humanize_profile")

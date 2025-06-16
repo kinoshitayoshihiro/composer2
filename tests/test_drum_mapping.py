@@ -1,8 +1,8 @@
 import yaml
 from pathlib import Path
-from generator.drum_generator import (
+from generator.drum_generator import DRUM_ALIAS
+from utilities.drum_map_registry import (
     GM_DRUM_MAP,
-    DRUM_ALIAS,
     MISSING_DRUM_MAP_FALLBACK,
 )
 

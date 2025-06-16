@@ -252,17 +252,17 @@ HUMANIZATION_TEMPLATES: Dict[str, Dict[str, Any]] = {
 
 
 try:
-    import numpy
-
+    import numpy as np
     NUMPY_AVAILABLE = True
 except ImportError:
+    np = None  # type: ignore
     NUMPY_AVAILABLE = False
 
 
 def generate_fractional_noise(
     length: int, hurst: float = 0.7, scale_factor: float = 1.0
 ) -> List[float]:
-    if not NUMPY_AVAILABLE or np is None:
+    if not NUMPY_AVAILABLE:
         logger.debug(
             f"Humanizer (FBM): NumPy not available. Using Gaussian noise for length {length}."
         )

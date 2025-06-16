@@ -18,6 +18,7 @@ try:
         apply_envelope,
         apply as humanize_apply,
         apply_swing,
+        apply_offset_profile,
     )
 except ModuleNotFoundError as e:
     raise ModuleNotFoundError(
@@ -82,6 +83,17 @@ class BasePartGenerator(ABC):
         swing_rh = self.overrides.swing_ratio_rh if self.overrides else None
         swing_lh = self.overrides.swing_ratio_lh if self.overrides else None
 
+        offset_profile = (
+            (self.overrides and getattr(self.overrides, "offset_profile", None))
+            or section_data.get("part_params", {}).get("offset_profile")
+        )
+        offset_profile_rh = (
+            self.overrides.offset_profile_rh if self.overrides else None
+        ) or section_data.get("part_params", {}).get("offset_profile_rh")
+        offset_profile_lh = (
+            self.overrides.offset_profile_lh if self.overrides else None
+        ) or section_data.get("part_params", {}).get("offset_profile_lh")
+
         self.logger.info(
             f"Rendering part for section: '{section_label}' with overrides: {self.overrides.model_dump(exclude_unset=True) if self.overrides and hasattr(self.overrides, 'model_dump') else 'None'}"
         )
@@ -131,7 +143,11 @@ class BasePartGenerator(ABC):
         scale = {"low": 0.9, "medium": 1.0, "high": 1.1,
                  "very_high": 1.2}.get(intensity, 1.0)
 
-        def final_process(p: stream.Part, ratio: float | None = None) -> stream.Part:
+        def final_process(
+            p: stream.Part,
+            ratio: float | None = None,
+            profile: str | None = None,
+        ) -> stream.Part:
             part = process_one(p)
             humanize_apply(part, None)          # 基本ヒューマナイズ
             apply_envelope(                      # intensity → Velocity スケール
@@ -140,6 +156,8 @@ class BasePartGenerator(ABC):
                 int(section_data.get("q_length", 0)),
                 scale,
             )
+            if profile:
+                apply_offset_profile(part, profile)
             if ratio is not None:               # Swing が指定されていれば適用
                 apply_swing(part, float(ratio), subdiv=8)
             return part
@@ -153,11 +171,16 @@ class BasePartGenerator(ABC):
                         else swing_lh if "lh" in k.lower() and swing_lh is not None
                         else swing
                     ),
+                    (
+                        offset_profile_rh if "rh" in k.lower() and offset_profile_rh is not None
+                        else offset_profile_lh if "lh" in k.lower() and offset_profile_lh is not None
+                        else offset_profile
+                    ),
                 )
                 for k, v in parts.items()
             }
         else:
-            return final_process(parts, swing)
+            return final_process(parts, swing, offset_profile)
 
     @abstractmethod
     def _render_part(

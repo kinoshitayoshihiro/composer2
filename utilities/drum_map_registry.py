@@ -42,6 +42,19 @@ UJAM_LEGEND_MAP = {
     "ghost": ("closed_hi_hat", 42),
 }
 
+# Fallback mapping for drum names missing from ``GM_DRUM_MAP``.  Used by
+# ``generator.drum_generator`` and various scripts to resolve non-standard
+# instrument labels.
+MISSING_DRUM_MAP_FALLBACK = {
+    "hh": "chh",
+    "hat_closed": "chh",
+    "ghost": "chh",
+    "shaker_soft": "shaker_soft",
+    "chimes": "chimes",
+    "ride_cymbal_swell": "ride_cymbal_swell",
+    "crash_cymbal_soft_swell": "crash_cymbal_soft_swell",
+}
+
 # Registry of named drum maps
 DRUM_MAPS = {
     "gm": GM_DRUM_MAP,

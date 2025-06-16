@@ -4,11 +4,8 @@ from pathlib import Path
 import yaml
 import logging
 
-from generator.drum_generator import (
-    GM_DRUM_MAP,
-    DRUM_ALIAS,
-    MISSING_DRUM_MAP_FALLBACK,
-)
+from generator.drum_generator import DRUM_ALIAS
+from utilities.drum_map_registry import GM_DRUM_MAP, MISSING_DRUM_MAP_FALLBACK
 
 logging.basicConfig(level=logging.WARNING)
 

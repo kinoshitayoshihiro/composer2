@@ -21,7 +21,12 @@ from utilities.onset_heatmap import build_heatmap, RESOLUTION, load_heatmap
 from utilities import humanizer
 from utilities.humanizer import apply_humanization_to_element
 from utilities.safe_get import safe_get
-from utilities.drum_map_registry import DRUM_MAP, get_drum_map, GM_DRUM_MAP
+from utilities.drum_map_registry import (
+    DRUM_MAP,
+    get_drum_map,
+    GM_DRUM_MAP,
+    MISSING_DRUM_MAP_FALLBACK,
+)
 
 
 logger = logging.getLogger("modular_composer.drum_generator")
@@ -48,17 +53,6 @@ DRUM_ALIAS: Dict[str, str] = {
     "crash_cymbal_soft_swell": "crash_cymbal_soft_swell",
 }
 GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
-
-# Fallback mapping for drum names missing from GM_DRUM_MAP
-MISSING_DRUM_MAP_FALLBACK: Dict[str, str] = {
-    "hh": "chh",
-    "hat_closed": "chh",
-    "ghost": "chh",
-    "shaker_soft": "shaker_soft",
-    "chimes": "chimes",
-    "ride_cymbal_swell": "ride_cymbal_swell",
-    "crash_cymbal_soft_swell": "crash_cymbal_soft_swell",
-}
 
 
 class AccentMapper:

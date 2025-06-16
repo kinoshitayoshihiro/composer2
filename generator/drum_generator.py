@@ -458,15 +458,21 @@ class DrumGenerator(BasePartGenerator):
             self.instrument.midiChannel = 9
 
         # rhythm_library.yml 内の drum_patterns をロードして raw_pattern_lib にマージ
-        rhythm_path = (self.main_cfg.get("paths") or {}).get("rhythm_library_path")
-        if rhythm_path:
-            try:
-                with open(rhythm_path, "r", encoding="utf-8") as fh:
-                    lib = yaml.safe_load(fh)
-                    if isinstance(lib, dict):
-                        self.raw_pattern_lib.update(lib.get("drum_patterns", {}))
-            except FileNotFoundError:
-                logger.warning(f"DrumGen __init__: rhythm library not found: {rhythm_path}")
+        lib_path = self.main_cfg.get("paths", {}).get(
+            "rhythm_library_path", "data/rhythm_library.yml"
+        )
+        lib_path = str(Path(lib_path).expanduser())
+        try:
+            with open(lib_path, "r", encoding="utf-8") as fh:
+                library_data = yaml.safe_load(fh) or {}
+                if isinstance(library_data, dict):
+                    self.raw_pattern_lib.update(library_data.get("drum_patterns", {}))
+        except FileNotFoundError:
+            logger.warning(f"DrumGen __init__: rhythm library not found: {lib_path}")
+        except Exception as exc:
+            logger.warning(
+                f"DrumGen __init__: failed to load rhythm library {lib_path}: {exc}"
+            )
 
         # 最終的なパターン辞書を part_parameters に適用
         self.part_parameters = self.raw_pattern_lib

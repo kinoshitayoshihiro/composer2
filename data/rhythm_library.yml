@@ -1417,6 +1417,7 @@ drum_patterns:
   funky_syncop:
     description: "シンコペーション強めのファンク"
     pattern_type: "simple"
+    tags: ["offbeat"]
     pattern:
       - instrument: kick
         offset: 0.0

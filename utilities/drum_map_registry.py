@@ -18,6 +18,8 @@ GM_DRUM_MAP = {
     "chimes": ("triangle", 81),
     "shaker_soft": ("shaker", 82),
     "ghost": ("closed_hi_hat", 42),
+    "brush_kick": ("acoustic_bass_drum", 36),
+    "brush_snare": ("acoustic_snare", 38),
 }
 
 # Mapping for UJAM Virtual Drummer "LEGEND".  Numbers are the note numbers used
@@ -40,6 +42,8 @@ UJAM_LEGEND_MAP = {
     "chimes": ("triangle", 81),
     "shaker_soft": ("shaker", 82),
     "ghost": ("closed_hi_hat", 42),
+    "brush_kick": ("kick", 36),
+    "brush_snare": ("snare", 38),
 }
 
 # Fallback mapping for drum names missing from ``GM_DRUM_MAP``.  Used by

@@ -315,15 +315,17 @@ class DrumGenerator(BasePartGenerator):
 
         # apply groove pretty
         global_cfg = self.main_cfg.get("global_settings", {})
-        groove_path = global_cfg.get("groove_profile_path")
+        self.groove_profile_path = global_cfg.get("groove_profile_path")
         self.groove_strength = float(global_cfg.get("groove_strength", 1.0))
         self.groove_profile = {}
-        if groove_path:
+        if self.groove_profile_path:
             try:
-                with open(groove_path, "r", encoding="utf-8") as f:
+                with open(self.groove_profile_path, "r", encoding="utf-8") as f:
                     self.groove_profile = json.load(f)
             except Exception as e:
-                logger.warning(f"Failed to load groove profile from {groove_path}: {e}")
+                logger.warning(
+                    f"Failed to load groove profile from {self.groove_profile_path}: {e}"
+                )
 
         # 楽器設定
         part_default_cfg = self.main_cfg.get("default_part_parameters", {}).get(
@@ -618,7 +620,7 @@ class DrumGenerator(BasePartGenerator):
         part = super().compose(
             section_data=section_data,
             overrides_root=overrides_root,
-            groove_profile_path=groove_profile_path,
+            groove_profile_path=groove_profile_path or self.groove_profile_path,
             next_section_data=next_section_data,
             part_specific_humanize_params=part_specific_humanize_params,
             shared_tracks=shared_tracks,

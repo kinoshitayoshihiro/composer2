@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging, random, json, copy
 import yaml
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Set, Sequence
 from utilities.velocity_curve import resolve_velocity_curve
 from music21 import (
     stream,
@@ -1336,11 +1336,10 @@ class DrumGenerator(BasePartGenerator):
 # --- END OF FILE generator/drum_generator.py ---
 
 # --- START OF FILE generator/drum_generator.py (最終FIX版) ---
-from __future__ import annotations
 import logging, random, json, copy
 import yaml
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Set, Sequence
 from utilities.velocity_curve import resolve_velocity_curve
 from music21 import (
     stream,
@@ -2145,15 +2144,15 @@ class DrumGenerator(BasePartGenerator):
                         ]
                         if possible_fills_for_style:
                             chosen_fill_key = self.rng.choice(possible_fills_for_style)
-                                fill_def = self._get_effective_pattern_def(chosen_fill_key)
-                                chosen_fill_pattern_list = fill_def.get(chosen_fill_key, fill_def.get("pattern"))
-                                if chosen_fill_pattern_list is not None:
-                                    pattern_to_use_for_iteration = chosen_fill_pattern_list
-                                    fill_legato = bool(fill_def.get("legato"))
-                                    fill_applied_this_iter = True
-                                logger.debug(
-                                    f"{log_render_prefix}: Applied scheduled fill '{chosen_fill_key}' for style '{style_key}'."
-                                )
+                            fill_def = self._get_effective_pattern_def(chosen_fill_key)
+                            chosen_fill_pattern_list = fill_def.get(chosen_fill_key, fill_def.get("pattern"))
+                            if chosen_fill_pattern_list is not None:
+                                pattern_to_use_for_iteration = chosen_fill_pattern_list
+                                fill_legato = bool(fill_def.get("legato"))
+                                fill_applied_this_iter = True
+                            logger.debug(
+                                f"{log_render_prefix}: Applied scheduled fill '{chosen_fill_key}' for style '{style_key}'."
+                            )
                 start_bin = int((offset_in_score + current_pos_within_block) * self.heatmap_resolution)
                 end_bin = int((offset_in_score + current_pos_within_block + current_pattern_iteration_ql) * self.heatmap_resolution)
                 max_bin_val = 0

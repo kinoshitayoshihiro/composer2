@@ -38,5 +38,5 @@ def test_drum_alias_mapping(tmp_path, rhythm_library):
     section = {"absolute_offset": 0.0, "q_length": 2.0, "musical_intent": {}, "part_params": {}}
     part = drum.compose(section_data=section)
     mids = [n.pitch.midi for n in part.flatten().notes]
-    assert mids.count(GM_DRUM_MAP["closed_hi_hat"]) == 2
-    assert GM_DRUM_MAP["shaker"] in mids
+    assert mids.count(GM_DRUM_MAP["hh"][1]) == 2
+    assert GM_DRUM_MAP["shaker_soft"][1] in mids

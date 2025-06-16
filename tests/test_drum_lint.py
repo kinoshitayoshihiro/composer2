@@ -4,7 +4,7 @@ def test_drum_lint_unknown_instruments():
 
     path = Path(__file__).resolve().parents[1] / "data" / "drum_patterns.yml"
     unknown = check_drum_patterns(path)
-    assert {"chimes", "hh", "ride_cymbal_swell", "shaker_soft"} <= unknown
+    assert unknown == set()
 
 
 def test_rhythm_library_lint_unknown_instruments():
@@ -13,10 +13,4 @@ def test_rhythm_library_lint_unknown_instruments():
 
     path = Path(__file__).resolve().parents[1] / "data" / "rhythm_library.yml"
     unknown = check_rhythm_library(path)
-    assert {
-        "chimes",
-        "ghost",
-        "hh",
-        "ride_cymbal_swell",
-        "shaker_soft",
-    } <= unknown
+    assert unknown == set()

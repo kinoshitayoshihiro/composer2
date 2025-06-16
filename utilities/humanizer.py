@@ -286,6 +286,12 @@ HUMANIZATION_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "use_fbm_time": True,
         "fbm_time_scale": 0.008,
     },
+    "flam_legato_ghost": {
+        "time_variation": 0.005,
+        "duration_percentage": 1.2,
+        "velocity_variation": [-0.2, 0.2],
+        "apply_to_elements": ["note"],
+    },
 }
 
 
@@ -394,8 +400,14 @@ def apply_humanization_to_element(
                 and n_obj_affect.volume.velocity is not None
                 else 64
             )
-            vel_change = random.randint(-vel_var, vel_var)
-            final_vel = max(1, min(127, base_vel + vel_change))
+            if isinstance(vel_var, (list, tuple)) and len(vel_var) == 2:
+                scale = 1.0 + random.uniform(float(vel_var[0]), float(vel_var[1]))
+                final_vel = int(max(1, min(127, round(base_vel * scale))))
+            else:
+                vel_range = int(vel_var)
+                vel_change = random.randint(-vel_range, vel_range)
+                final_vel = max(1, min(127, base_vel + vel_change))
+
             if hasattr(n_obj_affect, "volume") and n_obj_affect.volume is not None:
                 n_obj_affect.volume.velocity = final_vel
             else:

@@ -17,7 +17,7 @@ class FillDrum(DrumGenerator):
                 "part_params": {"drums": {"final_style_key_for_render": "main"}},
             })
         part = stream.Part(id=self.part_name)
-        self._render(blocks, part)
+        self._render(blocks, part, section_data)
         return part
 
 def test_fill_inserted_at_bar8(tmp_path):

@@ -634,11 +634,20 @@ class DrumGenerator(BasePartGenerator):
         self,
         blocks: Sequence[Dict[str, Any]],
         part: stream.Part,
+        section_data: Optional[Dict[str, Any]] = None,
     ):
         ms_since_fill = 0
         bars_since_section_start = 0
+        num_bars = (
+            section_data.get("length_in_measures", len(blocks)) if section_data else len(blocks)
+        )
         for blk_idx, blk_data in enumerate(blocks):
             log_render_prefix = f"DrumGen.Render.Blk{blk_idx+1}"  # 1-indexed for logs
+            intensity = blk_data.get("musical_intent", {}).get("emotion_intensity", 0.0)
+            fill_threshold = self.main_cfg.get("fill_emotion_threshold", 0.8)
+            if intensity >= fill_threshold and section_data is not None:
+                peak_bar = int((blk_idx / len(blocks)) * num_bars) + 1
+                section_data.setdefault("preferred_fill_positions", []).append(peak_bar)
             drums_params = blk_data.get("part_params", {}).get("drums", {})
             style_key = drums_params.get(
                 "final_style_key_for_render", "default_drum_pattern"
@@ -791,7 +800,17 @@ class DrumGenerator(BasePartGenerator):
                             f"{log_render_prefix}: Override fill key '{override_fill_key}' not in fills for '{style_key}'."
                         )
 
-                preferred_positions = [int(p) for p in style_def.get("preferred_fill_positions", []) if isinstance(p, int)]
+                preferred_positions = [
+                    int(p)
+                    for p in style_def.get("preferred_fill_positions", [])
+                    if isinstance(p, int)
+                ]
+                if section_data:
+                    preferred_positions.extend(
+                        int(p)
+                        for p in section_data.get("preferred_fill_positions", [])
+                        if isinstance(p, int)
+                    )
                 fill_keys = style_def.get("fill_patterns", [])
                 at_section_end = blk_idx == len(blocks) - 1 and is_last_pattern_iteration_in_block
                 bar_number = bars_since_section_start + 1
@@ -1270,7 +1289,7 @@ class DrumGenerator(BasePartGenerator):
         )
         drum_params.setdefault("final_style_key_for_render", style_key)
 
-        self._render([section_data], part)
+        self._render([section_data], part, section_data)
         return part
 
     def get_kick_offsets(self) -> List[float]:

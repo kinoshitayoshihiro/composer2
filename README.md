@@ -62,10 +62,14 @@ python modular_composer.py --main-cfg config/main_cfg.yml --drum-map ujam_legend
 
 This value can also be set via `global_settings.drum_map` in your configuration file.
 
+StudioOne labels C1 (MIDI 36) as B0. When exporting from that DAW the note
+names may therefore appear one octave lower than the mapping used here.
+
 DAWs sometimes label octaves differently. For instance StudioOne displays MIDI 36
 as **B0** rather than **C1**, so exported UJAM patterns may look shifted even
 though the notes are correct. You can switch mappings programmatically via
 `utilities/drum_map_registry.get_drum_map`.
+
 
 ## Project Goal
 "OtoKotoba" aims to synchronize literary expression and music.  Chapters of narration are mapped to emotional states so that chords, melodies and arrangements resonate with the text, ready for import into VOCALOID or Synthesizer V.

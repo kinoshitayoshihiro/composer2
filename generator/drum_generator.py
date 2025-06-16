@@ -1251,108 +1251,18 @@ class DrumGenerator(BasePartGenerator):
         part = stream.Part(id=self.part_name)
         part.insert(0, self.default_instrument)
 
-        drum_params = section_data.get("part_params", {}).get(self.part_name, {})
+        drum_params = section_data.setdefault("part_params", {}).setdefault(
+            self.part_name, {}
+        )
         musical_intent = section_data.get("musical_intent", {})
-
         style_key = self._resolve_style_key(
             musical_intent,
             drum_params,
             section_data,
         )
-        style_def = self._get_effective_pattern_def(style_key)
+        drum_params.setdefault("final_style_key_for_render", style_key)
 
-        if not style_def.get("pattern"):
-            logger.warning(
-                f"Drum pattern for key '{style_key}' is empty or not found. Skipping block."
-            )
-            part.append(note.Rest(quarterLength=section_data.get("q_length", 4.0)))
-            return part
-
-        block_duration = section_data.get("q_length", 4.0)
-        pattern_ref_duration = float(style_def.get("length_beats", block_duration))
-        time_scale = block_duration / pattern_ref_duration if pattern_ref_duration > 0 else 1.0
-
-        scaled_events = []
-        for ev in style_def.get("pattern", []):
-            ev_c = ev.copy()
-            ev_c["offset"] = float(ev_c.get("offset", 0.0)) * time_scale
-            ev_c["duration"] = float(ev_c.get("duration", 0.1)) * time_scale
-            scaled_events.append(ev_c)
-
-        # apply groove profile offsets
-        if self.groove_profile:
-            adjusted = []
-            for ev in scaled_events:
-                bin_idx = int(ev.get("offset", 0.0) * RESOLUTION)
-                groove_offset = self.groove_profile.get(str(bin_idx), 0)
-                ev_g = ev.copy()
-                ev_g["offset"] = ev.get("offset", 0.0) + groove_offset * self.groove_strength
-                adjusted.append(ev_g)
-            scaled_events = adjusted
-
-        swing_setting = style_def.get("swing", 0.5)
-        swing_type = "eighth"
-        swing_ratio = 0.5
-        if isinstance(swing_setting, dict):
-            swing_type = swing_setting.get("type", "eighth").lower()
-            swing_ratio = float(swing_setting.get("ratio", 0.5))
-        elif isinstance(swing_setting, (float, int)):
-            swing_ratio = float(swing_setting)
-
-        base_velocity = drum_params.get("velocity", style_def.get("velocity_base", 80))
-
-        ts = get_time_signature_object(style_def.get("time_signature", self.global_time_signature_str)) or self.global_ts
-
-        self._apply_pattern(
-            part,
-            scaled_events,
-            section_data.get("absolute_offset", 0.0),
-            block_duration,
-            int(base_velocity),
-            swing_type,
-            swing_ratio,
-            ts,
-            drum_params,
-            velocity_scale=1.0,
-            velocity_curve=None,
-            legato=False,
-        )
-
-        fill_keys = style_def.get("fill_patterns", [])
-        preferred = [int(p) for p in style_def.get("preferred_fill_positions", []) if isinstance(p, int)]
-        at_section_end = True
-        if fill_keys and (1 in preferred or at_section_end):
-            fill_def = self._get_effective_pattern_def(fill_keys[0])
-            fill_events = fill_def.get("pattern", [])
-            scaled_fill = []
-            for ev in fill_events:
-                ev_c = ev.copy()
-                ev_c["offset"] = float(ev_c.get("offset", 0.0)) * time_scale
-                ev_c["duration"] = float(ev_c.get("duration", 0.1)) * time_scale
-                scaled_fill.append(ev_c)
-            self._apply_pattern(
-                part,
-                scaled_fill,
-                section_data.get("absolute_offset", 0.0),
-                block_duration,
-                int(base_velocity),
-                swing_type,
-                swing_ratio,
-                ts,
-                drum_params,
-                velocity_scale=1.0,
-                velocity_curve=None,
-                legato=bool(fill_def.get("legato")),
-            )
-
-        profile_name = (
-            (self.main_cfg or {}).get("humanize_profile")
-            or section_data.get("humanize_profile")
-            or self.global_settings.get("humanize_profile")
-        )
-        if profile_name:
-            humanizer.apply(part, profile_name)
-
+        self._render([section_data], part)
         return part
 
     def get_kick_offsets(self) -> List[float]:

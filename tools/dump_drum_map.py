@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 import yaml
 
-from generator.drum_generator import GM_DRUM_MAP, MISSING_DRUM_MAP_FALLBACK
+from utilities.drum_map_registry import GM_DRUM_MAP, MISSING_DRUM_MAP_FALLBACK
 
 
 def collect_instruments(obj):

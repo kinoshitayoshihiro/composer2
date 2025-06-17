@@ -323,6 +323,7 @@ class DrumGenerator(BasePartGenerator):
 
         # apply groove pretty
         global_cfg = self.main_cfg.get("global_settings", {})
+        self.random_walk_step = int(global_cfg.get("random_walk_step", 4))
         self.groove_profile_path = global_cfg.get("groove_profile_path")
         self.groove_strength = float(global_cfg.get("groove_strength", 1.0))
         self.groove_profile = {}
@@ -1053,7 +1054,14 @@ class DrumGenerator(BasePartGenerator):
                     cast_to=int,
                     log_name=f"{log_event_prefix}.VelAbs",
                 )
-            final_event_velocity = max(1, min(127, final_event_velocity))
+
+            step = self.random_walk_step
+            if self.rng.random() < 0.05:
+                self._vel_walk = self.rng.randint(-step, step)
+            final_event_velocity = max(
+                1,
+                min(127, final_event_velocity + getattr(self, "_vel_walk", 0)),
+            )
 
             final_insert_offset_in_score = bar_start_abs_offset + rel_offset_in_pattern
             bin_idx = (

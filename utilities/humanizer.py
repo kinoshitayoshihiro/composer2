@@ -3,7 +3,16 @@ import music21  # name 'music21' is not defined エラー対策
 import random, logging
 import math
 import copy
-from typing import List, Dict, Any, Union, Optional, cast
+from typing import (
+    List,
+    Dict,
+    Any,
+    Union,
+    Optional,
+    cast,
+    Sequence,
+    Mapping,
+)
 from pathlib import Path
 
 # music21 のサブモジュールを正しい形式でインポート
@@ -148,7 +157,33 @@ def _apply_swing(part_stream: stream.Part, swing_ratio: float, subdiv: int = 8) 
             n.offset = pair_start + pair * swing_ratio
 
 
-def apply_swing(part: stream.Part, ratio: float, subdiv: int = 8) -> None:
+def _apply_variable_swing(
+    part_stream: stream.Part, ratios: Mapping[int, float], subdiv: int = 8
+) -> None:
+    """Apply swing where the ratio can vary per measure index."""
+    if subdiv <= 0:
+        return
+
+    step = 4.0 / subdiv
+    pair = step * 2.0
+    tol = step * 0.1
+
+    ts = part_stream.recurse().getElementsByClass(meter.TimeSignature).first()
+    measure_len = float(ts.barDuration.quarterLength) if ts else 4.0
+
+    for n in part_stream.recurse().notes:
+        pos = float(n.offset)
+        pair_start = math.floor(pos / pair) * pair
+        within = pos - pair_start
+        if abs(within - step) < tol:
+            measure_idx = int(pair_start // measure_len)
+            ratio = ratios.get(measure_idx, ratios.get("default", 0.5))
+            n.offset = pair_start + pair * ratio
+
+
+def apply_swing(
+    part: stream.Part, ratio: Union[float, Sequence[float], Mapping[int, float]], subdiv: int = 8
+) -> None:
     """Public API to apply swing in-place.
 
     Parameters
@@ -160,10 +195,19 @@ def apply_swing(part: stream.Part, ratio: float, subdiv: int = 8) -> None:
     subdiv : int
         Number of grid subdivisions per measure. ``8`` for typical eighth swing.
     """
-    if ratio is None or abs(ratio) < 1e-6:
+    if ratio is None:
         return
 
-    _apply_swing(part, float(ratio), subdiv=subdiv)
+    if isinstance(ratio, (int, float)):
+        if abs(float(ratio)) < 1e-6:
+            return
+        _apply_swing(part, float(ratio), subdiv=subdiv)
+    else:
+        if isinstance(ratio, Sequence):
+            ratios = {idx: float(r) for idx, r in enumerate(ratio)}
+        else:
+            ratios = {int(k): float(v) for k, v in ratio.items()}
+        _apply_variable_swing(part, ratios, subdiv=subdiv)
 
 
 def apply_envelope(part: stream.Part, start: int, end: int, scale: float) -> None:

@@ -58,7 +58,8 @@ DRUM_ALIAS: Dict[str, str] = {
     "pedal": "hh_pedal",
 }
 GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
-BRUSH_MAP: Dict[str, str] = {"kick": "brush_kick", "snare": "brush_snare"}
+# Map stick articulations to their brush counterparts
+BRUSH_MAP: Dict[str, str] = {"kick": "brush_kick", "snare": "snare_brush"}
 
 
 class HoldTie(tie.Tie):
@@ -1022,6 +1023,9 @@ class DrumGenerator(BasePartGenerator):
                 inst_name.lower(), inst_name.lower()
             )
             inst_name = DRUM_ALIAS.get(inst_name, inst_name).lower()
+            brush_active = self.drum_brush or (
+                self.overrides and getattr(self.overrides, "drum_brush", False)
+            )
             if inst_name not in self.gm_pitch_map:
                 if self.strict_drum_map:
                     raise KeyError(f"Unknown drum instrument: '{inst_name}'")
@@ -1135,6 +1139,12 @@ class DrumGenerator(BasePartGenerator):
             final_event_velocity = max(
                 1, min(127, int(final_event_velocity * velocity_scale))
             )
+
+            if brush_active and inst_name == "snare":
+                inst_name = "snare_brush"
+                final_event_velocity = max(
+                    1, int(final_event_velocity * 0.6)
+                )
 
             if inst_name == "chh" and final_event_velocity < 50:
                 inst_name = "hh_edge"
@@ -1262,7 +1272,10 @@ class DrumGenerator(BasePartGenerator):
     def _make_hit(self, name: str, vel: int, ql: float) -> Optional[note.Note]:
         # (前回と同様)
         mapped_name = name.lower().replace(" ", "_").replace("-", "_")
-        if self.drum_brush and mapped_name in BRUSH_MAP:
+        brush_active = self.drum_brush or (
+            self.overrides and getattr(self.overrides, "drum_brush", False)
+        )
+        if brush_active and mapped_name in BRUSH_MAP:
             mapped_name = BRUSH_MAP[mapped_name]
             vel = int(vel * 0.6)
         if mapped_name in {"chh", "hh", "hat_closed"} and vel < 40:

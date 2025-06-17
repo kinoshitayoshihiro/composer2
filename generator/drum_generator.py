@@ -53,6 +53,7 @@ DRUM_ALIAS: Dict[str, str] = {
     "chimes": "chimes",
     "ride_cymbal_swell": "ride_cymbal_swell",
     "crash_cymbal_soft_swell": "crash_cymbal_soft_swell",
+    "ride": "ride_cymbal_swell",
     "edge": "hh_edge",
     "pedal": "hh_pedal",
 }

@@ -78,3 +78,28 @@ def test_brush_velocity_scaling(tmp_path: Path):
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
     hit = drum._make_hit("snare", 100, 0.5)
     assert hit.volume.velocity < 70
+
+
+def test_intro_ride_notes(tmp_path: Path):
+    """Dummy Intro section should map 'ride' instrument correctly."""
+    cfg = _cfg(tmp_path)
+    drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
+    part = stream.Part(id="drums")
+    events = [
+        {"instrument": "ride", "offset": 0.0, "velocity": 90},
+        {"instrument": "ride", "offset": 1.0, "velocity": 90},
+    ]
+    drum._apply_pattern(
+        part,
+        events,
+        0.0,
+        4.0,
+        100,
+        "eighth",
+        0.5,
+        drum.global_ts,
+        {},
+    )
+    notes = list(part.flatten().notes)
+    assert notes
+    assert all(p.pitch.midi == GM_DRUM_MAP["ride"][1] for p in notes)

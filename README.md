@@ -17,7 +17,9 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - **pytest** – test runner
 
 The same list appears in [`requirements.txt`](requirements.txt) for reference.
-Install dependencies before running tests:
+Install the requirements before you invoke `modular_composer.py` or run
+the tests—otherwise packages such as `music21` will not be available and
+Python will raise a `ModuleNotFoundError`.
 
 ```bash
 # preferred
@@ -47,6 +49,8 @@ sections_to_generate:
 Edit these values to point to your chordmap and rhythm library, and list the section labels you wish to render.
 
 ## Generating MIDI
+Before generating any MIDI ensure the requirements are installed with
+`bash setup.sh` (or `pip install -r requirements.txt`).
 Run the main script with the configuration file:
 
 ```bash
@@ -128,7 +132,8 @@ drum_patterns の duration 欠損が解消されました
 
 ## Running Tests
 
-After installing the requirements you can verify the build by running:
+After installing the requirements with `bash setup.sh` (or
+`pip install -r requirements.txt`) you can verify the build by running:
 
 ```bash
 pytest -q

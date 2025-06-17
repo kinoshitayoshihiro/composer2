@@ -636,6 +636,14 @@ class DrumGenerator(BasePartGenerator):
             "heatmap_threshold"
         ) or self.global_settings.get("heatmap_threshold", 0.5)
 
+        if section_data and section_data.get("label") in {"Intro", "Outro"}:
+            section_data.setdefault("part_params", {}).setdefault(
+                self.part_name, {}
+            )["rhythm_key"] = "ride_only"
+            section_data["part_params"][self.part_name][
+                "final_style_key_for_render"
+            ] = "ride_only"
+
         if section_data and section_data.get("expression_details"):
             expr = section_data["expression_details"]
             key = (expr.get("emotion_bucket"), expr.get("intensity"))
@@ -993,6 +1001,8 @@ class DrumGenerator(BasePartGenerator):
             current_pattern_ts.beatDuration.quarterLength if current_pattern_ts else 1.0
         )
 
+        vel_walk_state: int = drum_block_params.setdefault("_vel_walk", pattern_base_velocity)
+
         prev_note: Optional[note.Note] = None
         for ev_idx, ev_def in enumerate(events):
             log_event_prefix = f"{log_apply_prefix}.Evt{ev_idx}"
@@ -1051,6 +1061,14 @@ class DrumGenerator(BasePartGenerator):
             if clipped_duration_ql < MIN_NOTE_DURATION_QL / 8.0:
                 continue
 
+            if self.random_walk_step:
+                step = self.rng.randint(-4, 4)
+                vel_walk_state = max(1, min(127, vel_walk_state + step))
+                drum_block_params["_vel_walk"] = vel_walk_state
+                base_vel_for_hit = vel_walk_state
+            else:
+                base_vel_for_hit = pattern_base_velocity
+
             if ev_def.get("type") == "ghost":
                 final_event_velocity = int(pattern_base_velocity * 0.2)
                 clipped_duration_ql = min(clipped_duration_ql, 0.1)
@@ -1059,7 +1077,7 @@ class DrumGenerator(BasePartGenerator):
                     ev_def,
                     "velocity",
                     default=int(
-                        pattern_base_velocity
+                        base_vel_for_hit
                         * safe_get(
                             ev_def,
                             "velocity_factor",
@@ -1071,14 +1089,6 @@ class DrumGenerator(BasePartGenerator):
                     cast_to=int,
                     log_name=f"{log_event_prefix}.VelAbs",
                 )
-
-            step = self.random_walk_step
-            if self.rng.random() < 0.05:
-                self._velocity_walk = self.rng.randint(-step, step)
-            final_event_velocity = max(
-                1,
-                min(127, final_event_velocity + getattr(self, "_velocity_walk", 0)),
-            )
 
             final_insert_offset_in_score = bar_start_abs_offset + rel_offset_in_pattern
             bin_idx = (
@@ -1120,12 +1130,6 @@ class DrumGenerator(BasePartGenerator):
                         )
                 except (TypeError, ValueError):
                     pass
-
-            if self.random_walk_step:
-                step = int(self.random_walk_step)
-                delta = step if self.rng.random() < 0.5 else -step
-                self._velocity_walk += delta
-                final_event_velocity += self._velocity_walk
 
             final_event_velocity = max(
                 1, min(127, int(final_event_velocity * velocity_scale))

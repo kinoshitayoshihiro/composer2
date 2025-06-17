@@ -47,29 +47,26 @@ def test_articulation_variants(tmp_path: Path):
     assert pitches == expected
 
 
-def test_random_walk_sign(tmp_path: Path):
+def test_velocity_random_walk(tmp_path: Path):
     cfg = _cfg(tmp_path)
-    cfg["random_walk_step"] = 8
+    cfg["random_walk_step"] = 4
     cfg["rng_seed"] = 0
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
     part = stream.Part(id="drums")
-    events = [{"instrument": "snare", "offset": i} for i in range(3)]
+    events = [{"instrument": "snare", "offset": i} for i in range(32)]
     drum._apply_pattern(
         part,
         events,
         0.0,
-        4.0,
+        32.0,
         80,
         "eighth",
         0.5,
         drum.global_ts,
         {},
-        1.0,
-        None,
     )
-    vels = [n.volume.velocity for n in part.flatten().notes]
-    diffs = [abs(v2 - v1) for v1, v2 in zip(vels, vels[1:])]
-    assert max(diffs) >= 6
+    notes = list(part.flatten().notes)
+    assert len({n.volume.velocity for n in notes}) > 4
 
 
 def test_brush_velocity_scaling(tmp_path: Path):

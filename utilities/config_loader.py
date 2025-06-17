@@ -86,7 +86,7 @@ def load_main_cfg(path: str | Path, *, strict: bool = True) -> Dict[str, Any]:
 
     # tempo_map_path / groove_profile_path も絶対化
     gset = cfg.get("global_settings", {})
-    for pkey in ("data/tempo_map_path", "groove_profile_path"):
+    for pkey in ("tempo_map_path", "groove_profile_path"):
         if pkey in gset:
             gset[pkey] = _abspath(base_dir, gset[pkey])
 

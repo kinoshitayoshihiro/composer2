@@ -48,12 +48,10 @@ from utilities.onset_heatmap import RESOLUTION
 
 try:
     import pretty_midi
-except ImportError:
-    print(
-        "ERROR: pretty_midi is not installed.  `pip install pretty_midi`",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+except ImportError as e:
+    raise ImportError(
+        "pretty_midi module is required. Install it with `pip install pretty_midi`."
+    ) from e
 
 # ★★★ music21 の stream をインポート ★★★
 from music21 import (

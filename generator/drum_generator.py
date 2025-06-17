@@ -21,6 +21,7 @@ from .base_part_generator import BasePartGenerator
 from utilities.core_music_utils import get_time_signature_object, MIN_NOTE_DURATION_QL
 from utilities.onset_heatmap import build_heatmap, RESOLUTION, load_heatmap
 from utilities import humanizer
+from utilities import groove_sampler
 from utilities.humanizer import apply_humanization_to_element
 from utilities.safe_get import safe_get
 from utilities.drum_map_registry import (
@@ -353,6 +354,15 @@ class DrumGenerator(BasePartGenerator):
                 logger.warning(
                     f"Failed to load groove profile from {self.groove_profile_path}: {e}"
                 )
+
+        groove_dir = global_cfg.get("groove_midi_dir")
+        self.groove_model = {}
+        if groove_dir:
+            try:
+                self.groove_model = groove_sampler.load_grooves(Path(groove_dir))
+            except Exception as e:  # pragma: no cover - optional feature
+                logger.warning(f"Failed to load grooves from {groove_dir}: {e}")
+        self._groove_history: List[str] = []
 
         self.push_pull_map = global_cfg.get("push_pull_curve", {})
         
@@ -1004,6 +1014,9 @@ class DrumGenerator(BasePartGenerator):
 
         vel_walk_state: int = drum_block_params.setdefault("_vel_walk", pattern_base_velocity)
 
+        if not events and self.groove_model:
+            events = groove_sampler.generate_bar(self._groove_history, self.groove_model, self.rng)
+
         prev_note: Optional[note.Note] = None
         for ev_idx, ev_def in enumerate(events):
             log_event_prefix = f"{log_apply_prefix}.Evt{ev_idx}"
@@ -1218,6 +1231,11 @@ class DrumGenerator(BasePartGenerator):
                 prev_note.tie = HoldTie()
             part.insert(final_insert_offset_in_score, drum_hit_note)
             prev_note = drum_hit_note
+            self._groove_history.append(inst_name)
+
+        n_hist = int(self.groove_model.get("n", 3)) if self.groove_model else 0
+        if n_hist > 1 and len(self._groove_history) > n_hist - 1:
+            self._groove_history = self._groove_history[-(n_hist - 1) :]
 
     def _swing(
         self,

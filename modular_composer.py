@@ -276,10 +276,12 @@ def main_cli() -> None:
                             section_start_q + block_start + el.offset,
                             clone_element(el),
                         )
-                    dest.insert(
-                        section_start_q + block_start + elem.offset,
-                        clone_element(elem),
-                    )
+                    # ここまでで全ノート/レストを挿入済み
+                    # 以下の冗長な部分を削除：
+                    # dest.insert(
+                    #     section_start_q + block_start + elem.offset,
+                    #     clone_element(elem),
+                    # )
 
                 if isinstance(result_stream, dict):
                     for key, part_blk_stream in result_stream.items():
@@ -290,7 +292,9 @@ def main_cli() -> None:
                             part_blk_stream, "id", None) or f"{part_name}_{idx}"
                         _insert_stream(stream_id, part_blk_stream)
                 else:
-                    _insert_stream(part_name, result_stream)
+                    # result_stream を初期化している場合
+                    result_stream = _insert_stream(
+                        result_stream, key, part_blk_stream)
 
     # 4) Humanizer -----------------------------------------------------------
     for name, p_stream in part_streams.items():
@@ -324,6 +328,17 @@ def main_cli() -> None:
             print(f"Exported MIDI: {out_path}")
         except Exception as e:
             logging.error(f"MIDI 書き出し失敗: {e}")
+
+
+result_stream = None
+
+
+def _insert_stream(result_stream, key, stream):
+    if result_stream is None:
+        result_stream = music21.stream.Stream()
+    for element in stream:
+        result_stream.insert(element.offset, element)
+    return result_stream
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ from music21 import (
     duration as m21duration,
     volume as m21volume,
     tie,
+    converter,
 )
 
 from .base_part_generator import BasePartGenerator
@@ -294,6 +295,9 @@ class DrumGenerator(BasePartGenerator):
         self.vocal_midi_path = self.main_cfg.get(
             "vocal_midi_path_for_drums"
         ) or self.main_cfg.get("paths", {}).get("vocal_note_data_path")
+        self.vocal_end_times: List[float] = self._load_vocal_end_times(
+            self.vocal_midi_path
+        )
 
         heatmap_json_path = self.main_cfg.get("heatmap_json_path_for_drums")
         if not heatmap_json_path:
@@ -331,6 +335,8 @@ class DrumGenerator(BasePartGenerator):
                     f"Failed to load groove profile from {self.groove_profile_path}: {e}"
                 )
 
+        self.push_pull_map = global_cfg.get("push_pull_curve", {})
+        
         # 楽器設定
         part_default_cfg = self.main_cfg.get("default_part_parameters", {}).get(
             self.part_name, {}
@@ -621,6 +627,16 @@ class DrumGenerator(BasePartGenerator):
                     self.part_name, {}
                 )["rhythm_key"] = mapped
 
+        emotion_key = None
+        if section_data:
+            emotion_key = (
+                (section_data.get("expression_details") or {}).get("emotion_bucket")
+                or section_data.get("musical_intent", {}).get("emotion")
+            )
+        self.current_push_pull_curve = (
+            self.push_pull_map.get(emotion_key) if emotion_key else None
+        )
+
         part = super().compose(
             section_data=section_data,
             overrides_root=overrides_root,
@@ -632,6 +648,7 @@ class DrumGenerator(BasePartGenerator):
 
         if section_data:
             self.fill_inserter.insert(part, section_data)
+        self._sync_hihat_with_vocals(part)
         return part
 
     def _render(
@@ -994,6 +1011,9 @@ class DrumGenerator(BasePartGenerator):
                 rel_offset_in_pattern = self._swing(
                     rel_offset_in_pattern, swing_ratio, beat_len_ql, swing_type
                 )
+            rel_offset_in_pattern = self._apply_push_pull(
+                rel_offset_in_pattern, beat_len_ql
+            )
             if rel_offset_in_pattern >= current_bar_actual_len_ql - (
                 MIN_NOTE_DURATION_QL / 16.0
             ):
@@ -1237,6 +1257,22 @@ class DrumGenerator(BasePartGenerator):
         main.offset = 0.0
         part.insert(offset, main)
 
+    def _load_vocal_end_times(self, midi_path: str) -> List[float]:
+        if not midi_path or not Path(midi_path).exists():
+            return []
+        try:
+            midi = converter.parse(midi_path)
+            return sorted(
+                float(n.offset + n.quarterLength)
+                for n in midi.flatten().notes
+                if isinstance(n, note.Note)
+            )
+        except Exception as exc:
+            logger.warning(
+                f"DrumGen: failed to load vocal MIDI for hi-hat sync: {exc}"
+            )
+            return []
+
     def _velocity_fade_into_fill(
         self, part: stream.Part, fill_offset: float, fade_beats: float = 2.0
     ) -> None:
@@ -1270,6 +1306,45 @@ class DrumGenerator(BasePartGenerator):
                 n.volume.velocity = new_vel
             else:
                 n.volume = m21volume.Volume(velocity=new_vel)
+
+    def _apply_push_pull(self, rel_offset: float, beat_len_ql: float) -> float:
+        curve = getattr(self, "current_push_pull_curve", None)
+        if not curve:
+            return rel_offset
+        try:
+            beat_idx = int(rel_offset / beat_len_ql)
+            shift_ms = float(curve[beat_idx])
+        except (ValueError, IndexError, TypeError):
+            return rel_offset
+        shift_ql = (shift_ms / 1000.0) * (self.global_tempo / 60.0)
+        return max(0.0, rel_offset + shift_ql)
+
+    def _sync_hihat_with_vocals(self, part: stream.Part) -> None:
+        if not self.vocal_end_times:
+            return
+        chh = self.gm_pitch_map.get("chh")
+        ohh = self.gm_pitch_map.get("ohh")
+        if chh is None or ohh is None:
+            return
+        thr = (50.0 / 1000.0) * (self.global_tempo / 60.0)
+        beat_len = self.global_ts.beatDuration.quarterLength
+        bar_len = self.global_ts.barDuration.quarterLength
+        notes = sorted(part.recurse().notes, key=lambda n: n.offset)
+        idx = 0
+        for end in self.vocal_end_times:
+            beat4 = round(end / bar_len) * bar_len
+            if abs(end - beat4) > thr:
+                continue
+            while idx < len(notes) and notes[idx].offset < end - 1e-6:
+                idx += 1
+            while idx < len(notes):
+                n = notes[idx]
+                if n.offset >= end - 1e-6:
+                    if int(n.pitch.midi) == chh:
+                        n.pitch.midi = ohh
+                        idx += 1
+                        break
+                idx += 1
 
     def _add_internal_default_patterns(self):
         """ライブラリに必須パターンがなければ、最低限のフォールバックを追加"""

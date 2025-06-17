@@ -41,6 +41,7 @@ paths:
   vocal_heatmap_path: "../data/heatmap.json"
   vocal_note_data_path: "../data/vocal_note_data_ore.json"
   output_dir: "../midi_output"
+vocal_midi_path_for_drums: "../data/vocal.mid"
 
 # ---------------- 3. Part Defaults ------------------
 part_defaults:

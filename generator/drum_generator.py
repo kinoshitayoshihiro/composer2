@@ -273,17 +273,11 @@ class DrumGenerator(BasePartGenerator):
         self.logger = logging.getLogger("modular_composer.drum_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
         self.kick_offsets: List[float] = []
-<<<<<<< codex/add-fade_beats-parameter-and-update-tests
         # Track fill offsets along with fade width for each fill
         self.fill_offsets: List[Tuple[float, float]] = []
-        self.fade_beats_default = float(self.main_cfg.get("fade_beats", 2.0))
+        global_cfg = self.main_cfg.get("global_settings", {}) if self.main_cfg else {}
+        self.fade_beats_default = float(global_cfg.get("fill_fade_beats", 2.0))
         self.strict_drum_map = bool((global_settings or {}).get("strict_drum_map", False))
-=======
-        self.fill_offsets: List[float] = []
-        self.strict_drum_map = bool(
-            (global_settings or {}).get("strict_drum_map", False)
-        )
->>>>>>> infra/zero-green
         self.drum_map_name = (global_settings or {}).get("drum_map", "gm")
         self.drum_map = get_drum_map(self.drum_map_name)
         # Simplified mapping to MIDI note numbers for internal use
@@ -856,7 +850,6 @@ class DrumGenerator(BasePartGenerator):
                         pattern_to_use_for_iteration = fill_def.get("pattern", [])
                         fill_legato = bool(fill_def.get("legato"))
                         fill_applied_this_iter = True
-<<<<<<< codex/add-fade_beats-parameter-and-update-tests
                         fade_beats_local = safe_get(
                             style_options,
                             "fade_beats",
@@ -866,10 +859,6 @@ class DrumGenerator(BasePartGenerator):
                         )
                         self.fill_offsets.append(
                             (offset_in_score + current_pos_within_block, fade_beats_local)
-=======
-                        self.fill_offsets.append(
-                            offset_in_score + current_pos_within_block
->>>>>>> infra/zero-green
                         )
                 fill_interval_bars = safe_get(
                     drums_params,

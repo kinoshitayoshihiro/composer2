@@ -17,7 +17,7 @@ def _cfg(tmp_path: Path):
     }
 
 
-def test_articulation_variants(tmp_path: Path):
+def test_hihat_articulations(tmp_path: Path):
     cfg = _cfg(tmp_path)
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
     part = stream.Part(id="drums")
@@ -126,3 +126,26 @@ def test_intro_ride_notes(tmp_path: Path):
     notes = list(part.flatten().notes)
     assert notes
     assert all(p.pitch.midi == GM_DRUM_MAP["ride"][1] for p in notes)
+
+
+def test_drag_ruff(tmp_path: Path):
+    cfg = _cfg(tmp_path)
+    drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
+    part = stream.Part(id="drums")
+    events = [
+        {"instrument": "snare", "offset": 0.5, "type": "drag"},
+        {"instrument": "snare", "offset": 1.5, "type": "ruff"},
+    ]
+    drum._apply_pattern(
+        part,
+        events,
+        0.0,
+        2.0,
+        100,
+        "eighth",
+        0.5,
+        drum.global_ts,
+        {},
+    )
+    notes = list(part.flatten().notes)
+    assert len(notes) == 7

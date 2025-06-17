@@ -11,7 +11,12 @@ def _make_cfg(tmp_path):
     hp = tmp_path / "heatmap.json"
     with hp.open("w") as f:
         json.dump(heatmap, f)
-    return {"vocal_midi_path_for_drums": "", "heatmap_json_path_for_drums": str(hp), "paths": {"rhythm_library_path": "data/rhythm_library.yml"}}
+    return {
+        "vocal_midi_path_for_drums": "",
+        "heatmap_json_path_for_drums": str(hp),
+        "paths": {"rhythm_library_path": "data/rhythm_library.yml"},
+        "global_settings": {},
+    }
 
 pattern_lib = {
     "flam_test": {"pattern": [{"instrument": "snare", "offset": 0.5, "type": "flam"}], "length_beats": 1.0},
@@ -54,10 +59,11 @@ def test_legato_ties_in_fill(tmp_path):
 
 def test_brush_mode_switches_map(tmp_path):
     cfg = _make_cfg(tmp_path)
-    cfg["drum_brush"] = True
+    cfg["global_settings"]["drum_brush"] = True
     gen = SimpleDrum(main_cfg=cfg, part_name="drums", part_parameters=pattern_lib)
     n = gen._make_hit("snare", 80, 0.5)
-    assert n.pitch.midi == GM_DRUM_MAP["brush_snare"][1]
+    assert n.pitch.midi == GM_DRUM_MAP["snare_brush"][1]
+    assert n.volume.velocity == int(80 * 0.6)
 
 
 def test_syncopation_tag_selection():

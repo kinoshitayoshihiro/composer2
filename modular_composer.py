@@ -110,7 +110,9 @@ def compose(
         for idx, ch_ev in enumerate(chords_abs):
             next_ev = chords_abs[idx + 1] if idx + 1 < len(chords_abs) else None
             block_start = ch_ev["absolute_offset_beats"] - section_start_q
-            block_length = ch_ev.get("humanized_duration_beats", ch_ev.get("original_duration_beats", 4.0))
+            block_length = ch_ev.get(
+                "humanized_duration_beats", ch_ev.get("original_duration_beats", 4.0)
+            )
 
             base_block: Dict[str, Any] = {
                 "section_name": label,
@@ -125,16 +127,23 @@ def compose(
             if next_ev:
                 next_block = {
                     "chord_symbol_for_voicing": next_ev.get("chord_symbol_for_voicing"),
-                    "specified_bass_for_voicing": next_ev.get("specified_bass_for_voicing"),
+                    "specified_bass_for_voicing": next_ev.get(
+                        "specified_bass_for_voicing"
+                    ),
                     "original_chord_label": next_ev.get("original_chord_label"),
-                    "q_length": next_ev.get("humanized_duration_beats", next_ev.get("original_duration_beats", 4.0)),
+                    "q_length": next_ev.get(
+                        "humanized_duration_beats",
+                        next_ev.get("original_duration_beats", 4.0),
+                    ),
                 }
 
             for part_name, gen in part_gens.items():
                 part_cfg = main_cfg["part_defaults"].get(part_name, {})
                 blk = deepcopy(base_block)
                 blk["part_params"] = part_cfg
-                blk.setdefault("shared_tracks", {})["kick_offsets"] = [o for lst in kick_map.values() for o in lst]
+                blk.setdefault("shared_tracks", {})["kick_offsets"] = [
+                    o for lst in kick_map.values() for o in lst
+                ]
                 result = gen.compose(
                     section_data=blk,
                     overrides_root=overrides_model,
@@ -199,7 +208,9 @@ def compose(
                             p.partName = pid
                         part_streams[pid] = p
                     dest = part_streams[pid]
-                    has_inst = bool(dest.recurse().getElementsByClass(m21inst.Instrument))
+                    has_inst = bool(
+                        dest.recurse().getElementsByClass(m21inst.Instrument)
+                    )
                     inserted_inst = False
                     for el in sub_stream.recurse():
                         if isinstance(el, m21inst.Instrument):
@@ -224,7 +235,9 @@ def compose(
                                 clone_element(el),
                             )
 
-        sec.setdefault("shared_tracks", {})["kick_offsets"] = [o for lst in kick_map.values() for o in lst]
+        sec.setdefault("shared_tracks", {})["kick_offsets"] = [
+            o for lst in kick_map.values() for o in lst
+        ]
 
     score = stream.Score(list(part_streams.values()))
     return score, sections
@@ -281,6 +294,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="未知のドラムキーをエラーにする",
     )
     from utilities.drum_map_registry import DRUM_MAPS
+
     p.add_argument(
         "--drum-map",
         choices=DRUM_MAPS.keys(),
@@ -443,7 +457,9 @@ def main_cli() -> None:
                             p.partName = pid
                         part_streams[pid] = p
                     dest = part_streams[pid]
-                    has_inst = bool(dest.recurse().getElementsByClass(m21inst.Instrument))
+                    has_inst = bool(
+                        dest.recurse().getElementsByClass(m21inst.Instrument)
+                    )
                     inserted_inst = False
                     for el in sub_stream.recurse():
                         if isinstance(el, m21inst.Instrument):
@@ -467,7 +483,6 @@ def main_cli() -> None:
                                 section_start_q + block_start + el.offset,
                                 clone_element(el),
                             )
-
 
     # 4) Humanizer -----------------------------------------------------------
     for name, p_stream in part_streams.items():

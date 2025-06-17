@@ -1,5 +1,9 @@
 """Registry of drum label mappings to General MIDI drum numbers."""
 
+# Additional hi-hat articulations
+HH_EDGE = ("closed_hi_hat_edge", 44)
+HH_PEDAL = ("pedal_hi_hat", 44)
+
 # Default General MIDI drum map
 GM_DRUM_MAP = {
     "chh": ("closed_hi_hat", 42),
@@ -20,6 +24,8 @@ GM_DRUM_MAP = {
     "ghost": ("closed_hi_hat", 42),
     "brush_kick": ("acoustic_bass_drum", 36),
     "brush_snare": ("acoustic_snare", 38),
+    "hh_edge": HH_EDGE,
+    "hh_pedal": HH_PEDAL,
 }
 
 # Mapping for UJAM Virtual Drummer "LEGEND".  Numbers are the note numbers used
@@ -42,6 +48,8 @@ UJAM_LEGEND_MAP = {
     "chimes": ("triangle", 81),
     "shaker_soft": ("shaker", 82),
     "ghost": ("closed_hi_hat", 42),
+    "hh_edge": HH_EDGE,
+    "hh_pedal": HH_PEDAL,
 }
 
 # Fallback mapping for drum names missing from ``GM_DRUM_MAP``.  Used by

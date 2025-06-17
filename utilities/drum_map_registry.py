@@ -1,7 +1,7 @@
 """Registry of drum label mappings to General MIDI drum numbers."""
 
 # Additional hi-hat articulations
-HH_EDGE = ("closed_hi_hat_edge", 44)
+HH_EDGE = ("closed_hi_hat_edge", 22)
 HH_PEDAL = ("pedal_hi_hat", 44)
 
 # Default General MIDI drum map

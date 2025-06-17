@@ -212,14 +212,14 @@ def compose(
                         dest.recurse().getElementsByClass(m21inst.Instrument)
                     )
                     inserted_inst = False
-                    for el in sub_stream.recurse():
-                        if isinstance(el, m21inst.Instrument):
+                    for elem in sub_stream.recurse():
+                        if isinstance(elem, m21inst.Instrument):
                             if not has_inst and not inserted_inst:
-                                dest.insert(0.0, clone_element(el))
+                                dest.insert(0.0, clone_element(elem))
                                 inserted_inst = True
                             continue
                         if isinstance(
-                            el,
+                            elem,
                             (
                                 note.GeneralNote,
                                 chord.Chord,
@@ -229,10 +229,10 @@ def compose(
                                 dynamics.Dynamic,
                                 expressions.Expression,
                             ),
-                            ):
+                        ):
                             dest.insert(
-                                section_start_q + block_start + el.offset,
-                                clone_element(el),
+                                section_start_q + block_start + elem.offset,
+                                clone_element(elem),
                             )
 
         sec.setdefault("shared_tracks", {})["kick_offsets"] = [
@@ -461,14 +461,14 @@ def main_cli() -> None:
                         dest.recurse().getElementsByClass(m21inst.Instrument)
                     )
                     inserted_inst = False
-                    for el in sub_stream.recurse():
-                        if isinstance(el, m21inst.Instrument):
+                    for elem in sub_stream.recurse():
+                        if isinstance(elem, m21inst.Instrument):
                             if not has_inst and not inserted_inst:
-                                dest.insert(0.0, clone_element(el))
+                                dest.insert(0.0, clone_element(elem))
                                 inserted_inst = True
                             continue
                         if isinstance(
-                            el,
+                            elem,
                             (
                                 note.GeneralNote,
                                 chord.Chord,
@@ -478,10 +478,10 @@ def main_cli() -> None:
                                 dynamics.Dynamic,
                                 expressions.Expression,
                             ),
-                            ):
+                        ):
                             dest.insert(
-                                section_start_q + block_start + el.offset,
-                                clone_element(el),
+                                section_start_q + block_start + elem.offset,
+                                clone_element(elem),
                             )
 
     # 4) Humanizer -----------------------------------------------------------

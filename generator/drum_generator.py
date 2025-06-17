@@ -641,12 +641,17 @@ class DrumGenerator(BasePartGenerator):
         num_bars = (
             section_data.get("length_in_measures", len(blocks)) if section_data else len(blocks)
         )
+        total_beats = sum(
+            b.get("humanized_duration_beats", b.get("q_length", 4.0)) for b in blocks
+        )
+        running_beats = 0.0
         for blk_idx, blk_data in enumerate(blocks):
             log_render_prefix = f"DrumGen.Render.Blk{blk_idx+1}"  # 1-indexed for logs
             intensity = blk_data.get("musical_intent", {}).get("emotion_intensity", 0.0)
             fill_threshold = self.main_cfg.get("fill_emotion_threshold", 0.8)
             if intensity >= fill_threshold and section_data is not None:
-                peak_bar = int((blk_idx / len(blocks)) * num_bars) + 1
+                peak_pos = running_beats / total_beats if total_beats > 0 else 0.0
+                peak_bar = int(peak_pos * num_bars) + 1
                 section_data.setdefault("preferred_fill_positions", []).append(peak_bar)
             drums_params = blk_data.get("part_params", {}).get("drums", {})
             style_key = drums_params.get(
@@ -888,6 +893,13 @@ class DrumGenerator(BasePartGenerator):
                 remaining_ql_in_block -= current_pattern_iteration_ql
                 bars_since_section_start += 1
 
+            running_beats += blk_data.get(
+                "humanized_duration_beats", blk_data.get("q_length", pattern_unit_length_ql)
+            )
+
+        for off in self.fill_offsets:
+            self._velocity_fade_into_fill(part, off)
+
     def _apply_pattern(
         self,
         part: stream.Part,
@@ -1030,9 +1042,10 @@ class DrumGenerator(BasePartGenerator):
             if not drum_hit_note:
                 continue
 
-            drum_hit_note = apply_humanization_to_element(
-                drum_hit_note, "flam_legato_ghost"
-            )
+            if ev_def.get("humanize_template") == "flam_legato_ghost":
+                drum_hit_note = apply_humanization_to_element(
+                    drum_hit_note, "flam_legato_ghost"
+                )
 
             # (ヒューマナイズ処理は前回と同様)
             humanize_this_hit = False
@@ -1150,6 +1163,32 @@ class DrumGenerator(BasePartGenerator):
         main.volume = m21volume.Volume(velocity=max(1, velocity))
         main.offset = 0.0
         part.insert(offset, main)
+
+    def _velocity_fade_into_fill(
+        self, part: stream.Part, fill_offset: float, fade_beats: float = 2.0
+    ) -> None:
+        """Gradually increase velocity leading into a fill."""
+        notes = [
+            n
+            for n in part.flatten().notes
+            if fill_offset - fade_beats <= n.offset < fill_offset
+        ]
+        if len(notes) <= 1:
+            return
+        notes.sort(key=lambda n: n.offset)
+        count = len(notes)
+        for idx, n in enumerate(notes):
+            base = (
+                n.volume.velocity
+                if n.volume and n.volume.velocity is not None
+                else 64
+            )
+            scale = 0.8 + (0.2 * (idx + 1) / count)
+            new_vel = int(max(1, min(127, base * scale)))
+            if n.volume:
+                n.volume.velocity = new_vel
+            else:
+                n.volume = m21volume.Volume(velocity=new_vel)
 
 
 

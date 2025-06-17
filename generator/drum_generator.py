@@ -269,7 +269,9 @@ class DrumGenerator(BasePartGenerator):
         self.logger = logging.getLogger("modular_composer.drum_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
         self.kick_offsets: List[float] = []
-        self.fill_offsets: List[float] = []
+        # Track fill offsets along with fade width for each fill
+        self.fill_offsets: List[Tuple[float, float]] = []
+        self.fade_beats_default = float(self.main_cfg.get("fade_beats", 2.0))
         self.strict_drum_map = bool((global_settings or {}).get("strict_drum_map", False))
         self.drum_map_name = (global_settings or {}).get("drum_map", "gm")
         self.drum_map = get_drum_map(self.drum_map_name)
@@ -836,7 +838,16 @@ class DrumGenerator(BasePartGenerator):
                         pattern_to_use_for_iteration = fill_def.get("pattern", [])
                         fill_legato = bool(fill_def.get("legato"))
                         fill_applied_this_iter = True
-                        self.fill_offsets.append(offset_in_score + current_pos_within_block)
+                        fade_beats_local = safe_get(
+                            style_options,
+                            "fade_beats",
+                            default=self.fade_beats_default,
+                            cast_to=float,
+                            log_name=f"{log_render_prefix}.FadeBeats",
+                        )
+                        self.fill_offsets.append(
+                            (offset_in_score + current_pos_within_block, fade_beats_local)
+                        )
                 fill_interval_bars = safe_get(
                     drums_params,
                     "drum_fill_interval_bars",
@@ -897,8 +908,8 @@ class DrumGenerator(BasePartGenerator):
                 "humanized_duration_beats", blk_data.get("q_length", pattern_unit_length_ql)
             )
 
-        for off in self.fill_offsets:
-            self._velocity_fade_into_fill(part, off)
+        for off, fade_beats in self.fill_offsets:
+            self._velocity_fade_into_fill(part, off, fade_beats)
 
     def _apply_pattern(
         self,
@@ -1167,7 +1178,17 @@ class DrumGenerator(BasePartGenerator):
     def _velocity_fade_into_fill(
         self, part: stream.Part, fill_offset: float, fade_beats: float = 2.0
     ) -> None:
-        """Gradually increase velocity leading into a fill."""
+        """Gradually increase velocity leading into a fill.
+
+        Parameters
+        ----------
+        part : stream.Part
+            Part to apply the fade to.
+        fill_offset : float
+            Absolute offset where the fill begins.
+        fade_beats : float, optional
+            Length of the fade window in beats. Defaults to 2.0.
+        """
         notes = [
             n
             for n in part.flatten().notes
@@ -1339,7 +1360,7 @@ class DrumGenerator(BasePartGenerator):
         return list(self.kick_offsets)
 
     def get_fill_offsets(self) -> List[float]:
-        return list(self.fill_offsets)
+        return [off if not isinstance(off, tuple) else off[0] for off in self.fill_offsets]
 
 
 # --- END OF FILE generator/drum_generator.py ---

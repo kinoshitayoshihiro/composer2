@@ -557,6 +557,10 @@ class PianoGenerator(BasePartGenerator):
 
         rh_part = self._apply_weak_beat(rh_part, ov.get("weak_beat_style_rh", "none"))
         lh_part = self._apply_weak_beat(lh_part, ov.get("weak_beat_style_lh", "none"))
+
+        for part in (rh_part, lh_part):
+            self._apply_measure_rubato(part)
+
         if ov.get("fill_on_4th"):
             fill_len = float(ov.get("fill_length_beats", 0.5))
             rh_part = self._add_fill(rh_part, cs, fill_len)
@@ -590,9 +594,6 @@ class PianoGenerator(BasePartGenerator):
         for part in (rh_part, lh_part):
             if global_profile:
                 humanizer.apply(part, global_profile)
-
-        for part in (rh_part, lh_part):
-            self._apply_measure_rubato(part)
 
         # 結合して 1 Part を返していたコードを削除
         rh_part.id  = "piano_rh"

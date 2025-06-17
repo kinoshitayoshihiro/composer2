@@ -270,6 +270,7 @@ class DrumGenerator(BasePartGenerator):
             global_key_signature_mode=global_key_signature_mode,
             **kwargs,
         )
+        self.overrides = None
         # ここに他の初期化処理をまとめて書く
         self.logger = logging.getLogger("modular_composer.drum_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
@@ -319,7 +320,10 @@ class DrumGenerator(BasePartGenerator):
             tuple(self.main_cfg.get("ghost_density_range", [0.3, 0.8])),
         )
         self.ghost_hat_on_offbeat = self.main_cfg.get("ghost_hat_on_offbeat", True)
-        self.drum_brush = bool(self.main_cfg.get("drum_brush", False))
+        self.brush_mode = bool(
+            safe_get(global_cfg, "drum_brush", default=False)
+            or (self.overrides and self.overrides.drum_brush)
+        )
 
         # apply groove pretty
         global_cfg = self.main_cfg.get("global_settings", {})
@@ -1234,8 +1238,12 @@ class DrumGenerator(BasePartGenerator):
     def _make_hit(self, name: str, vel: int, ql: float) -> Optional[note.Note]:
         # (前回と同様)
         mapped_name = name.lower().replace(" ", "_").replace("-", "_")
-        if self.drum_brush and mapped_name in BRUSH_MAP:
-            mapped_name = BRUSH_MAP[mapped_name]
+        if self.brush_mode:
+            if mapped_name == "snare":
+                mapped_name = "snare_brush"
+            elif mapped_name in BRUSH_MAP:
+                mapped_name = BRUSH_MAP[mapped_name]
+            vel = int(vel * 0.6)
         actual_name_for_midi = GHOST_ALIAS.get(mapped_name, mapped_name)
         midi_pitch_val = self.gm_pitch_map.get(actual_name_for_midi)
         if midi_pitch_val is None:

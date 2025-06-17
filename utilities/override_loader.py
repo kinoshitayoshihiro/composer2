@@ -71,6 +71,7 @@ class PartOverride(BaseModel):
     ghost_hat_on_offbeat: Optional[bool] = None
     additional_kick_density: Optional[float] = None
     drum_brush: Optional[bool] = None
+    push_pull_curve: Optional[List[int]] = None
     # drum_style_key: Optional[str] = None # Covered by rhythm_key
     # drum_base_velocity: Optional[int] = None # Covered by velocity
     # drum_fill_interval_bars: Optional[int] = None

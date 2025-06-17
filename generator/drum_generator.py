@@ -1047,6 +1047,21 @@ class DrumGenerator(BasePartGenerator):
                     drum_hit_note, "flam_legato_ghost"
                 )
 
+            # New multi-template humanization
+            templates = ev_def.get("humanize_templates")
+            if templates:
+                mode = str(ev_def.get("humanize_templates_mode", "sequential")).lower()
+                if isinstance(templates, Sequence) and not isinstance(templates, (str, bytes)):
+                    template_list = list(templates)
+                else:
+                    template_list = [templates]
+                if mode == "random":
+                    chosen = self.rng.choice(template_list)
+                    drum_hit_note = apply_humanization_to_element(drum_hit_note, chosen)
+                else:
+                    for t_name in template_list:
+                        drum_hit_note = apply_humanization_to_element(drum_hit_note, t_name)
+
             # (ヒューマナイズ処理は前回と同様)
             humanize_this_hit = False
             humanize_template_for_hit = "drum_tight"

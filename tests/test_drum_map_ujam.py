@@ -19,6 +19,7 @@ EXPECTED = {
     "chimes": 81,
     "shaker_soft": 82,
     "ghost": 42,
+    "snare_brush": 38,
 }
 
 def test_ujam_legend_map_notes():

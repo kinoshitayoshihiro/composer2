@@ -19,7 +19,12 @@ EXPECTED = {
     "chimes": 81,
     "shaker_soft": 82,
     "ghost": 42,
+<<<<<<< codex/update-drum-map-and-brush_mode-functionality
     "snare_brush": 38,
+=======
+    "hh_edge": 44,
+    "hh_pedal": 44,
+>>>>>>> infra/zero-green
 }
 
 def test_ujam_legend_map_notes():

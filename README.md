@@ -70,6 +70,15 @@ python modular_composer.py --main-cfg config/main_cfg.yml --strict-drum-map
 
 The same behaviour can be enabled with `global_settings.strict_drum_map: true` in your configuration file.
 
+ベロシティフェードがフィル前の何拍に及ぶかを制御できます:
+
+```yaml
+global_settings:
+  fill_fade_beats: 2.0 # デフォルトは2
+```
+
+パターンオプションによるスタイルごとのオーバーライドは `options.fade_beats` を使います。
+
 StudioOne labels C1 (MIDI 36) as B0. When exporting from that DAW the note
 names may therefore appear one octave lower than the mapping used here.
 

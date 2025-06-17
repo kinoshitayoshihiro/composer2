@@ -208,6 +208,27 @@ def test_compose_swing_ratio_from_section_params(
     mock_apply_swing.assert_called_once_with(rendered_part, 0.65, 8)
 
 
+@patch(f"{BGP_PATH}.apply_swing")
+@patch(f"{BGP_PATH}.get_part_override")
+def test_compose_variable_swing_list(
+    mock_get_part_override: Mock,
+    mock_apply_swing: Mock,
+    test_generator: ConcreteTestGenerator,
+    default_section_data: dict,
+    mock_logger: Mock,
+):
+    rendered_part = stream.Part(id="vs_part"); rendered_part.append(note.Note("E4"))
+    test_generator._render_part_mock_method.return_value = rendered_part
+    mock_get_part_override.return_value = None
+
+    section_data = default_section_data.copy()
+    section_data["part_params"] = {"swing_ratio": [0.55, 0.45]}
+
+    test_generator.compose(section_data=section_data)
+
+    mock_apply_swing.assert_called_once_with(rendered_part, [0.55, 0.45], subdiv=8)
+
+
 @patch(f"{BGP_PATH}.apply_groove_pretty")
 @patch(f"{BGP_PATH}.load_groove_profile")
 @patch(f"{BGP_PATH}.get_part_override") # Other mocks not needed

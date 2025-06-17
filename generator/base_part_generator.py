@@ -159,7 +159,7 @@ class BasePartGenerator(ABC):
             if profile:
                 apply_offset_profile(part, profile)
             if ratio is not None:               # Swing が指定されていれば適用
-                apply_swing(part, float(ratio), subdiv=8)
+                apply_swing(part, ratio, subdiv=8)
             return part
 
         if isinstance(parts, dict):

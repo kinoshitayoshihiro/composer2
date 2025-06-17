@@ -56,12 +56,28 @@ def test_velocity_fade_into_fill(tmp_path):
     assert velocities == sorted(velocities)
 
 
+<<<<<<< codex/add-fade_beats-parameter-and-update-tests
+def test_velocity_fade_custom_width(tmp_path):
+=======
 def test_velocity_fade_respects_existing_velocities(tmp_path):
+>>>>>>> infra/zero-green
     heatmap = [{"grid_index": i, "count": 0} for i in range(RESOLUTION)]
     heatmap_path = tmp_path / "heatmap.json"
     with open(heatmap_path, "w") as f:
         json.dump(heatmap, f)
 
+<<<<<<< codex/add-fade_beats-parameter-and-update-tests
+    pattern_lib = {
+        "main": {
+            "pattern": [{"instrument": "kick", "offset": i} for i in range(4)],
+            "length_beats": 4.0,
+            "fill_patterns": ["f"],
+            "options": {"fade_beats": 3.0},
+        },
+        "f": {"pattern": [{"instrument": "snare", "offset": 0.0}], "length_beats": 4.0},
+    }
+
+=======
     cfg = {
         "vocal_midi_path_for_drums": "",
         "heatmap_json_path_for_drums": str(heatmap_path),
@@ -95,10 +111,29 @@ def test_velocity_fade_duplicate_offsets(tmp_path):
     with open(heatmap_path, "w") as f:
         json.dump(heatmap, f)
 
+>>>>>>> infra/zero-green
     cfg = {
         "vocal_midi_path_for_drums": "",
         "heatmap_json_path_for_drums": str(heatmap_path),
         "paths": {"rhythm_library_path": "data/rhythm_library.yml"},
+<<<<<<< codex/add-fade_beats-parameter-and-update-tests
+        "rng_seed": 1,
+    }
+
+    drum = FadeDrum(main_cfg=cfg, part_name="drums", part_parameters=pattern_lib)
+    section = {"absolute_offset": 0.0, "q_length": 12.0, "length_in_measures": 3, "part_params": {}}
+    part = drum.compose(section_data=section)
+
+    offsets = drum.get_fill_offsets()
+    assert offsets
+    fill_offset = offsets[0]
+    notes_before = sorted(
+        [n for n in part.flatten().notes if fill_offset - 3.0 <= n.offset < fill_offset],
+        key=lambda n: n.offset,
+    )
+    velocities = [n.volume.velocity for n in notes_before]
+    assert velocities == sorted(velocities)
+=======
     }
 
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
@@ -116,3 +151,4 @@ def test_velocity_fade_duplicate_offsets(tmp_path):
 
     final = [n.volume.velocity for n in sorted(part.flatten().notes, key=lambda n: n.offset)]
     assert final == sorted(final)
+>>>>>>> infra/zero-green

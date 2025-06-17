@@ -270,6 +270,7 @@ class DrumGenerator(BasePartGenerator):
             global_key_signature_mode=global_key_signature_mode,
             **kwargs,
         )
+        self.overrides = None
         # ここに他の初期化処理をまとめて書く
         self.logger = logging.getLogger("modular_composer.drum_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
@@ -319,12 +320,21 @@ class DrumGenerator(BasePartGenerator):
             tuple(self.main_cfg.get("ghost_density_range", [0.3, 0.8])),
         )
         self.ghost_hat_on_offbeat = self.main_cfg.get("ghost_hat_on_offbeat", True)
-        self.drum_brush = bool(self.main_cfg.get("drum_brush", False))
+
+        # Drum ブラシ（テストでは drum_brush を参照）
+        self.drum_brush = bool(
+            safe_get(global_cfg, "drum_brush", default=False)
+            or (self.overrides and self.overrides.drum_brush)
+        )
+
+
+        # ランダムウォークのステップ幅（テストで random_walk_step を使う場合）
         self.random_walk_step = int(self.main_cfg.get("random_walk_step", 0))
         self._velocity_walk = 0
 
         # apply groove pretty
         global_cfg = self.main_cfg.get("global_settings", {})
+        self.random_walk_step = int(global_cfg.get("random_walk_step", 4))
         self.groove_profile_path = global_cfg.get("groove_profile_path")
         self.groove_strength = float(global_cfg.get("groove_strength", 1.0))
         self.groove_profile = {}
@@ -1055,7 +1065,14 @@ class DrumGenerator(BasePartGenerator):
                     cast_to=int,
                     log_name=f"{log_event_prefix}.VelAbs",
                 )
-            final_event_velocity = max(1, min(127, final_event_velocity))
+
+            step = self.random_walk_step
+            if self.rng.random() < 0.05:
+                self._vel_walk = self.rng.randint(-step, step)
+            final_event_velocity = max(
+                1,
+                min(127, final_event_velocity + getattr(self, "_vel_walk", 0)),
+            )
 
             final_insert_offset_in_score = bar_start_abs_offset + rel_offset_in_pattern
             bin_idx = (
@@ -1107,6 +1124,11 @@ class DrumGenerator(BasePartGenerator):
             final_event_velocity = max(
                 1, min(127, int(final_event_velocity * velocity_scale))
             )
+
+            if inst_name in {"chh", "hh"} and final_event_velocity <= 45:
+                inst_name = "hh_edge"
+            if inst_name in {"chh", "hh"} and ev_def.get("pedal", False):
+                inst_name = "hh_pedal"
 
             if ev_def.get("type") == "flam":
                 midi_pitch = self.gm_pitch_map.get(inst_name)
@@ -1229,11 +1251,20 @@ class DrumGenerator(BasePartGenerator):
     def _make_hit(self, name: str, vel: int, ql: float) -> Optional[note.Note]:
         # (前回と同様)
         mapped_name = name.lower().replace(" ", "_").replace("-", "_")
+        codex/create-test_drum_articulations.py-with-tests
         if self.drum_brush and mapped_name in BRUSH_MAP:
             mapped_name = BRUSH_MAP[mapped_name]
             vel = int(vel * 0.65)
         if mapped_name in {"chh", "hh", "hat_closed"} and vel < 40:
             mapped_name = "hh_edge"
+
+        if self.brush_mode:
+            if mapped_name == "snare":
+                mapped_name = "snare_brush"
+            elif mapped_name in BRUSH_MAP:
+                mapped_name = BRUSH_MAP[mapped_name]
+            vel = int(vel * 0.6)
+        infra/zero-green
         actual_name_for_midi = GHOST_ALIAS.get(mapped_name, mapped_name)
         midi_pitch_val = self.gm_pitch_map.get(actual_name_for_midi)
         if midi_pitch_val is None:

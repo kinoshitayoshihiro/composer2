@@ -6,7 +6,7 @@ EXPECTED = {
     "chh": 42,
     "hh": 42,
     "hat_closed": 42,
-    "hh_edge": 42,
+    "hh_edge": 44,
     "ohh": 46,
     "kick": 36,
     "snare": 38,
@@ -20,12 +20,8 @@ EXPECTED = {
     "chimes": 81,
     "shaker_soft": 82,
     "ghost": 42,
-<<<<<<< codex/update-drum-map-and-brush_mode-functionality
     "snare_brush": 38,
-=======
-    "hh_edge": 44,
     "hh_pedal": 44,
->>>>>>> infra/zero-green
 }
 
 def test_ujam_legend_map_notes():

@@ -323,7 +323,7 @@ class DrumGenerator(BasePartGenerator):
 
         # Drum ブラシ（テストでは drum_brush を参照）
         self.drum_brush = bool(
-            safe_get(global_cfg, "drum_brush", default=False)
+            safe_get(global_cfg, "drum_brush", default=self.main_cfg.get("drum_brush", False))
             or (self.overrides and self.overrides.drum_brush)
         )
 
@@ -334,7 +334,9 @@ class DrumGenerator(BasePartGenerator):
 
         # apply groove pretty
         global_cfg = self.main_cfg.get("global_settings", {})
-        self.random_walk_step = int(global_cfg.get("random_walk_step", 4))
+        self.random_walk_step = int(
+            global_cfg.get("random_walk_step", self.random_walk_step)
+        )
         self.groove_profile_path = global_cfg.get("groove_profile_path")
         self.groove_strength = float(global_cfg.get("groove_strength", 1.0))
         self.groove_profile = {}
@@ -1251,20 +1253,11 @@ class DrumGenerator(BasePartGenerator):
     def _make_hit(self, name: str, vel: int, ql: float) -> Optional[note.Note]:
         # (前回と同様)
         mapped_name = name.lower().replace(" ", "_").replace("-", "_")
-        codex/create-test_drum_articulations.py-with-tests
         if self.drum_brush and mapped_name in BRUSH_MAP:
             mapped_name = BRUSH_MAP[mapped_name]
-            vel = int(vel * 0.65)
+            vel = int(vel * 0.6)
         if mapped_name in {"chh", "hh", "hat_closed"} and vel < 40:
             mapped_name = "hh_edge"
-
-        if self.brush_mode:
-            if mapped_name == "snare":
-                mapped_name = "snare_brush"
-            elif mapped_name in BRUSH_MAP:
-                mapped_name = BRUSH_MAP[mapped_name]
-            vel = int(vel * 0.6)
-        infra/zero-green
         actual_name_for_midi = GHOST_ALIAS.get(mapped_name, mapped_name)
         midi_pitch_val = self.gm_pitch_map.get(actual_name_for_midi)
         if midi_pitch_val is None:

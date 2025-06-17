@@ -1,5 +1,5 @@
 import json
-from music21 import stream
+from music21 import stream, note, volume
 from generator.drum_generator import DrumGenerator, RESOLUTION
 
 class FadeDrum(DrumGenerator):
@@ -54,3 +54,65 @@ def test_velocity_fade_into_fill(tmp_path):
     )
     velocities = [n.volume.velocity for n in notes_before]
     assert velocities == sorted(velocities)
+
+
+def test_velocity_fade_respects_existing_velocities(tmp_path):
+    heatmap = [{"grid_index": i, "count": 0} for i in range(RESOLUTION)]
+    heatmap_path = tmp_path / "heatmap.json"
+    with open(heatmap_path, "w") as f:
+        json.dump(heatmap, f)
+
+    cfg = {
+        "vocal_midi_path_for_drums": "",
+        "heatmap_json_path_for_drums": str(heatmap_path),
+        "paths": {"rhythm_library_path": "data/rhythm_library.yml"},
+    }
+
+    drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
+    part = stream.Part(id="drums")
+
+    base_velocities = [50, 75, 100]
+    for i, vel in enumerate(base_velocities):
+        n = note.Note("C4")
+        n.volume = volume.Volume(velocity=vel)
+        n.offset = i * 0.5
+        part.insert(n.offset, n)
+
+    drum._velocity_fade_into_fill(part, 1.5, fade_beats=1.5)
+    count = len(base_velocities)
+    expected = []
+    for idx, base in enumerate(base_velocities):
+        scale = 0.8 + (0.2 * (idx + 1) / count)
+        expected.append(int(max(1, min(127, base * scale))))
+
+    final = [n.volume.velocity for n in sorted(part.flatten().notes, key=lambda n: n.offset)]
+    assert final == expected
+
+
+def test_velocity_fade_duplicate_offsets(tmp_path):
+    heatmap = [{"grid_index": i, "count": 0} for i in range(RESOLUTION)]
+    heatmap_path = tmp_path / "heatmap.json"
+    with open(heatmap_path, "w") as f:
+        json.dump(heatmap, f)
+
+    cfg = {
+        "vocal_midi_path_for_drums": "",
+        "heatmap_json_path_for_drums": str(heatmap_path),
+        "paths": {"rhythm_library_path": "data/rhythm_library.yml"},
+    }
+
+    drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
+    part = stream.Part(id="drums")
+
+    for i in range(3):
+        n = note.Note("C4")
+        n.volume = volume.Volume(velocity=60)
+        n.offset = i * 0.5
+        part.insert(n.offset, n)
+
+    drum.fill_offsets = [1.5, 1.5]
+    for off in drum.fill_offsets:
+        drum._velocity_fade_into_fill(part, off, fade_beats=1.5)
+
+    final = [n.volume.velocity for n in sorted(part.flatten().notes, key=lambda n: n.offset)]
+    assert final == sorted(final)

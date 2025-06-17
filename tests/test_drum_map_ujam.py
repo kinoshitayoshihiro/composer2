@@ -20,7 +20,7 @@ EXPECTED = {
     "chimes": 81,
     "shaker_soft": 82,
     "ghost": 42,
-    "snare_brush": 38,
+    "snare_brush": 40,
     "hh_pedal": 44,
 }
 

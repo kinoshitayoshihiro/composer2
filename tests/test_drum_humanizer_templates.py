@@ -31,6 +31,33 @@ pattern_lib = {
     }
 }
 
+pattern_lib_multi = {
+    "main": {
+        "pattern": [
+            {
+                "instrument": "kick",
+                "offset": 0.0,
+                "humanize_templates": ["drum_tight", "flam_legato_ghost"],
+            }
+        ],
+        "length_beats": 1.0,
+    }
+}
+
+pattern_lib_random = {
+    "main": {
+        "pattern": [
+            {
+                "instrument": "kick",
+                "offset": 0.0,
+                "humanize_templates": ["drum_tight", "flam_legato_ghost"],
+                "humanize_templates_mode": "random",
+            }
+        ],
+        "length_beats": 1.0,
+    }
+}
+
 
 @patch("generator.drum_generator.apply_humanization_to_element")
 def test_flam_legato_ghost_template_applied(mock_apply, tmp_path: Path):
@@ -57,3 +84,46 @@ def test_flam_legato_ghost_template_applied(mock_apply, tmp_path: Path):
     note_obj = list(part.flatten().notes)[0]
     assert note_obj.duration.quarterLength > 0.125
     assert note_obj.volume.velocity > 1
+
+
+@patch("generator.drum_generator.apply_humanization_to_element")
+def test_multiple_templates_sequential(mock_apply, tmp_path: Path):
+    call_order = []
+
+    def record(n, template_name=None, custom_params=None):
+        call_order.append(template_name)
+        return n
+
+    mock_apply.side_effect = record
+    cfg = _basic_cfg(tmp_path)
+    drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters=pattern_lib_multi)
+    section = {
+        "absolute_offset": 0.0,
+        "q_length": 1.0,
+        "part_params": {"drums": {"final_style_key_for_render": "main"}},
+    }
+    drum.compose(section_data=section)
+
+    assert call_order == ["drum_tight", "flam_legato_ghost"]
+
+
+@patch("generator.drum_generator.apply_humanization_to_element")
+def test_multiple_templates_random(mock_apply, tmp_path: Path):
+    chosen_templates = []
+
+    def record(n, template_name=None, custom_params=None):
+        chosen_templates.append(template_name)
+        return n
+
+    mock_apply.side_effect = record
+    cfg = _basic_cfg(tmp_path)
+    drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters=pattern_lib_random)
+    section = {
+        "absolute_offset": 0.0,
+        "q_length": 1.0,
+        "part_params": {"drums": {"final_style_key_for_render": "main"}},
+    }
+    drum.compose(section_data=section)
+
+    assert len(chosen_templates) == 1
+    assert chosen_templates[0] in {"drum_tight", "flam_legato_ghost"}

@@ -26,7 +26,8 @@ GM_DRUM_MAP = {
     "ghost": ("closed_hi_hat", 42),
     "brush_kick": ("acoustic_bass_drum", 36),
     "brush_snare": ("acoustic_snare", 38),
-    "snare_brush": ("acoustic_snare", 38),
+    # Brush articulation for snare mapped to a slightly higher pitch
+    "snare_brush": ("electric_snare", 40),
     "hh_pedal": HH_PEDAL,
 }
 
@@ -51,7 +52,8 @@ UJAM_LEGEND_MAP = {
     "chimes": ("triangle", 81),
     "shaker_soft": ("shaker", 82),
     "ghost": ("closed_hi_hat", 42),
-    "snare_brush": ("snare", 38),
+    # UJAM brush snare articulation
+    "snare_brush": ("snare", 40),
     "hh_pedal": HH_PEDAL,
 }
 

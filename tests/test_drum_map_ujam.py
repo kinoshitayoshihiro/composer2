@@ -6,7 +6,7 @@ EXPECTED = {
     "chh": 42,
     "hh": 42,
     "hat_closed": 42,
-    "hh_edge": 44,
+    "hh_edge": 22,
     "ohh": 46,
     "kick": 36,
     "snare": 38,

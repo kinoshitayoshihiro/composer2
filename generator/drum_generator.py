@@ -320,10 +320,17 @@ class DrumGenerator(BasePartGenerator):
             tuple(self.main_cfg.get("ghost_density_range", [0.3, 0.8])),
         )
         self.ghost_hat_on_offbeat = self.main_cfg.get("ghost_hat_on_offbeat", True)
-        self.brush_mode = bool(
+
+        # Drum ブラシ（テストでは drum_brush を参照）
+        self.drum_brush = bool(
             safe_get(global_cfg, "drum_brush", default=False)
             or (self.overrides and self.overrides.drum_brush)
         )
+
+
+        # ランダムウォークのステップ幅（テストで random_walk_step を使う場合）
+        self.random_walk_step = int(self.main_cfg.get("random_walk_step", 0))
+        self._velocity_walk = 0
 
         # apply groove pretty
         global_cfg = self.main_cfg.get("global_settings", {})
@@ -1108,6 +1115,12 @@ class DrumGenerator(BasePartGenerator):
                 except (TypeError, ValueError):
                     pass
 
+            if self.random_walk_step:
+                step = int(self.random_walk_step)
+                delta = step if self.rng.random() < 0.5 else -step
+                self._velocity_walk += delta
+                final_event_velocity += self._velocity_walk
+
             final_event_velocity = max(
                 1, min(127, int(final_event_velocity * velocity_scale))
             )
@@ -1238,12 +1251,20 @@ class DrumGenerator(BasePartGenerator):
     def _make_hit(self, name: str, vel: int, ql: float) -> Optional[note.Note]:
         # (前回と同様)
         mapped_name = name.lower().replace(" ", "_").replace("-", "_")
+        codex/create-test_drum_articulations.py-with-tests
+        if self.drum_brush and mapped_name in BRUSH_MAP:
+            mapped_name = BRUSH_MAP[mapped_name]
+            vel = int(vel * 0.65)
+        if mapped_name in {"chh", "hh", "hat_closed"} and vel < 40:
+            mapped_name = "hh_edge"
+
         if self.brush_mode:
             if mapped_name == "snare":
                 mapped_name = "snare_brush"
             elif mapped_name in BRUSH_MAP:
                 mapped_name = BRUSH_MAP[mapped_name]
             vel = int(vel * 0.6)
+        infra/zero-green
         actual_name_for_midi = GHOST_ALIAS.get(mapped_name, mapped_name)
         midi_pitch_val = self.gm_pitch_map.get(actual_name_for_midi)
         if midi_pitch_val is None:

@@ -135,6 +135,14 @@ def apply(
                 n.offset = beat_start
 
 
+def _validate_ratio(ratio: float) -> float:
+    """Return a safe swing ratio clipped to ``0.5`` when out of range."""
+    if not 0 < ratio < 1:
+        logger.warning("Swing ratio %.3f out of range (0,1). Using 0.5", ratio)
+        return 0.5
+    return ratio
+
+
 def _apply_swing(part_stream: stream.Part, swing_ratio: float, subdiv: int = 8) -> None:
     """Shift off-beats according to ``swing_ratio`` and grid ``subdiv``.
 
@@ -142,6 +150,7 @@ def _apply_swing(part_stream: stream.Part, swing_ratio: float, subdiv: int = 8) 
     within a pair (0.5 means straight). ``subdiv`` describes the number of
     divisions in a 4/4 measure. 8 results in eighth‑note swing.
     """
+    swing_ratio = _validate_ratio(swing_ratio)
     if subdiv <= 0:
         return
 
@@ -178,11 +187,26 @@ def _apply_variable_swing(
         if abs(within - step) < tol:
             measure_idx = int(pair_start // measure_len)
             ratio = ratios.get(measure_idx, ratios.get("default", 0.5))
+            ratio = _validate_ratio(ratio)
             n.offset = pair_start + pair * ratio
 
 
+def _guess_subdiv(part: stream.Part) -> int:
+    """Return default swing subdivision based on time signature."""
+    ts = part.recurse().getElementsByClass(meter.TimeSignature).first()
+    if ts:
+        num, denom = ts.numerator, ts.denominator
+        if denom == 4 and num in (3, 4):
+            return 8
+        if denom == 8 and num in (6, 12):
+            return 12
+    return 8
+
+
 def apply_swing(
-    part: stream.Part, ratio: Union[float, Sequence[float], Mapping[int, float]], subdiv: int = 8
+    part: stream.Part,
+    ratio: Union[float, Sequence[float], Mapping[int, float]],
+    subdiv: int | None = 8,
 ) -> None:
     """Public API to apply swing in-place.
 
@@ -190,18 +214,24 @@ def apply_swing(
     ----------
     part : :class:`music21.stream.Part`
         Target part to modify.
-    ratio : float
+    ratio : float | Sequence[float] | Mapping[int, float]
         Relative position of the off-beat note (0.5 = straight).
-    subdiv : int
+    subdiv : int | None
         Number of grid subdivisions per measure. ``8`` for typical eighth swing.
+        When ``None``, a suitable value is inferred from the part's time signature
+        (e.g. ``8`` for ``4/4`` or ``3/4`` and ``12`` for ``6/8`` or ``12/8``).
     """
     if ratio is None:
         return
 
+    if subdiv is None:
+        subdiv = _guess_subdiv(part)
+
     if isinstance(ratio, (int, float)):
-        if abs(float(ratio)) < 1e-6:
+        r = _validate_ratio(float(ratio))
+        if abs(r) < 1e-6:
             return
-        _apply_swing(part, float(ratio), subdiv=subdiv)
+        _apply_swing(part, r, subdiv=subdiv)
     else:
         if isinstance(ratio, Sequence):
             ratios = {idx: float(r) for idx, r in enumerate(ratio)}

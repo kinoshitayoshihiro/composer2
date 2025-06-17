@@ -16,11 +16,35 @@ def _cfg(tmp_path: Path):
     }
 
 
-def test_edge_hat_selected(tmp_path: Path):
+def test_articulation_variants(tmp_path: Path):
     cfg = _cfg(tmp_path)
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
-    hit = drum._make_hit("chh", 20, 0.25)
-    assert hit.pitch.midi == GM_DRUM_MAP["hh_edge"][1]
+    part = stream.Part(id="drums")
+    events = [
+        {"instrument": "kick", "offset": 0.0, "velocity": 90},
+        {"instrument": "chh", "offset": 1.0, "velocity": 80},
+        {"instrument": "chh", "offset": 2.0, "velocity": 40},
+        {"instrument": "chh", "offset": 3.0, "velocity": 80, "pedal": True},
+    ]
+    drum._apply_pattern(
+        part,
+        events,
+        0.0,
+        4.0,
+        100,
+        "eighth",
+        0.5,
+        drum.global_ts,
+        {},
+    )
+    pitches = {n.pitch.midi for n in part.flatten().notes}
+    expected = {
+        GM_DRUM_MAP["kick"][1],
+        GM_DRUM_MAP["chh"][1],
+        GM_DRUM_MAP["hh_edge"][1],
+        GM_DRUM_MAP["hh_pedal"][1],
+    }
+    assert pitches == expected
 
 
 def test_random_walk_sign(tmp_path: Path):

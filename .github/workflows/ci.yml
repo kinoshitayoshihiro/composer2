@@ -12,5 +12,6 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: '3.12'
+      - run: pip install pretty_midi setuptools
       - run: bash setup.sh
       - run: pytest -q

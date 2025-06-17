@@ -134,7 +134,8 @@ def main_cli() -> None:
     logger.info("使用 chordmap_path = %s", paths["chordmap_path"])
     logger.info("使用 rhythm_library_path = %s", paths["rhythm_library_path"])
 
-    drum_map_name = args.drum_map or main_cfg.get("global_settings", {}).get("drum_map")
+    drum_map_name = args.drum_map or main_cfg.get(
+        "global_settings", {}).get("drum_map")
     main_cfg.setdefault("global_settings", {})["drum_map"] = drum_map_name
 
     # 3. ファイル読み込み
@@ -169,7 +170,8 @@ def main_cli() -> None:
         logging.error("指定セクションが chordmap に見つかりませんでした")
         return
 
-    ts = meter.TimeSignature(main_cfg["global_settings"].get("time_signature", "4/4"))
+    ts = meter.TimeSignature(
+        main_cfg["global_settings"].get("time_signature", "4/4"))
     beats_per_measure = ts.numerator
 
     # 2) Generator 初期化 ----------------------------------------------------
@@ -196,11 +198,13 @@ def main_cli() -> None:
         section_start_q = chords_abs[0]["absolute_offset_beats"]
 
         for idx, ch_ev in enumerate(chords_abs):
-            next_ev = chords_abs[idx + 1] if idx + 1 < len(chords_abs) else None
+            next_ev = chords_abs[idx + 1] if idx + \
+                1 < len(chords_abs) else None
 
             block_start = ch_ev["absolute_offset_beats"] - section_start_q
             block_length = ch_ev.get(
-                "humanized_duration_beats", ch_ev.get("original_duration_beats", 4.0)
+                "humanized_duration_beats", ch_ev.get(
+                    "original_duration_beats", 4.0)
             )
 
             base_block_data: Dict[str, Any] = {
@@ -272,17 +276,18 @@ def main_cli() -> None:
                             section_start_q + block_start + el.offset,
                             clone_element(el),
                         )
-
-                            section_start_q + block_start + elem.offset,
-                            clone_element(elem),
-                        )
+                    dest.insert(
+                        section_start_q + block_start + elem.offset,
+                        clone_element(elem),
+                    )
 
                 if isinstance(result_stream, dict):
                     for key, part_blk_stream in result_stream.items():
                         _insert_stream(key, part_blk_stream)
                 elif isinstance(result_stream, (list, tuple)):
                     for idx, part_blk_stream in enumerate(result_stream):
-                        stream_id = getattr(part_blk_stream, "id", None) or f"{part_name}_{idx}"
+                        stream_id = getattr(
+                            part_blk_stream, "id", None) or f"{part_name}_{idx}"
                         _insert_stream(stream_id, part_blk_stream)
                 else:
                     _insert_stream(part_name, result_stream)

@@ -1070,10 +1070,10 @@ class DrumGenerator(BasePartGenerator):
 
             step = self.random_walk_step
             if self.rng.random() < 0.05:
-                self._vel_walk = self.rng.randint(-step, step)
+                self._velocity_walk = self.rng.randint(-step, step)
             final_event_velocity = max(
                 1,
-                min(127, final_event_velocity + getattr(self, "_vel_walk", 0)),
+                min(127, final_event_velocity + getattr(self, "_velocity_walk", 0)),
             )
 
             final_insert_offset_in_score = bar_start_abs_offset + rel_offset_in_pattern

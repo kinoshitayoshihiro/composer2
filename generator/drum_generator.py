@@ -1164,6 +1164,19 @@ class DrumGenerator(BasePartGenerator):
             if ev_def.get("pedal", False):
                 inst_name = "hh_pedal"
 
+            ev_type = ev_def.get("type")
+            if ev_type in {"drag", "ruff"}:
+                midi_pitch = self.gm_pitch_map.get(inst_name)
+                if midi_pitch is not None:
+                    self._insert_grace_chain(
+                        part,
+                        final_insert_offset_in_score,
+                        midi_pitch,
+                        final_event_velocity,
+                        2 if ev_type == "drag" else 3,
+                    )
+                continue
+
             if ev_def.get("type") == "flam":
                 midi_pitch = self.gm_pitch_map.get(inst_name)
                 if midi_pitch is not None:
@@ -1325,6 +1338,36 @@ class DrumGenerator(BasePartGenerator):
         grace.volume = m21volume.Volume(velocity=max(1, int(velocity * 0.4)))
         grace.offset = 0.0
         part.insert(max(0.0, offset - grace_offset), grace)
+        main = note.Note()
+        main.pitch = pitch.Pitch(midi=midi_pitch)
+        main.duration = m21duration.Duration(max(MIN_NOTE_DURATION_QL / 8.0, 0.1))
+        main.volume = m21volume.Volume(velocity=max(1, velocity))
+        main.offset = 0.0
+        part.insert(offset, main)
+
+    def _insert_grace_chain(
+        self,
+        part: stream.Part,
+        offset: float,
+        midi_pitch: int,
+        velocity: int,
+        n_hits: int = 2,
+    ) -> None:
+        """Insert drag/ruff grace notes before the main hit."""
+        spread_ms = 25.0
+        step_ms = spread_ms / max(1, n_hits)
+        for idx in range(n_hits):
+            off_ms = spread_ms - idx * step_ms
+            grace_offset = (off_ms / 1000.0) * (self.global_tempo / 60.0)
+            factor = 0.3 + (0.3 * idx / max(1, n_hits - 1))
+            grace = note.Note()
+            grace.pitch = pitch.Pitch(midi=midi_pitch)
+            grace.duration = m21duration.Duration(max(MIN_NOTE_DURATION_QL / 8.0, 0.05))
+            grace.volume = m21volume.Volume(
+                velocity=max(1, int(velocity * factor))
+            )
+            grace.offset = 0.0
+            part.insert(max(0.0, offset - grace_offset), grace)
         main = note.Note()
         main.pitch = pitch.Pitch(midi=midi_pitch)
         main.duration = m21duration.Duration(max(MIN_NOTE_DURATION_QL / 8.0, 0.1))

@@ -3,6 +3,7 @@
 # Additional hi-hat articulations
 HH_EDGE = ("closed_hi_hat_edge", 22)
 HH_PEDAL = ("pedal_hi_hat", 44)
+SNARE_RUFF = ("acoustic_snare", 38)
 
 # Default General MIDI drum map
 GM_DRUM_MAP = {
@@ -14,6 +15,7 @@ GM_DRUM_MAP = {
     "kick": ("acoustic_bass_drum", 36),
     "snare": ("acoustic_snare", 38),
     "ghost_snare": ("acoustic_snare", 38),
+    "snare_ruff": SNARE_RUFF,
     "tom1": ("high_tom", 48),
     "tom2": ("mid_tom", 47),
     "tom3": ("low_tom", 45),
@@ -43,6 +45,7 @@ UJAM_LEGEND_MAP = {
     "kick": ("kick", 36),
     "snare": ("snare", 38),
     "ghost_snare": ("snare", 38),
+    "snare_ruff": ("snare", 38),
     "tom1": ("high_tom", 50),
     "tom2": ("mid_tom", 47),
     "tom3": ("low_tom", 45),

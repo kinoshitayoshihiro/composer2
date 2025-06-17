@@ -11,6 +11,7 @@ EXPECTED = {
     "kick": 36,
     "snare": 38,
     "ghost_snare": 38,
+    "snare_ruff": 38,
     "tom1": 50,
     "tom2": 47,
     "tom3": 45,

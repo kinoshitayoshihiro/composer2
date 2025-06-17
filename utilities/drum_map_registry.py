@@ -19,6 +19,7 @@ GM_DRUM_MAP = {
     "tom3": ("low_tom", 45),
     "crash": ("crash_cymbal_1", 49),
     "crash_cymbal_soft_swell": ("crash_cymbal_1", 49),
+    "ride": ("ride_cymbal_1", 51),
     "ride_cymbal_swell": ("ride_cymbal_1", 51),
     "chimes": ("triangle", 81),
     "shaker_soft": ("shaker", 82),

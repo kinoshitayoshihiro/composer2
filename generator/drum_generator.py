@@ -292,10 +292,12 @@ class DrumGenerator(BasePartGenerator):
         # 必須のデフォルトパターンが不足している場合に補充
         self._add_internal_default_patterns()
 
-        # Use path settings from main_cfg, falling back to general paths
-        self.vocal_midi_path = self.main_cfg.get(
-            "vocal_midi_path_for_drums"
-        ) or self.main_cfg.get("paths", {}).get("vocal_note_data_path")
+        # Use path settings from main_cfg, preferring an explicit MIDI file path
+        self.vocal_midi_path = (
+            self.main_cfg.get("paths", {}).get("vocal_midi_path_for_drums")
+            or self.main_cfg.get("vocal_midi_path_for_drums")
+            or self.main_cfg.get("paths", {}).get("vocal_note_data_path")
+        )
         self.vocal_end_times: List[float] = self._load_vocal_end_times(
             self.vocal_midi_path
         )

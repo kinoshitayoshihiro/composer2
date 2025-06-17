@@ -136,8 +136,11 @@ def apply(
 
 
 def _validate_ratio(ratio: float) -> float:
-    """Return a safe swing ratio clipped to ``0.5`` when out of range."""
-    if not 0 < ratio < 1:
+    """Return a safe swing ratio allowing ``0`` for straight feel."""
+    if ratio <= 0:
+        # ``0`` disables swing; no warning necessary
+        return 0.0
+    if ratio >= 1:
         logger.warning("Swing ratio %.3f out of range (0,1). Using 0.5", ratio)
         return 0.5
     return ratio
@@ -228,9 +231,10 @@ def apply_swing(
         subdiv = _guess_subdiv(part)
 
     if isinstance(ratio, (int, float)):
-        r = _validate_ratio(float(ratio))
+        r = float(ratio)
         if abs(r) < 1e-6:
             return
+        r = _validate_ratio(r)
         _apply_swing(part, r, subdiv=subdiv)
     else:
         if isinstance(ratio, Sequence):

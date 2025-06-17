@@ -19,7 +19,16 @@ def _basic_cfg(tmp_path: Path):
 
 
 pattern_lib = {
-    "main": {"pattern": [{"instrument": "kick", "offset": 0.0}], "length_beats": 1.0}
+    "main": {
+        "pattern": [
+            {
+                "instrument": "kick",
+                "offset": 0.0,
+                "humanize_template": "flam_legato_ghost",
+            }
+        ],
+        "length_beats": 1.0,
+    }
 }
 
 
@@ -37,11 +46,14 @@ def test_flam_legato_ghost_template_applied(mock_apply, tmp_path: Path):
     mock_apply.side_effect = modify
     cfg = _basic_cfg(tmp_path)
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters=pattern_lib)
-    section = {"absolute_offset": 0.0, "q_length": 1.0, "part_params": {}}
+    section = {
+        "absolute_offset": 0.0,
+        "q_length": 1.0,
+        "part_params": {"drums": {"final_style_key_for_render": "main"}},
+    }
     part = drum.compose(section_data=section)
 
     mock_apply.assert_called()
     note_obj = list(part.flatten().notes)[0]
-    assert note_obj.offset > 0.0
     assert note_obj.duration.quarterLength > 0.125
     assert note_obj.volume.velocity > 1

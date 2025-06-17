@@ -53,6 +53,8 @@ DRUM_ALIAS: Dict[str, str] = {
     "chimes": "chimes",
     "ride_cymbal_swell": "ride_cymbal_swell",
     "crash_cymbal_soft_swell": "crash_cymbal_soft_swell",
+    "edge": "hh_edge",
+    "pedal": "hh_pedal",
 }
 GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
 BRUSH_MAP: Dict[str, str] = {"kick": "brush_kick", "snare": "brush_snare"}
@@ -1129,9 +1131,9 @@ class DrumGenerator(BasePartGenerator):
                 1, min(127, int(final_event_velocity * velocity_scale))
             )
 
-            if inst_name in {"chh", "hh"} and final_event_velocity <= 45:
+            if inst_name == "chh" and final_event_velocity < 50:
                 inst_name = "hh_edge"
-            if inst_name in {"chh", "hh"} and ev_def.get("pedal", False):
+            if ev_def.get("pedal", False):
                 inst_name = "hh_pedal"
 
             if ev_def.get("type") == "flam":

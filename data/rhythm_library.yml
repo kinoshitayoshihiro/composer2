@@ -2137,3 +2137,8 @@ drum_patterns:
       fill_density: 0.7
       allow_snare: true
       max_velocity_factor: 1.22
+
+  ride_only:
+    pattern:
+      - {instrument: ride_cymbal_swell, offset: 0.0}
+    length_beats: 4.0

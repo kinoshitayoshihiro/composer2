@@ -1108,6 +1108,11 @@ class DrumGenerator(BasePartGenerator):
                 1, min(127, int(final_event_velocity * velocity_scale))
             )
 
+            if inst_name in {"chh", "hh"} and final_event_velocity <= 45:
+                inst_name = "hh_edge"
+            if inst_name in {"chh", "hh"} and ev_def.get("pedal", False):
+                inst_name = "hh_pedal"
+
             if ev_def.get("type") == "flam":
                 midi_pitch = self.gm_pitch_map.get(inst_name)
                 if midi_pitch is not None:

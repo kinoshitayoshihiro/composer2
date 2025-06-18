@@ -79,14 +79,23 @@ class AccentMapper:
     def __init__(self, threshold: float = 0.6, ghost_density_range=(0.3, 0.8)) -> None:
         self.threshold = threshold
         self.ghost_density_range = ghost_density_range
+        self._walk = 0
 
-    def accent(self, rel: float, velocity: int) -> int:
-        return self.get_velocity(rel, velocity)
+    def begin_bar(self, walk_range: int = 8) -> None:
+        """Advance the velocity random walk for a new bar."""
+        step = random.randint(-walk_range, walk_range)
+        self._walk += step
 
-    def get_velocity(self, rel: float, base_velocity: int) -> int:
+    def accent(self, rel: float, velocity: int, step: bool = True) -> int:
+        return self.get_velocity(rel, velocity, step=step)
+
+    def get_velocity(self, rel: float, base_velocity: int, step: bool = True) -> int:
+        vel = base_velocity
         if rel >= self.threshold:
-            return min(127, int(base_velocity * 1.2))
-        return base_velocity
+            vel = int(vel * 1.2)
+        if step:
+            vel += self._walk
+        return max(1, min(127, vel))
 
     def ghost_density(self, rel: float) -> float:
         low, high = self.ghost_density_range
@@ -839,6 +848,7 @@ class DrumGenerator(BasePartGenerator):
                 bars_since_section_start = 0
             current_pos_within_block = 0.0
             while remaining_ql_in_block > MIN_NOTE_DURATION_QL / 8.0:
+                self.accent_mapper.begin_bar()
                 # (フィルインロジック、パターンの適用は前回と同様、base_vel を _apply_pattern に渡す)
                 current_pattern_iteration_ql = min(
                     pattern_unit_length_ql, remaining_ql_in_block
@@ -1135,7 +1145,9 @@ class DrumGenerator(BasePartGenerator):
 
             if inst_name in {"kick", "snare"}:
                 final_event_velocity = self.accent_mapper.accent(
-                    rel, final_event_velocity
+                    rel,
+                    final_event_velocity,
+                    step=ev_def.get("type") != "ghost",
                 )
 
             layer_idx = ev_def.get("velocity_layer")

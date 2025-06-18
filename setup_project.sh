@@ -101,4 +101,4 @@ python -m pip install \
 # 3. プロジェクト本体を editable で投入
 # ----------------------------------------------------------------------
 echo "3) プロジェクトを editable (-e) でインストール…"
-pyth
+python -m pip install --no-build-isolation --no-deps -e .

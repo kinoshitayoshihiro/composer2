@@ -15,7 +15,7 @@
   "remoteUser": "vscode",
   "postCreateCommand": [
     "pip install --upgrade pip setuptools",
-    "pip install --no-index --find-links=./wheelhouse -r requirements.txt",
+    "pip install --no-index --find-links=./wheelhouse --no-build-isolation -r requirements.txt",
     "pip install -e .",
     "mkdir -p midi_output"
   ]

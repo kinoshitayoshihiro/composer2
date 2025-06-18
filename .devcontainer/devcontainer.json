@@ -1,7 +1,9 @@
 {
   "name": "composer-dev",
-  "build": {
+  "build": [
     "dockerfile": "Dockerfile"
+  "runArgs": [
+    "--network=host"
   },
   "settings": {
     "terminal.integrated.defaultProfile.linux": "bash"

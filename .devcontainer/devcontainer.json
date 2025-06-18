@@ -11,7 +11,12 @@
     "ms-toolsai.jupyter",
     "ms-azuretools.vscode-docker"
   ],
-  "forwardPorts": [8888],  // Jupyterなど用
+  "forwardPorts": [8888],
   "remoteUser": "vscode",
-  "postCreateCommand": "pip install -r requirements.txt"
+  "postCreateCommand": [
+    "pip install --upgrade pip setuptools",
+    "pip install --no-index --find-links=./wheelhouse --no-build-isolation -r requirements.txt",
+    "pip install -e .",
+    "mkdir -p midi_output"
+  ]
 }

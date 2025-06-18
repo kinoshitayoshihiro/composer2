@@ -1,28 +1,48 @@
-# --- ベースイメージ ---
-FROM mcr.microsoft.com/devcontainers/python:3.10
+# --- ビルドステージ ---
+FROM python:3.12-slim AS builder
 
-# 作業ディレクトリ
-WORKDIR /workspace/composer2
+WORKDIR /app
 
-# ↑ ここで appuser はあらかじめ DevContainer が用意済み
-#    （通常、devcontainers イメージは非 root ユーザー 'vscode' を使うので、
-#     必要なら USER vscode にしておいてください）
+# wheelhouse フォルダだけ先に作成＆コピー
+RUN mkdir wheelhouse
 
-# オフラインバンドルをコピー
-COPY wheelhouse ./wheelhouse
+# SciPy の manylinux ホイールを wheelhouse にダウンロード
+# ※ビルド時はネットワーク ON の前提
+RUN pip install --upgrade pip setuptools \
+ && pip download --dest wheelhouse \
+      --platform manylinux_2_17_x86_64 \
+      --only-binary=:all: \
+      --no-deps \
+      'scipy>=1.10'
 
-# ソースをコピー
+# requirements.txt ほかソース一式をコピー
+COPY requirements.txt .
 COPY . .
 
-# ユーザーのホーム配下に venv を作り、オフラインインストール
-USER vscode
-RUN python -m venv .venv \
- && . .venv/bin/activate \
- && pip install --upgrade pip setuptools \
- && pip install --no-index --find-links=./wheelhouse -r requirements.txt
+# 他の依存パッケージも同様にダウンロード
+RUN pip download --dest wheelhouse \
+      --platform manylinux_2_17_x86_64 \
+      --only-binary=:all: \
+      --no-deps \
+      -r requirements.txt
 
-# 仮想環境の bin を PATH に追加
-ENV PATH=/workspace/composer2/.venv/bin:$PATH
+# wheelhouse とホイールを使って依存をインストール
+RUN pip install --no-index \
+      --find-links=wheelhouse \
+      -r requirements.txt
 
-# （オプション）出力フォルダを作成
-RUN mkdir -p midi_output
+# --- ランタイムステージ ---
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# ビルドステージから site-packages をコピー
+COPY --from=builder /usr/local/lib/python3.12 /usr/local/lib/python3.12
+# ソースをコピー
+COPY --from=builder /app /app
+
+# 非 root ユーザー切り替えなど
+RUN useradd --create-home --shell /bin/bash appuser
+USER appuser
+
+CMD ["python", "modular_composer.py", "--help"]

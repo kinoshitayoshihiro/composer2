@@ -49,3 +49,8 @@ drum_patterns:
 ```
 
 In this example, layer 0 uses a 0.6 multiplier, layer 1 uses 0.8 and layer 2 uses 1.0 when calculating final note velocity.
+
+When calling the internal ``_apply_pattern()`` helper, note that the arguments
+after ``drum_block_params`` are ``velocity_scale`` followed by
+``velocity_curve``. Passing them in the wrong order will produce unexpected
+velocity values. Using keyword arguments is recommended for clarity.

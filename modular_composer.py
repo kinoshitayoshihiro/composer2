@@ -464,49 +464,49 @@ def main_cli() -> None:
                             p.partName = pid
                         part_streams[pid] = p
                     dest = part_streams[pid]
-# ---- sub_stream から dest へ要素をコピー ---------------------------------
-has_inst = bool(dest.recurse().getElementsByClass(m21inst.Instrument))
-inserted_inst = False
+                    # ---- sub_stream から dest へ要素をコピー ---------------------------------
+                    has_inst = bool(dest.recurse().getElementsByClass(m21inst.Instrument))
+                    inserted_inst = False
 
-for elem in sub_stream.recurse():
-    # Instrument は先頭 0.0 ql に 1 度だけ入れる
-    if isinstance(elem, m21inst.Instrument):
-        if not has_inst and not inserted_inst:
-            dest.insert(0.0, clone_element(elem))
-            inserted_inst = True
-        continue
+                    for elem in sub_stream.recurse():
+                        # Instrument は先頭 0.0 ql に 1 度だけ入れる
+                        if isinstance(elem, m21inst.Instrument):
+                            if not has_inst and not inserted_inst:
+                                dest.insert(0.0, clone_element(elem))
+                                inserted_inst = True
+                            continue
 
-    # ノート系・テンポ・拍子・ダイナミクスなど必要な要素だけコピー
-    if isinstance(
-        elem,
-        (
-            note.GeneralNote,
-            chord.Chord,
-            note.Rest,
-            tempo.MetronomeMark,
-            key.KeySignature,
-            dynamics.Dynamic,
-            expressions.Expression,
-        ),
-    ):
-        dest.insert(
-            section_start_q + block_start + elem.offset,
-            clone_element(elem),
-        )
+                        # ノート系・テンポ・拍子・ダイナミクスなど必要な要素だけコピー
+                        if isinstance(
+                            elem,
+                            (
+                                note.GeneralNote,
+                                chord.Chord,
+                                note.Rest,
+                                tempo.MetronomeMark,
+                                key.KeySignature,
+                                dynamics.Dynamic,
+                                expressions.Expression,
+                            ),
+                        ):
+                            dest.insert(
+                                section_start_q + block_start + elem.offset,
+                                clone_element(elem),
+                            )
 
-# ---- ここから下は main ブランチ側のロジックを維持 --------------------------
-if isinstance(result_stream, dict):
-    for key, part_blk_stream in result_stream.items():
-        _insert_stream(key, part_blk_stream)
+                    # ---- ここから下は main ブランチ側のロジックを維持 --------------------------
+                    if isinstance(result_stream, dict):
+                        for key, part_blk_stream in result_stream.items():
+                            _insert_stream(key, part_blk_stream)
 
-elif isinstance(result_stream, (list, tuple)):
-    for idx, part_blk_stream in enumerate(result_stream):
-        stream_id = getattr(part_blk_stream, "id", None) or f"{part_name}_{idx}"
-        _insert_stream(stream_id, part_blk_stream)
+                    elif isinstance(result_stream, (list, tuple)):
+                        for idx, part_blk_stream in enumerate(result_stream):
+                            stream_id = getattr(part_blk_stream, "id", None) or f"{part_name}_{idx}"
+                            _insert_stream(stream_id, part_blk_stream)
 
-else:
-    # result_stream が単一 Stream のケース
-    result_stream = _insert_stream(result_stream, key, part_blk_stream)
+                    else:
+                        # result_stream が単一 Stream のケース
+                        result_stream = _insert_stream(result_stream, key, part_blk_stream)
 
 
     # 4) Humanizer -----------------------------------------------------------

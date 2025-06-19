@@ -1171,7 +1171,12 @@ class DrumGenerator(BasePartGenerator):
         vel_walk_state: int = drum_block_params.setdefault("_vel_walk", pattern_base_velocity)
 
         if not events and self.groove_model:
-            events = groove_sampler.generate_bar(self._groove_history, self.groove_model, self.rng)
+            events = groove_sampler.generate_bar(
+                prev_history=self._groove_history,
+                model=self.groove_model,
+                rng=self.rng,
+                resolution=16,
+            )
 
         prev_note: Optional[note.Note] = None
         for ev_idx, ev_def in enumerate(events):

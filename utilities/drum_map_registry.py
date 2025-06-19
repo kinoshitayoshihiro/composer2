@@ -65,7 +65,7 @@ UJAM_LEGEND_MAP: Dict[str, Tuple[str, int]] = {
     **_LEGEND_BASE,  # まず GM をベースにコピーし、一部だけ差し替え
     "kick": ("acoustic_bass_drum", 36),
     "snare": ("acoustic_snare", 38),
-    "tom1": ("high_tom", 50),   # high tom は 50
+    "tom1": ("high_tom", 50),  # high tom は 50
     # …
 }
 
@@ -73,6 +73,7 @@ UJAM_LEGEND_MAP: Dict[str, Tuple[str, int]] = {
 # ④ BeatMaker V3（main ブランチ側の追加マップ）
 #     main 側は値 = int だけだったので、説明文字列を付与して tuple 化
 # ---------------------------------------------------------------------------
+
 
 def _mk(desc: str, note: int) -> Tuple[str, int]:
     return desc, note
@@ -125,7 +126,9 @@ def _as_int_map(mapping: Dict[str, Tuple[str, int]]) -> Dict[str, int]:
     return {k: v[1] if isinstance(v, tuple) else v for k, v in mapping.items()}
 
 
-def get_drum_map(name: str, *, return_int_only: bool = False) -> Dict[str, Union[int, Tuple[str, int]]]:
+def get_drum_map(
+    name: str, *, return_int_only: bool = False
+) -> dict[str, int] | dict[str, tuple[str, int]]:
     """
     Drum マップを取得するユーティリティ.
 
@@ -143,6 +146,7 @@ def get_drum_map(name: str, *, return_int_only: bool = False) -> Dict[str, Union
     """
     mapping = DRUM_MAPS[name.lower()]  # KeyError を自然に吐かせる
     return _as_int_map(mapping) if return_int_only else mapping
+
 
 __all__ = [
     "GM_DRUM_MAP",

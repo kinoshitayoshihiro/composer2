@@ -4,7 +4,6 @@ import math
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set, Sequence
-from utilities.velocity_curve import resolve_velocity_curve
 from music21 import (
     stream,
     note,

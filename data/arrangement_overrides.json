@@ -17,6 +17,9 @@
       "palm_mute": false,
       "humanize_timing_sec": 0.015,
       "strum_direction_cycle": "down,down,up,up"
+    },
+    "drums": {
+      "rhythm_key": "eight_beat_full"
     }
   },
   "Pre-Chorus 1": {
@@ -38,7 +41,8 @@
     },
     "bass": {
       "rhythm_key": "bass_pump_8th_octaves",
-      "velocity": 85
+      "velocity": 85,
+      "velocity_shift_on_kick": 12
     },
     "guitar": {
       "rhythm_key": "guitar_power_chord_8ths",
@@ -155,6 +159,12 @@
       "velocity": 87,
       "palm_mute": true,
       "humanize_timing_sec": 0.010
+    }
+  },
+  "Bridge": {
+    "bass": {
+      "mirror_melody": true,
+      "approach_style_on_4th": "subdom_dom"
     }
   }
 }

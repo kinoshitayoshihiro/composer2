@@ -13,7 +13,13 @@ try:
         Overrides as OverrideModelType,
         PartOverride,
     )
-    from utilities.humanizer import apply_humanization_to_part
+    from utilities.humanizer import (
+        apply_humanization_to_part,
+        apply_envelope,
+        apply as humanize_apply,
+        apply_swing,
+        apply_offset_profile,
+    )
 except ModuleNotFoundError as e:
     raise ModuleNotFoundError(
         "Missing optional utilities. Please install dependencies via 'pip install -r requirements.txt'."
@@ -56,7 +62,11 @@ class BasePartGenerator(ABC):
         groove_profile_path: Optional[str] = None,
         next_section_data: Optional[Dict[str, Any]] = None,
         part_specific_humanize_params: Optional[Dict[str, Any]] = None,
+        shared_tracks: Dict[str, Any] | None = None,
     ) -> stream.Part:
+        shared_tracks = shared_tracks or {}
+        section_data.setdefault("shared_tracks", {}).update(shared_tracks)
+
         section_label = section_data.get("section_name", "UnknownSection")
         if overrides_root:
             self.overrides = get_part_override(
@@ -64,6 +74,25 @@ class BasePartGenerator(ABC):
             )
         else:
             self.overrides = None
+
+        swing = (
+            (self.overrides and getattr(self.overrides, "swing_ratio", None))
+            or section_data.get("part_params", {}).get("swing_ratio")
+            or 0.0
+        )
+        swing_rh = self.overrides.swing_ratio_rh if self.overrides else None
+        swing_lh = self.overrides.swing_ratio_lh if self.overrides else None
+
+        offset_profile = (
+            (self.overrides and getattr(self.overrides, "offset_profile", None))
+            or section_data.get("part_params", {}).get("offset_profile")
+        )
+        offset_profile_rh = (
+            self.overrides.offset_profile_rh if self.overrides else None
+        ) or section_data.get("part_params", {}).get("offset_profile_rh")
+        offset_profile_lh = (
+            self.overrides.offset_profile_lh if self.overrides else None
+        ) or section_data.get("part_params", {}).get("offset_profile_lh")
 
         self.logger.info(
             f"Rendering part for section: '{section_label}' with overrides: {self.overrides.model_dump(exclude_unset=True) if self.overrides and hasattr(self.overrides, 'model_dump') else 'None'}"
@@ -93,7 +122,8 @@ class BasePartGenerator(ABC):
             humanize_params = part_specific_humanize_params or {}
             if humanize_params.get("enable", False) and p.flatten().notes:
                 try:
-                    template = humanize_params.get("template_name", "default_subtle")
+                    template = humanize_params.get(
+                        "template_name", "default_subtle")
                     custom = humanize_params.get("custom_params", {})
                     p = apply_humanization_to_part(
                         p, template_name=template, custom_params=custom
@@ -108,10 +138,49 @@ class BasePartGenerator(ABC):
                     )
             return p
 
+        intensity = section_data.get(
+            "musical_intent", {}).get("intensity", "medium")
+        scale = {"low": 0.9, "medium": 1.0, "high": 1.1,
+                 "very_high": 1.2}.get(intensity, 1.0)
+
+        def final_process(
+            p: stream.Part,
+            ratio: float | None = None,
+            profile: str | None = None,
+        ) -> stream.Part:
+            part = process_one(p)
+            humanize_apply(part, None)          # 基本ヒューマナイズ
+            apply_envelope(                      # intensity → Velocity スケール
+                part,
+                0,
+                int(section_data.get("q_length", 0)),
+                scale,
+            )
+            if profile:
+                apply_offset_profile(part, profile)
+            if ratio is not None:               # Swing が指定されていれば適用
+                apply_swing(part, ratio, subdiv=8)
+            return part
+
         if isinstance(parts, dict):
-            return {k: process_one(v) for k, v in parts.items()}
+            return {
+                k: final_process(
+                    v,
+                    (
+                        swing_rh if "rh" in k.lower() and swing_rh is not None
+                        else swing_lh if "lh" in k.lower() and swing_lh is not None
+                        else swing
+                    ),
+                    (
+                        offset_profile_rh if "rh" in k.lower() and offset_profile_rh is not None
+                        else offset_profile_lh if "lh" in k.lower() and offset_profile_lh is not None
+                        else offset_profile
+                    ),
+                )
+                for k, v in parts.items()
+            }
         else:
-            return process_one(parts)
+            return final_process(parts, swing, offset_profile)
 
     @abstractmethod
     def _render_part(

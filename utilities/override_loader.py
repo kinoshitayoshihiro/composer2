@@ -41,6 +41,13 @@ class PartOverride(BaseModel):
     template_name: Optional[str] = None
     custom_params: Optional[Dict[str, Any]] = None
     velocity_shift: Optional[int] = None # ★★★ BassGenerator用に追加 ★★★
+    velocity_shift_on_kick: Optional[int] = None  # default 10
+    swing_ratio: Optional[float] = None
+    swing_ratio_rh: Optional[float] = None
+    swing_ratio_lh: Optional[float] = None
+    offset_profile: Optional[str] = None
+    offset_profile_rh: Optional[str] = None
+    offset_profile_lh: Optional[str] = None
 
     # Guitar specific
     palm_mute: Optional[bool] = None
@@ -63,6 +70,8 @@ class PartOverride(BaseModel):
     # Drum specific
     ghost_hat_on_offbeat: Optional[bool] = None
     additional_kick_density: Optional[float] = None
+    drum_brush: Optional[bool] = None
+    push_pull_curve: Optional[List[int]] = None
     # drum_style_key: Optional[str] = None # Covered by rhythm_key
     # drum_base_velocity: Optional[int] = None # Covered by velocity
     # drum_fill_interval_bars: Optional[int] = None

@@ -86,7 +86,7 @@ def load_main_cfg(path: str | Path, *, strict: bool = True) -> Dict[str, Any]:
 
     # tempo_map_path / groove_profile_path も絶対化
     gset = cfg.get("global_settings", {})
-    for pkey in ("data/tempo_map_path", "groove_profile_path"):
+    for pkey in ("tempo_map_path", "groove_profile_path"):
         if pkey in gset:
             gset[pkey] = _abspath(base_dir, gset[pkey])
 
@@ -125,14 +125,16 @@ def load_main_cfg(path: str | Path, *, strict: bool = True) -> Dict[str, Any]:
     return cfg
 
 
-def _abspath(base_dir: Path, path_or_none: Optional[str | list[str]]) -> Optional[str | list[str]]:
+def _abspath(base_dir: Path, path_or_none):
     """相対パスなら base_dir を前置して絶対パス文字列にする"""
-    if path_or_none is None:
-        return None
     if isinstance(path_or_none, list):
-        return [str((base_dir / Path(p)).resolve()) for p in path_or_none]
-    p = Path(path_or_none)
-    return str((base_dir / p).resolve()) if not p.is_absolute() else str(p)
+        return [str((base_dir / Path(p)).expanduser().resolve()) for p in path_or_none]
+    if not path_or_none:
+        return ""
+    p = Path(path_or_none).expanduser()
+    if not p.is_absolute():
+        p = base_dir / p
+    return str(p.resolve())
 
 
 def _validate(cfg: Mapping[str, Any]) -> None:

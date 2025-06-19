@@ -15,6 +15,7 @@ music21 の Part オブジェクトを生成して返します。
     - BassGenerator
     - MelodyGenerator
     - DrumGenerator
+    - SaxGenerator
     - VocalGenerator
     - ChordVoicer
 """
@@ -27,6 +28,7 @@ from .bass_generator import BassGenerator
 from .melody_generator import MelodyGenerator
 from .drum_generator import DrumGenerator
 from .vocal_generator import VocalGenerator
+from .sax_generator import SaxGenerator
 from .chord_voicer import ChordVoicer
 
 __all__ = [
@@ -37,5 +39,6 @@ __all__ = [
     "MelodyGenerator",
     "DrumGenerator",
     "VocalGenerator",
+    "SaxGenerator",
     "ChordVoicer",
 ]

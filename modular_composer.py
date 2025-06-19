@@ -17,7 +17,17 @@ from pathlib import Path
 from typing import Any, Dict
 from utilities.config_loader import load_chordmap_yaml, load_main_cfg
 from utilities.rhythm_library_loader import load_rhythm_library
-from music21 import instrument as m21inst, meter, stream, tempo
+from music21 import (
+    instrument as m21inst,
+    meter,
+    stream,
+    tempo,
+    key,
+    dynamics,
+    expressions,
+    chord,
+    note,
+)
 
 # --- project utilities ----------------------------------------------------
 from utilities.generator_factory import GenFactory  # type: ignore
@@ -68,6 +78,171 @@ def normalise_chords_to_relative(chords: list[Dict[str, Any]]) -> list[Dict[str,
     return rel_chords
 
 
+def compose(
+    main_cfg: Dict[str, Any],
+    chordmap: Dict[str, Any],
+    rhythm_lib,
+    overrides_model: Any | None = None,
+) -> tuple[stream.Score, list[Dict[str, Any]]]:
+    part_gens = GenFactory.build_from_config(main_cfg, rhythm_lib)
+
+    part_streams: dict[str, stream.Part] = {}
+    used_ids: set[str] = set()
+
+    sections_to_gen: list[str] = main_cfg["sections_to_generate"]
+    raw_sections: dict[str, Dict[str, Any]] = chordmap.get("sections", {})
+    sections: list[Dict[str, Any]] = []
+    for name in sections_to_gen:
+        sec = raw_sections.get(name)
+        if not sec:
+            continue
+        sec_copy = dict(sec)
+        sec_copy["label"] = name
+        sections.append(sec_copy)
+
+    for sec in sections:
+        label = sec["label"]
+        chords_abs = sec.get("processed_chord_events", [])
+        if not chords_abs:
+            continue
+        section_start_q = chords_abs[0]["absolute_offset_beats"]
+        kick_map: Dict[str, list[float]] = {}
+        for idx, ch_ev in enumerate(chords_abs):
+            next_ev = chords_abs[idx + 1] if idx + 1 < len(chords_abs) else None
+            block_start = ch_ev["absolute_offset_beats"] - section_start_q
+            block_length = ch_ev.get(
+                "humanized_duration_beats", ch_ev.get("original_duration_beats", 4.0)
+            )
+
+            base_block: Dict[str, Any] = {
+                "section_name": label,
+                "absolute_offset": block_start,
+                "q_length": block_length,
+                "chord_symbol_for_voicing": ch_ev.get("chord_symbol_for_voicing"),
+                "specified_bass_for_voicing": ch_ev.get("specified_bass_for_voicing"),
+                "original_chord_label": ch_ev.get("original_chord_label"),
+            }
+
+            next_block = None
+            if next_ev:
+                next_block = {
+                    "chord_symbol_for_voicing": next_ev.get("chord_symbol_for_voicing"),
+                    "specified_bass_for_voicing": next_ev.get(
+                        "specified_bass_for_voicing"
+                    ),
+                    "original_chord_label": next_ev.get("original_chord_label"),
+                    "q_length": next_ev.get(
+                        "humanized_duration_beats",
+                        next_ev.get("original_duration_beats", 4.0),
+                    ),
+                }
+
+            for part_name, gen in part_gens.items():
+                part_cfg = main_cfg["part_defaults"].get(part_name, {})
+                blk = deepcopy(base_block)
+                blk["part_params"] = part_cfg
+                blk.setdefault("shared_tracks", {})["kick_offsets"] = [
+                    o for lst in kick_map.values() for o in lst
+                ]
+                result = gen.compose(
+                    section_data=blk,
+                    overrides_root=overrides_model,
+                    next_section_data=next_block,
+                    shared_tracks=blk["shared_tracks"],
+                )
+                if hasattr(gen, "get_kick_offsets"):
+                    kick_map[part_name] = gen.get_kick_offsets()
+
+                if isinstance(result, dict):
+                    items = list(result.items())
+                elif isinstance(result, (list, tuple)):
+                    seq = list(result)
+                    items = []
+                    for i, sub in enumerate(seq):
+                        pid = getattr(sub, "id", None)
+                        if not pid:
+                            pid = f"{part_name}_{i}"
+                            try:
+                                sub.id = pid
+                            except Exception:
+                                pass
+                        items.append((pid, sub))
+                else:
+                    pid = getattr(result, "id", None)
+                    if not pid:
+                        pid = f"{part_name}_0"
+                        try:
+                            result.id = pid
+                        except Exception:
+                            pass
+                    items = [(pid, result)]
+
+                fixed_items = []
+                for base_pid, sub_stream in items:
+                    pid = base_pid
+                    if pid in used_ids or pid == "":
+                        base = pid if pid else f"{part_name}_0"
+                        suffix = ""
+                        count = 0
+                        while True:
+                            candidate = base + suffix
+                            if candidate not in used_ids:
+                                pid = candidate
+                                break
+                            count += 1
+                            suffix = "_dup" if count == 1 else f"_dup{count}"
+                    used_ids.add(pid)
+                    try:
+                        if getattr(sub_stream, "id", None) in (None, ""):
+                            sub_stream.id = pid
+                    except Exception:
+                        pass
+                    fixed_items.append((pid, sub_stream))
+
+                for pid, sub_stream in fixed_items:
+                    if pid not in part_streams:
+                        p = stream.Part(id=pid)
+                        try:
+                            p.insert(0, m21inst.fromString(pid))
+                        except Exception:
+                            p.partName = pid
+                        part_streams[pid] = p
+                    dest = part_streams[pid]
+                    has_inst = bool(
+                        dest.recurse().getElementsByClass(m21inst.Instrument)
+                    )
+                    inserted_inst = False
+                    for note_elem in sub_stream.recurse():
+                        if isinstance(note_elem, m21inst.Instrument):
+                            if not has_inst and not inserted_inst:
+                                dest.insert(0.0, clone_element(note_elem))
+                                inserted_inst = True
+                            continue
+                        if isinstance(
+                            note_elem,
+                            (
+                                note.GeneralNote,
+                                chord.Chord,
+                                note.Rest,
+                                tempo.MetronomeMark,
+                                key.KeySignature,
+                                dynamics.Dynamic,
+                                expressions.Expression,
+                            ),
+                        ):
+                            dest.insert(
+                                section_start_q + block_start + note_elem.offset,
+                                clone_element(note_elem),
+                            )
+
+        sec.setdefault("shared_tracks", {})["kick_offsets"] = [
+            o for lst in kick_map.values() for o in lst
+        ]
+
+    score = stream.Score(list(part_streams.values()))
+    return score, sections
+
+
 # -------------------------------------------------------------------------
 # main
 # -------------------------------------------------------------------------
@@ -100,8 +275,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="MIDI 出力ディレクトリを上書き",
     )
     p.add_argument(
-        "--drum-map",
-        help="ドラムマップ名を指定 (global_settings.drum_map)",
+        "--output-filename",
+        help="MIDI ファイル名 (default: output.mid)",
     )
     p.add_argument(
         "--verbose", "-v", action="store_true", help="詳しいログ(INFO)を表示"
@@ -113,6 +288,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="ログレベルを指定",
     )
     p.add_argument("--dry-run", action="store_true", help="動作検証のみ")
+    p.add_argument(
+        "--strict-drum-map",
+        action="store_true",
+        help="未知のドラムキーをエラーにする",
+    )
+    from utilities.drum_map_registry import DRUM_MAPS
+
+    p.add_argument(
+        "--drum-map",
+        choices=DRUM_MAPS.keys(),
+        help="使用するドラムマッピングを選択",
+    )
     return p
 
 
@@ -122,6 +309,10 @@ def main_cli() -> None:
 
     # 1) 設定 & データロード -------------------------------------------------
     main_cfg = load_main_cfg(Path(args.main_cfg))
+    if args.strict_drum_map:
+        main_cfg.setdefault("global_settings", {})["strict_drum_map"] = True
+    if args.drum_map:
+        main_cfg.setdefault("global_settings", {})["drum_map"] = args.drum_map
     paths = main_cfg.setdefault("paths", {})
     for k, v in (
         ("chordmap_path", args.chordmap),
@@ -130,6 +321,8 @@ def main_cli() -> None:
     ):
         if v:
             paths[k] = v
+    if args.output_filename:
+        paths["output_filename"] = args.output_filename
 
     logger.info("使用 chordmap_path = %s", paths["chordmap_path"])
     logger.info("使用 rhythm_library_path = %s", paths["rhythm_library_path"])
@@ -259,7 +452,7 @@ def main_cli() -> None:
                         pid = getattr(sub, "id", f"{part_name}_{idx}")
                         items.append((pid, sub))
                 else:
-                    items = [(part_name, result_stream)]
+                    items = [(getattr(result_stream, "id", part_name), result_stream)]
 
                 # 各パートを初期化＆ノート挿入
                 for pid, sub_stream in items:
@@ -271,30 +464,50 @@ def main_cli() -> None:
                             p.partName = pid
                         part_streams[pid] = p
                     dest = part_streams[pid]
-                    for el in sub_stream.flatten().notesAndRests:
-                        dest.insert(
-                            section_start_q + block_start + el.offset,
-                            clone_element(el),
-                        )
-                    # ここまでで全ノート/レストを挿入済み
-                    # 以下の冗長な部分を削除：
-                    # dest.insert(
-                    #     section_start_q + block_start + elem.offset,
-                    #     clone_element(elem),
-                    # )
+# ---- sub_stream から dest へ要素をコピー ---------------------------------
+has_inst = bool(dest.recurse().getElementsByClass(m21inst.Instrument))
+inserted_inst = False
 
-                if isinstance(result_stream, dict):
-                    for key, part_blk_stream in result_stream.items():
-                        _insert_stream(key, part_blk_stream)
-                elif isinstance(result_stream, (list, tuple)):
-                    for idx, part_blk_stream in enumerate(result_stream):
-                        stream_id = getattr(
-                            part_blk_stream, "id", None) or f"{part_name}_{idx}"
-                        _insert_stream(stream_id, part_blk_stream)
-                else:
-                    # result_stream を初期化している場合
-                    result_stream = _insert_stream(
-                        result_stream, key, part_blk_stream)
+for elem in sub_stream.recurse():
+    # Instrument は先頭 0.0 ql に 1 度だけ入れる
+    if isinstance(elem, m21inst.Instrument):
+        if not has_inst and not inserted_inst:
+            dest.insert(0.0, clone_element(elem))
+            inserted_inst = True
+        continue
+
+    # ノート系・テンポ・拍子・ダイナミクスなど必要な要素だけコピー
+    if isinstance(
+        elem,
+        (
+            note.GeneralNote,
+            chord.Chord,
+            note.Rest,
+            tempo.MetronomeMark,
+            key.KeySignature,
+            dynamics.Dynamic,
+            expressions.Expression,
+        ),
+    ):
+        dest.insert(
+            section_start_q + block_start + elem.offset,
+            clone_element(elem),
+        )
+
+# ---- ここから下は main ブランチ側のロジックを維持 --------------------------
+if isinstance(result_stream, dict):
+    for key, part_blk_stream in result_stream.items():
+        _insert_stream(key, part_blk_stream)
+
+elif isinstance(result_stream, (list, tuple)):
+    for idx, part_blk_stream in enumerate(result_stream):
+        stream_id = getattr(part_blk_stream, "id", None) or f"{part_name}_{idx}"
+        _insert_stream(stream_id, part_blk_stream)
+
+else:
+    # result_stream が単一 Stream のケース
+    result_stream = _insert_stream(result_stream, key, part_blk_stream)
+
 
     # 4) Humanizer -----------------------------------------------------------
     for name, p_stream in part_streams.items():

@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import copy
 from typing import Dict, Any, Optional, List, Tuple
+from utilities.velocity_curve import resolve_velocity_curve
 
 from music21 import (
     stream,
@@ -159,6 +160,9 @@ class PianoGenerator(BasePartGenerator):
                 }
             ]
 
+        options = pattern_data.get("options", {})
+        velocity_curve_list = resolve_velocity_curve(options.get("velocity_curve"))
+
         octave = params.get(f"default_{hand.lower()}_target_octave", 4 if hand == "RH" else 2)
         if params.get("random_octave_shift"):
             octave += self.rng.choice([-1, 1])
@@ -208,6 +212,14 @@ class PianoGenerator(BasePartGenerator):
             velocity = int(base_velocity * vel_factor)
             if velocity_shift is not None:
                 velocity += int(velocity_shift)
+            layer_idx = p_event.get("velocity_layer")
+            if velocity_curve_list and layer_idx is not None:
+                try:
+                    idx = int(layer_idx)
+                    if 0 <= idx < len(velocity_curve_list):
+                        velocity = int(velocity * velocity_curve_list[idx])
+                except (TypeError, ValueError):
+                    pass
             velocity = max(1, min(127, velocity))
             event_type = p_event.get("type", "chord")
             element_to_add = self._create_music_element(
@@ -545,6 +557,10 @@ class PianoGenerator(BasePartGenerator):
 
         rh_part = self._apply_weak_beat(rh_part, ov.get("weak_beat_style_rh", "none"))
         lh_part = self._apply_weak_beat(lh_part, ov.get("weak_beat_style_lh", "none"))
+
+        for part in (rh_part, lh_part):
+            self._apply_measure_rubato(part)
+
         if ov.get("fill_on_4th"):
             fill_len = float(ov.get("fill_length_beats", 0.5))
             rh_part = self._add_fill(rh_part, cs, fill_len)
@@ -578,9 +594,6 @@ class PianoGenerator(BasePartGenerator):
         for part in (rh_part, lh_part):
             if global_profile:
                 humanizer.apply(part, global_profile)
-
-        for part in (rh_part, lh_part):
-            self._apply_measure_rubato(part)
 
         # 結合して 1 Part を返していたコードを削除
         rh_part.id  = "piano_rh"

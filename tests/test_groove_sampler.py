@@ -19,22 +19,23 @@ def _create_loop_midi(tmp_path: Path) -> Path:
     return midi_path
 
 
-def test_model_build(tmp_path: Path):
+def test_given_loop_when_load_grooves_then_model_contains_transitions(tmp_path: Path):
     _create_loop_midi(tmp_path)
     model = groove_sampler.load_grooves(tmp_path)
     assert model["n"] == 2
-    key = (0, "kick")
+    assert model["resolution"] == 16
+    key = ((0, "kick"),)
     assert key in model["freq"]
     assert model["freq"][key][(4, "kick")] == 1
 
 
-def test_ngram_param(tmp_path: Path):
+def test_given_n_parameter_when_load_grooves_then_stored(tmp_path: Path):
     _create_loop_midi(tmp_path)
     model = groove_sampler.load_grooves(tmp_path, n=3)
     assert model["n"] == 3
 
 
-def test_sample_next_deterministic(tmp_path: Path):
+def test_given_context_when_sample_next_then_returns_expected(tmp_path: Path):
     # create alternating kick-snare pattern
     pm = pretty_midi.PrettyMIDI(initial_tempo=120)
     inst = pretty_midi.Instrument(program=0, is_drum=True)
@@ -47,21 +48,23 @@ def test_sample_next_deterministic(tmp_path: Path):
     midi_path = tmp_path / "alt.mid"
     pm.write(str(midi_path))
     model = groove_sampler.load_grooves(tmp_path)
-    next_state = groove_sampler.sample_next((0, "kick"), model, random.Random(0))
+    next_state = groove_sampler.sample_next([(0, "kick")], model, random.Random(0))
     assert next_state == (4, "snare")
 
 
-def test_generate_bar(tmp_path: Path):
+def test_given_model_when_generate_bar_then_events_valid(tmp_path: Path):
     _create_loop_midi(tmp_path)
-    model = groove_sampler.load_grooves(tmp_path)
-    events = groove_sampler.generate_bar([], model, random.Random(0), resolution=16)
+    model = groove_sampler.load_grooves(tmp_path, resolution=32)
+    events = groove_sampler.generate_bar([], model, random.Random(0), resolution=32)
     assert len(events) > 0
     assert max(e["offset"] for e in events) < 1.0
     for e in events:
-        assert e["instrument"] in {lbl for _, lbl in model["freq"].keys()}
+        valid = {lbl for ctx in model["freq"].keys() for _, lbl in ctx}
+        assert e["instrument"] in valid
+        assert abs(e["offset"] * 32 - round(e["offset"] * 32)) < 1e-6
 
 
-def test_velocity_jitter_range(tmp_path: Path):
+def test_given_default_jitter_when_generate_bar_then_in_range(tmp_path: Path):
     rng = random.Random(0)
     _create_loop_midi(tmp_path)
     model = groove_sampler.load_grooves(tmp_path)

@@ -12,8 +12,8 @@ class CurveDrum(DrumGenerator):
         part = stream.Part(id=self.part_name)
         part.insert(0, self.default_instrument)
         events = [
-            {"offset": 0.0, "duration": 0.25, "instrument": "snare", "velocity_factor": 1.0},
-            {"offset": 0.5, "duration": 0.25, "instrument": "snare", "velocity_factor": 1.0},
+            {"offset": 0.0, "duration": 0.25, "instrument": "snare", "velocity_factor": 1.0, "velocity_layer": 0},
+            {"offset": 0.5, "duration": 0.25, "instrument": "snare", "velocity_factor": 1.0, "velocity_layer": 1},
         ]
         self._apply_pattern(
             part,
@@ -25,6 +25,7 @@ class CurveDrum(DrumGenerator):
             0.5,
             None,
             {},
+            1.0,
             [0.5, 1.0],
         )
         return part
@@ -56,7 +57,7 @@ def test_velocity_curve_applied(tmp_path: Path, rhythm_library):
             ],
             "length_beats": 4.0,
             "velocity_base": 80,
-            "velocity_curve": [0.5, 1.0],
+            "options": {"velocity_curve": [0.5, 1.0]},
         }
     }
     drum = CurveDrum(main_cfg=cfg, part_name="drums", part_parameters=pattern_lib)
@@ -66,3 +67,27 @@ def test_velocity_curve_applied(tmp_path: Path, rhythm_library):
 
     velocities = [n.volume.velocity for n in part.flatten().notes]
     assert velocities == [40, 80]
+
+
+def test_velocity_curve_default(tmp_path: Path, rhythm_library):
+    heatmap = [{"grid_index": i, "count": 0} for i in range(RESOLUTION)]
+    heatmap_path = tmp_path / "heat.json"
+    with open(heatmap_path, "w") as f:
+        json.dump(heatmap, f)
+
+    cfg = {
+        "vocal_midi_path_for_drums": "",
+        "heatmap_json_path_for_drums": str(heatmap_path),
+        "paths": {"drum_pattern_files": []},
+    }
+    pattern_lib = {
+        "base": {
+            "pattern": [],
+            "length_beats": 4.0,
+            "velocity_base": 80,
+        }
+    }
+    drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters=pattern_lib)
+
+    resolved = drum._get_effective_pattern_def("base")
+    assert resolved["velocity_curve"] == [1.0]

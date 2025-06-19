@@ -29,6 +29,7 @@ from utilities.drum_map_registry import (
     GM_DRUM_MAP,
     MISSING_DRUM_MAP_FALLBACK,
 )
+from utilities.drum_map import GENERAL_MIDI_MAP
 
 
 logger = logging.getLogger("modular_composer.drum_generator")

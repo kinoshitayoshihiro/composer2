@@ -1,25 +1,16 @@
 {
-  "name": "composer-dev",
-  "build": {
-    "dockerfile": "Dockerfile"
+  "name": "composer2-dev",
+  "build": { "dockerfile": "Dockerfile" },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter"
+      ]
+    }
   },
-  "runArgs": [
-    "--network=host"
-  ],
-  "settings": {
-    "terminal.integrated.defaultProfile.linux": "bash"
-  },
-  "extensions": [
-    "ms-python.python",
-    "ms-toolsai.jupyter",
-    "ms-azuretools.vscode-docker"
-  ],
-  "forwardPorts": [8888],
-  "remoteUser": "vscode",
-  "postCreateCommand": [
-    "pip install --upgrade pip setuptools",
-    "pip install --no-index --find-links=./wheelhouse --no-build-isolation -r requirements.txt",
-    "pip install -e .",
-    "mkdir -p midi_output"
-  ]
+
+  "postCreateCommand": "bash ./setup_project.sh",
+  "remoteUser": "vscode"
 }

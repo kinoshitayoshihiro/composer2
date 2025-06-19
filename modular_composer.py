@@ -495,19 +495,6 @@ def main_cli() -> None:
                                 clone_element(elem),
                             )
 
-                    # ---- ここから下は main ブランチ側のロジックを維持 --------------------------
-                    if isinstance(result_stream, dict):
-                        for key, part_blk_stream in result_stream.items():
-                            _insert_stream(key, part_blk_stream)
-
-                    elif isinstance(result_stream, (list, tuple)):
-                        for idx, part_blk_stream in enumerate(result_stream):
-                            stream_id = getattr(part_blk_stream, "id", None) or f"{part_name}_{idx}"
-                            _insert_stream(stream_id, part_blk_stream)
-
-                    else:
-                        # result_stream が単一 Stream のケース
-                        result_stream = _insert_stream(result_stream, key, part_blk_stream)
 
 
     # 4) Humanizer -----------------------------------------------------------
@@ -542,17 +529,6 @@ def main_cli() -> None:
             print(f"Exported MIDI: {out_path}")
         except Exception as e:
             logging.error(f"MIDI 書き出し失敗: {e}")
-
-
-result_stream = None
-
-
-def _insert_stream(result_stream, key, stream):
-    if result_stream is None:
-        result_stream = music21.stream.Stream()
-    for element in stream:
-        result_stream.insert(element.offset, element)
-    return result_stream
 
 
 if __name__ == "__main__":

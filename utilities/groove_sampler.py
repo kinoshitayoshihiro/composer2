@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from collections import Counter, defaultdict
-from typing import Any, TypedDict
+from typing import Callable, Optional, Sequence, TypedDict, Union
 from random import Random
 
 import pretty_midi
@@ -27,7 +27,9 @@ class Model(TypedDict):
     """n-gram frequency model used for groove generation."""
 
     n: int
-    freq: dict[State, Counter[State]]
+    freq: dict[tuple[State, ...], Counter[State]]
+    unigram: Counter[State]
+    resolution: int
 
 
 def _iter_drum_notes(midi_path: Path) -> list[tuple[float, int]]:
@@ -63,71 +65,95 @@ def _iter_drum_notes(midi_path: Path) -> list[tuple[float, int]]:
     return drum_hits
 
 
-def load_grooves(dir_path: Path, resolution: int = 16, n: int = 2) -> Model:
-    """Build an n-gram model from all MIDI files in ``dir_path``.
+def load_grooves(dir_path: Path, *, resolution: int = 16, n: int = 2) -> Model:
+    """Build an *n*-gram transition-frequency model from ``dir_path``.
 
-    Parameters
-    ----------
-    dir_path : Path
-        Directory containing MIDI files.
-    resolution : int, optional
-        Number of subdivisions per bar (default ``16``).
-    n : int, optional
-        Order of the n-gram model to store in the returned object (default ``2``).
+    Args:
+        dir_path: Directory containing ``.mid`` files.
+        resolution: Number of subdivisions per bar.
+        n: Order of the n-gram model. Must be at least ``2``.
 
-    Returns
-    -------
-    Model
-        Mapping of states to transition frequency counters.
+    Returns:
+        Model describing transition frequencies and metadata.
+
+    Raises:
+        ValueError: If ``n`` is less than ``2``.
+
+    Notes:
+        Offsets are quantized to ``resolution`` steps assuming 4 beats per bar.
     """
-    freq: dict[State, Counter[State]] = defaultdict(Counter)
+    if n < 2:
+        raise ValueError("n must be >= 2")
+
+    freq: dict[tuple[State, ...], Counter[State]] = defaultdict(Counter)
+    unigram: Counter[State] = Counter()
 
     for midi_path in dir_path.glob("*.mid"):
         notes = _iter_drum_notes(midi_path)
         if not notes:
             continue
-        for idx, (off, pitch) in enumerate(notes):
-            cur_label = _PITCH_TO_LABEL.get(pitch, str(pitch))
-            cur_bin = int(round((off % 4) * (resolution / 4)))
-            cur_state: State = (cur_bin, cur_label)
-            if idx + 1 < len(notes):
-                nxt_off, nxt_pitch = notes[idx + 1]
-                nxt_label = _PITCH_TO_LABEL.get(nxt_pitch, str(nxt_pitch))
-                nxt_bin = int(round((nxt_off % 4) * (resolution / 4)))
-                nxt_state: State = (nxt_bin, nxt_label)
-                freq[cur_state][nxt_state] += 1
+        states: list[State] = []
+        for off, pitch in notes:
+            label = _PITCH_TO_LABEL.get(pitch, str(pitch))
+            bin_idx = int(round((off % 4) * (resolution / 4)))
+            state: State = (bin_idx, label)
+            unigram[state] += 1
+            states.append(state)
 
-    return {"n": n, "freq": freq}
+        for i in range(len(states) - n + 1):
+            ctx = tuple(states[i : i + n - 1])
+            nxt = states[i + n - 1]
+            freq[ctx][nxt] += 1
+
+    return {"n": n, "freq": freq, "unigram": unigram, "resolution": resolution}
 
 
-def sample_next(prev: State, model: Model, rng: Random) -> State | None:
-    """Return the next state sampled from ``model``.
+def _choose_weighted(counter: Counter[State], rng: Random) -> Optional[State]:
+    """Return one element from ``counter`` sampled proportionally to its count."""
 
-    Parameters
-    ----------
-    prev : State
-        Current state from which to transition.
-    model : Model
-        Frequency model returned by :func:`load_grooves`.
-    rng : Random
-        Random number generator used for sampling.
-
-    Returns
-    -------
-    State | None
-        The sampled state or ``None`` if ``prev`` has no outgoing transitions.
-    """
-    trans = model["freq"].get(prev)
-    if not trans:
+    if not counter:
         return None
-    total = sum(trans.values())
+    total = sum(counter.values())
     r = rng.uniform(0, total)
-    cum = 0.0
-    for state, count in trans.items():
-        cum += count
-        if r <= cum:
-            return state
+    acc = 0.0
+    for item, count in counter.items():
+        acc += count
+        if r <= acc:
+            return item
     return None
+
+
+def sample_next(prev: Sequence[State], model: Model, rng: Random) -> Optional[State]:
+    """Return the next state using n-gram back-off.
+
+    Args:
+        prev: History states ordered oldest to newest.
+        model: Frequency model created by :func:`load_grooves`.
+        rng: Random number generator used for sampling.
+
+    Returns:
+        The sampled state or ``None`` when the model is empty.
+
+    Notes:
+        When the exact ``prev`` context is unseen, the oldest token is dropped
+        until a match is found. If no bigram matches exist, sampling falls back
+        to the model's unigram frequency distribution.
+    """
+
+    if not model.get("freq"):
+        return None
+
+    n = max(2, int(model.get("n", 2)))
+    ctx = tuple(prev)[-(n - 1) :]
+    while ctx:
+        counter = model["freq"].get(ctx)
+        state = _choose_weighted(counter, rng) if counter else None
+        if state is not None:
+            return state
+        ctx = ctx[1:]
+
+    uni = model.get("unigram")
+    return _choose_weighted(uni, rng) if uni else None
 
 
 def generate_bar(
@@ -135,57 +161,59 @@ def generate_bar(
     model: Model,
     rng: Random,
     *,
+    length_beats: float = 4.0,
     resolution: int = 16,
+    velocity_jitter: Union[tuple[int, int], Callable[[Random], float]] = _VEL_JITTER,
 ) -> list[dict[str, float | str]]:
-    """Generate drum events filling one bar.
+    """Generate drum events for a fixed-length segment.
 
-    Parameters
-    ----------
-    prev_history : list[str]
-        Previous instrument labels providing context for the Markov chain.
-    model : Model
-        n-gram model returned by :func:`load_grooves`.
-    rng : Random
-        Source of randomness used during sampling.
-    resolution : int, optional
-        Number of subdivisions per bar (default ``16``).
+    Args:
+        prev_history: Instrument labels providing Markov history.
+        model: n-gram model returned by :func:`load_grooves`.
+        rng: Source of randomness used during sampling.
+        length_beats: Desired length in beats.
+        resolution: Subdivisions per bar.
+        velocity_jitter: Either a ``(min,max)`` percentage range or a callable
+            returning a percentage jitter.
 
-    Returns
-    -------
-    list[dict[str, float | str]]
-        Events sorted by ``offset`` covering up to one bar.
+    Returns:
+        Events sorted by ``offset`` covering up to ``length_beats`` beats.
     """
     if not model or not model.get("freq"):
         return []
 
-    n = int(model.get("n", 2))  # 将来の n-gram 拡張用
+    n = int(model.get("n", 2))
 
     events: list[dict[str, float | str]] = []
-    # Seed with previous instrument if available
-    prev_label = prev_history[-1] if prev_history else None
-    prev_state = None
-    if prev_label is not None:
-        # Use bin 0 for history; actual bin doesn't matter for transition lookup
-        prev_state = (0, prev_label)
+    context: list[State] = []
+    for lbl in prev_history[-(n - 1) :]:
+        context.append((0, lbl))
 
     beat = 0
     iterations = 0
-    max_iter = resolution * 4
-    while beat < resolution and iterations < max_iter:
-        if prev_state is None:
-            # random starting state
-            candidates = list(model["freq"].keys())
-            prev_state = rng.choice(candidates)
+    max_step = int(resolution * length_beats / 4)
+    max_iter = max_step * 4
 
-        next_state = sample_next(prev_state, model, rng)
+    while beat < max_step and iterations < max_iter:
+        if not context:
+            start_state = _choose_weighted(model["unigram"], rng)
+            context.append(start_state)
+
+        next_state = sample_next(tuple(context), model, rng)
         if not next_state:
             break
         bin_idx, inst = next_state
-        if bin_idx >= resolution:
+        if bin_idx >= max_step:
             break
-        if prev_state is not None and bin_idx <= prev_state[0]:
-            bin_idx = prev_state[0] + 1
-        vel = 1.0 + rng.uniform(*_VEL_JITTER) / 100.0
+        if context and bin_idx <= context[-1][0]:
+            bin_idx = context[-1][0] + 1
+            if bin_idx >= max_step:
+                break
+        if isinstance(velocity_jitter, tuple):
+            jitter = rng.uniform(*velocity_jitter)
+        else:
+            jitter = velocity_jitter(rng)
+        vel = 1.0 + jitter / 100.0
         events.append(
             {
                 "instrument": inst,
@@ -195,7 +223,9 @@ def generate_bar(
             }
         )
         beat = bin_idx + 1
-        prev_state = (bin_idx, inst)
+        context.append((bin_idx, inst))
+        if len(context) > n - 1:
+            context.pop(0)
         iterations += 1
 
     events.sort(key=lambda e: e["offset"])

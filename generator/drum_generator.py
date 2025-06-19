@@ -17,7 +17,10 @@ from music21 import (
 )
 
 from .base_part_generator import BasePartGenerator
-from utilities.core_music_utils import get_time_signature_object, MIN_NOTE_DURATION_QL
+from utilities.core_music_utils import (
+    get_time_signature_object,
+    MIN_NOTE_DURATION_QL,
+)
 from utilities.onset_heatmap import build_heatmap, RESOLUTION, load_heatmap
 from utilities import humanizer
 from utilities import groove_sampler
@@ -318,6 +321,54 @@ def load_heatmap_data(heatmap_path: Optional[str]) -> Dict[int, int]:
         return {}
 
 
+def _combine_timing(
+    rel_offset: float,
+    beat_len_ql: float,
+    *,
+    swing_ratio: float = 0.5,
+    swing_type: str = "eighth",
+    push_pull_curve: list[float] | None = None,
+    tempo_bpm: float,
+) -> float:
+    """Apply push-pull and swing timing adjustments."""
+
+    if beat_len_ql <= 0:
+        return rel_offset
+
+    # push-pull
+    if push_pull_curve:
+        try:
+            beat_idx = int(rel_offset / beat_len_ql)
+            pp_ms = float(push_pull_curve[beat_idx])
+            shift_ql = (pp_ms / 1000.0) * (tempo_bpm / 60.0)
+            rel_offset = max(0.0, rel_offset + shift_ql)
+        except (TypeError, ValueError, IndexError):
+            pass
+
+    # swing
+    if abs(swing_ratio - 0.5) < 1e-3:
+        return rel_offset
+
+    if swing_type == "eighth":
+        subdivision_duration_ql = beat_len_ql / 2.0
+    elif swing_type == "sixteenth":
+        subdivision_duration_ql = beat_len_ql / 4.0
+    else:
+        return rel_offset
+
+    if subdivision_duration_ql <= 0:
+        return rel_offset
+
+    effective_beat_ql = subdivision_duration_ql * 2.0
+    beat_num = math.floor(rel_offset / effective_beat_ql)
+    within = rel_offset - beat_num * effective_beat_ql
+    epsilon = subdivision_duration_ql * 0.1
+    if abs(within - subdivision_duration_ql) < epsilon:
+        rel_offset = beat_num * effective_beat_ql + effective_beat_ql * swing_ratio
+
+    return rel_offset
+
+
 # DrumGenerator例
 class DrumGenerator(BasePartGenerator):
     def __init__(
@@ -437,6 +488,7 @@ class DrumGenerator(BasePartGenerator):
         self._groove_history: List[str] = []
 
         self.push_pull_map = global_cfg.get("push_pull_curve", {})
+        self.current_push_pull_curve = None
         
         # 楽器設定
         part_default_cfg = self.main_cfg.get("default_part_parameters", {}).get(
@@ -1147,12 +1199,13 @@ class DrumGenerator(BasePartGenerator):
                 cast_to=float,
                 log_name=f"{log_event_prefix}.Offset",
             )
-            if abs(swing_ratio - 0.5) > 1e-3:
-                rel_offset_in_pattern = self._swing(
-                    rel_offset_in_pattern, swing_ratio, beat_len_ql, swing_type
-                )
-            rel_offset_in_pattern = self._apply_push_pull(
-                rel_offset_in_pattern, beat_len_ql
+            rel_offset_in_pattern = _combine_timing(
+                rel_offset_in_pattern,
+                beat_len_ql,
+                swing_ratio=swing_ratio,
+                swing_type=swing_type,
+                push_pull_curve=self.current_push_pull_curve,
+                tempo_bpm=self.global_tempo,
             )
             if rel_offset_in_pattern >= current_bar_actual_len_ql - (
                 MIN_NOTE_DURATION_QL / 16.0
@@ -1355,45 +1408,6 @@ class DrumGenerator(BasePartGenerator):
         if n_hist > 1 and len(self._groove_history) > n_hist - 1:
             self._groove_history = self._groove_history[-(n_hist - 1) :]
 
-    def _swing(
-        self,
-        rel_offset: float,
-        swing_ratio: float,
-        beat_len_ql: float,
-        swing_type: str = "eighth",
-    ) -> float:
-        # (前回と同様)
-        if abs(swing_ratio - 0.5) < 1e-3 or beat_len_ql <= 0:
-            return rel_offset
-        subdivision_duration_ql: float
-        if swing_type == "eighth":
-            subdivision_duration_ql = beat_len_ql / 2.0
-        elif swing_type == "sixteenth":
-            subdivision_duration_ql = beat_len_ql / 4.0
-        else:
-            logger.warning(
-                f"DrumGen _swing: Unsupported swing_type '{swing_type}'. No swing."
-            )
-            return rel_offset
-        if subdivision_duration_ql <= 0:
-            return rel_offset
-        effective_beat_for_swing_pair_ql = subdivision_duration_ql * 2.0
-        beat_num_in_bar_for_swing_pair = math.floor(
-            rel_offset / effective_beat_for_swing_pair_ql
-        )
-        offset_within_effective_beat = rel_offset - (
-            beat_num_in_bar_for_swing_pair * effective_beat_for_swing_pair_ql
-        )
-        epsilon = subdivision_duration_ql * 0.1
-        if abs(offset_within_effective_beat - subdivision_duration_ql) < epsilon:
-            new_offset_within_effective_beat = (
-                effective_beat_for_swing_pair_ql * swing_ratio
-            )
-            swung_rel_offset = (
-                beat_num_in_bar_for_swing_pair * effective_beat_for_swing_pair_ql
-            ) + new_offset_within_effective_beat
-            return swung_rel_offset
-        return rel_offset
 
     def _make_hit(self, name: str, vel: int, ql: float) -> Optional[note.Note]:
         # (前回と同様)

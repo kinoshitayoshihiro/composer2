@@ -487,10 +487,15 @@ class DrumGenerator(BasePartGenerator):
                 )
 
         groove_dir = global_cfg.get("groove_midi_dir")
+        groove_ngram = int(global_cfg.get("groove_ngram", 2))
+        groove_resolution = int(global_cfg.get("groove_resolution", 16))
+        self.groove_resolution = groove_resolution
         self.groove_model = {}
         if groove_dir:
             try:
-                self.groove_model = groove_sampler.load_grooves(Path(groove_dir))
+                self.groove_model = groove_sampler.load_grooves(
+                    Path(groove_dir), n=groove_ngram, resolution=groove_resolution
+                )
             except Exception as e:  # pragma: no cover - optional feature
                 logger.warning(f"Failed to load grooves from {groove_dir}: {e}")
         self._groove_history: List[str] = []
@@ -1175,7 +1180,7 @@ class DrumGenerator(BasePartGenerator):
                 prev_history=self._groove_history,
                 model=self.groove_model,
                 rng=self.rng,
-                resolution=16,
+                resolution=self.groove_resolution,
             )
 
         prev_note: Optional[note.Note] = None

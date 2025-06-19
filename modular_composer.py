@@ -297,8 +297,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p.add_argument(
         "--drum-map",
+        default="gm",
         choices=DRUM_MAPS.keys(),
-        help="使用するドラムマッピングを選択",
+        help="使用するドラムマッピングを選択 (default: gm)",
     )
     return p
 
@@ -328,7 +329,7 @@ def main_cli() -> None:
     logger.info("使用 rhythm_library_path = %s", paths["rhythm_library_path"])
 
     drum_map_name = args.drum_map or main_cfg.get(
-        "global_settings", {}).get("drum_map")
+        "global_settings", {}).get("drum_map") or "gm"
     main_cfg.setdefault("global_settings", {})["drum_map"] = drum_map_name
 
     # 3. ファイル読み込み

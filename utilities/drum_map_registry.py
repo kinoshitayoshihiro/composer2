@@ -49,15 +49,22 @@ GM_DRUM_MAP: Dict[str, Tuple[str, int]] = {
     "ghost": ("closed_hi_hat", 42),
 }
 
+# Keep old name for compatibility with historic tests
+DRUM_MAP = GM_DRUM_MAP
+
 # ---------------------------------------------------------------------------
 # ③ UJAM LEGEND (値はプラグイン note、説明は GM に倣う)
 # ---------------------------------------------------------------------------
 
+_LEGEND_BASE = {
+    k: v
+    for k, v in GM_DRUM_MAP.items()
+    if k not in {"brush_kick", "brush_snare", "ride"}
+}
 UJAM_LEGEND_MAP: Dict[str, Tuple[str, int]] = {
-    **GM_DRUM_MAP,  # まず GM をベースにコピー
-    # ほんの数か所だけ UJAM 独自 note に置換
-    "kick": ("kick", 36),
-    "snare": ("snare", 38),
+    **_LEGEND_BASE,  # まず GM をベースにコピーし、一部だけ差し替え
+    "kick": ("acoustic_bass_drum", 36),
+    "snare": ("acoustic_snare", 38),
     "tom1": ("high_tom", 50),   # high tom は 50
     # …
 }
@@ -136,3 +143,13 @@ def get_drum_map(name: str, *, return_int_only: bool = False) -> Dict[str, Union
     """
     mapping = DRUM_MAPS[name.lower()]  # KeyError を自然に吐かせる
     return _as_int_map(mapping) if return_int_only else mapping
+
+__all__ = [
+    "GM_DRUM_MAP",
+    "DRUM_MAP",
+    "UJAM_LEGEND_MAP",
+    "BEATMAKER_V3_MAP",
+    "MISSING_DRUM_MAP_FALLBACK",
+    "DRUM_MAPS",
+    "get_drum_map",
+]

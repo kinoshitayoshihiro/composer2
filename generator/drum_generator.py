@@ -24,6 +24,7 @@ from utilities.core_music_utils import (
 from utilities.onset_heatmap import build_heatmap, RESOLUTION, load_heatmap
 from utilities import humanizer
 from utilities import groove_sampler
+from utilities import fill_dsl
 from utilities.humanizer import apply_humanization_to_element
 from utilities.safe_get import safe_get
 from utilities.drum_map_registry import (
@@ -182,7 +183,14 @@ class FillInserter:
         if fill_def is None:
             logger.warning("FillInserter.insert: fill pattern '%s' not found", key)
             return
-        events = fill_def.get("pattern", [])
+        if "template" in fill_def:
+            events = fill_dsl.parse(
+                fill_def["template"],
+                fill_def.get("length_beats", 1.0),
+                fill_def.get("velocity_factor", 1.0),
+            )
+        else:
+            events = fill_def.get("pattern", [])
         if not events:
             return
         start = (
@@ -513,6 +521,7 @@ class DrumGenerator(BasePartGenerator):
             f"DrumGen __init__: Initialized with {len(self.raw_pattern_lib)} raw drum patterns."
         )
         self.fill_inserter = FillInserter(self.raw_pattern_lib)
+        self.fill_inserter.drum_map = self.drum_map
         core_defaults = {
             "default_drum_pattern": {
                 "description": "Default fallback pattern",

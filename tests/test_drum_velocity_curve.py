@@ -12,8 +12,20 @@ class CurveDrum(DrumGenerator):
         part = stream.Part(id=self.part_name)
         part.insert(0, self.default_instrument)
         events = [
-            {"offset": 0.0, "duration": 0.25, "instrument": "snare", "velocity_factor": 1.0},
-            {"offset": 0.5, "duration": 0.25, "instrument": "snare", "velocity_factor": 1.0},
+            {
+                "offset": 0.0,
+                "duration": 0.25,
+                "instrument": "snare",
+                "velocity_factor": 1.0,
+                "velocity_layer": 0,
+            },
+            {
+                "offset": 0.5,
+                "duration": 0.25,
+                "instrument": "snare",
+                "velocity_factor": 1.0,
+                "velocity_layer": 1,
+            },
         ]
         self._apply_pattern(
             part,
@@ -25,7 +37,8 @@ class CurveDrum(DrumGenerator):
             0.5,
             None,
             {},
-            [0.5, 1.0],
+            velocity_scale=1.0,
+            velocity_curve=[0.5, 1.0],
         )
         return part
 

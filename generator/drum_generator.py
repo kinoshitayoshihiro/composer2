@@ -114,27 +114,46 @@ def resolve_velocity_curve(curve_spec: Any) -> List[float]:
 class AccentMapper:
     """Map accent strength and ghost-hat density using vocal heatmap."""
 
-    def __init__(self, threshold: float = 0.6, ghost_density_range=(0.3, 0.8)) -> None:
+    def __init__(
+        self,
+        threshold: float = 0.6,
+        ghost_density_range: tuple[float, float] = (0.3, 0.8),
+        rng: random.Random | None = None,
+    ) -> None:
         self.threshold = threshold
         self.ghost_density_range = ghost_density_range
+        self.rng = rng or random.Random()
         self._walk = 0
-        self.rng = random.Random()
+        self._prev: int | None = None
 
     def begin_bar(self, walk_range: int = 8) -> None:
         step = self.rng.randint(-walk_range, walk_range)
         self._walk = max(-127, min(127, self._walk + step))
 
-    def accent(self, rel: float, velocity: int) -> int:
-        return self.get_velocity(rel, velocity)
+    def accent(self, rel: float, velocity: int, *, step: bool = True) -> int:
+        """Return velocity after applying accent and random walk."""
+        return self.get_velocity(rel, velocity, apply_walk=step)
 
-    def get_velocity(self, rel: float, base_velocity: int, step: bool = True) -> int:
+    def get_velocity(
+        self,
+        rel: float,
+        base_velocity: int,
+        *,
+        apply_walk: bool = True,
+        clamp: tuple[int, int] = (1, 127),
+    ) -> int:
         if rel >= self.threshold:
             vel = int(base_velocity * 1.2)
         else:
             vel = base_velocity
-        if step:
+        if apply_walk:
             vel += self._walk
-        return max(1, min(127, vel))
+        low, high = clamp
+        vel = max(low, min(high, vel))
+        if self._prev is not None:
+            vel = int(round((self._prev + vel) / 2))
+        self._prev = vel
+        return vel
 
     def ghost_density(self, rel: float) -> float:
         low, high = self.ghost_density_range
@@ -373,8 +392,11 @@ class DrumGenerator(BasePartGenerator):
             self.rng.seed(self.main_cfg["rng_seed"])
 
         self.accent_mapper = AccentMapper(
-            self.main_cfg.get("accent_threshold", 0.6),
-            tuple(self.main_cfg.get("ghost_density_range", [0.3, 0.8])),
+            threshold=self.main_cfg.get("accent_threshold", 0.6),
+            ghost_density_range=tuple(
+                self.main_cfg.get("ghost_density_range", [0.3, 0.8])
+            ),
+            rng=self.rng,
         )
         self.ghost_hat_on_offbeat = self.main_cfg.get("ghost_hat_on_offbeat", True)
 
@@ -387,7 +409,6 @@ class DrumGenerator(BasePartGenerator):
 
         # ランダムウォークのステップ幅（テストで random_walk_step を使う場合）
         self.random_walk_step = int(self.main_cfg.get("random_walk_step", 0))
-        self._velocity_walk = 0
 
         # apply groove pretty
         global_cfg = self.main_cfg.get("global_settings", {})

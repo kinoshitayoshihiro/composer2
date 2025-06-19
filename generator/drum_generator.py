@@ -1062,7 +1062,18 @@ class DrumGenerator(BasePartGenerator):
         velocity_scale: float = 1.0,
         velocity_curve: List[float] | None = None,
         legato: bool = False,
-    ):
+    ) -> None:
+        """Insert a list of drum events into ``part``.
+
+        Parameters
+        ----------
+        velocity_scale : float
+            Multiplicative factor applied to every computed velocity.
+        velocity_curve : list[float] | None
+            Optional per-layer multipliers applied after ``velocity_scale``.
+            When calling this method directly, pass ``velocity_scale`` first
+            and then ``velocity_curve`` to avoid mis-scaled velocities.
+        """
         log_apply_prefix = f"DrumGen.ApplyPattern"
         beat_len_ql = (
             current_pattern_ts.beatDuration.quarterLength if current_pattern_ts else 1.0

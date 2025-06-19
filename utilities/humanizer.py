@@ -1,8 +1,18 @@
 # --- START OF FILE utilities/humanizer.py (役割特化版) ---
 import music21  # name 'music21' is not defined エラー対策
 import random, logging
+import math
 import copy
-from typing import List, Dict, Any, Union, Optional, cast
+from typing import (
+    List,
+    Dict,
+    Any,
+    Union,
+    Optional,
+    cast,
+    Sequence,
+    Mapping,
+)
 from pathlib import Path
 
 # music21 のサブモジュールを正しい形式でインポート
@@ -27,11 +37,31 @@ except ImportError:
 
 logger = logging.getLogger("otokotoba.humanizer")
 
+try:
+    import quantize  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    class _DummyQuantize:
+        def setSwingRatio(self, ratio: float) -> None:
+            pass
+
+    quantize = _DummyQuantize()
+
+class _QuantizeConfig:
+    def __init__(self) -> None:
+        self.swing_ratio = 0.5
+
+    def setSwingRatio(self, ratio: float) -> None:
+        self.swing_ratio = float(ratio)
+
+# quantizeモジュールの代替として常にこのインスタンスを使う
+quantize = _QuantizeConfig()
+
 # 既存の関数があれば残しつつ、下記を追記 -----------------------
 # ------------------------------------------------------------
 # 1) グローバルプロファイル・レジストリ
 # ------------------------------------------------------------
 _PROFILE_REGISTRY: Dict[str, Dict[str, Any]] = {}
+PROFILES = _PROFILE_REGISTRY
 
 
 def load_profiles(dict_like: Dict[str, Any]) -> None:
@@ -53,9 +83,14 @@ def get_profile(name: str) -> Dict[str, Any]:
 # ------------------------------------------------------------
 # 2) 適用関数
 # ------------------------------------------------------------
-def apply(part_stream, profile_name: str) -> None:
+def apply(
+    part_stream: stream.Part,
+    profile_name: str | None = None,
+    *,
+    swing_ratio: Optional[float] = None,
+) -> None:
     """music21.stream.Part に in-place でヒューマナイズを適用"""
-    prof = get_profile(profile_name)
+    prof = get_profile(profile_name) if profile_name else {}
     off = prof.get("offset_ms", {})  # {mean, stdev}
     vel = prof.get("velocity", {})
     dur = prof.get("duration_pct", {})
@@ -79,6 +114,179 @@ def apply(part_stream, profile_name: str) -> None:
                 random.normalvariate(dur.get("mean", 100), dur.get("stdev", 0)) / 100.0
             )
             n.quarterLength *= factor
+
+    if swing_ratio is None and profile_name:
+        swing_ratio = cast(float | None, PROFILES.get(profile_name, {}).get("swing"))
+
+    if swing_ratio is not None:
+        try:
+            quantize.setSwingRatio(swing_ratio)
+        except Exception:
+            pass
+        swing_offset = round(swing_ratio * 0.5, 2)
+        for n in part_stream.recurse().notesAndRests:
+            if n.quarterLength >= 1.0:
+                continue
+            beat_pos = float(n.offset) % 1.0
+            beat_start = n.offset - beat_pos
+            if abs(beat_pos - 0.5) < 0.05:
+                n.offset = beat_start + swing_offset
+            elif beat_pos < 0.05 or beat_pos > 0.95:
+                n.offset = beat_start
+
+
+def _validate_ratio(ratio: float) -> float:
+    """Return a safe swing ratio allowing ``0`` for straight feel."""
+    if ratio <= 0:
+        # ``0`` disables swing; no warning necessary
+        return 0.0
+    if ratio >= 1:
+        logger.warning("Swing ratio %.3f out of range (0,1). Using 0.5", ratio)
+        return 0.5
+    return ratio
+
+
+def _apply_swing(part_stream: stream.Part, swing_ratio: float, subdiv: int = 8) -> None:
+    """Shift off-beats according to ``swing_ratio`` and grid ``subdiv``.
+
+    ``swing_ratio`` represents the relative position of the off-beat note
+    within a pair (0.5 means straight). ``subdiv`` describes the number of
+    divisions in a 4/4 measure. 8 results in eighth‑note swing.
+    """
+    swing_ratio = _validate_ratio(swing_ratio)
+    if subdiv <= 0:
+        return
+
+    step = 4.0 / subdiv  # length of the smallest grid
+    pair = step * 2.0    # span of an on/off pair
+    tol = step * 0.1
+
+    for n in part_stream.recurse().notes:
+        pos = float(n.offset)
+        pair_start = math.floor(pos / pair) * pair
+        within = pos - pair_start
+        if abs(within - step) < tol:
+            n.offset = pair_start + pair * swing_ratio
+
+
+def _apply_variable_swing(
+    part_stream: stream.Part, ratios: Mapping[int, float], subdiv: int = 8
+) -> None:
+    """Apply swing where the ratio can vary per measure index."""
+    if subdiv <= 0:
+        return
+
+    step = 4.0 / subdiv
+    pair = step * 2.0
+    tol = step * 0.1
+
+    ts = part_stream.recurse().getElementsByClass(meter.TimeSignature).first()
+    measure_len = float(ts.barDuration.quarterLength) if ts else 4.0
+
+    for n in part_stream.recurse().notes:
+        pos = float(n.offset)
+        pair_start = math.floor(pos / pair) * pair
+        within = pos - pair_start
+        if abs(within - step) < tol:
+            measure_idx = int(pair_start // measure_len)
+            ratio = ratios.get(measure_idx, ratios.get("default", 0.5))
+            ratio = _validate_ratio(ratio)
+            n.offset = pair_start + pair * ratio
+
+
+def _guess_subdiv(part: stream.Part) -> int:
+    """Return default swing subdivision based on time signature."""
+    ts = part.recurse().getElementsByClass(meter.TimeSignature).first()
+    if ts:
+        num, denom = ts.numerator, ts.denominator
+        if denom == 4 and num in (3, 4):
+            return 8
+        if denom == 8 and num in (6, 12):
+            return 12
+    return 8
+
+
+def apply_swing(
+    part: stream.Part,
+    ratio: Union[float, Sequence[float], Mapping[int, float]],
+    subdiv: int | None = 8,
+) -> None:
+    """Public API to apply swing in-place.
+
+    Parameters
+    ----------
+    part : :class:`music21.stream.Part`
+        Target part to modify.
+    ratio : float | Sequence[float] | Mapping[int, float]
+        Relative position of the off-beat note (0.5 = straight).
+    subdiv : int | None
+        Number of grid subdivisions per measure. ``8`` for typical eighth swing.
+        When ``None``, a suitable value is inferred from the part's time signature
+        (e.g. ``8`` for ``4/4`` or ``3/4`` and ``12`` for ``6/8`` or ``12/8``).
+    """
+    if ratio is None:
+        return
+
+    if subdiv is None:
+        subdiv = _guess_subdiv(part)
+
+    if isinstance(ratio, (int, float)):
+        r = float(ratio)
+        if abs(r) < 1e-6:
+            return
+        r = _validate_ratio(r)
+        _apply_swing(part, r, subdiv=subdiv)
+    else:
+        if isinstance(ratio, Sequence):
+            ratios = {idx: float(r) for idx, r in enumerate(ratio)}
+        else:
+            ratios = {int(k): float(v) for k, v in ratio.items()}
+        _apply_variable_swing(part, ratios, subdiv=subdiv)
+
+
+def apply_envelope(part: stream.Part, start: int, end: int, scale: float) -> None:
+    """Scale note velocities between start and end beats."""
+    for n in part.recurse().notes:
+        if start <= n.offset < end and n.volume and n.volume.velocity is not None:
+            n.volume.velocity = int(max(1, min(127, round(n.volume.velocity * scale))))
+
+
+def apply_offset_profile(part: stream.Part, profile_name: str | None) -> None:
+    """Shift note offsets according to a registered profile."""
+    if not profile_name:
+        return
+    try:
+        profile = get_profile(profile_name)
+    except KeyError:
+        logger.warning(f"Offset profile '{profile_name}' not found.")
+        return
+
+    if "shift_ql" in profile:
+        try:
+            shift = float(profile["shift_ql"])
+        except (TypeError, ValueError):
+            shift = 0.0
+        for n in part.recurse().notesAndRests:
+            n.offset += shift
+        for cc in getattr(part, "extra_cc", []):
+            cc["time"] += shift
+        return
+
+    pattern = profile.get("offsets_ql") or profile.get("pattern")
+    if not isinstance(pattern, (list, tuple)) or not pattern:
+        logger.warning(
+            f"Offset profile '{profile_name}' has no usable 'shift_ql' or 'offsets_ql'."
+        )
+        return
+
+    shifts = [float(x) for x in pattern]
+    notes = list(part.recurse().notesAndRests)
+    for idx, el in enumerate(notes):
+        shift = shifts[idx % len(shifts)]
+        el.offset += shift
+    for idx, cc in enumerate(getattr(part, "extra_cc", [])):
+        shift = shifts[idx % len(shifts)]
+        cc["time"] += shift
 
 
 # ------------------------------------------------------------
@@ -156,21 +364,27 @@ HUMANIZATION_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "use_fbm_time": True,
         "fbm_time_scale": 0.008,
     },
+    "flam_legato_ghost": {
+        "time_variation": 0.005,
+        "duration_percentage": 1.2,
+        "velocity_variation": [-0.2, 0.2],
+        "apply_to_elements": ["note"],
+    },
 }
 
 
 try:
-    import numpy
-
+    import numpy as np
     NUMPY_AVAILABLE = True
 except ImportError:
+    np = None  # type: ignore
     NUMPY_AVAILABLE = False
 
 
 def generate_fractional_noise(
     length: int, hurst: float = 0.7, scale_factor: float = 1.0
 ) -> List[float]:
-    if not NUMPY_AVAILABLE or np is None:
+    if not NUMPY_AVAILABLE:
         logger.debug(
             f"Humanizer (FBM): NumPy not available. Using Gaussian noise for length {length}."
         )
@@ -264,8 +478,14 @@ def apply_humanization_to_element(
                 and n_obj_affect.volume.velocity is not None
                 else 64
             )
-            vel_change = random.randint(-vel_var, vel_var)
-            final_vel = max(1, min(127, base_vel + vel_change))
+            if isinstance(vel_var, (list, tuple)) and len(vel_var) == 2:
+                scale = 1.0 + random.uniform(float(vel_var[0]), float(vel_var[1]))
+                final_vel = int(max(1, min(127, round(base_vel * scale))))
+            else:
+                vel_range = int(vel_var)
+                vel_change = random.randint(-vel_range, vel_range)
+                final_vel = max(1, min(127, base_vel + vel_change))
+
             if hasattr(n_obj_affect, "volume") and n_obj_affect.volume is not None:
                 n_obj_affect.volume.velocity = final_vel
             else:

@@ -42,16 +42,16 @@ import pathlib
 import random
 import statistics
 import sys
+import logging
 from typing import Dict, List, Tuple
+from utilities.onset_heatmap import RESOLUTION
 
 try:
     import pretty_midi
-except ImportError:
-    print(
-        "ERROR: pretty_midi is not installed.  `pip install pretty_midi`",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+except ImportError as e:
+    raise ImportError(
+        "pretty_midi module is required. Install it with `pip install pretty_midi`."
+    ) from e
 
 # ★★★ music21 の stream をインポート ★★★
 from music21 import (
@@ -175,10 +175,22 @@ def load_groove_profile(
 def apply_groove_pretty(
     part: Union[stream.Part, stream.Voice], profile: Dict
 ) -> Union[stream.Part, stream.Voice]:
-    """music21 パートに ±シフトを付与する簡易版。今は平均 µ, σ の正規分布のみ対応。"""
+    """Apply micro-timing groove to a music21 part."""
     if not profile:
         logging.warning(
             "apply_groove_pretty: Groove profile is empty or None. No groove applied."
+        )
+        return part
+
+    # --- Deterministic offset map support ---------------------------------
+    if all(str(k).isdigit() for k in profile.keys()):
+        offset_map = {int(k): float(v) for k, v in profile.items()}
+        ql_per_sub = 1.0 / RESOLUTION
+        for n_note_m21 in part.recurse().notes:
+            idx = int(round(n_note_m21.offset / ql_per_sub))
+            n_note_m21.offset += offset_map.get(idx, 0.0)
+        logging.info(
+            f"Applied deterministic groove map to part '{part.id if part.id else ''}'."
         )
         return part
 

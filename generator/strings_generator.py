@@ -21,9 +21,10 @@ class StringsGenerator(MelodyGenerator):
         groove_profile_path=None,
         next_section_data=None,
         part_specific_humanize_params=None,
+        shared_tracks=None,
     ):
-        """Wrapper to keep interface compatible with BasePartGenerator."""
-        _ = overrides_root, groove_profile_path, next_section_data, part_specific_humanize_params
+        """Delegate to MelodyGenerator.compose while ignoring extra args."""
+        _ = overrides_root, groove_profile_path, next_section_data, part_specific_humanize_params, shared_tracks
         return super().compose(section_data)
 
     def _postprocess_stream(self, part):

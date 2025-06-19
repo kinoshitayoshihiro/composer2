@@ -32,3 +32,20 @@ The rhythm library includes a pattern named `guitar_emotion_arpeggio`. It select
 The guitar generator resolves the rhythm key using the emotion bucket determined from the section's `musical_intent`. For example, a `calm` bucket might produce a slow ascending arpeggio, while an `energetic` bucket chooses a wider, faster pattern.
 
 The mapping is defined in the YAML rhythm library. When a section specifies `rhythm_key: guitar_emotion_arpeggio`, the generator looks up the appropriate arpeggio indices according to its bucket and intensity before rendering the notes.
+
+## Velocity Curves
+
+Patterns may define a `velocity_curve` list under their `options`. Each event can specify a `velocity_layer` index which selects the corresponding scale factor.
+
+```yaml
+drum_patterns:
+  build_intro:
+    options:
+      velocity_curve: [0.6, 0.8, 1.0]
+    pattern:
+      - {instrument: kick, offset: 0.0, velocity_layer: 0}
+      - {instrument: snare, offset: 1.0, velocity_layer: 1}
+      - {instrument: kick, offset: 2.0, velocity_layer: 2}
+```
+
+In this example, layer 0 uses a 0.6 multiplier, layer 1 uses 0.8 and layer 2 uses 1.0 when calculating final note velocity.

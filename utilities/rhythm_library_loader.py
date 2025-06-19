@@ -24,7 +24,9 @@ class PatternEvent(BaseModel):
         ge=0,
     )
     duration: float = Field(
-        ..., description="Duration of the event in quarter lengths.", gt=0
+        1.0,
+        description="Duration of the event in quarter lengths.",
+        ge=0.0,
     )
     velocity: Optional[int] = Field(
         None,
@@ -85,6 +87,8 @@ class BasePatternDef(BaseModel):
             description="Reference duration of the pattern in quarter lengths. If None, often calculated from length_beats and time_signature.",
         )
     )
+    swing_ratio: Optional[float] = None
+    offset_profile: Optional[str] = None
     pattern_type: Optional[str] = "fixed_pattern"
     velocity_base: Optional[int] = Field(None, ge=1, le=127)
     options: Optional[Dict[str, Any]] = Field(default_factory=dict)
@@ -195,6 +199,11 @@ def load_rhythm_library(
     extra_dir_resolved = _resolve_extra_dir(extra_dir)
     if extra_dir_resolved:
         raw = _merge_extra_patterns(raw, extra_dir_resolved)
+
+    for name, pat in raw.get("drum_patterns", {}).items():
+        for ev in pat.get("pattern", []):
+            if "duration" not in ev:
+                ev["duration"] = 1.0
 
     try:
         # Pydanticモデルによるバリデーションと型変換

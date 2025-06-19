@@ -667,6 +667,7 @@ class DrumGenerator(BasePartGenerator):
         pattern_def.setdefault("fill_patterns", [])
         pattern_def.setdefault("preferred_fill_positions", [])
         pattern_def["velocity_curve"] = resolve_velocity_curve(
+            pattern_def.get("options", {}).get("velocity_curve")
         )
         self.pattern_lib_cache[style_key] = copy.deepcopy(pattern_def)
         return pattern_def

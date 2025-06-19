@@ -327,6 +327,10 @@ def main_cli() -> None:
     logger.info("使用 chordmap_path = %s", paths["chordmap_path"])
     logger.info("使用 rhythm_library_path = %s", paths["rhythm_library_path"])
 
+    drum_map_name = args.drum_map or main_cfg.get(
+        "global_settings", {}).get("drum_map")
+    main_cfg.setdefault("global_settings", {})["drum_map"] = drum_map_name
+
     # 3. ファイル読み込み
     chordmap = load_chordmap_yaml(Path(paths["chordmap_path"]))
     rhythm_lib = load_rhythm_library(paths["rhythm_library_path"])
@@ -359,7 +363,8 @@ def main_cli() -> None:
         logging.error("指定セクションが chordmap に見つかりませんでした")
         return
 
-    ts = meter.TimeSignature(main_cfg["global_settings"].get("time_signature", "4/4"))
+    ts = meter.TimeSignature(
+        main_cfg["global_settings"].get("time_signature", "4/4"))
     beats_per_measure = ts.numerator
 
     # 2) Generator 初期化 ----------------------------------------------------
@@ -386,11 +391,13 @@ def main_cli() -> None:
         section_start_q = chords_abs[0]["absolute_offset_beats"]
 
         for idx, ch_ev in enumerate(chords_abs):
-            next_ev = chords_abs[idx + 1] if idx + 1 < len(chords_abs) else None
+            next_ev = chords_abs[idx + 1] if idx + \
+                1 < len(chords_abs) else None
 
             block_start = ch_ev["absolute_offset_beats"] - section_start_q
             block_length = ch_ev.get(
-                "humanized_duration_beats", ch_ev.get("original_duration_beats", 4.0)
+                "humanized_duration_beats", ch_ev.get(
+                    "original_duration_beats", 4.0)
             )
 
             base_block_data: Dict[str, Any] = {
@@ -457,32 +464,50 @@ def main_cli() -> None:
                             p.partName = pid
                         part_streams[pid] = p
                     dest = part_streams[pid]
-                    has_inst = bool(
-                        dest.recurse().getElementsByClass(m21inst.Instrument)
-                    )
-                    inserted_inst = False
-                    for note_elem in sub_stream.recurse():
-                        if isinstance(note_elem, m21inst.Instrument):
-                            if not has_inst and not inserted_inst:
-                                dest.insert(0.0, clone_element(note_elem))
-                                inserted_inst = True
-                            continue
-                        if isinstance(
-                            note_elem,
-                            (
-                                note.GeneralNote,
-                                chord.Chord,
-                                note.Rest,
-                                tempo.MetronomeMark,
-                                key.KeySignature,
-                                dynamics.Dynamic,
-                                expressions.Expression,
-                            ),
-                        ):
-                            dest.insert(
-                                section_start_q + block_start + note_elem.offset,
-                                clone_element(note_elem),
-                            )
+# ---- sub_stream から dest へ要素をコピー ---------------------------------
+has_inst = bool(dest.recurse().getElementsByClass(m21inst.Instrument))
+inserted_inst = False
+
+for elem in sub_stream.recurse():
+    # Instrument は先頭 0.0 ql に 1 度だけ入れる
+    if isinstance(elem, m21inst.Instrument):
+        if not has_inst and not inserted_inst:
+            dest.insert(0.0, clone_element(elem))
+            inserted_inst = True
+        continue
+
+    # ノート系・テンポ・拍子・ダイナミクスなど必要な要素だけコピー
+    if isinstance(
+        elem,
+        (
+            note.GeneralNote,
+            chord.Chord,
+            note.Rest,
+            tempo.MetronomeMark,
+            key.KeySignature,
+            dynamics.Dynamic,
+            expressions.Expression,
+        ),
+    ):
+        dest.insert(
+            section_start_q + block_start + elem.offset,
+            clone_element(elem),
+        )
+
+# ---- ここから下は main ブランチ側のロジックを維持 --------------------------
+if isinstance(result_stream, dict):
+    for key, part_blk_stream in result_stream.items():
+        _insert_stream(key, part_blk_stream)
+
+elif isinstance(result_stream, (list, tuple)):
+    for idx, part_blk_stream in enumerate(result_stream):
+        stream_id = getattr(part_blk_stream, "id", None) or f"{part_name}_{idx}"
+        _insert_stream(stream_id, part_blk_stream)
+
+else:
+    # result_stream が単一 Stream のケース
+    result_stream = _insert_stream(result_stream, key, part_blk_stream)
+
 
     # 4) Humanizer -----------------------------------------------------------
     for name, p_stream in part_streams.items():
@@ -516,6 +541,17 @@ def main_cli() -> None:
             print(f"Exported MIDI: {out_path}")
         except Exception as e:
             logging.error(f"MIDI 書き出し失敗: {e}")
+
+
+result_stream = None
+
+
+def _insert_stream(result_stream, key, stream):
+    if result_stream is None:
+        result_stream = music21.stream.Stream()
+    for element in stream:
+        result_stream.insert(element.offset, element)
+    return result_stream
 
 
 if __name__ == "__main__":

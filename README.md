@@ -1,5 +1,6 @@
 # OtoKotoba Composer
 
+
 This project blends poetic Japanese narration with emotive musical arrangements.
 
 It automatically generates chords, melodies and instrumental parts for each chapter of a text, allowing verse, chorus and bridge sections to be arranged with human‑like expressiveness.

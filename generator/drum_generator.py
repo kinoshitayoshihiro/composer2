@@ -73,6 +73,44 @@ class HoldTie(tie.Tie):
         self.tieType = "hold"
 
 
+def resolve_velocity_curve(curve_spec: Any) -> List[float]:
+    """Return list of velocity multipliers from specification.
+
+    Parameters
+    ----------
+    curve_spec : Any
+        Either a list of numbers or a named preset string.
+
+    Returns
+    -------
+    List[float]
+        Multipliers for each subdivision. Defaults to ``[1.0]``.
+    """
+    if not curve_spec:
+        return [1.0]
+
+    if isinstance(curve_spec, list):
+        curve = [float(v) for v in curve_spec if isinstance(v, (int, float))]
+        return curve or [1.0]
+
+    if isinstance(curve_spec, str):
+        spec = curve_spec.lower().strip()
+        presets = {
+            "crescendo": [0.8, 0.9, 1.0, 1.1, 1.2],
+            "decrescendo": [1.2, 1.1, 1.0, 0.9, 0.8],
+            "swell": [0.8, 1.0, 1.2, 1.0, 0.8],
+            "flat": [1.0],
+        }
+        if spec in presets:
+            return presets[spec]
+        try:
+            return [float(v) for v in spec.replace(",", " ").split()]
+        except Exception:
+            return [1.0]
+
+    return [1.0]
+
+
 class AccentMapper:
     """Map accent strength and ghost-hat density using vocal heatmap."""
 
@@ -273,9 +311,11 @@ class DrumGenerator(BasePartGenerator):
         global_key_signature_tonic=None,
         global_key_signature_mode=None,
         main_cfg=None,
+        drum_map=None,
         **kwargs,
     ):
         self.main_cfg = main_cfg
+        self.drum_map = drum_map or GENERAL_MIDI_MAP
         super().__init__(
             global_settings=global_settings,
             default_instrument=default_instrument,
@@ -626,6 +666,8 @@ class DrumGenerator(BasePartGenerator):
         pattern_def.setdefault("velocity_base", 80)
         pattern_def.setdefault("fill_patterns", [])
         pattern_def.setdefault("preferred_fill_positions", [])
+        pattern_def["velocity_curve"] = resolve_velocity_curve(
+        )
         self.pattern_lib_cache[style_key] = copy.deepcopy(pattern_def)
         return pattern_def
 
@@ -987,6 +1029,7 @@ class DrumGenerator(BasePartGenerator):
                     velocity_scale,
                     velocity_curve_list,
                     legato=fill_legato,
+
                 )
                 if fill_applied_this_iter:
                     ms_since_fill = 0
@@ -1023,6 +1066,13 @@ class DrumGenerator(BasePartGenerator):
         beat_len_ql = (
             current_pattern_ts.beatDuration.quarterLength if current_pattern_ts else 1.0
         )
+        if swing_type == "eighth":
+            subdivision_duration_ql = beat_len_ql / 2.0
+        elif swing_type == "sixteenth":
+            subdivision_duration_ql = beat_len_ql / 4.0
+        else:
+            subdivision_duration_ql = beat_len_ql
+        velocity_curve = velocity_curve or [1.0]
 
         vel_walk_state: int = drum_block_params.setdefault("_vel_walk", pattern_base_velocity)
 
@@ -1076,6 +1126,8 @@ class DrumGenerator(BasePartGenerator):
             ):
                 continue
 
+            velocity_idx = int(rel_offset_in_pattern / subdivision_duration_ql)
+
             hit_duration_ql_from_def = safe_get(
                 ev_def,
                 "duration",
@@ -1118,7 +1170,6 @@ class DrumGenerator(BasePartGenerator):
                     cast_to=int,
                     log_name=f"{log_event_prefix}.VelAbs",
                 )
-
             final_insert_offset_in_score = bar_start_abs_offset + rel_offset_in_pattern
             bin_idx = (
                 int((final_insert_offset_in_score * self.heatmap_resolution))

@@ -5,6 +5,21 @@ This project blends poetic Japanese narration with emotive musical arrangements.
 
 It automatically generates chords, melodies and instrumental parts for each chapter of a text, allowing verse, chorus and bridge sections to be arranged with human‑like expressiveness.
 
+## Setup
+Before running any tests or generation scripts you must install the project dependencies.  Execute
+
+```bash
+bash setup.sh
+```
+
+or equivalently
+
+```bash
+pip install -r requirements.txt
+```
+
+Without these packages `pytest` and the composer modules will fail to import.
+
 ## Required Libraries
 - **music21** – MIDI and score manipulation
 - **pretty_midi** – MIDI export utilities
@@ -133,8 +148,9 @@ drum_patterns の duration 欠損が解消されました
 
 ## Running Tests
 
-After installing the requirements with `bash setup.sh` (or
-`pip install -r requirements.txt`) you can verify the build by running:
+Be sure you have installed the requirements via `bash setup.sh` (or
+`pip install -r requirements.txt`) before running any tests.  Once the
+packages are installed you can verify the build with:
 
 ```bash
 pytest -q

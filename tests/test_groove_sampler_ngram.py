@@ -22,9 +22,9 @@ def test_given_unseen_context_when_sample_next_then_fallback_to_unigram(tmp_path
     _create_loop_midi(tmp_path)
     model = groove_sampler.load_grooves(tmp_path, n=3)
     state = groove_sampler.sample_next(
-        [(0, "kick"), (4, "snare")], model, random.Random(0)
+        [(0, "kick"), (8, "snare")], model, random.Random(0)
     )
-    assert state in model["unigram"]
+    assert state in model["prob"][0][()]
 
 
 def test_given_n_value_when_load_grooves_then_stored(tmp_path: Path):

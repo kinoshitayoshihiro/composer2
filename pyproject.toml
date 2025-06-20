@@ -29,6 +29,10 @@ dev = [
   "mypy",
   "ruff",
 ]
+audio = [
+  "librosa>=0.10",
+  "soundfile>=0.12",
+]
 
 [project.scripts]
 modcompose = "modular_composer.cli:main"

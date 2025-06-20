@@ -34,6 +34,7 @@ from utilities.drum_map_registry import (
     MISSING_DRUM_MAP_FALLBACK,
 )
 from utilities.drum_map import GENERAL_MIDI_MAP
+from utilities.timing_utils import TimingBlend, interp_curve
 
 
 logger = logging.getLogger("modular_composer.drum_generator")
@@ -343,44 +344,90 @@ def _combine_timing(
     swing_type: str = "eighth",
     push_pull_curve: list[float] | None = None,
     tempo_bpm: float,
+    max_push_ms: float = 80.0,
+    vel_range: tuple[float, float] = (0.9, 1.1),
+    return_vel: bool = False,
 ) -> float:
-    """Apply push-pull and swing timing adjustments."""
+    """Apply push-pull and swing timing with velocity blending.
 
+    Parameters
+    ----------
+    rel_offset
+        Original relative offset in quarterLength units.
+    beat_len_ql
+        Duration of one beat in ``quarterLength``.
+    swing_ratio
+        Ratio for swing feel. ``0.5`` means straight.
+    swing_type
+        Either ``"eighth"`` or ``"sixteenth"``.
+    push_pull_curve
+        List of push/pull offsets in milliseconds.
+    tempo_bpm
+        Tempo used for ms-to-quarterLength conversion.
+    max_push_ms
+        Maximum magnitude mapped to ``vel_range``.
+    vel_range
+        Tuple ``(min, max)`` velocity multipliers.
+    return_vel
+        If ``True`` return :class:`TimingBlend` instead of ``float``.
+
+    Returns
+    -------
+    float or TimingBlend
+        Adjusted offset, and optionally velocity multiplier.
+    """
     if beat_len_ql <= 0:
-        return rel_offset
+        result = TimingBlend(rel_offset, 1.0)
+        return result if return_vel else result.offset_ql
 
-    # push-pull
+    base_offset = rel_offset
+    delta_push_ql = 0.0
+    vel_scale = 1.0
+
     if push_pull_curve:
         try:
-            beat_idx = int(rel_offset / beat_len_ql)
-            pp_ms = float(push_pull_curve[beat_idx])
-            shift_ql = (pp_ms / 1000.0) * (tempo_bpm / 60.0)
-            rel_offset = max(0.0, rel_offset + shift_ql)
-        except (TypeError, ValueError, IndexError):
-            pass
+            ext_curve = list(push_pull_curve) + [push_pull_curve[0]]
+            steps = len(push_pull_curve) * 4 + 1
+            curve = interp_curve(ext_curve, steps)
+            bar_len = beat_len_ql * len(push_pull_curve)
+            pos = (rel_offset % bar_len) / bar_len * (steps - 1)
+            idx = int(pos)
+            frac = pos - idx
+            val_ms = curve[idx] * (1 - frac) + curve[idx + 1] * frac
+            delta_push_ql = (val_ms / 1000.0) * (tempo_bpm / 60.0)
+            mag = min(abs(val_ms), max_push_ms) / float(max_push_ms)
+            vmin, vmax = vel_range
+            if val_ms >= 0:
+                vel_scale = 1.0 + (vmax - 1.0) * mag
+            else:
+                vel_scale = 1.0 - (1.0 - vmin) * mag
+        except Exception:
+            delta_push_ql = 0.0
+            vel_scale = 1.0
 
-    # swing
-    if abs(swing_ratio - 0.5) < 1e-3:
-        return rel_offset
+    delta_swing_ql = 0.0
+    if abs(swing_ratio - 0.5) >= 1e-3:
+        if swing_type == "eighth":
+            subdivision_duration_ql = beat_len_ql / 2.0
+        elif swing_type == "sixteenth":
+            subdivision_duration_ql = beat_len_ql / 4.0
+        else:
+            subdivision_duration_ql = beat_len_ql
+        if subdivision_duration_ql > 0:
+            effective_beat_ql = subdivision_duration_ql * 2.0
+            beat_num = math.floor(rel_offset / effective_beat_ql)
+            within = rel_offset - beat_num * effective_beat_ql
+            epsilon = subdivision_duration_ql * 0.1
+            if abs(within - subdivision_duration_ql) < epsilon:
+                swung = beat_num * effective_beat_ql + effective_beat_ql * swing_ratio
+                delta_swing_ql = swung - rel_offset
 
-    if swing_type == "eighth":
-        subdivision_duration_ql = beat_len_ql / 2.0
-    elif swing_type == "sixteenth":
-        subdivision_duration_ql = beat_len_ql / 4.0
-    else:
-        return rel_offset
+    w = 0.5
+    new_offset = base_offset + delta_swing_ql * (1.0 - w) + delta_push_ql * w
+    new_offset = max(0.0, new_offset)
 
-    if subdivision_duration_ql <= 0:
-        return rel_offset
-
-    effective_beat_ql = subdivision_duration_ql * 2.0
-    beat_num = math.floor(rel_offset / effective_beat_ql)
-    within = rel_offset - beat_num * effective_beat_ql
-    epsilon = subdivision_duration_ql * 0.1
-    if abs(within - subdivision_duration_ql) < epsilon:
-        rel_offset = beat_num * effective_beat_ql + effective_beat_ql * swing_ratio
-
-    return rel_offset
+    result = TimingBlend(new_offset, vel_scale)
+    return result if return_vel else result.offset_ql
 
 
 # DrumGenerator例
@@ -512,6 +559,16 @@ class DrumGenerator(BasePartGenerator):
 
         self.push_pull_map = global_cfg.get("push_pull_curve", {})
         self.current_push_pull_curve = None
+        self.push_pull_max_ms = float(global_cfg.get("push_pull_max_ms", 80.0))
+        vr = global_cfg.get("velocity_range", (0.9, 1.1))
+        if (
+            isinstance(vr, (list, tuple))
+            and len(vr) == 2
+            and all(isinstance(v, (int, float)) for v in vr)
+        ):
+            self.velocity_range = (float(vr[0]), float(vr[1]))
+        else:
+            self.velocity_range = (0.9, 1.1)
         
         # 楽器設定
         part_default_cfg = self.main_cfg.get("default_part_parameters", {}).get(
@@ -1198,6 +1255,8 @@ class DrumGenerator(BasePartGenerator):
             )
 
         prev_note: Optional[note.Note] = None
+        prev_vel_scale = 1.0
+        alpha = 0.5
         for ev_idx, ev_def in enumerate(events):
             log_event_prefix = f"{log_apply_prefix}.Evt{ev_idx}"
             if self.rng.random() > safe_get(
@@ -1232,14 +1291,20 @@ class DrumGenerator(BasePartGenerator):
                 cast_to=float,
                 log_name=f"{log_event_prefix}.Offset",
             )
-            rel_offset_in_pattern = _combine_timing(
+            blend = _combine_timing(
                 rel_offset_in_pattern,
                 beat_len_ql,
                 swing_ratio=swing_ratio,
                 swing_type=swing_type,
                 push_pull_curve=self.current_push_pull_curve,
                 tempo_bpm=self.global_tempo,
+                max_push_ms=self.push_pull_max_ms,
+                vel_range=self.velocity_range,
+                return_vel=True,
             )
+            rel_offset_in_pattern = blend.offset_ql
+            vel_mul = prev_vel_scale * (1 - alpha) + blend.vel_scale * alpha
+            prev_vel_scale = blend.vel_scale
             if rel_offset_in_pattern >= current_bar_actual_len_ql - (
                 MIN_NOTE_DURATION_QL / 16.0
             ):
@@ -1331,7 +1396,11 @@ class DrumGenerator(BasePartGenerator):
                     pass
 
             final_event_velocity = max(
-                1, min(127, int(final_event_velocity * velocity_scale))
+                1,
+                min(
+                    127,
+                    int(final_event_velocity * velocity_scale * vel_mul),
+                ),
             )
 
             if brush_active and inst_name == "snare":

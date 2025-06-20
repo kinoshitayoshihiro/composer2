@@ -1,30 +1,24 @@
 #!/usr/bin/env bash
 # ======================================================================
-#  setup_project.sh      (venv 付き・オフライン wheelhouse セットアップ)
+#  setup_project.sh  (venv + wheelhouse *offline* setup)
 # ======================================================================
+
 set -euo pipefail
 
 # ----------------------------------------------------------------------
-#  0. 定数
+# 0. 変数
 # ----------------------------------------------------------------------
 PROJECT_ROOT="$(pwd)"
-WHEEL_DIR="${PROJECT_ROOT}/wheelhouse"      # 事前に wheel を集める場所
-REQ_FILE="requirements.txt"                 # 通常の requirements
-OUTPUT_DIR="midi_output"                    # 生成ファイル格納先
-VENV_DIR=".venv"                            # venv を置くフォルダ
+WHEEL_DIR="${PROJECT_ROOT}/wheelhouse"      # 事前 / 自動 DL 済み .whl の置き場
+REQ_FILE="requirements.txt"
+OUTPUT_DIR="midi_output"
+
+VENV_DIR=".venv"
 PYBIN="${VENV_DIR}/bin"
+PIP="${PYBIN}/pip"
+PYTHON="${PYBIN}/python"
 
-# Python tag (cp310 / cp311 など) を動的取得
-PYTAG="$((command -v python3) - <<'PY' 
-import sys
-print(f'cp{sys.version_info.major}{sys.version_info.minor}')
-PY
-)"
-
-# ----------------------------------------------------------------------
-#  1. heavy / バイナリ依存が大きいパッケージ一覧
-#     → wheelhouse に必ず置く
-# ----------------------------------------------------------------------
+# pip / build 系も wheelhouse で管理 (← wheel 必須! )
 HEAVY_PACKAGES=(
   # --- core build ---
   "wheel>=0.43"            # ←★ 追加!!
@@ -53,74 +47,64 @@ HEAVY_PACKAGES=(
   # ── matplotlib (music21 連鎖) ─
   "kiwisolver>=1.3.1" "Pillow>=10.0"
 )
-
 # ----------------------------------------------------------------------
-#  2. venv 作成
+# 1. venv
 # ----------------------------------------------------------------------
 if [[ ! -d "${VENV_DIR}" ]]; then
-  echo ">> Creating venv in ${VENV_DIR}"
+  echo "🟢 0) create venv (${VENV_DIR})"
   python3 -m venv "${VENV_DIR}"
 fi
-
-PIP="${PYBIN}/pip"
-PYTHON="${PYBIN}/python"
-echo ">> Using interpreter: $(${PYTHON} -V)"
+echo "   venv Python: $(${PYTHON} -V)"
 
 # ----------------------------------------------------------------------
-#  3. wheelhouse 存在チェック
+# 2. wheelhouse 存在確認
 # ----------------------------------------------------------------------
-if [[ ! -d "${WHEEL_DIR}" ]]; then
-  echo "ERROR: wheelhouse '${WHEEL_DIR}' がありません。" >&2
-  exit 1
-fi
+echo "🟢 1) check wheelhouse"
+[[ -d "${WHEEL_DIR}" ]] || { echo "ERROR: '${WHEEL_DIR}' not found"; exit 1; }
 
 # ----------------------------------------------------------------------
-#  4. heavy パッケージの wheel を用意
+# 3. heavy packages を wheelhouse に補完 (オンライン時のみ)
 # ----------------------------------------------------------------------
-echo ">> Ensuring heavy wheels ..."
+echo "🟢 2) ensure heavy wheels"
+PYTAG="cp$(python3 - <<'PY'
+import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')
+PY
+)"
 for spec in "${HEAVY_PACKAGES[@]}"; do
-  pkg="${spec%%[<=>]*}"
-  pattern="${WHEEL_DIR}/${pkg}"*-${PYTAG}-*-manylinux*.whl
+  pkg="${spec%%[*<>=]*}"
+  pattern="${WHEEL_DIR}/${pkg}"*-"${PYTAG}"*-manylinux*.whl
+  if ls ${pattern} >/dev/null 2>&1; then continue; fi
 
-  # 既に wheel が有ればスキップ
-  if ls ${pattern} >/dev/null 2>&1; then
-    continue
+  echo "   → fetch/build ${pkg}"
+  if [[ "${pkg}" == "pretty_midi" ]]; then
+    "${PYTHON}" -m pip wheel   --wheel-dir "${WHEEL_DIR}" --no-deps "${spec}"
+  else
+    "${PYTHON}" -m pip download --dest "${WHEEL_DIR}" \
+      --platform manylinux_2_17_x86_64 --implementation cp --abi "${PYTAG}" \
+      --only-binary=:all: --no-deps "${spec}"
   fi
-
-  echo "   • ${pkg} – trying download..."
-  if "${PIP}" download --dest "${WHEEL_DIR}" \
-        --only-binary=:all: --no-deps \
-        --platform manylinux_2_17_x86_64 \
-        --implementation cp --abi "${PYTAG}" "${spec}" 2>/dev/null; then
-        continue
-  fi
-
-  echo "     ↳ no ready-made wheel; building locally"
-  "${PIP}" wheel --wheel-dir "${WHEEL_DIR}" --no-deps "${spec}"
 done
 
 # ----------------------------------------------------------------------
-#  5. pip / setuptools upgrade (オフライン)
+# 4. pip / setuptools / wheel を wheelhouse で更新
 # ----------------------------------------------------------------------
+echo "🟢 3) upgrade pip / setuptools / wheel (offline)"
 "${PIP}" install --no-index --find-links="${WHEEL_DIR}" --upgrade pip setuptools wheel
 
+# ----------------------------------------------------------------------
+# 5. requirements.txt (プロジェクト依存) をオフラインで入れる
+# ----------------------------------------------------------------------
+echo "🟢 4) install project requirements"
+"${PIP}" install --no-index --find-links="${WHEEL_DIR}" -r "${REQ_FILE}"
 
 # ----------------------------------------------------------------------
-#  6. requirements.txt インストール
-#     --upgrade-strategy only-if-needed で既存 wheel 優先
+# 6. プロジェクト自体を editable-install
 # ----------------------------------------------------------------------
-echo ">> Installing requirements.txt ..."
-"${PIP}" install --no-index --find-links="${WHEEL_DIR}" \
-  --upgrade-strategy only-if-needed -r "${REQ_FILE}"
-
-# ----------------------------------------------------------------------
-#  7. プロジェクト本体を editable インストール
-# ----------------------------------------------------------------------
-echo ">> Installing project (editable) ..."
+echo "🟢 5) install project (-e .)"
 "${PIP}" install --no-build-isolation --no-deps -e .
 
 # ----------------------------------------------------------------------
-#  8. 後処理
+# 7. 後処理
 # ----------------------------------------------------------------------
 mkdir -p "${OUTPUT_DIR}"
-echo "✅ Setup finished; run 'source ${VENV_DIR}/bin/activate' to enter the environment."
+echo "✅ setup finished!  run  'source ${VENV_DIR}/bin/activate'"

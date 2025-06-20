@@ -182,13 +182,15 @@ python -m utilities.groove_sampler_v2 sample model.pkl -l 4 \
 
 ## Vocal Sync
 
-Extract amplitude peaks from your narration to align with the generated music:
+
+Run this command to extract amplitude peaks from your narration. The peaks are
+saved to JSON so they can be used for later synchronization tools:
 
 ```bash
 modcompose peaks path/to/vocal.wav -o peaks.json --plot
 ```
 
-The JSON can be fed to later synchronization tools. TODO: refine wording.
+This JSON can then be fed to later synchronization tools. TODO: refine wording.
 
 ## License
 This project is licensed under the [MIT License](LICENSE).

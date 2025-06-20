@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "modular_composer"
-version = "0.1.0"
+version = "0.1.1"
 description = "OtoKotoba Modular Composer"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -21,6 +21,8 @@ dependencies = [
   "mido>=1.3.0",
   "scipy>=1.10",
   "tomli>=2.0",
+  "librosa>=0.10",
+  "soundfile>=0.12",
 ]
 
 [project.optional-dependencies]

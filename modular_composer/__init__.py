@@ -7,7 +7,7 @@ __all__ = ["__version__"]
 try:
     __version__ = version("modular_composer")
 except PackageNotFoundError:
-    __version__ = "0.0.0-dev"
+    __version__ = "0.1.1"
 
 _spec = util.spec_from_file_location(
     "_legacy_modular_composer", Path(__file__).resolve().parent.parent / "modular_composer.py"

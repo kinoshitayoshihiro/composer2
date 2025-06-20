@@ -46,6 +46,31 @@ def test_hihat_articulations(tmp_path: Path):
     assert pitches == expected
 
 
+def test_hihat_edge_pedal(tmp_path: Path):
+    cfg = _cfg(tmp_path)
+    drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
+    part = stream.Part(id="drums")
+    events = [
+        {"instrument": "chh", "offset": 0.0, "velocity": 30},
+        {"instrument": "chh", "offset": 1.0, "velocity": 80, "pedal": True},
+    ]
+    drum._apply_pattern(
+        part,
+        events,
+        0.0,
+        2.0,
+        90,
+        "eighth",
+        0.5,
+        drum.global_ts,
+        {},
+    )
+    notes = sorted(part.flatten().notes, key=lambda n: n.offset)
+    assert len(notes) == 2
+    assert notes[0].pitch.midi == GM_DRUM_MAP["hh_edge"][1]
+    assert notes[1].pitch.midi == GM_DRUM_MAP["hh_pedal"][1]
+
+
 def test_velocity_random_walk(tmp_path: Path):
     cfg = _cfg(tmp_path)
     cfg["random_walk_step"] = 4

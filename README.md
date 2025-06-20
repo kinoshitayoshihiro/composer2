@@ -174,8 +174,10 @@ The command prints detected resolution and the chosen order.
 Build and sample using the optimized model:
 
 ```bash
-python -m utilities.groove_sampler_v2 train data/loops -o model.pkl --auto-res
-python -m utilities.groove_sampler_v2 sample model.pkl -l 4 --seed 42
+python -m utilities.groove_sampler_v2 train data/loops -o model.pkl \
+    --auto-res --jobs 8 --memmap-dir mmaps
+python -m utilities.groove_sampler_v2 sample model.pkl -l 4 \
+    --temperature 0.8 --cond-velocity hard --seed 42
 ```
 
 ## License

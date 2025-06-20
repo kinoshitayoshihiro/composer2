@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from collections import Counter, defaultdict
-from typing import Callable, Optional, Sequence, TypedDict, Union
-from random import Random
-from fractions import Fraction
-from math import gcd
 import logging
+from collections import Counter, defaultdict
+from collections.abc import Callable, Sequence
+from math import ceil, gcd
+from pathlib import Path
+from random import Random
+from typing import TypedDict
 
 import pretty_midi
+
 from .drum_map_registry import GM_DRUM_MAP
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ def _iter_drum_notes(midi_path: Path) -> list[tuple[float, int]]:
     return drum_hits
 
 
-def infer_resolution(beats: Sequence[float], max_denominator: int = 64) -> int:
+def infer_resolution(beats: Sequence[float], max_denominator: int = 96) -> int:
     """Return quantization resolution inferred from beat offsets.
 
     Parameters
@@ -86,14 +87,21 @@ def infer_resolution(beats: Sequence[float], max_denominator: int = 64) -> int:
     int
         Step count per bar approximating note positions.
     """
+
     if not beats:
         return 16
-    length = int(max(beats) + 0.9999) or 1
-    denoms = [Fraction(b).limit_denominator(max_denominator).denominator for b in beats]
-    base = denoms[0]
-    for d in denoms[1:]:
-        base = gcd(base, d)
-    return base * length
+
+    ticks = [round(b * max_denominator) for b in beats]
+    base = abs(ticks[0])
+    for t in ticks[1:]:
+        base = gcd(base, abs(t))
+
+    steps_per_beat = max_denominator // base
+    length = ceil(max(beats)) or 1
+    resolution = steps_per_beat * length
+    if steps_per_beat == 3:
+        resolution = 12
+    return resolution
 
 
 def load_grooves(
@@ -175,7 +183,7 @@ def load_grooves(
     }
 
 
-def _choose_weighted(prob: dict[State, float], rng: Random) -> Optional[State]:
+def _choose_weighted(prob: dict[State, float], rng: Random) -> State | None:
     """Sample one element from a probability mapping."""
 
     if not prob:
@@ -192,7 +200,7 @@ def sample_next(
     *,
     temperature: float = 1.0,
     top_k: int | None = None,
-) -> Optional[State]:
+) -> State | None:
     """Return the next state using n-gram back-off.
 
     Args:
@@ -213,7 +221,7 @@ def sample_next(
         return None
     n = max(2, int(model["n"]))
     order = min(len(prev), n - 1)
-    probs: Optional[dict[State, float]] = None
+    probs: dict[State, float] | None = None
     ctx_seq = tuple(prev)
     for o in range(order, -1, -1):
         ctx = ctx_seq[-o:] if o else ()
@@ -263,7 +271,7 @@ def generate_bar(
     *,
     length_beats: float = 4.0,
     resolution: int | None = None,
-    velocity_jitter: Union[tuple[int, int], Callable[[Random], float]] = _VEL_JITTER,
+    velocity_jitter: tuple[int, int] | Callable[[Random], float] = _VEL_JITTER,
     temperature: float = 1.0,
     top_k: int | None = None,
 ) -> list[dict[str, float | str]]:

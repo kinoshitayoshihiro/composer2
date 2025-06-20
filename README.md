@@ -168,5 +168,14 @@ python -m utilities.groove_sampler data/loops --stats
 
 The command prints detected resolution and the chosen order.
 
+### Groove Sampler v2
+
+Build and sample using the optimized model:
+
+```bash
+python -m utilities.groove_sampler_v2 train data/loops -o model.pkl --auto-res
+python -m utilities.groove_sampler_v2 sample model.pkl -l 4 --seed 42
+```
+
 ## License
 This project is licensed under the [MIT License](LICENSE).

@@ -20,8 +20,8 @@ jobs:
           cache: 'pip'
       - name: Install dependencies
         run: |
-          pip install -e .
-          pip install pytest mypy ruff
+          pip install -e .[dev]
+          pip install -r requirements.txt
       - name: Ruff
         run: ruff check . --output-format=github
       - name: Mypy

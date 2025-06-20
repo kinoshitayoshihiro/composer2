@@ -1,4 +1,5 @@
 # OtoKotoba Composer
+![CI](https://github.com/OpenAI/modular_composer/actions/workflows/ci.yml/badge.svg)
 
 
 This project blends poetic Japanese narration with emotive musical arrangements.

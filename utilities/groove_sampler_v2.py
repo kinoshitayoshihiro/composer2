@@ -262,10 +262,13 @@ def sample_next(
                 arr = arr.astype(float)
         if arr is not None and arr.sum() > 0:
             probs = arr.astype(float)
-            if cond_kick == "four_on_floor" and bucket == 0:
+            if cond_kick in {"four_on_floor", "sparse"}:
                 for i, st in enumerate(model.idx_to_state):
                     if st[2] == "kick":
-                        probs[i] *= 2
+                        if cond_kick == "four_on_floor" and bucket == 0:
+                            probs[i] *= 16
+                        elif cond_kick == "sparse":
+                            probs[i] *= 0.5
             if temperature != 1.0:
                 probs = np.power(probs, 1.0 / temperature)
             total = probs.sum()
@@ -283,10 +286,13 @@ def sample_next(
             arr = arr.astype(float)
     if arr is not None and arr.sum() > 0:
         probs = arr.astype(float)
-        if cond_kick == "four_on_floor" and bucket == 0:
+        if cond_kick in {"four_on_floor", "sparse"}:
             for i, st in enumerate(model.idx_to_state):
                 if st[2] == "kick":
-                    probs[i] *= 2
+                    if cond_kick == "four_on_floor" and bucket == 0:
+                        probs[i] *= 16
+                    elif cond_kick == "sparse":
+                        probs[i] *= 0.5
         if temperature != 1.0:
             probs = np.power(probs, 1.0 / temperature)
         total = probs.sum()
@@ -298,10 +304,13 @@ def sample_next(
     b_arr = model.bucket_freq.get(bucket)
     if b_arr is not None and b_arr.sum() > 0:
         probs = b_arr.astype(float)
-        if cond_kick == "four_on_floor" and bucket == 0:
+        if cond_kick in {"four_on_floor", "sparse"}:
             for i, st in enumerate(model.idx_to_state):
                 if st[2] == "kick":
-                    probs[i] *= 2
+                    if cond_kick == "four_on_floor" and bucket == 0:
+                        probs[i] *= 16
+                    elif cond_kick == "sparse":
+                        probs[i] *= 0.5
         if temperature != 1.0:
             probs = np.power(probs, 1.0 / temperature)
         total = probs.sum()
@@ -328,6 +337,11 @@ def generate_events(
     res = model.resolution
     step_per_beat = res / 4
     bar_len = res
+    tempo = 120
+    sec_per_beat = 60 / tempo
+    shift_ms = max(2.0, min(5.0, 60 / tempo / 8 * 1000))
+    shift_beats = (shift_ms / 1000) / sec_per_beat
+    retry_beats = (1 / 1000) / sec_per_beat
     events: list[dict[str, float | str]] = []
     history: list[int] = []
 
@@ -355,10 +369,12 @@ def generate_events(
             abs_bin = next_bin
         velocity = 1.0
         if cond_velocity == "soft":
-            velocity = 0.8
+            velocity = min(velocity, 0.8)
         elif cond_velocity == "hard":
-            velocity = 1.2
+            velocity = max(velocity, 1.2)
         offset = abs_bin / step_per_beat
+        if lbl == "ghost_snare":
+            offset += rng.normal(0.0, 0.003) / sec_per_beat
         skip = False
         for ev in events:
             if abs(ev["offset"] - offset) <= 1e-6:
@@ -368,11 +384,21 @@ def generate_events(
                 if lbl == "kick" and ev["instrument"] == "snare":
                     skip = True
                     break
-                if "hat" in lbl and ev["instrument"] in {"kick", "snare"}:
-                    offset += 0.005
+                if lbl.endswith("hh") and ev["instrument"] in {"kick", "snare"}:
+                    off = offset + shift_beats
+                    for _ in range(3):
+                        if not any(abs(e["offset"] - off) <= 1e-6 for e in events):
+                            break
+                        off += retry_beats
+                    offset = off
                     break
-                if lbl in {"kick", "snare"} and "hat" in ev["instrument"]:
-                    ev["offset"] += 0.005
+                if lbl in {"kick", "snare"} and ev["instrument"].endswith("hh"):
+                    off = ev["offset"] + shift_beats
+                    for _ in range(3):
+                        if not any(abs(e["offset"] - off) <= 1e-6 for e in events):
+                            break
+                        off += retry_beats
+                    ev["offset"] = off
         if skip:
             continue
         events.append(
@@ -383,6 +409,21 @@ def generate_events(
                 "velocity_factor": velocity,
             }
         )
+        if lbl == "ohh":
+            choke_off = offset + (4 / model.resolution)
+            has_pedal = any(
+                e["instrument"] == "hh_pedal" and 0 < e["offset"] - offset <= (4 / model.resolution)
+                for e in events
+            )
+            if not has_pedal and rng.random() < 0.3:
+                events.append(
+                    {
+                        "instrument": "hh_pedal",
+                        "offset": choke_off,
+                        "duration": 0.25 / step_per_beat,
+                        "velocity_factor": velocity,
+                    }
+                )
         history.append(idx)
         if len(history) > model.n - 1:
             history.pop(0)
@@ -459,7 +500,9 @@ def _cmd_sample(args: list[str]) -> None:
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--cond-velocity", choices=["soft", "hard"], default=None)
-    parser.add_argument("--cond-kick", choices=["four_on_floor"], default=None)
+    parser.add_argument(
+        "--cond-kick", choices=["four_on_floor", "sparse"], default=None
+    )
     ns = parser.parse_args(args)
 
     model = load(ns.model)

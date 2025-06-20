@@ -26,21 +26,31 @@ PY
 #     → wheelhouse に必ず置く
 # ----------------------------------------------------------------------
 HEAVY_PACKAGES=(
-  # ── Core numeric ───────────────
-  "numpy>=1.26.4,<2.0.0"
+  # --- core build ---
+  "wheel>=0.43"            # ←★ 追加!!
+  "pip>=24.0"
+  "setuptools>=68.0"
+
+  # --- numeric ---
+  "numpy>=1.26.4,<2.0.0"   "scipy>=1.10"
   "scipy>=1.10"
-  # ── Validation / parsing ───────
-  "pydantic>=2.7"          "pydantic-core==2.33.2"
+  # --- parsing / util ---
   "PyYAML>=6.0"            "tomli>=2.0"
-  # ── MIDI / audio utils ─────────
-  "pretty_midi>=0.2.10"    "mido>=1.3.0"     "pydub>=0.25"
+  "pydantic>=2.7"          "pydantic-core==2.33.2"
+  # --- midi / audio ---
+  "pretty_midi>=0.2.10"    "mido>=1.3.0"   "pydub>=0.25"
+  # --- librosa & deps ---
+  "soundfile>=0.12"        "audioread>=2.1.9"
+  "numba>=0.57"            "llvmlite>=0.42" "librosa>=0.10"
+  # --- plotting ---
+  "matplotlib>=3.8" "contourpy>=1.0.1" \
+  "fonttools>=4.22.0" "kiwisolver>=1.3.1" "Pillow>=10.0"
+  # --- misc ---
+  "charset_normalizer<4,>=2"
   # ── librosa & 依存 ─────────────
-  "soundfile>=0.12"
   "audioread>=2.1.9"
-  "numba>=0.57"            "llvmlite>=0.42"
   "librosa>=0.10"
   # ── matplotlib (music21 連鎖) ─
-  "matplotlib>=3.8" "contourpy>=1.0.1" "fonttools>=4.22.0" \
   "kiwisolver>=1.3.1" "Pillow>=10.0"
 )
 
@@ -93,6 +103,7 @@ done
 #  5. pip / setuptools upgrade (オフライン)
 # ----------------------------------------------------------------------
 "${PIP}" install --no-index --find-links="${WHEEL_DIR}" --upgrade pip setuptools wheel
+
 
 # ----------------------------------------------------------------------
 #  6. requirements.txt インストール

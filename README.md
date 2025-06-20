@@ -182,6 +182,7 @@ python -m utilities.groove_sampler_v2 sample model.pkl -l 4 \
 
 ## Vocal Sync
 
+
 Run this command to extract amplitude peaks from your narration. The peaks are
 saved to JSON so they can be used for later synchronization tools:
 

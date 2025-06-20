@@ -446,6 +446,10 @@ class DrumGenerator(BasePartGenerator):
         self.max_heatmap_value = max(self.heatmap.values()) if self.heatmap else 0
         self.heatmap_resolution = self.main_cfg.get("heatmap_resolution", RESOLUTION)
         self.heatmap_threshold = self.main_cfg.get("heatmap_threshold", 1)
+        # Velocity below this value triggers use of the HH edge articulation
+        self.hh_edge_threshold = int(
+            self.main_cfg.get("hh_edge_threshold", 50)
+        )
         self.rng = random.Random()
         if self.main_cfg.get("rng_seed") is not None:
             self.rng.seed(self.main_cfg["rng_seed"])
@@ -1326,10 +1330,6 @@ class DrumGenerator(BasePartGenerator):
                     1, int(final_event_velocity * 0.6)
                 )
 
-            if inst_name == "chh" and final_event_velocity < 50:
-                inst_name = "hh_edge"
-            if ev_def.get("pedal", False):
-                inst_name = "hh_pedal"
 
             ev_type = ev_def.get("type")
             if ev_type in {"drag", "ruff"}:
@@ -1356,7 +1356,7 @@ class DrumGenerator(BasePartGenerator):
                 continue
 
             drum_hit_note = self._make_hit(
-                inst_name, final_event_velocity, clipped_duration_ql
+                inst_name, final_event_velocity, clipped_duration_ql, ev_def
             )
             if not drum_hit_note:
                 continue
@@ -1421,15 +1421,38 @@ class DrumGenerator(BasePartGenerator):
                 prev_note.tie = HoldTie()
             part.insert(final_insert_offset_in_score, drum_hit_note)
             prev_note = drum_hit_note
-            self._groove_history.append(inst_name)
+            mapped_name_for_history = getattr(
+                drum_hit_note.editorial, "mapped_name", inst_name
+            )
+            self._groove_history.append(mapped_name_for_history)
 
         n_hist = int(self.groove_model.get("n", 3)) if self.groove_model else 0
         if n_hist > 1 and len(self._groove_history) > n_hist - 1:
             self._groove_history = self._groove_history[-(n_hist - 1) :]
 
 
-    def _make_hit(self, name: str, vel: int, ql: float) -> Optional[note.Note]:
-        # (前回と同様)
+    def _make_hit(
+        self, name: str, vel: int, ql: float, ev_def: Optional[Dict[str, Any]] = None
+    ) -> Optional[note.Note]:
+        """Return a ``music21.note.Note`` for a single drum hit.
+
+        Parameters
+        ----------
+        name : str
+            Drum instrument label.
+        vel : int
+            MIDI velocity (1-127).
+        ql : float
+            Duration in quarterLength units.
+        ev_def : dict | None
+            Original event definition to inspect flags such as ``pedal``.
+
+        Returns
+        -------
+        Optional[note.Note]
+            Prepared note object or ``None`` if the sound is unknown. The
+            resulting note stores its mapped label in ``note.editorial.mapped_name``.
+        """
         mapped_name = name.lower().replace(" ", "_").replace("-", "_")
         brush_active = self.drum_brush or (
             self.overrides and getattr(self.overrides, "drum_brush", False)
@@ -1437,8 +1460,10 @@ class DrumGenerator(BasePartGenerator):
         if brush_active and mapped_name in BRUSH_MAP:
             mapped_name = BRUSH_MAP[mapped_name]
             vel = int(vel * 0.6)
-        if mapped_name in {"chh", "hh", "hat_closed"} and vel < 40:
+        if mapped_name in {"chh", "hh", "hat_closed"} and vel < self.hh_edge_threshold:
             mapped_name = "hh_edge"
+        if ev_def and ev_def.get("pedal"):
+            mapped_name = "hh_pedal"
         actual_name_for_midi = GHOST_ALIAS.get(mapped_name, mapped_name)
         midi_pitch_val = self.gm_pitch_map.get(actual_name_for_midi)
         if midi_pitch_val is None:
@@ -1453,6 +1478,7 @@ class DrumGenerator(BasePartGenerator):
         )
         n.volume = m21volume.Volume(velocity=max(1, min(127, vel)))
         n.offset = 0.0
+        n.editorial.mapped_name = mapped_name
         return n
 
     def _insert_flam(

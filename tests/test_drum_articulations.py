@@ -22,10 +22,9 @@ def test_hihat_articulations(tmp_path: Path):
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
     part = stream.Part(id="drums")
     events = [
-        {"instrument": "kick", "offset": 0.0, "velocity": 90},
-        {"instrument": "chh", "offset": 1.0, "velocity": 80},
-        {"instrument": "chh", "offset": 2.0, "velocity": 40},
-        {"instrument": "chh", "offset": 3.0, "velocity": 80, "pedal": True},
+        {"instrument": "chh", "offset": 0.0, "velocity": 30},
+        {"instrument": "chh", "offset": 1.0, "velocity": 90},
+        {"instrument": "chh", "offset": 2.0, "velocity": 80, "pedal": True},
     ]
     drum._apply_pattern(
         part,
@@ -40,9 +39,8 @@ def test_hihat_articulations(tmp_path: Path):
     )
     pitches = {n.pitch.midi for n in part.flatten().notes}
     expected = {
-        GM_DRUM_MAP["kick"][1],
-        GM_DRUM_MAP["chh"][1],
         GM_DRUM_MAP["hh_edge"][1],
+        GM_DRUM_MAP["chh"][1],
         GM_DRUM_MAP["hh_pedal"][1],
     }
     assert pitches == expected

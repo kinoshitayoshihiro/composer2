@@ -13,6 +13,7 @@ def _minimal_cfg(tmp_path: Path):
         "vocal_midi_path_for_drums": "",
         "heatmap_json_path_for_drums": str(hp),
         "paths": {"rhythm_library_path": "data/rhythm_library.yml"},
+        "rng_seed": 0,
     }
 
 
@@ -47,8 +48,11 @@ def test_drag_and_ruff(tmp_path: Path):
 
     for notes in (drag_notes, ruff_notes):
         main_offset = notes[-1].offset
+        main_vel = notes[-1].volume.velocity
         for n in notes:
             assert int(n.pitch.midi) == GM_DRUM_MAP["snare"][1]
         for g in notes[:-1]:
             dt = (main_offset - g.offset) * 60 / drum.global_tempo
             assert 0 < dt <= 0.03
+            ratio = g.volume.velocity / main_vel
+            assert 0.3 <= ratio <= 0.6

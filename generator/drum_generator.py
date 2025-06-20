@@ -174,8 +174,16 @@ class AccentMapper:
 class FillInserter:
     """Insert drum fills at section boundaries."""
 
-    def __init__(self, pattern_lib: Dict[str, Any]) -> None:
+    def __init__(
+        self,
+        pattern_lib: Dict[str, Any],
+        rng: random.Random | None = None,
+        base_velocity: int = 80,
+    ) -> None:
         self.pattern_lib = pattern_lib
+        self.rng = rng or random.Random()
+        self.drum_map: Dict[str, tuple[str, int]] = {}
+        self.base_velocity = base_velocity
 
     def insert(
         self,
@@ -190,9 +198,12 @@ class FillInserter:
         if fill_def is None:
             logger.warning("FillInserter.insert: fill pattern '%s' not found", key)
             return
-        if "template" in fill_def:
+        template = fill_def.get("template")
+        if isinstance(template, list):
+            template = self.rng.choice(template)
+        if template is not None:
             events = fill_dsl.parse(
-                fill_def["template"],
+                str(template),
                 fill_def.get("length_beats", 1.0),
                 fill_def.get("velocity_factor", 1.0),
             )
@@ -200,11 +211,21 @@ class FillInserter:
             events = fill_def.get("pattern", [])
         if not events:
             return
+        velocity_curve = fill_def.get("velocity_curve")
+        if velocity_curve:
+            curve = [float(v) for v in velocity_curve]
+            for i, ev in enumerate(events):
+                scale = curve[min(i, len(curve) - 1)]
+                ev["velocity_factor"] = ev.get("velocity_factor", 1.0) * scale
+        legato_mode = fill_def.get("mode") == "legato"
+        base_vel = int(fill_def.get("base_velocity", self.base_velocity))
         start = (
             section_data.get("absolute_offset", 0.0)
             + section_data.get("q_length", 4.0)
             - 4.0
         )
+        prev_note: note.Note | None = None
+        prev_offset = 0.0
         for ev in events:
             inst = ev.get("instrument")
             if not inst:
@@ -215,11 +236,17 @@ class FillInserter:
                 continue
             n = note.Note()
             n.pitch = pitch.Pitch(midi=midi_pitch)
+            offset_val = float(ev.get("offset", 0.0))
             n.duration = m21duration.Duration(ev.get("duration", 0.25))
             n.volume = m21volume.Volume(
-                velocity=int(80 * ev.get("velocity_factor", 1.0))
+                velocity=int(base_vel * ev.get("velocity_factor", 1.0))
             )
-            part.insert(start + float(ev.get("offset", 0.0)), n)
+            if legato_mode and prev_note is not None:
+                prev_note.tie = HoldTie()
+                prev_note.duration = m21duration.Duration(offset_val - prev_offset)
+            part.insert(start + offset_val, n)
+            prev_note = n
+            prev_offset = offset_val
 
 
 EMOTION_TO_BUCKET: Dict[str, str] = {  # (前回と同様)
@@ -465,7 +492,9 @@ class DrumGenerator(BasePartGenerator):
         self.fill_offsets: List[Tuple[float, float]] = []
         global_cfg = self.main_cfg.get("global_settings", {}) if self.main_cfg else {}
         self.fade_beats_default = float(global_cfg.get("fill_fade_beats", 2.0))
-        self.strict_drum_map = bool((global_settings or {}).get("strict_drum_map", False))
+        self.strict_drum_map = bool(
+            (global_settings or {}).get("strict_drum_map", False)
+        )
         self.drum_map_name = (global_settings or {}).get("drum_map", "gm")
         self.drum_map = get_drum_map(self.drum_map_name)
         # Simplified mapping to MIDI note numbers for internal use
@@ -500,9 +529,7 @@ class DrumGenerator(BasePartGenerator):
         self.heatmap_resolution = self.main_cfg.get("heatmap_resolution", RESOLUTION)
         self.heatmap_threshold = self.main_cfg.get("heatmap_threshold", 1)
         # Velocity below this value triggers use of the HH edge articulation
-        self.hh_edge_threshold = int(
-            self.main_cfg.get("hh_edge_threshold", 50)
-        )
+        self.hh_edge_threshold = int(self.main_cfg.get("hh_edge_threshold", 50))
         self.rng = random.Random()
         if self.main_cfg.get("rng_seed") is not None:
             self.rng.seed(self.main_cfg["rng_seed"])
@@ -518,10 +545,11 @@ class DrumGenerator(BasePartGenerator):
 
         # Drum ブラシ（テストでは drum_brush を参照）
         self.drum_brush = bool(
-            safe_get(global_cfg, "drum_brush", default=self.main_cfg.get("drum_brush", False))
+            safe_get(
+                global_cfg, "drum_brush", default=self.main_cfg.get("drum_brush", False)
+            )
             or (self.overrides and self.overrides.drum_brush)
         )
-
 
         # ランダムウォークのステップ幅（テストで random_walk_step を使う場合）
         self.random_walk_step = int(self.main_cfg.get("random_walk_step", 0))
@@ -559,6 +587,7 @@ class DrumGenerator(BasePartGenerator):
 
         self.push_pull_map = global_cfg.get("push_pull_curve", {})
         self.current_push_pull_curve = None
+
         self.push_pull_max_ms = float(global_cfg.get("push_pull_max_ms", 80.0))
         vr = global_cfg.get("velocity_range", (0.9, 1.1))
         if (
@@ -856,9 +885,9 @@ class DrumGenerator(BasePartGenerator):
         ) or self.global_settings.get("heatmap_threshold", 0.5)
 
         if section_data and section_data.get("label") in {"Intro", "Outro"}:
-            section_data.setdefault("part_params", {}).setdefault(
-                self.part_name, {}
-            )["rhythm_key"] = "ride_only"
+            section_data.setdefault("part_params", {}).setdefault(self.part_name, {})[
+                "rhythm_key"
+            ] = "ride_only"
             section_data["part_params"][self.part_name][
                 "final_style_key_for_render"
             ] = "ride_only"
@@ -874,10 +903,9 @@ class DrumGenerator(BasePartGenerator):
 
         emotion_key = None
         if section_data:
-            emotion_key = (
-                (section_data.get("expression_details") or {}).get("emotion_bucket")
-                or section_data.get("musical_intent", {}).get("emotion")
-            )
+            emotion_key = (section_data.get("expression_details") or {}).get(
+                "emotion_bucket"
+            ) or section_data.get("musical_intent", {}).get("emotion")
         self.current_push_pull_curve = (
             self.push_pull_map.get(emotion_key) if emotion_key else None
         )
@@ -1121,7 +1149,10 @@ class DrumGenerator(BasePartGenerator):
                             log_name=f"{log_render_prefix}.FadeBeats",
                         )
                         self.fill_offsets.append(
-                            (offset_in_score + current_pos_within_block, fade_beats_local)
+                            (
+                                offset_in_score + current_pos_within_block,
+                                fade_beats_local,
+                            )
                         )
                 fill_interval_bars = safe_get(
                     drums_params,
@@ -1184,7 +1215,6 @@ class DrumGenerator(BasePartGenerator):
                     velocity_scale,
                     velocity_curve_list,
                     legato=fill_legato,
-
                 )
                 if fill_applied_this_iter:
                     ms_since_fill = 0
@@ -1244,7 +1274,9 @@ class DrumGenerator(BasePartGenerator):
             subdivision_duration_ql = beat_len_ql
         velocity_curve = velocity_curve or [1.0]
 
-        vel_walk_state: int = drum_block_params.setdefault("_vel_walk", pattern_base_velocity)
+        vel_walk_state: int = drum_block_params.setdefault(
+            "_vel_walk", pattern_base_velocity
+        )
 
         if not events and self.groove_model:
             events = groove_sampler.generate_bar(
@@ -1405,10 +1437,7 @@ class DrumGenerator(BasePartGenerator):
 
             if brush_active and inst_name == "snare":
                 inst_name = "snare_brush"
-                final_event_velocity = max(
-                    1, int(final_event_velocity * 0.6)
-                )
-
+                final_event_velocity = max(1, int(final_event_velocity * 0.6))
 
             ev_type = ev_def.get("type")
             if ev_type in {"drag", "ruff"}:
@@ -1452,7 +1481,9 @@ class DrumGenerator(BasePartGenerator):
             templates = ev_def.get("humanize_templates")
             if templates:
                 mode = str(ev_def.get("humanize_templates_mode", "sequential")).lower()
-                if isinstance(templates, Sequence) and not isinstance(templates, (str, bytes)):
+                if isinstance(templates, Sequence) and not isinstance(
+                    templates, (str, bytes)
+                ):
                     template_list = list(templates)
                 else:
                     template_list = [templates]
@@ -1461,7 +1492,9 @@ class DrumGenerator(BasePartGenerator):
                     drum_hit_note = apply_humanization_to_element(drum_hit_note, chosen)
                 else:
                     for t_name in template_list:
-                        drum_hit_note = apply_humanization_to_element(drum_hit_note, t_name)
+                        drum_hit_note = apply_humanization_to_element(
+                            drum_hit_note, t_name
+                        )
 
             # (ヒューマナイズ処理は前回と同様)
             humanize_this_hit = False
@@ -1511,7 +1544,6 @@ class DrumGenerator(BasePartGenerator):
         n_hist = int(self.groove_model.get("n", 3)) if self.groove_model else 0
         if n_hist > 1 and len(self._groove_history) > n_hist - 1:
             self._groove_history = self._groove_history[-(n_hist - 1) :]
-
 
     def _make_hit(
         self, name: str, vel: int, ql: float, ev_def: Optional[Dict[str, Any]] = None
@@ -1642,7 +1674,9 @@ class DrumGenerator(BasePartGenerator):
             if isinstance(humanize, dict):
                 tmpl = humanize.get("template_name")
                 params = humanize.get("custom_params")
-                return apply_humanization_to_element(n, template_name=tmpl, custom_params=params)
+                return apply_humanization_to_element(
+                    n, template_name=tmpl, custom_params=params
+                )
             return n
 
         for idx in range(n_hits):
@@ -1674,9 +1708,7 @@ class DrumGenerator(BasePartGenerator):
                 if isinstance(n, note.Note)
             )
         except Exception as exc:
-            logger.warning(
-                f"DrumGen: failed to load vocal MIDI for hi-hat sync: {exc}"
-            )
+            logger.warning(f"DrumGen: failed to load vocal MIDI for hi-hat sync: {exc}")
             return []
 
     def _velocity_fade_into_fill(
@@ -1900,7 +1932,9 @@ class DrumGenerator(BasePartGenerator):
         return list(self.kick_offsets)
 
     def get_fill_offsets(self) -> List[float]:
-        return [off if not isinstance(off, tuple) else off[0] for off in self.fill_offsets]
+        return [
+            off if not isinstance(off, tuple) else off[0] for off in self.fill_offsets
+        ]
 
 
 # --- END OF FILE generator/drum_generator.py ---

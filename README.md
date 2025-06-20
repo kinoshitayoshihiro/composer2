@@ -180,5 +180,15 @@ python -m utilities.groove_sampler_v2 sample model.pkl -l 4 \
     --temperature 0.8 --cond-velocity hard --seed 42
 ```
 
+## Vocal Sync
+
+Extract amplitude peaks from your narration to align with the generated music:
+
+```bash
+modcompose peaks path/to/vocal.wav -o peaks.json --plot
+```
+
+The JSON can be fed to later synchronization tools. TODO: refine wording.
+
 ## License
 This project is licensed under the [MIT License](LICENSE).

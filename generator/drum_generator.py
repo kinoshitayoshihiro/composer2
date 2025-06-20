@@ -42,6 +42,12 @@ logger = logging.getLogger("modular_composer.drum_generator")
 # threshold (0-1 scale based on heatmap weight).
 HAT_SUPPRESSION_THRESHOLD = 0.6
 
+# Default grace-note timing range in milliseconds. ``MIN_GRACE_MS`` and
+# ``MAX_GRACE_MS`` are used to clamp the ``spread_ms`` parameter for drag/ruff
+# articulations so extremely short or long grace windows are avoided.
+MIN_GRACE_MS = 5.0
+MAX_GRACE_MS = 60.0
+
 # Emotion/Intensity to drum style LUT
 EMOTION_INTENSITY_LUT = {
     ("soft_reflective", "low"): "brush_light_loop",
@@ -1156,6 +1162,10 @@ class DrumGenerator(BasePartGenerator):
     ) -> None:
         """Insert a list of drum events into ``part``.
 
+        Each event may specify a ``type`` to trigger articulations such as
+        ``drag`` (two grace notes), ``ruff`` (three grace notes), ``flam``
+        (single grace) or ``ghost`` (low-velocity).
+
         Parameters
         ----------
         velocity_scale : float
@@ -1341,6 +1351,9 @@ class DrumGenerator(BasePartGenerator):
                         midi_pitch,
                         final_event_velocity,
                         2 if ev_type == "drag" else 3,
+                        spread_ms=float(ev_def.get("spread_ms", 25.0)),
+                        velocity_curve=ev_def.get("grace_curve"),
+                        humanize=ev_def.get("humanize_grace"),
                     )
                 continue
 
@@ -1506,21 +1519,73 @@ class DrumGenerator(BasePartGenerator):
         midi_pitch: int,
         velocity: int,
         n_hits: int = 2,
+        *,
+        spread_ms: float = 25.0,
+        velocity_curve: str | Sequence[float] | None = None,
+        humanize: bool | str | dict | None = None,
     ) -> None:
-        """Insert drag/ruff grace notes before the main hit."""
-        spread_ms = 25.0
-        step_ms = spread_ms / max(1, n_hits)
+        """Insert a drag or ruff before the main hit.
+
+        Parameters
+        ----------
+        part : :class:`music21.stream.Part`
+            Part to insert the notes into.
+        offset : float
+            Offset of the main hit in quarterLength.
+        midi_pitch : int
+            MIDI pitch for all notes.
+        velocity : int
+            Velocity of the main hit.
+        n_hits : int, optional
+            Number of grace notes preceding the main hit.
+        spread_ms : float, optional
+            Duration of the grace window in milliseconds.
+
+        Notes
+        -----
+        Grace notes are spaced evenly within ``spread_ms`` before ``offset`` and
+        their velocities fade from roughly 30%% to 60%% of ``velocity``. ``velocity_curve``
+        may be ``"exp"`` for exponential fade or a list of multipliers.
+        """
+        window_ms = max(MIN_GRACE_MS, min(MAX_GRACE_MS, float(spread_ms)))
+        step_ms = window_ms / max(1, n_hits)
+
+        def _get_factor(i: int) -> float:
+            if isinstance(velocity_curve, Sequence):
+                if i < len(velocity_curve):
+                    return float(velocity_curve[i])
+                return float(velocity_curve[-1]) if velocity_curve else 0.5
+            if isinstance(velocity_curve, str) and velocity_curve.lower() == "exp":
+                base = 0.3
+                top = 0.6
+                exponent = i / max(1, n_hits - 1)
+                return base * ((top / base) ** exponent)
+            return 0.3 + (0.3 * i / max(1, n_hits - 1))
+
+        def _maybe_humanize(n: note.Note) -> note.Note:
+            if not humanize:
+                return n
+            if isinstance(humanize, bool):
+                tmpl = "drum_tight"
+                return apply_humanization_to_element(n, template_name=tmpl)
+            if isinstance(humanize, str):
+                return apply_humanization_to_element(n, template_name=humanize)
+            if isinstance(humanize, dict):
+                tmpl = humanize.get("template_name")
+                params = humanize.get("custom_params")
+                return apply_humanization_to_element(n, template_name=tmpl, custom_params=params)
+            return n
+
         for idx in range(n_hits):
-            off_ms = spread_ms - idx * step_ms
+            off_ms = window_ms - idx * step_ms
             grace_offset = (off_ms / 1000.0) * (self.global_tempo / 60.0)
-            factor = 0.3 + (0.3 * idx / max(1, n_hits - 1))
+            factor = _get_factor(idx)
             grace = note.Note()
             grace.pitch = pitch.Pitch(midi=midi_pitch)
             grace.duration = m21duration.Duration(max(MIN_NOTE_DURATION_QL / 8.0, 0.05))
-            grace.volume = m21volume.Volume(
-                velocity=max(1, int(velocity * factor))
-            )
+            grace.volume = m21volume.Volume(velocity=max(1, int(velocity * factor)))
             grace.offset = 0.0
+            grace = _maybe_humanize(grace)
             part.insert(max(0.0, offset - grace_offset), grace)
         main = note.Note()
         main.pitch = pitch.Pitch(midi=midi_pitch)

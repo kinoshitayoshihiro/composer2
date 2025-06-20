@@ -158,5 +158,15 @@ pytest -q
 
 Running the tests confirms that chord generation and instrument mappings behave as expected.
 
+### Groove Sampler Usage
+
+Build an n-gram model from a folder of MIDI loops:
+
+```bash
+python -m utilities.groove_sampler data/loops --stats
+```
+
+The command prints detected resolution and the chosen order.
+
 ## License
 This project is licensed under the [MIT License](LICENSE).

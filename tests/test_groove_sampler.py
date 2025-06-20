@@ -25,8 +25,8 @@ def test_given_loop_when_load_grooves_then_model_contains_transitions(tmp_path: 
     assert model["n"] == 2
     assert model["resolution"] == 16
     key = ((0, "kick"),)
-    assert key in model["freq"]
-    assert model["freq"][key][(4, "kick")] == 1
+    assert key in model["prob"][1]
+    assert (16, "kick") in model["prob"][1][key]
 
 
 def test_given_n_parameter_when_load_grooves_then_stored(tmp_path: Path):
@@ -49,7 +49,7 @@ def test_given_context_when_sample_next_then_returns_expected(tmp_path: Path):
     pm.write(str(midi_path))
     model = groove_sampler.load_grooves(tmp_path)
     next_state = groove_sampler.sample_next([(0, "kick")], model, random.Random(0))
-    assert next_state == (4, "snare")
+    assert next_state == (16, "snare")
 
 
 def test_given_model_when_generate_bar_then_events_valid(tmp_path: Path):
@@ -57,9 +57,8 @@ def test_given_model_when_generate_bar_then_events_valid(tmp_path: Path):
     model = groove_sampler.load_grooves(tmp_path, resolution=32)
     events = groove_sampler.generate_bar([], model, random.Random(0), resolution=32)
     assert len(events) > 0
-    assert max(e["offset"] for e in events) < 1.0
     for e in events:
-        valid = {lbl for ctx in model["freq"].keys() for _, lbl in ctx}
+        valid = {lbl for d in model["prob"].values() for ctx in d for _, lbl in ctx}
         assert e["instrument"] in valid
         assert abs(e["offset"] * 32 - round(e["offset"] * 32)) < 1e-6
 

@@ -9,7 +9,10 @@ from typing import Dict, Tuple, Union
 # ---------------------------------------------------------------------------
 
 HH_EDGE: Tuple[str, int] = ("closed_hi_hat_edge", 22)
+"""GM note mapping for closed hi-hat "edge" sample."""
+
 HH_PEDAL: Tuple[str, int] = ("pedal_hi_hat", 44)
+"""GM note mapping for hi-hat pedal "chick"."""
 SNARE_RUFF: Tuple[str, int] = ("acoustic_snare", 38)
 
 # ---------------------------------------------------------------------------

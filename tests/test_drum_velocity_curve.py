@@ -43,7 +43,7 @@ class CurveDrum(DrumGenerator):
         )
         return part
 
-    def _make_hit(self, name: str, vel: int, ql: float):
+    def _make_hit(self, name: str, vel: int, ql: float, ev_def=None):
         n = note.Note()
         n.pitch = pitch.Pitch(midi=38)
         n.duration = m21duration.Duration(quarterLength=ql)

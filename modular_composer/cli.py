@@ -6,6 +6,7 @@ from pathlib import Path
 
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
 from utilities.peak_extractor import PeakExtractorConfig, extract_peaks
+from utilities.peak_synchroniser import PeakSynchroniser
 
 try:
     __version__ = _md.version("modular_composer")
@@ -34,6 +35,8 @@ def _cmd_sample(args: list[str]) -> None:
         "--cond-kick", choices=["four_on_floor", "sparse"], default=None
     )
     ap.add_argument("-o", "--out", type=Path)
+    ap.add_argument("--peaks", type=Path)
+    ap.add_argument("--lag", type=float, default=10.0)
     ns = ap.parse_args(args)
     model = load(ns.model)
     ev = generate_events(
@@ -44,6 +47,17 @@ def _cmd_sample(args: list[str]) -> None:
         cond_velocity=ns.cond_velocity,
         cond_kick=ns.cond_kick,
     )
+    if ns.peaks:
+        import json
+
+        with ns.peaks.open() as fh:
+            peaks = json.load(fh)
+        ev = PeakSynchroniser.sync_events(
+            peaks,
+            ev,
+            tempo_bpm=120.0,
+            lag_ms=ns.lag,
+        )
     import json
     import sys
 

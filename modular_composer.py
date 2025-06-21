@@ -278,6 +278,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--output-filename",
         help="MIDI ファイル名 (default: output.mid)",
     )
+    p.add_argument("--tempo-curve", help="JSON tempo curve path")
     p.add_argument(
         "--verbose", "-v", action="store_true", help="詳しいログ(INFO)を表示"
     )
@@ -324,6 +325,8 @@ def main_cli() -> None:
             paths[k] = v
     if args.output_filename:
         paths["output_filename"] = args.output_filename
+    if args.tempo_curve:
+        main_cfg.setdefault("global_settings", {})["tempo_curve_path"] = args.tempo_curve
 
     logger.info("使用 chordmap_path = %s", paths["chordmap_path"])
     logger.info("使用 rhythm_library_path = %s", paths["rhythm_library_path"])

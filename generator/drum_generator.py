@@ -35,6 +35,8 @@ from utilities.drum_map_registry import (
 )
 from utilities.drum_map import GENERAL_MIDI_MAP
 from utilities.timing_utils import TimingBlend, interp_curve
+from utilities.tempo_utils import load_tempo_curve, get_bpm_at
+from utilities.velocity_smoother import EmaSmoother
 from utilities.peak_synchroniser import PeakSynchroniser
 
 
@@ -510,6 +512,23 @@ class DrumGenerator(BasePartGenerator):
         # もし、この後に独自の初期化処理があれば、ここに残してください。
         # 必須のデフォルトパターンが不足している場合に補充
         self._add_internal_default_patterns()
+
+        curve_path = (
+            (global_settings or {}).get("tempo_curve_path")
+            or (self.main_cfg.get("paths", {}).get("tempo_curve_path") if self.main_cfg else None)
+        )
+        self.tempo_curve = None
+        if curve_path:
+            p = Path(curve_path).expanduser()
+            if p.exists():
+                try:
+                    self.tempo_curve = load_tempo_curve(p)
+                except Exception as e:  # pragma: no cover - optional
+                    logger.warning(f"Failed to load tempo curve from {p}: {e}")
+
+        self.current_bpm = self.main_cfg.get("tempo", 120)
+        self.use_velocity_ema = bool((global_settings or {}).get("use_velocity_ema", False))
+        self._vel_smoother = EmaSmoother()
 
         sync_cfg = global_cfg.get("consonant_sync", {})
         self.consonant_sync_cfg = {
@@ -1278,6 +1297,13 @@ class DrumGenerator(BasePartGenerator):
             and then ``velocity_curve`` to avoid mis-scaled velocities.
         """
         log_apply_prefix = f"DrumGen.ApplyPattern"
+        if self.tempo_curve:
+            beat_pos = bar_start_abs_offset
+            self.current_bpm = get_bpm_at(beat_pos, self.tempo_curve)
+        else:
+            self.current_bpm = self.global_tempo
+        if self.use_velocity_ema:
+            self._vel_smoother.reset()
         beat_len_ql = (
             current_pattern_ts.beatDuration.quarterLength if current_pattern_ts else 1.0
         )
@@ -1302,14 +1328,14 @@ class DrumGenerator(BasePartGenerator):
             )
 
         if self.consonant_peaks:
-            start_sec = bar_start_abs_offset * 60.0 / self.global_tempo
-            end_sec = (bar_start_abs_offset + current_bar_actual_len_ql) * 60.0 / self.global_tempo
+            start_sec = bar_start_abs_offset * 60.0 / self.current_bpm
+            end_sec = (bar_start_abs_offset + current_bar_actual_len_ql) * 60.0 / self.current_bpm
             peaks_in_bar = [p - start_sec for p in self.consonant_peaks if start_sec <= p < end_sec]
             if peaks_in_bar:
                 events = PeakSynchroniser.sync_events(
                     peaks_in_bar,
                     events,
-                    tempo_bpm=self.global_tempo,
+                    tempo_bpm=self.current_bpm,
                     lag_ms=self.consonant_sync_cfg["lag_ms"],
                     min_distance_beats=self.consonant_sync_cfg["min_distance_beats"],
                     sustain_threshold_ms=self.consonant_sync_cfg["sustain_threshold_ms"],
@@ -1359,13 +1385,20 @@ class DrumGenerator(BasePartGenerator):
                 cast_to=float,
                 log_name=f"{log_event_prefix}.Offset",
             )
+            if self.tempo_curve:
+                event_bpm = get_bpm_at(
+                    bar_start_abs_offset + rel_offset_in_pattern, self.tempo_curve
+                )
+            else:
+                event_bpm = self.global_tempo
+            self.current_bpm = event_bpm
             blend = _combine_timing(
                 rel_offset_in_pattern,
                 beat_len_ql,
                 swing_ratio=swing_ratio,
                 swing_type=swing_type,
                 push_pull_curve=self.current_push_pull_curve,
-                tempo_bpm=self.global_tempo,
+                tempo_bpm=event_bpm,
                 max_push_ms=self.push_pull_max_ms,
                 vel_range=self.velocity_range,
                 return_vel=True,
@@ -1426,7 +1459,7 @@ class DrumGenerator(BasePartGenerator):
             if articulation == "bell":
                 final_event_velocity = min(127, int(final_event_velocity * 1.15))
             if articulation == "splash":
-                max_dur = (0.3 * self.global_tempo) / 60.0
+                max_dur = (0.3 * self.current_bpm) / 60.0
                 clipped_duration_ql = min(clipped_duration_ql, max_dur)
             final_insert_offset_in_score = bar_start_abs_offset + rel_offset_in_pattern
             bin_idx = (
@@ -1476,6 +1509,20 @@ class DrumGenerator(BasePartGenerator):
                     int(final_event_velocity * velocity_scale * vel_mul),
                 ),
             )
+            if self.use_velocity_ema and any(
+                k in inst_name for k in [
+                    "kick",
+                    "snare",
+                    "tom",
+                    "crash",
+                    "splash",
+                    "ride",
+                    "bell",
+                    "china",
+                    "cymbal",
+                ]
+            ):
+                final_event_velocity = self._vel_smoother.smooth(final_event_velocity)
 
             if brush_active and inst_name == "snare":
                 inst_name = "snare_brush"
@@ -1516,7 +1563,7 @@ class DrumGenerator(BasePartGenerator):
 
             if inst_name in {"ghost_snare", "ghost_tom"}:
                 drum_hit_note = humanizer.apply_ghost_jitter(
-                    drum_hit_note, self.rng, tempo_bpm=self.global_tempo
+                    drum_hit_note, self.rng, tempo_bpm=self.current_bpm
                 )
 
             if ev_def.get("humanize_template") == "flam_legato_ghost":
@@ -1584,8 +1631,8 @@ class DrumGenerator(BasePartGenerator):
             part.insert(final_insert_offset_in_score, drum_hit_note)
 
             if inst_name == "ohh" and self.rng.random() < self.open_hat_choke_prob:
-                min_b = (self.open_hat_choke_min_ms / 1000.0) * (self.global_tempo / 60.0)
-                max_b = (self.open_hat_choke_max_ms / 1000.0) * (self.global_tempo / 60.0)
+                min_b = (self.open_hat_choke_min_ms / 1000.0) * (self.current_bpm / 60.0)
+                max_b = (self.open_hat_choke_max_ms / 1000.0) * (self.current_bpm / 60.0)
                 off = final_insert_offset_in_score + self.rng.uniform(min_b, max_b)
                 vel = max(1, int(drum_hit_note.volume.velocity * self.rng.uniform(0.6, 0.9)))
                 pedal_pitch = self.gm_pitch_map.get("hh_pedal")
@@ -1606,7 +1653,7 @@ class DrumGenerator(BasePartGenerator):
                             part.insert(off, pedal_note)
 
             if articulation == "choke":
-                off = final_insert_offset_in_score + (0.2 * self.global_tempo / 60.0)
+                off = final_insert_offset_in_score + (0.2 * self.current_bpm / 60.0)
                 note_off = note.Note()
                 note_off.pitch = drum_hit_note.pitch
                 note_off.duration = m21duration.Duration(0)
@@ -1677,7 +1724,7 @@ class DrumGenerator(BasePartGenerator):
         self, part: stream.Part, offset: float, midi_pitch: int, velocity: int
     ) -> None:
         """Insert a flam consisting of a grace note before the main hit."""
-        grace_offset = (30.0 / 1000.0) * (self.global_tempo / 60.0)
+        grace_offset = (30.0 / 1000.0) * (self.current_bpm / 60.0)
         grace = note.Note()
         grace.pitch = pitch.Pitch(midi=midi_pitch)
         grace.duration = m21duration.Duration(max(MIN_NOTE_DURATION_QL / 8.0, 0.05))
@@ -1759,7 +1806,7 @@ class DrumGenerator(BasePartGenerator):
 
         for idx in range(n_hits):
             off_ms = window_ms - idx * step_ms
-            grace_offset = (off_ms / 1000.0) * (self.global_tempo / 60.0)
+            grace_offset = (off_ms / 1000.0) * (self.current_bpm / 60.0)
             factor = _get_factor(idx)
             grace = note.Note()
             grace.pitch = pitch.Pitch(midi=midi_pitch)
@@ -1832,7 +1879,7 @@ class DrumGenerator(BasePartGenerator):
             shift_ms = float(curve[beat_idx])
         except (ValueError, IndexError, TypeError):
             return rel_offset
-        shift_ql = (shift_ms / 1000.0) * (self.global_tempo / 60.0)
+        shift_ql = (shift_ms / 1000.0) * (self.current_bpm / 60.0)
         return max(0.0, rel_offset + shift_ql)
 
     def _sync_hihat_with_vocals(self, part: stream.Part) -> None:
@@ -1842,7 +1889,7 @@ class DrumGenerator(BasePartGenerator):
         ohh = self.gm_pitch_map.get("ohh")
         if chh is None or ohh is None:
             return
-        thr = (50.0 / 1000.0) * (self.global_tempo / 60.0)
+        thr = (50.0 / 1000.0) * (self.current_bpm / 60.0)
         beat_len = self.global_ts.beatDuration.quarterLength
         bar_len = self.global_ts.barDuration.quarterLength
         notes = sorted(part.recurse().notes, key=lambda n: n.offset)

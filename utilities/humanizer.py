@@ -14,6 +14,11 @@ from typing import (
     Mapping,
 )
 from pathlib import Path
+from .ghost_jitter import apply_ghost_jitter  # re-export
+
+__all__ = [
+    "apply_ghost_jitter",
+]
 
 # music21 のサブモジュールを正しい形式でインポート
 import music21.note as note

@@ -67,6 +67,9 @@ DRUM_ALIAS: Dict[str, str] = {
     "ride_cymbal_swell": "ride_cymbal_swell",
     "crash_cymbal_soft_swell": "crash_cymbal_soft_swell",
     "ride": "ride_cymbal_swell",
+    "ride_bell": "ride_bell",
+    "splash": "splash",
+    "crash_choke": "crash_choke",
     "edge": "hh_edge",
     "pedal": "hh_pedal",
 }
@@ -598,6 +601,9 @@ class DrumGenerator(BasePartGenerator):
         self.current_push_pull_curve = None
 
         self.push_pull_max_ms = float(global_cfg.get("push_pull_max_ms", 80.0))
+        self.open_hat_choke_prob = float(global_cfg.get("open_hat_choke_prob", 0.35))
+        self.open_hat_choke_min_ms = float(global_cfg.get("open_hat_choke_min_ms", 160.0))
+        self.open_hat_choke_max_ms = float(global_cfg.get("open_hat_choke_max_ms", 280.0))
         vr = global_cfg.get("velocity_range", (0.9, 1.1))
         if (
             isinstance(vr, (list, tuple))
@@ -1329,6 +1335,13 @@ class DrumGenerator(BasePartGenerator):
                 inst_name.lower(), inst_name.lower()
             )
             inst_name = DRUM_ALIAS.get(inst_name, inst_name).lower()
+            articulation = str(ev_def.get("articulation", "")).lower()
+            if articulation == "bell":
+                inst_name = "ride_bell"
+            elif articulation == "splash":
+                inst_name = "splash"
+            elif articulation == "choke":
+                inst_name = "crash_choke"
             brush_active = self.drum_brush or (
                 self.overrides and getattr(self.overrides, "drum_brush", False)
             )
@@ -1409,6 +1422,12 @@ class DrumGenerator(BasePartGenerator):
                     cast_to=int,
                     log_name=f"{log_event_prefix}.VelAbs",
                 )
+
+            if articulation == "bell":
+                final_event_velocity = min(127, int(final_event_velocity * 1.15))
+            if articulation == "splash":
+                max_dur = (0.3 * self.global_tempo) / 60.0
+                clipped_duration_ql = min(clipped_duration_ql, max_dur)
             final_insert_offset_in_score = bar_start_abs_offset + rel_offset_in_pattern
             bin_idx = (
                 int((final_insert_offset_in_score * self.heatmap_resolution))
@@ -1495,6 +1514,11 @@ class DrumGenerator(BasePartGenerator):
             if not drum_hit_note:
                 continue
 
+            if inst_name in {"ghost_snare", "ghost_tom"}:
+                drum_hit_note = humanizer.apply_ghost_jitter(
+                    drum_hit_note, self.rng, tempo_bpm=self.global_tempo
+                )
+
             if ev_def.get("humanize_template") == "flam_legato_ghost":
                 drum_hit_note = apply_humanization_to_element(
                     drum_hit_note, "flam_legato_ghost"
@@ -1558,6 +1582,37 @@ class DrumGenerator(BasePartGenerator):
             if legato and prev_note is not None:
                 prev_note.tie = HoldTie()
             part.insert(final_insert_offset_in_score, drum_hit_note)
+
+            if inst_name == "ohh" and self.rng.random() < self.open_hat_choke_prob:
+                min_b = (self.open_hat_choke_min_ms / 1000.0) * (self.global_tempo / 60.0)
+                max_b = (self.open_hat_choke_max_ms / 1000.0) * (self.global_tempo / 60.0)
+                off = final_insert_offset_in_score + self.rng.uniform(min_b, max_b)
+                vel = max(1, int(drum_hit_note.volume.velocity * self.rng.uniform(0.6, 0.9)))
+                pedal_pitch = self.gm_pitch_map.get("hh_pedal")
+                if pedal_pitch is not None:
+                    q_off = PeakSynchroniser._quantize(off)
+                    duplicate = False
+                    for n in part.flatten().notes:
+                        if (
+                            PeakSynchroniser._quantize(float(n.offset)) == q_off
+                            and n.pitch.midi == pedal_pitch
+                        ):
+                            duplicate = True
+                            break
+                    if not duplicate:
+                        pedal_note = self._make_hit("hh_pedal", vel, MIN_NOTE_DURATION_QL / 8.0, None)
+                        if pedal_note:
+                            pedal_note.offset = 0.0
+                            part.insert(off, pedal_note)
+
+            if articulation == "choke":
+                off = final_insert_offset_in_score + (0.2 * self.global_tempo / 60.0)
+                note_off = note.Note()
+                note_off.pitch = drum_hit_note.pitch
+                note_off.duration = m21duration.Duration(0)
+                note_off.volume = m21volume.Volume(velocity=0)
+                note_off.offset = 0.0
+                part.insert(off, note_off)
             prev_note = drum_hit_note
             mapped_name_for_history = getattr(
                 drum_hit_note.editorial, "mapped_name", inst_name
@@ -1596,7 +1651,7 @@ class DrumGenerator(BasePartGenerator):
         )
         if brush_active and mapped_name in BRUSH_MAP:
             mapped_name = BRUSH_MAP[mapped_name]
-            vel = int(vel * 0.6)
+            vel = max(1, int(vel * 0.6))
         if mapped_name in {"chh", "hh", "hat_closed"} and vel < self.hh_edge_threshold:
             mapped_name = "hh_edge"
         if ev_def and ev_def.get("pedal"):

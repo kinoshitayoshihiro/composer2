@@ -16,8 +16,9 @@ class PeakSynchroniser:
     TICK_RESOLUTION = 960
 
     @staticmethod
-    def _quantize(value: float) -> float:
-        return round(value * PeakSynchroniser.TICK_RESOLUTION) / PeakSynchroniser.TICK_RESOLUTION
+    def _quantize(value: float, resolution: float = 1e-3) -> float:
+        """Round ``value`` to the nearest ``resolution`` in beats."""
+        return round(value / resolution) * resolution
 
     @staticmethod
     def _add_event(

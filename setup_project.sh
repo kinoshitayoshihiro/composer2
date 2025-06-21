@@ -37,8 +37,9 @@ if [[ ! -x "$VPY" ]]; then
   python3 -m venv --symlinks "$VENV_DIR"   # ← ★ 失敗しないモード
 
   # フォールバック: python3 シンボリックリンクが無い環境用
-  [[ -e "$VENV_DIR/bin/python3" ]] || ln -s python "$VENV_DIR/bin/python3"
-fi
+ if [[ ! -x "$VENV_DIR/bin/python3" ]]; then
+   ln -s python "$VENV_DIR/bin/python3"
+ fi
 echo "   venv python: $("$VPY" -V)"
 
 # ensure pip/setuptools/wheel は最低限入れる

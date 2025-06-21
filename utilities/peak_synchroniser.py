@@ -31,7 +31,7 @@ class PeakSynchroniser:
         q_off = PeakSynchroniser._quantize(offset)
         for idx, ev in enumerate(events):
             ev_off = PeakSynchroniser._quantize(float(ev.get("offset", 0.0)))
-            if ev_off == q_off:
+            if abs(ev_off - q_off) <= 1e-6:
                 if priority.get(instrument, 0) > priority.get(ev.get("instrument", ""), 0):
                     events[idx] = {
                         "instrument": instrument,
@@ -83,6 +83,7 @@ class PeakSynchroniser:
             )
             if next_gap * 1000 >= sustain_threshold_ms:
                 PeakSynchroniser._add_event(events, "ohh", final_off, priority=priority)
-                PeakSynchroniser._add_event(events, "hh_pedal", final_off + 0.25, priority=priority)
+                pedal_off = final_off + 0.25
+                PeakSynchroniser._add_event(events, "hh_pedal", pedal_off, priority=priority)
         events.sort(key=lambda e: float(e.get("offset", 0.0)))
         return events

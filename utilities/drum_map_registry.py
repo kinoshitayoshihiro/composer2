@@ -41,6 +41,9 @@ GM_DRUM_MAP: Dict[str, Tuple[str, int]] = {
     "crash_cymbal_soft_swell": ("crash_cymbal_1", 49),
     "ride": ("ride_cymbal_1", 51),
     "ride_cymbal_swell": ("ride_cymbal_1", 51),
+    "ride_bell": ("ride_cymbal_bell", 53),
+    "splash": ("splash_cymbal", 55),
+    "crash_choke": ("crash_cymbal_1", 49),
     # FX
     "chimes": ("triangle", 81),
     "shaker_soft": ("shaker", 82),

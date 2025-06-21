@@ -1,27 +1,30 @@
 #!/usr/bin/env bash
-# ======================================================================
+# =====================================================================
 #  setup_project.sh  (venv + wheelhouse *offline* setup)
-# ======================================================================
-
+# =====================================================================
 set -euo pipefail
 
-# ----------------------------------------------------------------------
-# 変数
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 0. paths / vars
+# ---------------------------------------------------------------------
 PROJECT_ROOT="$(pwd)"
-WHEEL_DIR="${PROJECT_ROOT}/wheelhouse"
+WHEEL_DIR="${PROJECT_ROOT}/wheelhouse"        # 事前 DL した .whl 置き場
 REQ_FILE="requirements.txt"
 OUTPUT_DIR="midi_output"
 
 VENV_DIR=".venv"
 PYBIN="${VENV_DIR}/bin"
-# まだ venv が無い段階なので PYTHON/PIP は後で改めて設定
+PYTHON="${PYBIN}/python"
+PIP="${PYBIN}/pip"
 
+# Python tags (host≒GitHub Actions: cp 3.11 / manylinux2014)
 PYTAG="cp311"
-MANYLINUX_TAG="manylinux_2_17_x86_64"
+MANYLINUX_TAG="manylinux2014_x86_64"
 
-# heavy-list はヒアドキュメントのまま
-read -r -d '' HEAVY_SPEC <<'LIST'
+# ---------------------------------------------------------------------
+# 1. heavy package list  ※-d '' を削除しヒアドキュメントで閉じる
+# ---------------------------------------------------------------------
+read -r -d '' HEAVY_SPEC <<'PKG'
 wheel>=0.43
 pip>=24.0
 setuptools>=68.0
@@ -45,63 +48,64 @@ fonttools>=4.22.0
 kiwisolver>=1.3.1
 Pillow>=10.0
 charset_normalizer<4,>=2
-LIST
-
+PKG
 mapfile -t HEAVY_PACKAGES <<<"${HEAVY_SPEC}"
 
-# ----------------------------------------------------------------------
-# 0. venv
-# ----------------------------------------------------------------------
-if [[ ! -e "${VENV_DIR}/pyvenv.cfg" ]]; then
-  echo "🟢 0) create venv (${VENV_DIR})"
-  python3 -m venv "${VENV_DIR}"   # ← --copies を外す
-fi
-
-# venv 内の python / pip を改めて取得
-PYTHON="${PYBIN}/python"
-PIP="${PYBIN}/pip"
-
+# ---------------------------------------------------------------------
+# 2. create venv (–copies で bin/python3 不足を防ぐ)
+# ---------------------------------------------------------------------
 if [[ ! -x "${PYTHON}" ]]; then
-  echo "❌ venv 作成に失敗: ${PYTHON} がありません" >&2
-  exit 1
+  echo "🟢 0) create venv (${VENV_DIR})"
+  python3 -m venv --copies "${VENV_DIR}"
 fi
 echo "   venv Python: $(${PYTHON} -V)"
 
-# ----------------------------------------------------------------------
-echo "🟢 1) check wheelhouse"
-[[ -d "${WHEEL_DIR}" ]] || { echo "ERROR: '${WHEEL_DIR}' not found"; exit 1; }
+# ---------------------------------------------------------------------
+# 3. check wheelhouse
+# ---------------------------------------------------------------------
+echo "🟢 1) check wheelhouse"; [[ -d "${WHEEL_DIR}" ]] \
+  || { echo "ERROR: '${WHEEL_DIR}' not found"; exit 1; }
 
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 4. fetch / build heavy wheels (オンライン時のみ)
+# ---------------------------------------------------------------------
 echo "🟢 2) ensure heavy wheels"
 for spec in "${HEAVY_PACKAGES[@]}"; do
   pkg="${spec%%[*<>=]*}"
-  pattern="${WHEEL_DIR}/${pkg}"*-"${PYTAG}"*-manylinux*.whl
-  [[ -e $(echo "${pattern}") ]] && continue
+  pattern="${WHEEL_DIR}/${pkg}"*-${PYTAG}-*manylinux*.whl
+  [[ -e $(ls ${pattern} 2>/dev/null | head -n1) ]] && continue
 
   echo "   → ${pkg}"
   if [[ "${pkg}" == "pretty_midi" ]]; then
     "${PYTHON}" -m pip wheel --wheel-dir "${WHEEL_DIR}" --no-deps "${spec}"
   else
-    "${PYTHON}" -m pip download \
-      --dest "${WHEEL_DIR}" \
-      --platform "${MANYLINUX_TAG}" \
-      --implementation cp --abi "${PYTAG}" \
-      --only-binary=:all: --no-deps "${spec}"
+    "${PYTHON}" -m pip download --dest "${WHEEL_DIR}" \
+      --platform "${MANYLINUX_TAG}" --implementation cp --abi "${PYTAG}" \
+      --python-version 3.11 --only-binary=:all: --no-deps "${spec}"
   fi
 done
 
-# ----------------------------------------------------------------------
-echo "🟢 3) upgrade pip / setuptools / wheel (offline)"
-"${PIP}" install --no-index --find-links="${WHEEL_DIR}" --upgrade pip setuptools wheel
+# ---------------------------------------------------------------------
+# 5. upgrade pip / setuptools / wheel  (offline)
+# ---------------------------------------------------------------------
+echo "🟢 3) upgrade pip / setuptools / wheel"
+"${PIP}" install --no-index --find-links="${WHEEL_DIR}" \
+  --upgrade pip setuptools wheel
 
-# ----------------------------------------------------------------------
-echo "🟢 4) install project requirements (offline)"
+# ---------------------------------------------------------------------
+# 6. install project requirements (offline)
+# ---------------------------------------------------------------------
+echo "🟢 4) install requirements"
 "${PIP}" install --no-index --find-links="${WHEEL_DIR}" -r "${REQ_FILE}"
 
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 7. install project itself
+# ---------------------------------------------------------------------
 echo "🟢 5) install project (-e .)"
 "${PIP}" install --no-build-isolation --no-deps -e .
 
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 8. post-setup
+# ---------------------------------------------------------------------
 mkdir -p "${OUTPUT_DIR}"
-echo "✅ setup finished!   source ${VENV_DIR}/bin/activate"
+echo "✅ setup finished – run  'source ${VENV_DIR}/bin/activate'"

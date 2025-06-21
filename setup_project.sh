@@ -48,13 +48,15 @@ HEAVY_PACKAGES=(
 # --- 2. create venv ---
 if [[ ! -x "${PYTHON}" ]]; then
   echo "🟢 0) create venv (${VENV_DIR})"
-  
-  # ▼▼▼ ここから修正 ▼▼▼
-  # ステップ1: まずは仮想環境を作成するだけ
-  python3 -m venv --copies "${VENV_DIR}"
 
-  # ステップ2: 作成した仮想環境のpipを使って、ツールをアップグレードする
-  # これなら、パスが${PIP}（.venv/bin/pip）に確実に解決される
+  # ▼▼▼ ここから修正 ▼▼▼
+  # システムの 'python3' コマンドのフルパスを取得する
+  SYSTEM_PYTHON_PATH=$(which python3)
+  
+  # 取得したフルパスを使ってvenvを作成する
+  echo "   → Using python from: ${SYSTEM_PYTHON_PATH}"
+  "${SYSTEM_PYTHON_PATH}" -m venv --copies "${VENV_DIR}"
+
   echo "   → Upgrading pip/setuptools in venv"
   "${PIP}" install --upgrade pip setuptools
   # ▲▲▲ ここまで修正 ▲▲▲

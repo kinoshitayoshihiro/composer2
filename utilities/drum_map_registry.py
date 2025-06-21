@@ -65,7 +65,15 @@ DRUM_MAP = GM_DRUM_MAP
 _LEGEND_BASE = {
     k: v
     for k, v in GM_DRUM_MAP.items()
-    if k not in {"brush_kick", "brush_snare", "ride"}
+    if k
+    not in {
+        "brush_kick",
+        "brush_snare",
+        "ride",
+        "ride_bell",
+        "splash",
+        "crash_choke",
+    }
 }
 UJAM_LEGEND_MAP: Dict[str, Tuple[str, int]] = {
     **_LEGEND_BASE,  # まず GM をベースにコピーし、一部だけ差し替え

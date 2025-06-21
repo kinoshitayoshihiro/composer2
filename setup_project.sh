@@ -66,9 +66,17 @@ echo "🟢 1) check wheelhouse"
 # 3. heavy packages を wheelhouse に補完 (オンライン時のみ)
 # ----------------------------------------------------------------------
 echo "🟢 2) ensure heavy wheels"
-PYTAG="cp$(python3 - <<'PY'
-import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')
-PY
+# === 設定例 ==========================================
+PYTAG="cp311"
+MANYLINUX_TAG="manylinux2014_x86_64"   # ← ここを修正
+# …
+"${PYTHON}" -m pip download \
+    --dest "${WHEEL_DIR}" \
+    --platform "${MANYLINUX_TAG}" \
+    --implementation cp --abi "${PYTAG}" \
+    --python-version "3.11" \
+    --only-binary=:all: --no-deps "${spec}"
+# =====================================================
 )"
 for spec in "${HEAVY_PACKAGES[@]}"; do
   pkg="${spec%%[*<>=]*}"

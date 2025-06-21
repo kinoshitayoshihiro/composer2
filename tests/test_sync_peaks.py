@@ -24,7 +24,9 @@ def test_pre_hit_lag() -> None:
 
 
 def test_clip_at_zero() -> None:
-    events = PeakSynchroniser.sync_events([0.0], [], tempo_bpm=120.0, lag_ms=-30, clip_at_zero=True)
+    events = PeakSynchroniser.sync_events(
+        [0.0], [], tempo_bpm=120.0, lag_ms=-30, clip_at_zero=True
+    )
     assert events[0]["offset"] == 0.0
 
 

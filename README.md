@@ -190,6 +190,16 @@ saved to JSON so they can be used for later synchronization tools:
 modcompose peaks path/to/vocal.wav -o peaks.json --plot
 ```
 
+Use the JSON with the sampler to synchronise drums with consonants:
+
+```bash
+modcompose sample model.pkl --peaks peaks.json --lag 10
+```
+
+Passing `--lag` values below zero will pre-hit the drums. If this causes
+negative beat offsets, set `clip_at_zero=true` in your configuration or pass the
+parameter when using the synchroniser programmatically.
+
 This JSON can then be fed to later synchronization tools. TODO: refine wording.
 
 ## License

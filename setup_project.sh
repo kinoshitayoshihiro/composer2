@@ -9,7 +9,7 @@ set -euo pipefail
 # 0. 変数
 # ----------------------------------------------------------------------
 PROJECT_ROOT="$(pwd)"
-WHEEL_DIR="${PROJECT_ROOT}/wheelhouse"      # 事前 / 自動 DL 済み .whl の置き場
+WHEEL_DIR="${PROJECT_ROOT}/wheelhouse"
 REQ_FILE="requirements.txt"
 OUTPUT_DIR="midi_output"
 
@@ -18,35 +18,29 @@ PYBIN="${VENV_DIR}/bin"
 PIP="${PYBIN}/pip"
 PYTHON="${PYBIN}/python"
 
-# pip / build 系も wheelhouse で管理 (← wheel 必須! )
-HEAVY_PACKAGES=(
-  # --- core build ---
-  "wheel>=0.43"            # ←★ 追加!!
-  "pip>=24.0"
-  "setuptools>=68.0"
+# ターゲット Python / wheel タグ
+PYTAG="cp311"                    # 例: Python 3.11
+MANYLINUX_TAG="manylinux2014_x86_64"
 
-  # --- numeric ---
-  "numpy>=1.26.4,<2.0.0"   "scipy>=1.10"
-  "scipy>=1.10"
-  # --- parsing / util ---
-  "PyYAML>=6.0"            "tomli>=2.0"
-  "pydantic>=2.7"          "pydantic-core==2.33.2"
-  # --- midi / audio ---
-  "pretty_midi>=0.2.10"    "mido>=1.3.0"   "pydub>=0.25"
-  # --- librosa & deps ---
-  "soundfile>=0.12"        "audioread>=2.1.9"
-  "numba>=0.57"            "llvmlite>=0.42" "librosa>=0.10"
-  # --- plotting ---
-  "matplotlib>=3.8" "contourpy>=1.0.1" \
-  "fonttools>=4.22.0" "kiwisolver>=1.3.1" "Pillow>=10.0"
-  # --- misc ---
+# heavy パッケージ  ── **wheelhouse に必ず置くもの**
+HEAVY_PACKAGES=(
+  # build-core
+  "wheel>=0.43" "pip>=24.0" "setuptools>=68.0"
+
+  # numeric
+  "numpy>=1.26.4,<2.0.0" "scipy>=1.10"
+  # parsing / util
+  "PyYAML>=6.0" "tomli>=2.0" "pydantic>=2.7" "pydantic-core==2.33.2"
+  # midi / audio
+  "pretty_midi>=0.2.10" "mido>=1.3.0" "pydub>=0.25"
+  # librosa & deps
+  "soundfile>=0.12" "audioread>=2.1.9" "numba>=0.57" "llvmlite>=0.42" "librosa>=0.10"
+  # plotting
+  "matplotlib>=3.8" "contourpy>=1.0.1" "fonttools>=4.22.0" "kiwisolver>=1.3.1" "Pillow>=10.0"
+  # misc
   "charset_normalizer<4,>=2"
-  # ── librosa & 依存 ─────────────
-  "audioread>=2.1.9"
-  "librosa>=0.10"
-  # ── matplotlib (music21 連鎖) ─
-  "kiwisolver>=1.3.1" "Pillow>=10.0"
 )
+
 # ----------------------------------------------------------------------
 # 1. venv
 # ----------------------------------------------------------------------
@@ -66,18 +60,6 @@ echo "🟢 1) check wheelhouse"
 # 3. heavy packages を wheelhouse に補完 (オンライン時のみ)
 # ----------------------------------------------------------------------
 echo "🟢 2) ensure heavy wheels"
-# === 設定例 ==========================================
-PYTAG="cp311"
-MANYLINUX_TAG="manylinux2014_x86_64"   # ← ここを修正
-# …
-"${PYTHON}" -m pip download \
-    --dest "${WHEEL_DIR}" \
-    --platform "${MANYLINUX_TAG}" \
-    --implementation cp --abi "${PYTAG}" \
-    --python-version "3.11" \
-    --only-binary=:all: --no-deps "${spec}"
-# =====================================================
-)"
 for spec in "${HEAVY_PACKAGES[@]}"; do
   pkg="${spec%%[*<>=]*}"
   pattern="${WHEEL_DIR}/${pkg}"*-"${PYTAG}"*-manylinux*.whl
@@ -85,28 +67,30 @@ for spec in "${HEAVY_PACKAGES[@]}"; do
 
   echo "   → fetch/build ${pkg}"
   if [[ "${pkg}" == "pretty_midi" ]]; then
-    "${PYTHON}" -m pip wheel   --wheel-dir "${WHEEL_DIR}" --no-deps "${spec}"
+    "${PYTHON}" -m pip wheel --wheel-dir "${WHEEL_DIR}" --no-deps "${spec}"
   else
     "${PYTHON}" -m pip download --dest "${WHEEL_DIR}" \
-      --platform manylinux_2_17_x86_64 --implementation cp --abi "${PYTAG}" \
+      --platform "${MANYLINUX_TAG}" \
+      --implementation cp --abi "${PYTAG}" \
+      --python-version "${PYTAG:2}" \
       --only-binary=:all: --no-deps "${spec}"
   fi
 done
 
 # ----------------------------------------------------------------------
-# 4. pip / setuptools / wheel を wheelhouse で更新
+# 4. build tools を wheelhouse から upgrade
 # ----------------------------------------------------------------------
 echo "🟢 3) upgrade pip / setuptools / wheel (offline)"
 "${PIP}" install --no-index --find-links="${WHEEL_DIR}" --upgrade pip setuptools wheel
 
 # ----------------------------------------------------------------------
-# 5. requirements.txt (プロジェクト依存) をオフラインで入れる
+# 5. requirements.txt のオフライン install
 # ----------------------------------------------------------------------
 echo "🟢 4) install project requirements"
 "${PIP}" install --no-index --find-links="${WHEEL_DIR}" -r "${REQ_FILE}"
 
 # ----------------------------------------------------------------------
-# 6. プロジェクト自体を editable-install
+# 6. プロジェクト自体を editable install
 # ----------------------------------------------------------------------
 echo "🟢 5) install project (-e .)"
 "${PIP}" install --no-build-isolation --no-deps -e .
@@ -115,4 +99,4 @@ echo "🟢 5) install project (-e .)"
 # 7. 後処理
 # ----------------------------------------------------------------------
 mkdir -p "${OUTPUT_DIR}"
-echo "✅ setup finished!  run  'source ${VENV_DIR}/bin/activate'"
+echo "✅ setup finished!   source ${VENV_DIR}/bin/activate"

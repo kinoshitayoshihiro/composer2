@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# =========================================================
-#  setup_project.sh   (robust offline / online bootstrap)
-# =========================================================
+# =====================================================================
+#  setup_project.sh  (robust offline / online bootstrap)
+# =====================================================================
 set -euo pipefail
 
-# --- paths ------------------------------------------------
-ROOT_DIR="$PWD"
+# ---------- paths ----------------------------------------------------
+ROOT_DIR=$(pwd)
 WHEEL_DIR="$ROOT_DIR/wheelhouse"
 REQ_FILE="$ROOT_DIR/requirements.txt"
 OUTPUT_DIR="$ROOT_DIR/midi_output"
@@ -17,7 +17,7 @@ VPIP="$VENV_DIR/bin/pip"
 PYTAG="cp311"
 MANYLINUX="manylinux2014_x86_64"
 
-# --- heavy wheels (***1 token = 1 quoted string***) -------
+# ---------- heavy packages (1 token = 1 quoted string) ---------------
 HEAVY_PKGS=(
   "wheel>=0.43" "pip>=24.0" "setuptools>=68.0"
   "numpy>=1.26.4,<2.0.0" "scipy>=1.10"
@@ -31,33 +31,35 @@ HEAVY_PKGS=(
   "charset_normalizer<4,>=2"
 )
 
-# --- create venv -----------------------------------------
+# ---------- 0. create / fix venv -------------------------------------
 if [[ ! -x "$VPY" ]]; then
   echo "🟢 creating venv ($VENV_DIR)"
-  python3 -m venv "$VENV_DIR"
+  python3 -m venv --symlinks "$VENV_DIR"   # ← ★ 失敗しないモード
+
+  # フォールバック: python3 シンボリックリンクが無い環境用
+  [[ -e "$VENV_DIR/bin/python3" ]] || ln -s python "$VENV_DIR/bin/python3"
 fi
 echo "   venv python: $("$VPY" -V)"
 
-# make sure pip is boot-strapped (some distros ship empty venv)
-"$VPY" -m ensurepip --upgrade > /dev/null 2>&1 || true
-"$VPY" -m pip install --upgrade wheel pip setuptools > /dev/null
+# ensure pip/setuptools/wheel は最低限入れる
+"$VPY" -m ensurepip --upgrade >/dev/null 2>&1 || true
+"$VPY" -m pip install --upgrade wheel pip setuptools >/dev/null
 
-# --- decide offline / online ------------------------------
-OFFLINE=true
+# ---------- 1. decide offline / online -------------------------------
 if [[ ! -d "$WHEEL_DIR" || -z "$(ls -A "$WHEEL_DIR" 2>/dev/null)" ]]; then
-  OFFLINE=false
-  mkdir -p "$WHEEL_DIR"
+  OFFLINE=false; mkdir -p "$WHEEL_DIR"
   echo "🟡 wheelhouse empty → ONLINE mode"
 else
+  OFFLINE=true
   echo "🟢 wheelhouse found → OFFLINE mode"
 fi
 
-# --- fetch heavy wheels if online -------------------------
+# ---------- 2. fetch heavy wheels (only if online) -------------------
 if ! $OFFLINE; then
   echo "🟢 downloading heavy wheels"
   for spec in "${HEAVY_PKGS[@]}"; do
     pkg=${spec%%[<>=]*}
-    if compgen -G "$WHEEL_DIR/${pkg}-*-${PYTAG}-*manylinux*.whl" > /dev/null; then
+    if compgen -G "$WHEEL_DIR/${pkg}-*-${PYTAG}-*manylinux*.whl" >/dev/null; then
       continue
     fi
     echo "   → $pkg"
@@ -67,11 +69,11 @@ if ! $OFFLINE; then
   done
 fi
 
-# --- upgrade pip etc. again, now offline if possible ------
+# ---------- 3. upgrade pip etc. using wheelhouse ---------------------
 "$VPIP" install --no-index --find-links "$WHEEL_DIR" \
   --upgrade wheel pip setuptools
 
-# --- install requirements ---------------------------------
+# ---------- 4. requirements -----------------------------------------
 echo "🟢 installing project requirements"
 if $OFFLINE; then
   "$VPIP" install --no-index --find-links "$WHEEL_DIR" -r "$REQ_FILE"
@@ -79,7 +81,7 @@ else
   "$VPIP" install -r "$REQ_FILE"
 fi
 
-# --- editable-install project -----------------------------
+# ---------- 5. editable install project ------------------------------
 "$VPIP" install --no-build-isolation --no-deps -e "$ROOT_DIR"
 
 mkdir -p "$OUTPUT_DIR"

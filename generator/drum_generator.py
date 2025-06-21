@@ -35,6 +35,7 @@ from utilities.drum_map_registry import (
 )
 from utilities.drum_map import GENERAL_MIDI_MAP
 from utilities.timing_utils import TimingBlend, interp_curve
+from utilities.peak_synchroniser import PeakSynchroniser
 
 
 logger = logging.getLogger("modular_composer.drum_generator")
@@ -506,6 +507,14 @@ class DrumGenerator(BasePartGenerator):
         # もし、この後に独自の初期化処理があれば、ここに残してください。
         # 必須のデフォルトパターンが不足している場合に補充
         self._add_internal_default_patterns()
+
+        sync_cfg = global_cfg.get("consonant_sync", {})
+        self.consonant_sync_cfg = {
+            "lag_ms": float(sync_cfg.get("lag_ms", 10.0)),
+            "min_distance_beats": float(sync_cfg.get("min_distance_beats", 0.25)),
+            "sustain_threshold_ms": float(sync_cfg.get("sustain_threshold_ms", 120.0)),
+        }
+        self.consonant_peaks: List[float] | None = None
 
         # Use path settings from main_cfg, preferring an explicit MIDI file path
         self.vocal_midi_path = (
@@ -1285,6 +1294,20 @@ class DrumGenerator(BasePartGenerator):
                 rng=self.rng,
                 resolution=self.groove_resolution,
             )
+
+        if self.consonant_peaks:
+            start_sec = bar_start_abs_offset * 60.0 / self.global_tempo
+            end_sec = (bar_start_abs_offset + current_bar_actual_len_ql) * 60.0 / self.global_tempo
+            peaks_in_bar = [p - start_sec for p in self.consonant_peaks if start_sec <= p < end_sec]
+            if peaks_in_bar:
+                events = PeakSynchroniser.sync_events(
+                    peaks_in_bar,
+                    events,
+                    tempo_bpm=self.global_tempo,
+                    lag_ms=self.consonant_sync_cfg["lag_ms"],
+                    min_distance_beats=self.consonant_sync_cfg["min_distance_beats"],
+                    sustain_threshold_ms=self.consonant_sync_cfg["sustain_threshold_ms"],
+                )
 
         prev_note: Optional[note.Note] = None
         prev_vel_scale = 1.0

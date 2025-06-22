@@ -38,6 +38,13 @@ Install the requirements before you invoke `modular_composer.py` or run
 the tests—otherwise packages such as `music21` will not be available and
 Python will raise a `ModuleNotFoundError`.
 
+If you encounter `ModuleNotFoundError: No module named 'pkg_resources'` when
+importing `pretty_midi`, install `setuptools` as well:
+
+```bash
+pip install setuptools
+```
+
 ```bash
 # preferred
 bash setup.sh
@@ -54,6 +61,7 @@ The `config/` directory stores YAML files that control generation.  The main ent
 global_settings:
   time_signature: "4/4"
   tempo_bpm: 88
+  tempo_curve_path: "data/tempo_curve.json"  # optional gradual rit./accel.
 paths:
   chordmap_path: "../data/processed_chordmap_with_emotion.yaml"
   rhythm_library_path: "../data/rhythm_library.yml"

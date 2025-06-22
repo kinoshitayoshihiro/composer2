@@ -1,4 +1,3 @@
-# --- START OF FILE generator/drum_generator.py (最終FIX版) ---
 import logging, random, json, copy
 import math
 import yaml
@@ -35,8 +34,8 @@ from utilities.drum_map_registry import (
 )
 from utilities.drum_map import GENERAL_MIDI_MAP
 from utilities.timing_utils import TimingBlend, interp_curve
-from utilities.tempo_curve import TempoCurve
-from utilities.velocity_smoother import VelocitySmoother
+from utilities.tempo_curve import TempoCurve, load_tempo_curve
+from utilities.velocity_smoother import EMASmoother
 from utilities.peak_synchroniser import PeakSynchroniser
 
 
@@ -524,13 +523,15 @@ class DrumGenerator(BasePartGenerator):
             p = Path(curve_path).expanduser()
             if p.exists():
                 try:
-                    self.tempo_curve = TempoCurve.from_json(p)
+                    self.tempo_curve = load_tempo_curve(p)
                 except Exception as e:  # pragma: no cover - optional
                     logger.warning(f"Failed to load tempo curve from {p}: {e}")
 
         self.current_bpm = self.main_cfg.get("tempo", 120)
-        self.use_velocity_ema = bool((global_settings or {}).get("use_velocity_ema", False))
-        self._vel_smoother = VelocitySmoother()
+        self.use_velocity_ema = bool(
+            (global_settings or {}).get("use_velocity_ema", False)
+        )
+        self._vel_smoother = EMASmoother()
 
         sync_cfg = global_cfg.get("consonant_sync", {})
         self.consonant_sync_cfg = {
@@ -1301,7 +1302,7 @@ class DrumGenerator(BasePartGenerator):
         log_apply_prefix = f"DrumGen.ApplyPattern"
         if self.tempo_curve:
             beat_pos = bar_start_abs_offset
-            self.current_bpm = self.tempo_curve.bpm_at(beat_pos)
+            self.current_bpm = self.tempo_curve.bpm_at(beat_pos, self.global_ts)
         else:
             self.current_bpm = self.global_tempo
         if self.use_velocity_ema:
@@ -1389,7 +1390,8 @@ class DrumGenerator(BasePartGenerator):
             )
             if self.tempo_curve:
                 event_bpm = self.tempo_curve.bpm_at(
-                    bar_start_abs_offset + rel_offset_in_pattern
+                    bar_start_abs_offset + rel_offset_in_pattern,
+                    self.global_ts,
                 )
             else:
                 event_bpm = self.global_tempo
@@ -1511,19 +1513,7 @@ class DrumGenerator(BasePartGenerator):
                     int(final_event_velocity * velocity_scale * vel_mul),
                 ),
             )
-            if self.use_velocity_ema and any(
-                k in inst_name for k in [
-                    "kick",
-                    "snare",
-                    "tom",
-                    "crash",
-                    "splash",
-                    "ride",
-                    "bell",
-                    "china",
-                    "cymbal",
-                ]
-            ):
+            if self.use_velocity_ema and any(k in inst_name for k in ["kick", "snare"]):
                 final_event_velocity = self._vel_smoother.smooth(final_event_velocity)
 
             if brush_active and inst_name == "snare":
@@ -1543,6 +1533,7 @@ class DrumGenerator(BasePartGenerator):
                         spread_ms=float(ev_def.get("spread_ms", 25.0)),
                         velocity_curve=ev_def.get("grace_curve"),
                         humanize=ev_def.get("humanize_grace"),
+                        tempo_bpm=event_bpm,
                     )
                 continue
 
@@ -1565,7 +1556,7 @@ class DrumGenerator(BasePartGenerator):
 
             if inst_name in {"ghost_snare", "ghost_tom"}:
                 drum_hit_note = humanizer.apply_ghost_jitter(
-                    drum_hit_note, self.rng, tempo_bpm=self.current_bpm
+                    drum_hit_note, self.rng, tempo_bpm=event_bpm
                 )
 
             if ev_def.get("humanize_template") == "flam_legato_ghost":
@@ -1751,6 +1742,7 @@ class DrumGenerator(BasePartGenerator):
         spread_ms: float = 25.0,
         velocity_curve: str | Sequence[float] | None = None,
         humanize: bool | str | dict | None = None,
+        tempo_bpm: float | None = None,
     ) -> None:
         """Insert a drag or ruff before the main hit.
 
@@ -1806,9 +1798,10 @@ class DrumGenerator(BasePartGenerator):
                 )
             return n
 
+        tempo = tempo_bpm or self.current_bpm
         for idx in range(n_hits):
             off_ms = window_ms - idx * step_ms
-            grace_offset = (off_ms / 1000.0) * (self.current_bpm / 60.0)
+            grace_offset = (off_ms / 1000.0) * (tempo / 60.0)
             factor = _get_factor(idx)
             grace = note.Note()
             grace.pitch = pitch.Pitch(midi=midi_pitch)
@@ -2064,4 +2057,3 @@ class DrumGenerator(BasePartGenerator):
         ]
 
 
-# --- END OF FILE generator/drum_generator.py ---

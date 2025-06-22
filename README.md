@@ -167,6 +167,15 @@ pytest -q
 
 Running the tests confirms that chord generation and instrument mappings behave as expected.
 
+Golden MIDI regression files live in `tests/golden/`. Update them with:
+
+```bash
+pytest --generate-golden
+```
+
+To render audio set `SF2_PATH` to your SoundFont and install `fluidsynth`.
+Use `utilities.synth.render_midi` to convert MIDI files to WAV for quick checks.
+
 ### Groove Sampler Usage
 
 Build an n-gram model from a folder of MIDI loops:

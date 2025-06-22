@@ -35,8 +35,8 @@ from utilities.drum_map_registry import (
 )
 from utilities.drum_map import GENERAL_MIDI_MAP
 from utilities.timing_utils import TimingBlend, interp_curve
-from utilities.tempo_utils import load_tempo_curve, get_bpm_at
-from utilities.velocity_smoother import EmaSmoother
+from utilities.tempo_curve import TempoCurve
+from utilities.velocity_smoother import VelocitySmoother
 from utilities.peak_synchroniser import PeakSynchroniser
 
 
@@ -515,20 +515,22 @@ class DrumGenerator(BasePartGenerator):
 
         curve_path = (
             (global_settings or {}).get("tempo_curve_path")
+            or (global_settings or {}).get("tempo_curve_json")
             or (self.main_cfg.get("paths", {}).get("tempo_curve_path") if self.main_cfg else None)
+            or (self.main_cfg.get("paths", {}).get("tempo_curve_json") if self.main_cfg else None)
         )
-        self.tempo_curve = None
+        self.tempo_curve: TempoCurve | None = None
         if curve_path:
             p = Path(curve_path).expanduser()
             if p.exists():
                 try:
-                    self.tempo_curve = load_tempo_curve(p)
+                    self.tempo_curve = TempoCurve.from_json(p)
                 except Exception as e:  # pragma: no cover - optional
                     logger.warning(f"Failed to load tempo curve from {p}: {e}")
 
         self.current_bpm = self.main_cfg.get("tempo", 120)
         self.use_velocity_ema = bool((global_settings or {}).get("use_velocity_ema", False))
-        self._vel_smoother = EmaSmoother()
+        self._vel_smoother = VelocitySmoother()
 
         sync_cfg = global_cfg.get("consonant_sync", {})
         self.consonant_sync_cfg = {
@@ -1299,7 +1301,7 @@ class DrumGenerator(BasePartGenerator):
         log_apply_prefix = f"DrumGen.ApplyPattern"
         if self.tempo_curve:
             beat_pos = bar_start_abs_offset
-            self.current_bpm = get_bpm_at(beat_pos, self.tempo_curve)
+            self.current_bpm = self.tempo_curve.bpm_at(beat_pos)
         else:
             self.current_bpm = self.global_tempo
         if self.use_velocity_ema:
@@ -1386,8 +1388,8 @@ class DrumGenerator(BasePartGenerator):
                 log_name=f"{log_event_prefix}.Offset",
             )
             if self.tempo_curve:
-                event_bpm = get_bpm_at(
-                    bar_start_abs_offset + rel_offset_in_pattern, self.tempo_curve
+                event_bpm = self.tempo_curve.bpm_at(
+                    bar_start_abs_offset + rel_offset_in_pattern
                 )
             else:
                 event_bpm = self.global_tempo

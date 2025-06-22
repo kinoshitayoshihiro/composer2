@@ -7,6 +7,7 @@ from pathlib import Path
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
 from utilities.peak_extractor import PeakExtractorConfig, extract_peaks
 from utilities.peak_synchroniser import PeakSynchroniser
+from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple, beat_to_seconds
 
 try:
     __version__ = _md.version("modular_composer")
@@ -17,11 +18,24 @@ except _md.PackageNotFoundError:
 def _cmd_demo(args: list[str]) -> None:
     ap = argparse.ArgumentParser(prog="modcompose demo")
     ap.add_argument("-o", "--out", type=Path, default=Path("demo.mid"))
+    ap.add_argument("--tempo-curve", type=Path)
     ns = ap.parse_args(args)
-    model = train(Path("data/loops"), n=2, auto_res=True)
-    ev = generate_events(model, bars=4)
-    # (PrettyMIDI export placeholder)
-    print(f"[demo] generated {len(ev)} events -> {ns.out}")
+
+    curve = []
+    if ns.tempo_curve:
+        curve = load_tempo_curve_simple(ns.tempo_curve)
+
+    import pretty_midi
+
+    pm = pretty_midi.PrettyMIDI(initial_tempo=curve[0]["bpm"] if curve else 120)
+    inst = pretty_midi.Instrument(program=0)
+    for i in range(16):
+        start = beat_to_seconds(float(i), curve)
+        end = beat_to_seconds(float(i + 1), curve)
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=start, end=end))
+    pm.instruments.append(inst)
+    pm.write(str(ns.out))
+    print(f"[demo] wrote {ns.out}")
 
 
 def _cmd_sample(args: list[str]) -> None:
@@ -37,6 +51,7 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("-o", "--out", type=Path)
     ap.add_argument("--peaks", type=Path)
     ap.add_argument("--lag", type=float, default=10.0)
+    ap.add_argument("--tempo-curve", type=Path)
     ns = ap.parse_args(args)
     model = load(ns.model)
     ev = generate_events(

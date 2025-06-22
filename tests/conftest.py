@@ -26,6 +26,11 @@ def pytest_addoption(parser):
         action="store_true",
         help="Regenerate golden MIDI files",
     )
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        help="Regenerate golden MIDI files",
+    )
 
 
 @pytest.fixture(scope="session")

@@ -16,3 +16,4 @@ filelist.txt
 heatmap.json
 modular_composer.egg-info/
 .DS_Store
+.hypothesis/

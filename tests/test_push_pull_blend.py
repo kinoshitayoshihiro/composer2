@@ -1,5 +1,5 @@
 import pytest
-from generator.drum_generator import _combine_timing
+from utilities.timing_utils import _combine_timing
 
 
 def test_push_pull_velocity_blend():

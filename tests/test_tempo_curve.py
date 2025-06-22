@@ -3,7 +3,7 @@ from pathlib import Path
 from utilities.tempo_curve import TempoCurve
 from music21 import meter
 from hypothesis import given, strategies as st
-from generator.drum_generator import _combine_timing
+from utilities.timing_utils import _combine_timing
 
 
 def test_tempo_curve_linear(tmp_path: Path) -> None:

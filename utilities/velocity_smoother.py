@@ -2,6 +2,7 @@ from __future__ import annotations
 # deque is required for the EMA history buffer
 from collections import deque
 from statistics import median
+import warnings
 
 
 class VelocitySmoother:
@@ -55,6 +56,11 @@ class EMASmoother:
     """Exponential moving average velocity smoother with MAD-based alpha."""
 
     def __init__(self, initial_alpha: float = 0.5, window: int = 8) -> None:
+        warnings.warn(
+            "EMASmoother is deprecated; use TempoVelocitySmoother instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if not 0 < initial_alpha <= 1:
             raise ValueError("initial_alpha must be in (0, 1]")
         self.alpha = float(initial_alpha)

@@ -1,4 +1,5 @@
 from __future__ import annotations
+# deque is required for the EMA history buffer
 from collections import deque
 from statistics import median
 
@@ -46,5 +47,46 @@ class VelocitySmoother:
             return max(1, min(127, raw))
         alpha = self._alpha()
         self.value = self.value + alpha * (raw - self.value)
+        result = int(round(self.value))
+        return max(1, min(127, result))
+
+
+class EMASmoother:
+    """Exponential moving average velocity smoother with MAD-based alpha."""
+
+    def __init__(self, initial_alpha: float = 0.5, window: int = 8) -> None:
+        if not 0 < initial_alpha <= 1:
+            raise ValueError("initial_alpha must be in (0, 1]")
+        self.alpha = float(initial_alpha)
+        self.window = window
+        self.value: float | None = None
+        self.history: deque[int] = deque(maxlen=window)
+
+    def reset(self) -> None:
+        self.value = None
+        self.history.clear()
+
+    @staticmethod
+    def alpha_for_window(vals: list[int]) -> float:
+        if not vals:
+            return 0.5
+        med = median(vals)
+        dev = [abs(v - med) for v in vals]
+        mad = median(dev)
+        alpha = mad / 20.0
+        if alpha < 0.15:
+            alpha = 0.15
+        elif alpha > 0.85:
+            alpha = 0.85
+        return alpha
+
+    def smooth(self, raw: int) -> int:
+        raw = int(raw)
+        self.history.append(raw)
+        if self.value is None:
+            self.value = float(raw)
+            return raw
+        self.alpha = self.alpha_for_window(list(self.history))
+        self.value = self.value + self.alpha * (raw - self.value)
         result = int(round(self.value))
         return max(1, min(127, result))

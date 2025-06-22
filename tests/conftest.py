@@ -21,6 +21,11 @@ def pytest_configure(config):
 
 def pytest_addoption(parser):
     parser.addoption("--dry-run", action="store_true", help="Run tests in dry-run mode")
+    parser.addoption(
+        "--generate-golden",
+        action="store_true",
+        help="Regenerate golden MIDI files",
+    )
 
 
 @pytest.fixture(scope="session")

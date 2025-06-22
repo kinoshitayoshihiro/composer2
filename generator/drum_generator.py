@@ -33,7 +33,7 @@ from utilities.drum_map_registry import (
     MISSING_DRUM_MAP_FALLBACK,
 )
 from utilities.drum_map import GENERAL_MIDI_MAP
-from utilities.timing_utils import TimingBlend, interp_curve
+from utilities.timing_utils import TimingBlend, interp_curve, _combine_timing
 from utilities.tempo_curve import TempoCurve, load_tempo_curve
 from utilities.velocity_smoother import EMASmoother
 from utilities.peak_synchroniser import PeakSynchroniser
@@ -368,98 +368,6 @@ def load_heatmap_data(heatmap_path: Optional[str]) -> Dict[int, int]:
         return {}
 
 
-def _combine_timing(
-    rel_offset: float,
-    beat_len_ql: float,
-    *,
-    swing_ratio: float = 0.5,
-    swing_type: str = "eighth",
-    push_pull_curve: list[float] | None = None,
-    tempo_bpm: float,
-    max_push_ms: float = 80.0,
-    vel_range: tuple[float, float] = (0.9, 1.1),
-    return_vel: bool = False,
-) -> float:
-    """Apply push-pull and swing timing with velocity blending.
-
-    Parameters
-    ----------
-    rel_offset
-        Original relative offset in quarterLength units.
-    beat_len_ql
-        Duration of one beat in ``quarterLength``.
-    swing_ratio
-        Ratio for swing feel. ``0.5`` means straight.
-    swing_type
-        Either ``"eighth"`` or ``"sixteenth"``.
-    push_pull_curve
-        List of push/pull offsets in milliseconds.
-    tempo_bpm
-        Tempo used for ms-to-quarterLength conversion.
-    max_push_ms
-        Maximum magnitude mapped to ``vel_range``.
-    vel_range
-        Tuple ``(min, max)`` velocity multipliers.
-    return_vel
-        If ``True`` return :class:`TimingBlend` instead of ``float``.
-
-    Returns
-    -------
-    float or TimingBlend
-        Adjusted offset, and optionally velocity multiplier.
-    """
-    if beat_len_ql <= 0:
-        result = TimingBlend(rel_offset, 1.0)
-        return result if return_vel else result.offset_ql
-
-    base_offset = rel_offset
-    delta_push_ql = 0.0
-    vel_scale = 1.0
-
-    if push_pull_curve:
-        try:
-            ext_curve = list(push_pull_curve) + [push_pull_curve[0]]
-            steps = len(push_pull_curve) * 4 + 1
-            curve = interp_curve(ext_curve, steps)
-            bar_len = beat_len_ql * len(push_pull_curve)
-            pos = (rel_offset % bar_len) / bar_len * (steps - 1)
-            idx = int(pos)
-            frac = pos - idx
-            val_ms = curve[idx] * (1 - frac) + curve[idx + 1] * frac
-            delta_push_ql = (val_ms / 1000.0) * (tempo_bpm / 60.0)
-            mag = min(abs(val_ms), max_push_ms) / float(max_push_ms)
-            vmin, vmax = vel_range
-            if val_ms >= 0:
-                vel_scale = 1.0 + (vmax - 1.0) * mag
-            else:
-                vel_scale = 1.0 - (1.0 - vmin) * mag
-        except Exception:
-            delta_push_ql = 0.0
-            vel_scale = 1.0
-
-    delta_swing_ql = 0.0
-    if abs(swing_ratio - 0.5) >= 1e-3:
-        if swing_type == "eighth":
-            subdivision_duration_ql = beat_len_ql / 2.0
-        elif swing_type == "sixteenth":
-            subdivision_duration_ql = beat_len_ql / 4.0
-        else:
-            subdivision_duration_ql = beat_len_ql
-        if subdivision_duration_ql > 0:
-            effective_beat_ql = subdivision_duration_ql * 2.0
-            beat_num = math.floor(rel_offset / effective_beat_ql)
-            within = rel_offset - beat_num * effective_beat_ql
-            epsilon = subdivision_duration_ql * 0.1
-            if abs(within - subdivision_duration_ql) < epsilon:
-                swung = beat_num * effective_beat_ql + effective_beat_ql * swing_ratio
-                delta_swing_ql = swung - rel_offset
-
-    w = 0.5
-    new_offset = base_offset + delta_swing_ql * (1.0 - w) + delta_push_ql * w
-    new_offset = max(0.0, new_offset)
-
-    result = TimingBlend(new_offset, vel_scale)
-    return result if return_vel else result.offset_ql
 
 
 # DrumGenerator例
@@ -788,6 +696,12 @@ class DrumGenerator(BasePartGenerator):
 
         # 最終的なパターン辞書を part_parameters に適用
         self.part_parameters = self.raw_pattern_lib
+
+    def _current_bpm(self, abs_offset_ql: float) -> float:
+        """Return BPM at ``abs_offset_ql`` using tempo curve if available."""
+        if self.tempo_curve is not None:
+            return self.tempo_curve.bpm_at(abs_offset_ql, self.global_ts)
+        return self.global_tempo
 
     def _choose_pattern_key(
         self,
@@ -1300,11 +1214,7 @@ class DrumGenerator(BasePartGenerator):
             and then ``velocity_curve`` to avoid mis-scaled velocities.
         """
         log_apply_prefix = f"DrumGen.ApplyPattern"
-        if self.tempo_curve:
-            beat_pos = bar_start_abs_offset
-            self.current_bpm = self.tempo_curve.bpm_at(beat_pos, self.global_ts)
-        else:
-            self.current_bpm = self.global_tempo
+        self.current_bpm = self._current_bpm(bar_start_abs_offset)
         if self.use_velocity_ema:
             self._vel_smoother.reset()
         beat_len_ql = (
@@ -1388,13 +1298,7 @@ class DrumGenerator(BasePartGenerator):
                 cast_to=float,
                 log_name=f"{log_event_prefix}.Offset",
             )
-            if self.tempo_curve:
-                event_bpm = self.tempo_curve.bpm_at(
-                    bar_start_abs_offset + rel_offset_in_pattern,
-                    self.global_ts,
-                )
-            else:
-                event_bpm = self.global_tempo
+            event_bpm = self._current_bpm(bar_start_abs_offset + rel_offset_in_pattern)
             self.current_bpm = event_bpm
             blend = _combine_timing(
                 rel_offset_in_pattern,

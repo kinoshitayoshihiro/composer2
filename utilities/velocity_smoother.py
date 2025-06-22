@@ -68,16 +68,19 @@ class EMASmoother:
 
     @staticmethod
     def alpha_for_window(vals: list[int]) -> float:
+        """Return smoothing coefficient based on median absolute deviation."""
         if not vals:
             return 0.5
         med = median(vals)
         dev = [abs(v - med) for v in vals]
         mad = median(dev)
-        alpha = mad / 20.0
-        if alpha < 0.15:
-            alpha = 0.15
-        elif alpha > 0.85:
-            alpha = 0.85
+        if mad < 0:
+            mad = 0.0
+        alpha = 1.0 / (1.0 + mad)
+        if alpha < 0.1:
+            alpha = 0.1
+        elif alpha > 0.9:
+            alpha = 0.9
         return alpha
 
     def smooth(self, raw: int) -> int:

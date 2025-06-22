@@ -1,4 +1,4 @@
-from generator.drum_generator import _combine_timing
+from utilities.timing_utils import _combine_timing
 
 
 def _eval(rel, pp, swing, bpm=120):

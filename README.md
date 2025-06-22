@@ -45,6 +45,12 @@ importing `pretty_midi`, install `setuptools` as well:
 pip install setuptools
 ```
 
+### Dev-Dependencies
+
+The optional **Musyng Kite** SoundFont (LGPL) is recommended for audio previews.
+Place the `.sf2` file somewhere and set the environment variable `SF2_PATH`
+when rendering MIDI with `utilities.synth.render_midi`.
+
 ```bash
 # preferred
 bash setup.sh
@@ -72,6 +78,17 @@ sections_to_generate:
 ```
 
 Edit these values to point to your chordmap and rhythm library, and list the section labels you wish to render.
+
+`data/tempo_curve.json` defines BPM over time. Each segment may specify
+`"curve": "linear"` or `"step"` to control interpolation:
+
+```json
+[
+  {"beat": 0, "bpm": 120, "curve": "linear"},
+  {"beat": 32, "bpm": 108, "curve": "linear"},
+  {"beat": 64, "bpm": 128}
+]
+```
 
 ## Generating MIDI
 Before generating any MIDI ensure the requirements are installed with
@@ -167,10 +184,10 @@ pytest -q
 
 Running the tests confirms that chord generation and instrument mappings behave as expected.
 
-Golden MIDI regression files live in `tests/golden/`. Update them with:
+Golden MIDI regression files live in `tests/golden_midi/`. Update them with:
 
 ```bash
-pytest --generate-golden
+pytest --update-golden
 ```
 
 To render audio set `SF2_PATH` to your SoundFont and install `fluidsynth`.
@@ -217,7 +234,7 @@ Passing `--lag` values below zero will pre-hit the drums. If this causes
 negative beat offsets, set `clip_at_zero=true` in your configuration or pass the
 parameter when using the synchroniser programmatically.
 
-This JSON can then be fed to later synchronization tools. TODO: refine wording.
+This JSON can then be fed to later synchronization tools.
 
 ## License
 This project is licensed under the [MIT License](LICENSE).

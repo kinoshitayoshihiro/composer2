@@ -42,6 +42,13 @@ from .drum_map_registry import get_drum_map
 
 from .velocity_curve import resolve_velocity_curve, PREDEFINED_CURVES
 from .tempo_curve import TempoCurve, TempoPoint, load_tempo_curve
+from .tempo_utils import (
+    load_tempo_curve as load_tempo_curve_simple,
+    get_bpm_at,
+    interpolate_bpm,
+    beat_to_seconds,
+    TempoVelocitySmoother,
+)
 from .velocity_smoother import VelocitySmoother, EMASmoother
 from .midi_export import write_demo_bar
 from .synth import render_midi
@@ -53,5 +60,6 @@ __all__ = [
     "HUMANIZATION_TEMPLATES", "NUMPY_AVAILABLE",
     "resolve_velocity_curve", "PREDEFINED_CURVES",
     "TempoCurve", "TempoPoint", "load_tempo_curve", "VelocitySmoother", "EMASmoother",
-    "write_demo_bar", "render_midi",
+    "load_tempo_curve_simple", "get_bpm_at", "interpolate_bpm", "beat_to_seconds",
+    "TempoVelocitySmoother", "write_demo_bar", "render_midi",
 ]

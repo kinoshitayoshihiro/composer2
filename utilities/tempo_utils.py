@@ -164,6 +164,11 @@ class TempoMap:
                 return prev["bpm"] + (cur["bpm"] - prev["bpm"]) * frac
         return float(curve[-1]["bpm"])
 
+    def tick_to_seconds(self, tick: int, ppq: int = 480) -> float:
+        """Return absolute seconds for ``tick`` given ``ppq``."""
+        beat = tick / float(ppq)
+        return beat_to_seconds(beat, self.events)
+
 
 def load_tempo_map(json_path: Path | str) -> TempoMap:
     try:

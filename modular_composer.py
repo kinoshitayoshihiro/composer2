@@ -32,6 +32,7 @@ from music21 import (
 # --- project utilities ----------------------------------------------------
 from utilities.generator_factory import GenFactory  # type: ignore
 import utilities.humanizer as humanizer  # type: ignore
+from utilities.tempo_utils import load_tempo_map
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -83,8 +84,14 @@ def compose(
     chordmap: Dict[str, Any],
     rhythm_lib,
     overrides_model: Any | None = None,
+    tempo_map=None,
 ) -> tuple[stream.Score, list[Dict[str, Any]]]:
-    part_gens = GenFactory.build_from_config(main_cfg, rhythm_lib)
+    if tempo_map is None:
+        part_gens = GenFactory.build_from_config(main_cfg, rhythm_lib)
+    else:
+        part_gens = GenFactory.build_from_config(
+            main_cfg, rhythm_lib, tempo_map=tempo_map
+        )
 
     part_streams: dict[str, stream.Part] = {}
     used_ids: set[str] = set()
@@ -326,13 +333,27 @@ def main_cli() -> None:
     if args.output_filename:
         paths["output_filename"] = args.output_filename
     if args.tempo_curve:
-        main_cfg.setdefault("global_settings", {})["tempo_curve_path"] = args.tempo_curve
+        main_cfg.setdefault("global_settings", {})[
+            "tempo_curve_path"
+        ] = args.tempo_curve
+    tempo_map = None
+    curve_path = (
+        args.tempo_curve
+        or main_cfg.get("global_settings", {}).get("tempo_curve_path")
+        or paths.get("tempo_curve_path")
+    )
+    if curve_path:
+        try:
+            tempo_map = load_tempo_map(curve_path)
+        except Exception as e:  # pragma: no cover - optional
+            logger.warning("Failed to load tempo map: %s", e)
 
     logger.info("使用 chordmap_path = %s", paths["chordmap_path"])
     logger.info("使用 rhythm_library_path = %s", paths["rhythm_library_path"])
 
-    drum_map_name = args.drum_map or main_cfg.get(
-        "global_settings", {}).get("drum_map") or "gm"
+    drum_map_name = (
+        args.drum_map or main_cfg.get("global_settings", {}).get("drum_map") or "gm"
+    )
     main_cfg.setdefault("global_settings", {})["drum_map"] = drum_map_name
 
     # 3. ファイル読み込み
@@ -367,12 +388,13 @@ def main_cli() -> None:
         logging.error("指定セクションが chordmap に見つかりませんでした")
         return
 
-    ts = meter.TimeSignature(
-        main_cfg["global_settings"].get("time_signature", "4/4"))
+    ts = meter.TimeSignature(main_cfg["global_settings"].get("time_signature", "4/4"))
     beats_per_measure = ts.numerator
 
     # 2) Generator 初期化 ----------------------------------------------------
-    part_gens = GenFactory.build_from_config(main_cfg, rhythm_lib)
+    part_gens = GenFactory.build_from_config(
+        main_cfg, rhythm_lib, tempo_map=tempo_map
+    )
 
     # 楽器ごとの単一 Part
     part_streams: dict[str, stream.Part] = {}
@@ -395,13 +417,11 @@ def main_cli() -> None:
         section_start_q = chords_abs[0]["absolute_offset_beats"]
 
         for idx, ch_ev in enumerate(chords_abs):
-            next_ev = chords_abs[idx + 1] if idx + \
-                1 < len(chords_abs) else None
+            next_ev = chords_abs[idx + 1] if idx + 1 < len(chords_abs) else None
 
             block_start = ch_ev["absolute_offset_beats"] - section_start_q
             block_length = ch_ev.get(
-                "humanized_duration_beats", ch_ev.get(
-                    "original_duration_beats", 4.0)
+                "humanized_duration_beats", ch_ev.get("original_duration_beats", 4.0)
             )
 
             base_block_data: Dict[str, Any] = {
@@ -469,7 +489,9 @@ def main_cli() -> None:
                         part_streams[pid] = p
                     dest = part_streams[pid]
                     # ---- sub_stream から dest へ要素をコピー ---------------------------------
-                    has_inst = bool(dest.recurse().getElementsByClass(m21inst.Instrument))
+                    has_inst = bool(
+                        dest.recurse().getElementsByClass(m21inst.Instrument)
+                    )
                     inserted_inst = False
 
                     for elem in sub_stream.recurse():
@@ -497,8 +519,6 @@ def main_cli() -> None:
                                 section_start_q + block_start + elem.offset,
                                 clone_element(elem),
                             )
-
-
 
     # 4) Humanizer -----------------------------------------------------------
     for name, p_stream in part_streams.items():

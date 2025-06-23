@@ -27,6 +27,20 @@ jobs:
         run: mypy modular_composer utilities tests --strict
       - name: Pytest
         run: pytest -q --cov --cov-report=xml
+      - name: Golden MIDI regression
+        run: |
+          files=$(ls tests/golden_midi/*.mid 2>/dev/null || true)
+          if [ -z "$files" ]; then
+            echo "no golden midi"
+          else
+            modcompose gm-test $files
+          fi
+      - name: Upload golden MIDI failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-failures
+          path: tests/golden_midi/failed
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:

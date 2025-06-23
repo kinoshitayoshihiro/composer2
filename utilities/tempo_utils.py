@@ -117,15 +117,63 @@ def beat_to_seconds(beat: float, curve: List[Dict[str, float]]) -> float:
     for cur in curve[1:]:
         if beat <= cur["beat"]:
             seg_beats = beat - prev["beat"]
-            total += _seg_time(prev["bpm"], cur["bpm"], seg_beats, prev.get("curve", "linear"))
+            total += _seg_time(
+                prev["bpm"], cur["bpm"], seg_beats, prev.get("curve", "linear")
+            )
             return total
         seg_beats = cur["beat"] - prev["beat"]
-        total += _seg_time(prev["bpm"], cur["bpm"], seg_beats, prev.get("curve", "linear"))
+        total += _seg_time(
+            prev["bpm"], cur["bpm"], seg_beats, prev.get("curve", "linear")
+        )
         prev = cur
 
     seg_beats = beat - prev["beat"]
     total += _seg_time(prev["bpm"], prev["bpm"], seg_beats, prev.get("curve", "linear"))
     return total
+
+
+class TempoMap:
+    """Lightweight tempo map supporting linear interpolation."""
+
+    def __init__(self, events: List[Dict[str, float]]) -> None:
+        cleaned: List[Dict[str, float]] = []
+        for e in events:
+            try:
+                beat = float(e["beat"])
+                bpm = float(e["bpm"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            cleaned.append({"beat": beat, "bpm": bpm})
+        cleaned.sort(key=lambda x: x["beat"])
+        if not cleaned:
+            cleaned = [{"beat": 0.0, "bpm": 120.0}]
+        self.events = cleaned
+
+    def get_bpm(self, beat: float) -> float:
+        curve = self.events
+        if beat <= curve[0]["beat"]:
+            return float(curve[0]["bpm"])
+        for i in range(1, len(curve)):
+            prev = curve[i - 1]
+            cur = curve[i]
+            if beat <= cur["beat"]:
+                span = cur["beat"] - prev["beat"]
+                if span <= 0:
+                    return float(cur["bpm"])
+                frac = (beat - prev["beat"]) / span
+                return prev["bpm"] + (cur["bpm"] - prev["bpm"]) * frac
+        return float(curve[-1]["bpm"])
+
+
+def load_tempo_map(json_path: Path | str) -> TempoMap:
+    try:
+        with Path(json_path).open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        data = []
+    if not isinstance(data, list):
+        data = []
+    return TempoMap(data)
 
 
 class TempoVelocitySmoother:
@@ -189,4 +237,3 @@ class TempoVelocitySmoother:
         stream["value"] = new_val
         out = int(round(new_val))
         return max(1, min(127, out))
-

@@ -234,6 +234,25 @@ Passing `--lag` values below zero will pre-hit the drums. If this causes
 negative beat offsets, set `clip_at_zero=true` in your configuration or pass the
 parameter when using the synchroniser programmatically.
 
+### Render from a Score Spec
+
+Generate a simple MIDI file from a YAML or JSON description:
+
+```bash
+modcompose render spec.yml -o out.mid --soundfont path/to/timgm.sf2
+```
+
+### Golden MIDI Regression
+
+Check serialized MIDI files for unwanted changes:
+
+```bash
+modcompose gm-test tests/golden_midi/*.mid
+```
+
+MIDI events are normalised before comparison so header metadata can vary.
+Add `--update` to overwrite the expected files after intentional changes.
+
 This JSON can then be fed to later synchronization tools.
 
 ## License

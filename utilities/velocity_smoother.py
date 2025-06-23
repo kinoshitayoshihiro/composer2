@@ -86,8 +86,8 @@ class EMASmoother:
             alpha = 0.75
         return alpha
 
-    def update(self, raw: int) -> int:
-        """Update the smoother with ``raw`` velocity and return the smoothed value."""
+    def smooth(self, raw: int) -> int:
+        """Return smoothed velocity after updating internal state."""
 
         raw = int(raw)
         self.history.append(raw)
@@ -99,6 +99,6 @@ class EMASmoother:
         result = int(round(self.value))
         return max(1, min(127, result))
 
-    # Backwards compatibility
-    def smooth(self, raw: int) -> int:
-        return self.update(raw)
+    # compatibility alias for older callers
+    def update(self, raw: int) -> int:  # noqa: D401 - simple wrapper
+        return self.smooth(raw)

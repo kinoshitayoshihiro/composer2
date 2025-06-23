@@ -5,6 +5,7 @@ from utilities.tempo_utils import TempoMap
 from music21 import meter
 from hypothesis import given, strategies as st
 from utilities.timing_utils import _combine_timing
+from utilities.tempo_utils import beat_to_seconds
 
 
 def test_tempo_curve_linear(tmp_path: Path) -> None:
@@ -48,3 +49,20 @@ def test_combine_timing_ms_roundtrip(off_beat: float, shift_ms: float) -> None:
     )
     ms_back = (blend.offset_ql - base) * 60.0 / bpm * 1000.0
     assert ms_back == pytest.approx(shift_ms * 0.5, abs=1.0)
+
+
+def test_seconds_at_beats() -> None:
+    curve = TempoMap(
+        [
+            {"beat": 0, "bpm": 120},
+            {"beat": 4, "bpm": 80},
+            {"beat": 8, "bpm": 140},
+        ]
+    )
+
+    def sec(beat: float) -> float:
+        return beat_to_seconds(beat, curve.events)
+
+    assert sec(0) == pytest.approx(0.0)
+    assert sec(4) == pytest.approx(2.432790648649, abs=1e-6)
+    assert sec(8) == pytest.approx(4.671253800391, abs=1e-6)

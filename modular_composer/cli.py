@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import importlib.metadata as _md
+import json
+import tempfile
 from pathlib import Path
 
+import pretty_midi
+
+from utilities import synth
+from utilities.golden import compare_midi, update_golden
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
 from utilities.peak_extractor import PeakExtractorConfig, extract_peaks
 from utilities.peak_synchroniser import PeakSynchroniser
@@ -126,13 +133,91 @@ def _cmd_peaks(args: list[str]) -> None:
     print(f"{len(peaks)} peaks -> {ns.out}")
 
 
+def _cmd_render(args: list[str]) -> None:
+    ap = argparse.ArgumentParser(prog="modcompose render")
+    ap.add_argument("spec", type=Path)
+    ap.add_argument("-o", "--out", type=Path, default=Path("out.mid"))
+    ap.add_argument("--soundfont", type=Path, default=None)
+    ap.add_argument("--seed", type=int, default=42)
+    ns = ap.parse_args(args)
+
+    if ns.spec.suffix.lower() in {".yml", ".yaml"}:
+        import yaml
+
+        with ns.spec.open("r", encoding="utf-8") as fh:
+            spec = yaml.safe_load(fh) or {}
+    else:
+        with ns.spec.open("r", encoding="utf-8") as fh:
+            spec = json.load(fh)
+
+    tempo_curve = spec.get("tempo_curve", [])
+    events = spec.get("drum_pattern", [])
+    peaks = spec.get("peaks", [])
+    if peaks:
+        events = PeakSynchroniser.sync_events(
+            peaks, events, tempo_bpm=spec.get("tempo_bpm", 120), lag_ms=10.0
+        )
+
+    pm = pretty_midi.PrettyMIDI(initial_tempo=tempo_curve[0]["bpm"] if tempo_curve else 120)
+    inst = pretty_midi.Instrument(program=0, name="drums")
+    pitch_map = {"kick": 36, "snare": 38, "hh_pedal": 44, "ohh": 46}
+    for ev in events:
+        start = beat_to_seconds(float(ev.get("offset", 0.0)), tempo_curve)
+        dur = float(ev.get("duration", 0.25))
+        end = start + beat_to_seconds(dur, tempo_curve) - beat_to_seconds(0, tempo_curve)
+        pitch = pitch_map.get(ev.get("instrument", "kick"), 60)
+        vel = int(ev.get("velocity", 100))
+        inst.notes.append(pretty_midi.Note(start=start, end=end, pitch=pitch, velocity=vel))
+    pm.instruments.append(inst)
+    pm.write(str(ns.out))
+    print(f"Wrote {ns.out}")
+    if ns.soundfont:
+        wav = ns.out.with_suffix(".wav")
+        synth.render_midi(ns.out, wav, ns.soundfont)
+        print(f"Rendered {wav}")
+
+
+def _cmd_gm_test(args: list[str]) -> None:
+    ap = argparse.ArgumentParser(prog="modcompose gm-test")
+    ap.add_argument("midi", nargs="+")
+    ap.add_argument("--update", action="store_true")
+    ns = ap.parse_args(args)
+
+    mismatched: list[str] = []
+    for pattern in ns.midi:
+        for path_str in glob.glob(pattern):
+            path = Path(path_str)
+            if path.stat().st_size == 0:
+                print(f"[gm-test] skipping empty file {path}")
+                continue
+            pm = pretty_midi.PrettyMIDI(str(path))
+            with tempfile.TemporaryDirectory() as td:
+                tmp = Path(td) / path.name
+                pm.write(str(tmp))
+                if not compare_midi(path, tmp):
+                    if ns.update:
+                        update_golden(tmp, path)
+                    else:
+                        failed_dir = path.parent / "failed"
+                        failed_dir.mkdir(exist_ok=True)
+                        new_path = failed_dir / f"{path.stem}_new.mid"
+                        update_golden(tmp, new_path)
+                        mismatched.append(str(path))
+    if mismatched and not ns.update:
+        for m in mismatched:
+            print(f"Mismatch: {m}")
+        raise SystemExit(1)
+    print("All golden MIDI match.")
+
+
 def main(argv: list[str] | None = None) -> None:
     import sys
 
     argv = sys.argv[1:] if argv is None else argv
     if not argv or argv[0] in {"-h", "--help"}:
         print(
-            "usage: modcompose <command> [<args>]\n\ncommands: demo, sample, peaks"
+            "usage: modcompose <command> [<args>]\n\n"
+            "commands: demo, sample, peaks, render, gm-test"
         )
         sys.exit(0)
     cmd, *rest = argv
@@ -142,6 +227,10 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_sample(rest)
     elif cmd == "peaks":
         _cmd_peaks(rest)
+    elif cmd == "render":
+        _cmd_render(rest)
+    elif cmd == "gm-test":
+        _cmd_gm_test(rest)
     else:
         sys.exit(f"unknown command {cmd!r}")
 

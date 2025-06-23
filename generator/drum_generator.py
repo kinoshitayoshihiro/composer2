@@ -475,10 +475,11 @@ class DrumGenerator(BasePartGenerator):
         # Initialize with the BPM at beat 0 so that grace calculations use
         # the correct starting tempo even when a tempo map is provided.
         self.current_bpm = self._current_bpm(0.0)
+        self.ppq = int((global_settings or {}).get("ppq", 480))
         self.use_velocity_ema = bool(
             (global_settings or {}).get("use_velocity_ema", False)
         )
-        self._vel_smoother = EMASmoother(window=16)
+        self.vel_smoother = EMASmoother(window=16)
 
         sync_cfg = global_cfg.get("consonant_sync", {})
         self.consonant_sync_cfg = {
@@ -1259,7 +1260,7 @@ class DrumGenerator(BasePartGenerator):
         log_apply_prefix = f"DrumGen.ApplyPattern"
         self.current_bpm = self._current_bpm(bar_start_abs_offset)
         if self.use_velocity_ema:
-            self._vel_smoother.reset()
+            self.vel_smoother.reset()
         beat_len_ql = (
             current_pattern_ts.beatDuration.quarterLength if current_pattern_ts else 1.0
         )
@@ -1284,11 +1285,11 @@ class DrumGenerator(BasePartGenerator):
             )
 
         if self.consonant_peaks:
-            start_sec = bar_start_abs_offset * 60.0 / self.current_bpm
-            end_sec = (
-                (bar_start_abs_offset + current_bar_actual_len_ql)
-                * 60.0
-                / self.current_bpm
+            start_sec = self._convert_ticks_to_seconds(
+                int(bar_start_abs_offset * self.ppq)
+            )
+            end_sec = self._convert_ticks_to_seconds(
+                int((bar_start_abs_offset + current_bar_actual_len_ql) * self.ppq)
             )
             peaks_in_bar = [
                 p - start_sec for p in self.consonant_peaks if start_sec <= p < end_sec
@@ -1469,7 +1470,7 @@ class DrumGenerator(BasePartGenerator):
                 ),
             )
             if self.use_velocity_ema:
-                final_event_velocity = self._vel_smoother.update(final_event_velocity)
+                final_event_velocity = self.vel_smoother.update(final_event_velocity)
 
             if brush_active and inst_name == "snare":
                 inst_name = "snare_brush"
@@ -1650,6 +1651,8 @@ class DrumGenerator(BasePartGenerator):
             resulting note stores its mapped label in ``note.editorial.mapped_name``.
         """
         mapped_name = name.lower().replace(" ", "_").replace("-", "_")
+        if self.use_velocity_ema:
+            vel = self.vel_smoother.smooth(int(vel))
         brush_active = self.drum_brush or (
             self.overrides and getattr(self.overrides, "drum_brush", False)
         )
@@ -1701,6 +1704,17 @@ class DrumGenerator(BasePartGenerator):
         main.volume = m21volume.Volume(velocity=max(1, velocity))
         main.offset = 0.0
         part.insert(offset, main)
+
+    def _convert_ticks_to_seconds(self, tick: int) -> float:
+        """Convert absolute ``tick`` position to seconds using ``TempoMap``."""
+        beat_pos = tick / float(self.ppq)
+        bpm = (
+            self.tempo_map.get_bpm(beat_pos)
+            if hasattr(self, "tempo_map")
+            else self.global_tempo
+        )
+        tick_scale = 60.0 / (bpm * self.ppq)
+        return tick * tick_scale
 
     def _insert_grace_chain(
         self,

@@ -22,7 +22,10 @@ from music21 import (
 )
 
 # Pedalクラスはexpressionsから個別にインポート
-from music21.expressions import PedalMark
+try:
+    from music21.expressions import PedalMark
+except Exception:  # pragma: no cover - compatibility
+    from music21.expressions import TextExpression as PedalMark
 
 
 from .base_part_generator import BasePartGenerator
@@ -37,7 +40,9 @@ try:
     from utilities.override_loader import PartOverride
     from utilities.scale_registry import ScaleRegistry
 except ModuleNotFoundError as e:
-    raise ModuleNotFoundError("Required dependencies are missing. Please run 'pip install -r requirements.txt'.") from e
+    raise ModuleNotFoundError(
+        "Required dependencies are missing. Please run 'pip install -r requirements.txt'."
+    ) from e
 
 
 logger = logging.getLogger("modular_composer.piano_generator")
@@ -123,7 +128,9 @@ class PianoGenerator(BasePartGenerator):
                 return key
         return None
 
-    def _get_pattern_keys(self, musical_intent: Dict[str, Any], overrides: Optional[PartOverride]) -> Tuple[str, str]:
+    def _get_pattern_keys(
+        self, musical_intent: Dict[str, Any], overrides: Optional[PartOverride]
+    ) -> Tuple[str, str]:
         emotion = musical_intent.get("emotion", "default")
         intensity = musical_intent.get("intensity", "medium")
         bucket = EMO_TO_BUCKET_PIANO.get(emotion, "default")
@@ -150,7 +157,9 @@ class PianoGenerator(BasePartGenerator):
         pattern_data = self.part_parameters.get(rhythm_key) or {}
         pattern_events = pattern_data.get("pattern") or []
         if not pattern_events:
-            logger.warning(f"PianoGen: pattern '{rhythm_key}' not found or empty. Using single root note fallback.")
+            logger.warning(
+                f"PianoGen: pattern '{rhythm_key}' not found or empty. Using single root note fallback."
+            )
             pattern_events = [
                 {
                     "offset": 0.0,
@@ -163,16 +172,22 @@ class PianoGenerator(BasePartGenerator):
         options = pattern_data.get("options", {})
         velocity_curve_list = resolve_velocity_curve(options.get("velocity_curve"))
 
-        octave = params.get(f"default_{hand.lower()}_target_octave", 4 if hand == "RH" else 2)
+        octave = params.get(
+            f"default_{hand.lower()}_target_octave", 4 if hand == "RH" else 2
+        )
         if params.get("random_octave_shift"):
             octave += self.rng.choice([-1, 1])
-        num_voices = params.get(f"default_{hand.lower()}_num_voices", 4 if hand == "RH" else 2)
+        num_voices = params.get(
+            f"default_{hand.lower()}_num_voices", 4 if hand == "RH" else 2
+        )
         default_style = "spread" if hand == "RH" else "closed"
         chosen_style = voicing_style or params.get(
             f"default_{hand.lower()}_voicing_style",
             default_style,
         )
-        voiced_pitches = self._voice_minimal_leap(hand, cs, num_voices, octave, chosen_style)
+        voiced_pitches = self._voice_minimal_leap(
+            hand, cs, num_voices, octave, chosen_style
+        )
 
         scale_pitches = None
         if mode and cs.root():
@@ -180,8 +195,12 @@ class PianoGenerator(BasePartGenerator):
                 scl = ScaleRegistry.get(cs.root().name, mode)
                 root_pitch = cs.root().transpose(0)
                 root_pitch.octave = octave
-                int_third = interval.Interval(scl.pitchFromDegree(1), scl.pitchFromDegree(3))
-                int_fifth = interval.Interval(scl.pitchFromDegree(1), scl.pitchFromDegree(5))
+                int_third = interval.Interval(
+                    scl.pitchFromDegree(1), scl.pitchFromDegree(3)
+                )
+                int_fifth = interval.Interval(
+                    scl.pitchFromDegree(1), scl.pitchFromDegree(5)
+                )
                 scale_pitches = {
                     "root": root_pitch,
                     "third": root_pitch.transpose(int_third),
@@ -233,9 +252,13 @@ class PianoGenerator(BasePartGenerator):
     def _get_voiced_pitches(self, cs, num_voices, octave, style) -> List[pitch.Pitch]:
         if self.chord_voicer:
             try:
-                return self.chord_voicer.voice_chord(cs, style=style, num_voices=num_voices, target_octave=octave)
+                return self.chord_voicer.voice_chord(
+                    cs, style=style, num_voices=num_voices, target_octave=octave
+                )
             except Exception as e:
-                logger.warning(f"ChordVoicer failed: {e}. Falling back to basic voicing.")
+                logger.warning(
+                    f"ChordVoicer failed: {e}. Falling back to basic voicing."
+                )
 
         cs_copy = copy.deepcopy(cs)
         cs_copy.closedPosition(inPlace=True)
@@ -252,7 +275,11 @@ class PianoGenerator(BasePartGenerator):
         transpose_interval = interval.Interval(bottom_pitch, target_pitch_ref)
         pitches = [p.transpose(transpose_interval) for p in pitches]
 
-        return pitches[:num_voices] if num_voices is not None and len(pitches) > num_voices else pitches
+        return (
+            pitches[:num_voices]
+            if num_voices is not None and len(pitches) > num_voices
+            else pitches
+        )
 
     def _voice_minimal_leap(
         self,
@@ -311,23 +338,40 @@ class PianoGenerator(BasePartGenerator):
         selected_pitch = choose_pitch()
 
         if event_type in ("octave_root", "octave"):
-            elem = m21chord.Chord([selected_pitch, selected_pitch.transpose(12)], quarterLength=duration_ql)
+            elem = m21chord.Chord(
+                [selected_pitch, selected_pitch.transpose(12)],
+                quarterLength=duration_ql,
+            )
         elif event_type == "root":
             elem = note.Note(selected_pitch, quarterLength=duration_ql)
         elif event_type == "root_octave_down" and scale_pitches:
-            elem = note.Note(scale_pitches["root"].transpose(-12), quarterLength=duration_ql)
+            elem = note.Note(
+                scale_pitches["root"].transpose(-12), quarterLength=duration_ql
+            )
         elif event_type == "minor_third_low" and scale_pitches:
-            elem = note.Note(scale_pitches["third"].transpose(-12), quarterLength=duration_ql)
+            elem = note.Note(
+                scale_pitches["third"].transpose(-12), quarterLength=duration_ql
+            )
         elif event_type == "fifth_low" and scale_pitches:
-            elem = note.Note(scale_pitches["fifth"].transpose(-12), quarterLength=duration_ql)
+            elem = note.Note(
+                scale_pitches["fifth"].transpose(-12), quarterLength=duration_ql
+            )
         elif event_type == "chord_high_voices":
-            high_pitches = sorted(pitches, key=lambda p: p.ps)[-3:] if len(pitches) >= 3 else pitches
+            high_pitches = (
+                sorted(pitches, key=lambda p: p.ps)[-3:]
+                if len(pitches) >= 3
+                else pitches
+            )
             elem = m21chord.Chord(high_pitches, quarterLength=duration_ql)
-            selected_pitch = min(high_pitches, key=lambda p: abs(p.ps - selected_pitch.ps))
+            selected_pitch = min(
+                high_pitches, key=lambda p: abs(p.ps - selected_pitch.ps)
+            )
         elif event_type == "chord":
             elem = m21chord.Chord(pitches, quarterLength=duration_ql)
         else:
-            logger.warning(f"Unknown pattern event type: '{event_type}'. Using default for {hand}.")
+            logger.warning(
+                f"Unknown pattern event type: '{event_type}'. Using default for {hand}."
+            )
             if hand == "RH":
                 elem = m21chord.Chord(pitches, quarterLength=duration_ql)
             else:
@@ -356,7 +400,9 @@ class PianoGenerator(BasePartGenerator):
             ped.pedalForm = expressions.PedalForm.Line
             part.insert(t, ped)
             cc_events.append({"time": t, "number": 64, "value": pedal_value})
-            cc_events.append({"time": min(t + measure_len, end_offset), "number": 64, "value": 0})
+            cc_events.append(
+                {"time": min(t + measure_len, end_offset), "number": 64, "value": 0}
+            )
             t += measure_len
 
         part.extra_cc = getattr(part, "extra_cc", []) + cc_events
@@ -379,14 +425,24 @@ class PianoGenerator(BasePartGenerator):
                 frac = s / steps
                 t = start_t + frac * (end_t - start_t)
                 val = int(round(start_val + (end_val - start_val) * frac))
-                cc_events.append({"time": t, "number": 11, "value": max(0, min(127, val))})
+                cc_events.append(
+                    {"time": t, "number": 11, "value": max(0, min(127, val))}
+                )
         part.extra_cc = cc_events
 
     def _apply_weak_beat(self, part: stream.Part, style: str) -> stream.Part:
         if style in (None, "none"):
             return part
-        beats = self.global_time_signature_obj.beatCount if self.global_time_signature_obj else 4
-        beat_len = self.global_time_signature_obj.beatDuration.quarterLength if self.global_time_signature_obj else 1.0
+        beats = (
+            self.global_time_signature_obj.beatCount
+            if self.global_time_signature_obj
+            else 4
+        )
+        beat_len = (
+            self.global_time_signature_obj.beatDuration.quarterLength
+            if self.global_time_signature_obj
+            else 1.0
+        )
         new_part = stream.Part(id=part.id)
         for elem in part.flatten().notesAndRests:
             rel = elem.offset
@@ -403,12 +459,18 @@ class PianoGenerator(BasePartGenerator):
                 if style == "rest":
                     continue
                 elif style == "ghost":
-                    base_vel = elem.volume.velocity if elem.volume and elem.volume.velocity else 64
+                    base_vel = (
+                        elem.volume.velocity
+                        if elem.volume and elem.volume.velocity
+                        else 64
+                    )
                     elem.volume = m21volume.Volume(velocity=max(1, int(base_vel * 0.4)))
             new_part.insert(elem.offset, elem)
         return new_part
 
-    def _add_fill(self, part: stream.Part, cs: harmony.ChordSymbol, length_beats: float) -> stream.Part:
+    def _add_fill(
+        self, part: stream.Part, cs: harmony.ChordSymbol, length_beats: float
+    ) -> stream.Part:
         if length_beats <= 0:
             return part
         offset = self.measure_duration - length_beats
@@ -437,7 +499,9 @@ class PianoGenerator(BasePartGenerator):
             grace.pitch = first_note.pitch
         part.insert(first_note.offset, grace)
 
-    def _apply_measure_rubato(self, part: stream.Part, amplitude_sec: float = 0.02) -> None:
+    def _apply_measure_rubato(
+        self, part: stream.Part, amplitude_sec: float = 0.02
+    ) -> None:
         """Randomly shift all notes per measure within +/- amplitude_sec."""
         if not part.recurse().notes or not self.global_tempo:
             return
@@ -493,13 +557,11 @@ class PianoGenerator(BasePartGenerator):
         rh_key = None
         lh_key = None
         if self.overrides:
-            rh_key = (
-                getattr(self.overrides, "rhythm_key_rh", None)
-                or getattr(self.overrides, "rhythm_key", None)
+            rh_key = getattr(self.overrides, "rhythm_key_rh", None) or getattr(
+                self.overrides, "rhythm_key", None
             )
-            lh_key = (
-                getattr(self.overrides, "rhythm_key_lh", None)
-                or getattr(self.overrides, "rhythm_key", None)
+            lh_key = getattr(self.overrides, "rhythm_key_lh", None) or getattr(
+                self.overrides, "rhythm_key", None
             )
 
         if not rh_key:
@@ -525,7 +587,9 @@ class PianoGenerator(BasePartGenerator):
         if section_name != self._current_cycle_section:
             self._style_cycle_index = {"RH": 0, "LH": 0}
             self._current_cycle_section = section_name
-        style_sequence = piano_params.get("voicing_style_sequence", ["spread", "closed", "inverted"])
+        style_sequence = piano_params.get(
+            "voicing_style_sequence", ["spread", "closed", "inverted"]
+        )
 
         rh_style = style_sequence[self._style_cycle_index["RH"] % len(style_sequence)]
         lh_style = style_sequence[self._style_cycle_index["LH"] % len(style_sequence)]
@@ -590,14 +654,16 @@ class PianoGenerator(BasePartGenerator):
             if profile_name:
                 humanizer.apply(part, profile_name)
 
-        global_profile = self.cfg.get("global_humanize_profile") or self.global_settings.get("global_humanize_profile")
+        global_profile = self.cfg.get(
+            "global_humanize_profile"
+        ) or self.global_settings.get("global_humanize_profile")
         for part in (rh_part, lh_part):
             if global_profile:
                 humanizer.apply(part, global_profile)
 
         # 結合して 1 Part を返していたコードを削除
-        rh_part.id  = "piano_rh"
+        rh_part.id = "piano_rh"
         rh_part.partName = "Piano RH"
-        lh_part.id  = "piano_lh"
+        lh_part.id = "piano_lh"
         lh_part.partName = "Piano LH"
         return {"piano_rh": rh_part, "piano_lh": lh_part}

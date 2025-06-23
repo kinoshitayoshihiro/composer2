@@ -16,9 +16,9 @@ class PeakSynchroniser:
     TICK_RESOLUTION = 960
 
     @staticmethod
-    def _quantize(off: float, step: float = 1e-3) -> float:
-        """offset を粗いグリッドに丸めて衝突検出に使う。"""
-        return round(off / step) * step
+    def _quantize(offset: float, *, grid: float = 1 / 480) -> float:
+        """Return offset snapped to small grid (default 480 PPQ)."""
+        return round(offset / grid) * grid
 
     @staticmethod
     def _add_event(

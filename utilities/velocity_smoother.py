@@ -2,7 +2,7 @@ from __future__ import annotations
 # deque is required for the EMA history buffer
 from collections import deque
 from statistics import median
-import warnings
+import math
 
 
 class VelocitySmoother:
@@ -53,16 +53,13 @@ class VelocitySmoother:
 
 
 class EMASmoother:
-    """Exponential moving average velocity smoother with MAD-based alpha."""
+    """Exponential moving average velocity smoother with adaptive ``alpha``."""
 
-    def __init__(self, initial_alpha: float = 0.5, window: int = 8) -> None:
-        warnings.warn(
-            "EMASmoother is deprecated; use TempoVelocitySmoother instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+    def __init__(self, initial_alpha: float = 0.5, window: int = 16) -> None:
         if not 0 < initial_alpha <= 1:
             raise ValueError("initial_alpha must be in (0, 1]")
+        if window <= 0:
+            raise ValueError("window must be positive")
         self.alpha = float(initial_alpha)
         self.window = window
         self.value: float | None = None
@@ -80,22 +77,28 @@ class EMASmoother:
         med = median(vals)
         dev = [abs(v - med) for v in vals]
         mad = median(dev)
-        if mad < 0:
-            mad = 0.0
-        alpha = 1.0 / (1.0 + mad)
-        if alpha < 0.1:
-            alpha = 0.1
-        elif alpha > 0.9:
-            alpha = 0.9
+        # sigmoid based scaling
+        sig = 1.0 / (1.0 + math.exp(-mad / 20.0))
+        alpha = 0.15 + 0.6 * sig
+        if alpha < 0.15:
+            alpha = 0.15
+        elif alpha > 0.75:
+            alpha = 0.75
         return alpha
 
-    def smooth(self, raw: int) -> int:
+    def update(self, raw: int) -> int:
+        """Update the smoother with ``raw`` velocity and return the smoothed value."""
+
         raw = int(raw)
         self.history.append(raw)
         if self.value is None:
             self.value = float(raw)
-            return raw
+            return max(1, min(127, raw))
         self.alpha = self.alpha_for_window(list(self.history))
         self.value = self.value + self.alpha * (raw - self.value)
         result = int(round(self.value))
         return max(1, min(127, result))
+
+    # Backwards compatibility
+    def smooth(self, raw: int) -> int:
+        return self.update(raw)

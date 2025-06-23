@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "modular_composer"
-version = "0.1.2"
+version = "0.1.3"
 description = "OtoKotoba Modular Composer"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -72,3 +72,6 @@ python_version = "3.10"
 ignore_missing_imports = true
 disallow_untyped_defs = true
 warn_unused_ignores = true
+
+[tool.setuptools.packages.find]
+include = ["modular_composer*", "utilities*"]

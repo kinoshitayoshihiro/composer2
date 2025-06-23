@@ -10,9 +10,10 @@ from generator.sax_generator import SaxGenerator
 from generator.base_part_generator import BasePartGenerator
 from music21 import instrument as m21instrument
 
+
 class GenFactory:
     @staticmethod
-    def build_from_config(main_cfg, rhythm_lib=None):
+    def build_from_config(main_cfg, rhythm_lib=None, tempo_map=None):
         """main_cfg['part_defaults'] を読み取り各 Generator を初期化
 
         Parameters
@@ -81,6 +82,7 @@ class GenFactory:
                 global_key_signature_tonic=global_settings.get("key_tonic"),
                 global_key_signature_mode=global_settings.get("key_mode"),
                 main_cfg=main_cfg,
+                tempo_map=tempo_map,
                 **cleaned_part_cfg,
             )
         return gens
@@ -89,17 +91,17 @@ class GenFactory:
 # ---- Single-Source Role Mapping ----
 ROLE_DISPATCH: dict[str, type[BasePartGenerator]] = {
     # Core instruments
-    "piano":   PianoGenerator,
-    "drums":   DrumGenerator,
-    "bass":    BassGenerator,
-    "guitar":  GuitarGenerator,
+    "piano": PianoGenerator,
+    "drums": DrumGenerator,
+    "bass": BassGenerator,
+    "guitar": GuitarGenerator,
     "strings": StringsGenerator,
     # Specialized / legacy logical roles
-    "melody":  MelodyGenerator,
+    "melody": MelodyGenerator,
     "counter": MelodyGenerator,
-    "pad":     StringsGenerator,
-    "riff":    MelodyGenerator,
-    "rhythm":  GuitarGenerator,
-    "unison":  StringsGenerator,
-    "sax":     SaxGenerator,
+    "pad": StringsGenerator,
+    "riff": MelodyGenerator,
+    "rhythm": GuitarGenerator,
+    "unison": StringsGenerator,
+    "sax": SaxGenerator,
 }

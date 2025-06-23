@@ -34,7 +34,7 @@ from utilities.drum_map_registry import (
 )
 from utilities.drum_map import GENERAL_MIDI_MAP
 from utilities.timing_utils import TimingBlend, interp_curve, _combine_timing
-from utilities.tempo_utils import get_tempo_at_beat, load_tempo_curve
+from utilities.tempo_utils import TempoMap, load_tempo_map
 from utilities.velocity_smoother import EMASmoother
 from utilities.peak_synchroniser import PeakSynchroniser
 
@@ -368,8 +368,6 @@ def load_heatmap_data(heatmap_path: Optional[str]) -> Dict[int, int]:
         return {}
 
 
-
-
 # DrumGenerator例
 class DrumGenerator(BasePartGenerator):
     def __init__(
@@ -383,6 +381,7 @@ class DrumGenerator(BasePartGenerator):
         global_key_signature_mode=None,
         main_cfg=None,
         drum_map=None,
+        tempo_map=None,
         **kwargs,
     ):
         self.main_cfg = main_cfg
@@ -420,22 +419,62 @@ class DrumGenerator(BasePartGenerator):
         # 必須のデフォルトパターンが不足している場合に補充
         self._add_internal_default_patterns()
 
-        curve_path = (
-            (global_settings or {}).get("tempo_curve_path")
-            or (global_settings or {}).get("tempo_curve_json")
-            or (self.main_cfg.get("paths", {}).get("tempo_curve_path") if self.main_cfg else None)
-            or (self.main_cfg.get("paths", {}).get("tempo_curve_json") if self.main_cfg else None)
-        )
-        self.tempo_curve: list[dict] | None = None
-        if curve_path:
-            p = Path(curve_path).expanduser()
-            if p.exists():
-                try:
-                    self.tempo_curve = load_tempo_curve(p)
-                except Exception as e:  # pragma: no cover - optional
-                    logger.warning(f"Failed to load tempo curve from {p}: {e}")
+        if tempo_map is not None:
+            self.tempo_map = tempo_map
+        else:
+            curve_path = (
+                (global_settings or {}).get("tempo_curve_path")
+                or (global_settings or {}).get("tempo_curve_json")
+                or (
+                    self.main_cfg.get("paths", {}).get("tempo_curve_path")
+                    if self.main_cfg
+                    else None
+                )
+                or (
+                    self.main_cfg.get("paths", {}).get("tempo_curve_json")
+                    if self.main_cfg
+                    else None
+                )
+            )
+            if curve_path:
+                p = Path(curve_path).expanduser()
+                if p.exists():
+                    try:
+                        self.tempo_map = load_tempo_map(p)
+                    except Exception as e:  # pragma: no cover - optional
+                        logger.warning(f"Failed to load tempo curve from {p}: {e}")
+                        self.tempo_map = TempoMap(
+                            [
+                                {
+                                    "beat": 0.0,
+                                    "bpm": (global_settings or {}).get(
+                                        "tempo_bpm", 120
+                                    ),
+                                }
+                            ]
+                        )
+                else:
+                    self.tempo_map = TempoMap(
+                        [
+                            {
+                                "beat": 0.0,
+                                "bpm": (global_settings or {}).get("tempo_bpm", 120),
+                            }
+                        ]
+                    )
+            else:
+                self.tempo_map = TempoMap(
+                    [
+                        {
+                            "beat": 0.0,
+                            "bpm": (global_settings or {}).get("tempo_bpm", 120),
+                        }
+                    ]
+                )
 
-        self.current_bpm = self.main_cfg.get("tempo", 120)
+        # Initialize with the BPM at beat 0 so that grace calculations use
+        # the correct starting tempo even when a tempo map is provided.
+        self.current_bpm = self._current_bpm(0.0)
         self.use_velocity_ema = bool(
             (global_settings or {}).get("use_velocity_ema", False)
         )
@@ -532,8 +571,12 @@ class DrumGenerator(BasePartGenerator):
 
         self.push_pull_max_ms = float(global_cfg.get("push_pull_max_ms", 80.0))
         self.open_hat_choke_prob = float(global_cfg.get("open_hat_choke_prob", 0.35))
-        self.open_hat_choke_min_ms = float(global_cfg.get("open_hat_choke_min_ms", 160.0))
-        self.open_hat_choke_max_ms = float(global_cfg.get("open_hat_choke_max_ms", 280.0))
+        self.open_hat_choke_min_ms = float(
+            global_cfg.get("open_hat_choke_min_ms", 160.0)
+        )
+        self.open_hat_choke_max_ms = float(
+            global_cfg.get("open_hat_choke_max_ms", 280.0)
+        )
         vr = global_cfg.get("velocity_range", (0.9, 1.1))
         if (
             isinstance(vr, (list, tuple))
@@ -543,7 +586,7 @@ class DrumGenerator(BasePartGenerator):
             self.velocity_range = (float(vr[0]), float(vr[1]))
         else:
             self.velocity_range = (0.9, 1.1)
-        
+
         # 楽器設定
         part_default_cfg = self.main_cfg.get("default_part_parameters", {}).get(
             self.part_name, {}
@@ -698,9 +741,9 @@ class DrumGenerator(BasePartGenerator):
         self.part_parameters = self.raw_pattern_lib
 
     def _current_bpm(self, abs_offset_ql: float) -> float:
-        """Return BPM at ``abs_offset_ql`` using tempo curve if available."""
-        if self.tempo_curve is not None:
-            return get_tempo_at_beat(abs_offset_ql, self.tempo_curve)
+        """Return BPM at ``abs_offset_ql`` using tempo map if available."""
+        if hasattr(self, "tempo_map") and self.tempo_map is not None:
+            return self.tempo_map.get_bpm(abs_offset_ql)
         return self.global_tempo
 
     def _choose_pattern_key(
@@ -1242,8 +1285,14 @@ class DrumGenerator(BasePartGenerator):
 
         if self.consonant_peaks:
             start_sec = bar_start_abs_offset * 60.0 / self.current_bpm
-            end_sec = (bar_start_abs_offset + current_bar_actual_len_ql) * 60.0 / self.current_bpm
-            peaks_in_bar = [p - start_sec for p in self.consonant_peaks if start_sec <= p < end_sec]
+            end_sec = (
+                (bar_start_abs_offset + current_bar_actual_len_ql)
+                * 60.0
+                / self.current_bpm
+            )
+            peaks_in_bar = [
+                p - start_sec for p in self.consonant_peaks if start_sec <= p < end_sec
+            ]
             if peaks_in_bar:
                 events = PeakSynchroniser.sync_events(
                     peaks_in_bar,
@@ -1251,7 +1300,9 @@ class DrumGenerator(BasePartGenerator):
                     tempo_bpm=self.current_bpm,
                     lag_ms=self.consonant_sync_cfg["lag_ms"],
                     min_distance_beats=self.consonant_sync_cfg["min_distance_beats"],
-                    sustain_threshold_ms=self.consonant_sync_cfg["sustain_threshold_ms"],
+                    sustain_threshold_ms=self.consonant_sync_cfg[
+                        "sustain_threshold_ms"
+                    ],
                 )
 
         prev_note: Optional[note.Note] = None
@@ -1449,6 +1500,7 @@ class DrumGenerator(BasePartGenerator):
                         final_insert_offset_in_score,
                         midi_pitch,
                         final_event_velocity,
+                        tempo_bpm=event_bpm,
                     )
                 continue
 
@@ -1528,10 +1580,16 @@ class DrumGenerator(BasePartGenerator):
             part.insert(final_insert_offset_in_score, drum_hit_note)
 
             if inst_name == "ohh" and self.rng.random() < self.open_hat_choke_prob:
-                min_b = (self.open_hat_choke_min_ms / 1000.0) * (self.current_bpm / 60.0)
-                max_b = (self.open_hat_choke_max_ms / 1000.0) * (self.current_bpm / 60.0)
+                min_b = (self.open_hat_choke_min_ms / 1000.0) * (
+                    self.current_bpm / 60.0
+                )
+                max_b = (self.open_hat_choke_max_ms / 1000.0) * (
+                    self.current_bpm / 60.0
+                )
                 off = final_insert_offset_in_score + self.rng.uniform(min_b, max_b)
-                vel = max(1, int(drum_hit_note.volume.velocity * self.rng.uniform(0.6, 0.9)))
+                vel = max(
+                    1, int(drum_hit_note.volume.velocity * self.rng.uniform(0.6, 0.9))
+                )
                 pedal_pitch = self.gm_pitch_map.get("hh_pedal")
                 if pedal_pitch is not None:
                     q_off = PeakSynchroniser._quantize(off)
@@ -1544,7 +1602,9 @@ class DrumGenerator(BasePartGenerator):
                             duplicate = True
                             break
                     if not duplicate:
-                        pedal_note = self._make_hit("hh_pedal", vel, MIN_NOTE_DURATION_QL / 8.0, None)
+                        pedal_note = self._make_hit(
+                            "hh_pedal", vel, MIN_NOTE_DURATION_QL / 8.0, None
+                        )
                         if pedal_note:
                             pedal_note.offset = 0.0
                             part.insert(off, pedal_note)
@@ -1618,10 +1678,17 @@ class DrumGenerator(BasePartGenerator):
         return n
 
     def _insert_flam(
-        self, part: stream.Part, offset: float, midi_pitch: int, velocity: int
+        self,
+        part: stream.Part,
+        offset: float,
+        midi_pitch: int,
+        velocity: int,
+        *,
+        tempo_bpm: float | None = None,
     ) -> None:
         """Insert a flam consisting of a grace note before the main hit."""
-        grace_offset = (30.0 / 1000.0) * (self.current_bpm / 60.0)
+        bpm = tempo_bpm if tempo_bpm is not None else self._current_bpm(offset)
+        grace_offset = (30.0 / 1000.0) * (bpm / 60.0)
         grace = note.Note()
         grace.pitch = pitch.Pitch(midi=midi_pitch)
         grace.duration = m21duration.Duration(max(MIN_NOTE_DURATION_QL / 8.0, 0.05))
@@ -1788,12 +1855,12 @@ class DrumGenerator(BasePartGenerator):
         ohh = self.gm_pitch_map.get("ohh")
         if chh is None or ohh is None:
             return
-        thr = (50.0 / 1000.0) * (self.current_bpm / 60.0)
         beat_len = self.global_ts.beatDuration.quarterLength
         bar_len = self.global_ts.barDuration.quarterLength
         notes = sorted(part.recurse().notes, key=lambda n: n.offset)
         idx = 0
         for end in self.vocal_end_times:
+            thr = (50.0 / 1000.0) * (self._current_bpm(end) / 60.0)
             beat4 = round(end / bar_len) * bar_len
             if abs(end - beat4) > thr:
                 continue
@@ -1959,5 +2026,3 @@ class DrumGenerator(BasePartGenerator):
         return [
             off if not isinstance(off, tuple) else off[0] for off in self.fill_offsets
         ]
-
-

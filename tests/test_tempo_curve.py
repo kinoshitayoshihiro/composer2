@@ -1,6 +1,7 @@
 import pytest
 from pathlib import Path
 from utilities.tempo_curve import TempoCurve
+from utilities.tempo_utils import TempoMap
 from music21 import meter
 from hypothesis import given, strategies as st
 from utilities.timing_utils import _combine_timing
@@ -22,6 +23,12 @@ def test_tempo_curve_linear(tmp_path: Path) -> None:
     assert curve.bpm_at(80) == 115
 
 
+def test_tempo_curve_seconds() -> None:
+    tempo = TempoMap([{"beat": 0, "bpm": 120}, {"beat": 4, "bpm": 60}])
+    assert tempo.get_bpm(0) == 120
+    assert tempo.get_bpm(2) == 90
+
+
 curve4 = TempoCurve([{"beat": 0, "bpm": 60}, {"beat": 4, "bpm": 120}])
 ts44 = meter.TimeSignature("4/4")
 
@@ -41,4 +48,3 @@ def test_combine_timing_ms_roundtrip(off_beat: float, shift_ms: float) -> None:
     )
     ms_back = (blend.offset_ql - base) * 60.0 / bpm * 1000.0
     assert ms_back == pytest.approx(shift_ms * 0.5, abs=1.0)
-

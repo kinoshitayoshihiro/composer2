@@ -34,8 +34,21 @@ def load_tempo_curve(path: Path) -> List[Dict[str, float]]:
     return events
 
 
-def get_bpm_at(beat: float, curve: List[Dict[str, float]]) -> float:
-    """Return interpolated BPM at ``beat`` using linear interpolation."""
+def _curve_fraction(t: float, mode: str) -> float:
+    """Return interpolation fraction for ``mode`` at normalized ``t``."""
+
+    if mode == "ease_in":
+        return t * t
+    if mode == "ease_out":
+        return 1 - (1 - t) ** 2
+    if mode == "ease_in_out":
+        return 3 * t * t - 2 * t * t * t
+    return t
+
+
+def get_tempo_at_beat(beat: float, curve: List[Dict[str, float]]) -> float:
+    """Return interpolated BPM at ``beat`` supporting multiple curves."""
+
     if not curve:
         return 120.0
     if beat <= curve[0]["beat"]:
@@ -44,15 +57,22 @@ def get_bpm_at(beat: float, curve: List[Dict[str, float]]) -> float:
         prev = curve[i - 1]
         cur = curve[i]
         if beat <= cur["beat"]:
-            mode = prev.get("curve", "linear")
+            mode = str(prev.get("curve", "linear"))
             if mode == "step":
                 return float(prev["bpm"])
             span = cur["beat"] - prev["beat"]
             if span == 0:
                 return float(cur["bpm"])
-            frac = (beat - prev["beat"]) / span
+            t = (beat - prev["beat"]) / span
+            frac = _curve_fraction(t, mode)
             return prev["bpm"] + (cur["bpm"] - prev["bpm"]) * frac
     return float(curve[-1]["bpm"])
+
+
+def get_bpm_at(beat: float, curve: List[Dict[str, float]]) -> float:
+    """Alias for :func:`get_tempo_at_beat`."""
+
+    return get_tempo_at_beat(beat, curve)
 
 
 def interpolate_bpm(curve: List[Dict[str, float]], beat: float) -> float:
@@ -79,7 +99,20 @@ def beat_to_seconds(beat: float, curve: List[Dict[str, float]]) -> float:
         if mode == "linear" and start_bpm != end_bpm:
             slope = (end_bpm - start_bpm) / beats
             return (60.0 / slope) * math.log(end_bpm / start_bpm)
-        return beats * 60.0 / start_bpm
+        if mode == "step" or start_bpm == end_bpm:
+            return beats * 60.0 / start_bpm
+
+        # numeric integration for ease curves
+        steps = 8
+        total = 0.0
+        for i in range(steps):
+            t0 = i / steps
+            t1 = (i + 1) / steps
+            bpm0 = start_bpm + (end_bpm - start_bpm) * _curve_fraction(t0, mode)
+            bpm1 = start_bpm + (end_bpm - start_bpm) * _curve_fraction(t1, mode)
+            avg = (bpm0 + bpm1) / 2.0
+            total += (t1 - t0) * beats * 60.0 / avg
+        return total
 
     for cur in curve[1:]:
         if beat <= cur["beat"]:

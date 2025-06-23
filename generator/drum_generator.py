@@ -34,8 +34,8 @@ from utilities.drum_map_registry import (
 )
 from utilities.drum_map import GENERAL_MIDI_MAP
 from utilities.timing_utils import TimingBlend, interp_curve, _combine_timing
-from utilities.tempo_curve import TempoCurve, load_tempo_curve
-from utilities.tempo_utils import TempoVelocitySmoother, interpolate_bpm
+from utilities.tempo_utils import get_tempo_at_beat, load_tempo_curve
+from utilities.velocity_smoother import EMASmoother
 from utilities.peak_synchroniser import PeakSynchroniser
 
 
@@ -426,7 +426,7 @@ class DrumGenerator(BasePartGenerator):
             or (self.main_cfg.get("paths", {}).get("tempo_curve_path") if self.main_cfg else None)
             or (self.main_cfg.get("paths", {}).get("tempo_curve_json") if self.main_cfg else None)
         )
-        self.tempo_curve: TempoCurve | None = None
+        self.tempo_curve: list[dict] | None = None
         if curve_path:
             p = Path(curve_path).expanduser()
             if p.exists():
@@ -439,7 +439,7 @@ class DrumGenerator(BasePartGenerator):
         self.use_velocity_ema = bool(
             (global_settings or {}).get("use_velocity_ema", False)
         )
-        self._vel_smoother = TempoVelocitySmoother()
+        self._vel_smoother = EMASmoother(window=16)
 
         sync_cfg = global_cfg.get("consonant_sync", {})
         self.consonant_sync_cfg = {
@@ -700,7 +700,7 @@ class DrumGenerator(BasePartGenerator):
     def _current_bpm(self, abs_offset_ql: float) -> float:
         """Return BPM at ``abs_offset_ql`` using tempo curve if available."""
         if self.tempo_curve is not None:
-            return interpolate_bpm(self.tempo_curve.points, abs_offset_ql)
+            return get_tempo_at_beat(abs_offset_ql, self.tempo_curve)
         return self.global_tempo
 
     def _choose_pattern_key(
@@ -1418,9 +1418,7 @@ class DrumGenerator(BasePartGenerator):
                 ),
             )
             if self.use_velocity_ema:
-                final_event_velocity = self._vel_smoother.smooth(
-                    inst_name, final_event_velocity
-                )
+                final_event_velocity = self._vel_smoother.update(final_event_velocity)
 
             if brush_active and inst_name == "snare":
                 inst_name = "snare_brush"
@@ -1704,7 +1702,7 @@ class DrumGenerator(BasePartGenerator):
                 )
             return n
 
-        tempo = tempo_bpm or self.current_bpm
+        tempo = tempo_bpm or self.global_tempo
         for idx in range(n_hits):
             off_ms = window_ms - idx * step_ms
             grace_offset = (off_ms / 1000.0) * (tempo / 60.0)

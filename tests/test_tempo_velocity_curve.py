@@ -21,7 +21,7 @@ def test_tempo_interp_midpoint(tmp_path: Path) -> None:
 def test_ema_smoothing_reduces_variance() -> None:
     vals = [120 if i % 2 == 0 else 30 for i in range(16)]
     smoother = EMASmoother()
-    out = [smoother.smooth(v) for v in vals]
+    out = [smoother.update(v) for v in vals]
     assert statistics.pstdev(out) < statistics.pstdev(vals) * 0.6
 
 

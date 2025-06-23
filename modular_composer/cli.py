@@ -7,7 +7,8 @@ from pathlib import Path
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
 from utilities.peak_extractor import PeakExtractorConfig, extract_peaks
 from utilities.peak_synchroniser import PeakSynchroniser
-from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple, beat_to_seconds
+from utilities.tempo_utils import beat_to_seconds
+from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple
 
 try:
     __version__ = _md.version("modular_composer")

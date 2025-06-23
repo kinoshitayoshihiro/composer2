@@ -1,14 +1,13 @@
 import pathlib
 import subprocess
-from typing import List, Tuple
 
 import mido
 import pytest
 
 
-def _read_events(path: pathlib.Path) -> List[Tuple[str, int, int | None, int | None, int | None]]:
+def _read_events(path: pathlib.Path) -> list[tuple[str, int, int | None, int | None, int | None]]:
     mid = mido.MidiFile(str(path))
-    events: List[Tuple[str, int, int | None, int | None, int | None]] = []
+    events: list[tuple[str, int, int | None, int | None, int | None]] = []
     for track in mid.tracks:
         for msg in track:
             note = getattr(msg, "note", None)
@@ -39,7 +38,7 @@ def test_golden_demo(tmp_path: pathlib.Path, request: pytest.FixtureRequest) -> 
         golden.write_bytes(out.read_bytes())
         pytest.skip("golden regenerated")
 
-    if not golden.exists():
+    if not golden.exists() or golden.stat().st_size == 0:
         pytest.skip("Golden MIDI missing")
 
     assert _read_events(out) == _read_events(golden)

@@ -44,6 +44,7 @@ from .velocity_curve import resolve_velocity_curve, PREDEFINED_CURVES
 from .tempo_curve import TempoCurve, TempoPoint, load_tempo_curve
 from .tempo_utils import (
     load_tempo_curve as load_tempo_curve_simple,
+    get_tempo_at_beat,
     get_bpm_at,
     interpolate_bpm,
     beat_to_seconds,
@@ -60,6 +61,6 @@ __all__ = [
     "HUMANIZATION_TEMPLATES", "NUMPY_AVAILABLE",
     "resolve_velocity_curve", "PREDEFINED_CURVES",
     "TempoCurve", "TempoPoint", "load_tempo_curve", "VelocitySmoother", "EMASmoother",
-    "load_tempo_curve_simple", "get_bpm_at", "interpolate_bpm", "beat_to_seconds",
+    "load_tempo_curve_simple", "get_tempo_at_beat", "get_bpm_at", "interpolate_bpm", "beat_to_seconds",
     "TempoVelocitySmoother", "write_demo_bar", "render_midi",
 ]

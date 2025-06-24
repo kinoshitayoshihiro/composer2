@@ -184,10 +184,11 @@ pytest -q
 
 Running the tests confirms that chord generation and instrument mappings behave as expected.
 
-Golden MIDI regression files live in `tests/golden_midi/`. Update them with:
+Golden MIDI regression files are stored as base64 text under `data/golden/`.
+Update them with:
 
 ```bash
-pytest --update-golden
+UPDATE_GOLDENS=1 pytest tests/test_midi_regression.py
 ```
 
 To render audio set `SF2_PATH` to your SoundFont and install `fluidsynth`.

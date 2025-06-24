@@ -5,6 +5,7 @@ import math
 import yaml
 from pathlib import Path
 import json
+
 from typing import Any, Dict, List, Optional, Tuple, Set, Sequence
 from music21 import (
     stream,
@@ -40,6 +41,7 @@ from utilities.timing_utils import TimingBlend, interp_curve, _combine_timing
 from utilities.tempo_utils import TempoMap, load_tempo_map
 from utilities.velocity_smoother import EMASmoother
 from tools.peak_synchroniser import PeakSynchroniser
+from utilities.accent_mapper import AccentMapper
 
 
 logger = logging.getLogger("modular_composer.drum_generator")
@@ -130,53 +132,6 @@ def resolve_velocity_curve(curve_spec: Any) -> List[float]:
     return [1.0]
 
 
-class AccentMapper:
-    """Map accent strength and ghost-hat density using vocal heatmap."""
-
-    def __init__(
-        self,
-        threshold: float = 0.6,
-        ghost_density_range: tuple[float, float] = (0.3, 0.8),
-        rng: random.Random | None = None,
-    ) -> None:
-        self.threshold = threshold
-        self.ghost_density_range = ghost_density_range
-        self.rng = rng or random.Random()
-        self._walk = 0
-        self._prev: int | None = None
-
-    def begin_bar(self, walk_range: int = 8) -> None:
-        step = self.rng.randint(-walk_range, walk_range)
-        self._walk = max(-127, min(127, self._walk + step))
-
-    def accent(self, rel: float, velocity: int, *, step: bool = True) -> int:
-        """Return velocity after applying accent and random walk."""
-        return self.get_velocity(rel, velocity, apply_walk=step)
-
-    def get_velocity(
-        self,
-        rel: float,
-        base_velocity: int,
-        *,
-        apply_walk: bool = True,
-        clamp: tuple[int, int] = (1, 127),
-    ) -> int:
-        if rel >= self.threshold:
-            vel = int(base_velocity * 1.2)
-        else:
-            vel = base_velocity
-        if apply_walk:
-            vel += self._walk
-        low, high = clamp
-        vel = max(low, min(high, vel))
-        if self._prev is not None:
-            vel = int(round((self._prev + vel) / 2))
-        self._prev = vel
-        return vel
-
-    def ghost_density(self, rel: float) -> float:
-        low, high = self.ghost_density_range
-        return high if rel < self.threshold else low
 
 
 class FillInserter:
@@ -526,10 +481,8 @@ class DrumGenerator(BasePartGenerator):
             self.rng.seed(self.main_cfg["rng_seed"])
 
         self.accent_mapper = AccentMapper(
-            threshold=self.main_cfg.get("accent_threshold", 0.6),
-            ghost_density_range=tuple(
-                self.main_cfg.get("ghost_density_range", [0.3, 0.8])
-            ),
+            self.heatmap,
+            self.main_cfg.get("global_settings", {}),
             rng=self.rng,
         )
         self.ghost_hat_on_offbeat = self.main_cfg.get("ghost_hat_on_offbeat", True)
@@ -1078,7 +1031,7 @@ class DrumGenerator(BasePartGenerator):
                 bars_since_section_start = 0
             current_pos_within_block = 0.0
             while remaining_ql_in_block > MIN_NOTE_DURATION_QL / 8.0:
-                self.accent_mapper.begin_bar(self.random_walk_step)
+                self.accent_mapper.begin_bar()
                 # (フィルインロジック、パターンの適用は前回と同様、base_vel を _apply_pattern に渡す)
                 current_pattern_iteration_ql = min(
                     pattern_unit_length_ql, remaining_ql_in_block
@@ -1436,7 +1389,6 @@ class DrumGenerator(BasePartGenerator):
                 % self.heatmap_resolution
             )
             bin_count = self.heatmap.get(bin_idx, 0)
-            rel = bin_count / self.max_heatmap_value if self.max_heatmap_value else 0
 
             if (
                 inst_name in {"ghost", "ghost_hat"}
@@ -1447,18 +1399,13 @@ class DrumGenerator(BasePartGenerator):
                 )
                 continue
             if inst_name in {"ghost", "ghost_hat"}:
-                density = self.accent_mapper.ghost_density(rel)
                 if not self.ghost_hat_on_offbeat:
                     beat_pos = (final_insert_offset_in_score * 2) % 1.0
                     if abs(beat_pos) < 1e-3:
                         continue
-                if self.rng.random() > density:
+                if not self.accent_mapper.maybe_ghost_hat(bin_idx):
                     continue
 
-            if inst_name in {"kick", "snare"}:
-                final_event_velocity = self.accent_mapper.accent(
-                    rel, final_event_velocity
-                )
 
             layer_idx = ev_def.get("velocity_layer")
             if velocity_curve and layer_idx is not None:
@@ -1480,6 +1427,15 @@ class DrumGenerator(BasePartGenerator):
             )
             if self.use_velocity_ema:
                 final_event_velocity = self.vel_smoother.update(final_event_velocity)
+
+            if (
+                inst_name in {"kick", "snare"}
+                and ev_def.get("type") not in {"drag", "ruff"}
+                and layer_idx is None
+            ):
+                final_event_velocity = self.accent_mapper.accent(
+                    bin_idx, final_event_velocity
+                )
 
             if brush_active and inst_name == "snare":
                 inst_name = "snare_brush"

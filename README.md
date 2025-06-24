@@ -193,6 +193,21 @@ UPDATE_GOLDENS=1 pytest tests/test_midi_regression.py
 
 To render audio set `SF2_PATH` to your SoundFont and install `fluidsynth`.
 Use `utilities.synth.render_midi` to convert MIDI files to WAV for quick checks.
+For a short audio regression locally you can run:
+
+```bash
+sudo apt-get install fluidsynth timgm6mb-soundfont
+python - <<'EOF'
+from utilities.synth import render_midi
+import pathlib, base64
+tmp = pathlib.Path('tmp-local')
+tmp.mkdir(exist_ok=True)
+b64 = pathlib.Path('data/golden/rock_drive_loop.b64').read_text()
+midi = tmp / 'rock_drive_loop.mid'
+midi.write_bytes(base64.b64decode(b64))
+render_midi(str(midi), 'rock_drive_loop.wav', soundfont='/usr/share/sounds/sf2/TimGM6mb.sf2')
+EOF
+```
 
 ### Groove Sampler Usage
 

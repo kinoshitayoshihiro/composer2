@@ -21,6 +21,21 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e ".[dev]"
+      - name: Cache SoundFont
+        id: cache-sf2
+        uses: actions/cache@v3
+        with:
+          path: sf2/TimGM6mb.sf2
+          key: ${{ runner.os }}-timgm6mb-sf2
+      - name: Install SoundFont
+        if: steps.cache-sf2.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fluidsynth timgm6mb-soundfont
+          mkdir -p sf2
+          cp /usr/share/sounds/sf2/TimGM6mb.sf2 sf2/
+      - name: Verify SF2 Size
+        run: ls -lh sf2/TimGM6mb.sf2
       - name: Ruff
         run: ruff check . --output-format=github
       - name: Mypy
@@ -31,6 +46,32 @@ jobs:
         run: pytest tests/test_midi_regression.py
         env:
           UPDATE_GOLDENS: ${{ github.event.inputs.update_goldens || '0' }}
+      - name: Audio Regression Tests
+        run: |
+          rm -rf tmp && mkdir tmp
+          python - << 'EOF'
+          from utilities.synth import render_midi
+          import pathlib, wave, base64
+          loops = ['rock_drive_loop', 'brush_light_loop']
+          sf2 = pathlib.Path('sf2/TimGM6mb.sf2')
+          for style in loops:
+              b64 = pathlib.Path(f'data/golden/{style}.b64').read_text()
+              midi_path = pathlib.Path('tmp') / f'{style}.mid'
+              midi_path.write_bytes(base64.b64decode(b64))
+              out = pathlib.Path('tmp') / f'{style}.wav'
+              render_midi(str(midi_path), str(out), soundfont=str(sf2))
+              with wave.open(out, 'rb') as wf:
+                  frames = wf.getnframes()
+                  rate = wf.getframerate()
+                  assert frames / rate < 20.0, f"{style}.wav too long"
+          EOF
+        timeout-minutes: 10
+      - name: Upload WAVs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wav-previews
+          path: tmp/*.wav
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:

@@ -22,14 +22,15 @@ music21 の Part オブジェクトを生成して返します。
 
 # --- 各楽器ジェネレータクラスとChordVoicerを再エクスポート ---
 from .base_part_generator import BasePartGenerator
-from .piano_generator import PianoGenerator
-from .guitar_generator import GuitarGenerator   # ファイル名が guitar_generator.py であることを確認
 from .bass_generator import BassGenerator
-from .melody_generator import MelodyGenerator
-from .drum_generator import DrumGenerator
-from .vocal_generator import VocalGenerator
-from .sax_generator import SaxGenerator
 from .chord_voicer import ChordVoicer
+from .drum_generator import DrumGenerator
+from .guitar_generator import GuitarGenerator  # ファイル名が guitar_generator.py であることを確認
+from .melody_generator import MelodyGenerator
+from .modular_composer_stub import ModularComposer
+from .piano_generator import PianoGenerator
+from .sax_generator import SaxGenerator
+from .vocal_generator import VocalGenerator
 
 __all__ = [
     "BasePartGenerator",
@@ -41,4 +42,5 @@ __all__ = [
     "VocalGenerator",
     "SaxGenerator",
     "ChordVoicer",
+    "ModularComposer",
 ]

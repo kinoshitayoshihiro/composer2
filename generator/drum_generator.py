@@ -1,7 +1,10 @@
-import logging, random, json, copy
+import logging
+import random
+import copy
 import math
 import yaml
 from pathlib import Path
+import json
 from typing import Any, Dict, List, Optional, Tuple, Set, Sequence
 from music21 import (
     stream,
@@ -36,7 +39,7 @@ from utilities.drum_map import GENERAL_MIDI_MAP
 from utilities.timing_utils import TimingBlend, interp_curve, _combine_timing
 from utilities.tempo_utils import TempoMap, load_tempo_map
 from utilities.velocity_smoother import EMASmoother
-from utilities.peak_synchroniser import PeakSynchroniser
+from tools.peak_synchroniser import PeakSynchroniser
 
 
 logger = logging.getLogger("modular_composer.drum_generator")
@@ -487,7 +490,13 @@ class DrumGenerator(BasePartGenerator):
             "min_distance_beats": float(sync_cfg.get("min_distance_beats", 0.25)),
             "sustain_threshold_ms": float(sync_cfg.get("sustain_threshold_ms", 120.0)),
         }
-        self.consonant_peaks: List[float] | None = None
+        self.use_consonant_sync = bool((global_settings or {}).get("use_consonant_sync", False))
+
+        peak_json_path = (
+            self.main_cfg.get("paths", {}).get("vocal_peak_json_for_drums")
+            or self.main_cfg.get("vocal_peak_json_for_drums")
+        )
+        self.consonant_peaks: List[float] = self._load_consonant_peaks(peak_json_path)
 
         # Use path settings from main_cfg, preferring an explicit MIDI file path
         self.vocal_midi_path = (
@@ -1284,7 +1293,7 @@ class DrumGenerator(BasePartGenerator):
                 resolution=self.groove_resolution,
             )
 
-        if self.consonant_peaks:
+        if self.use_consonant_sync and self.consonant_peaks:
             start_sec = self._convert_ticks_to_seconds(
                 int(bar_start_abs_offset * self.ppq)
             )
@@ -1814,6 +1823,17 @@ class DrumGenerator(BasePartGenerator):
             )
         except Exception as exc:
             logger.warning(f"DrumGen: failed to load vocal MIDI for hi-hat sync: {exc}")
+            return []
+
+    def _load_consonant_peaks(self, json_path: str | None) -> List[float]:
+        if not json_path or not Path(json_path).exists():
+            return []
+        try:
+            with open(json_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return sorted(float(p) for p in data)
+        except Exception as exc:
+            logger.warning(f"DrumGen: failed to load consonant peaks: {exc}")
             return []
 
     def _velocity_fade_into_fill(

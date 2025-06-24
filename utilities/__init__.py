@@ -50,6 +50,7 @@ from .tempo_utils import (
 from .velocity_smoother import VelocitySmoother, EMASmoother
 from .midi_export import write_demo_bar
 from .synth import render_midi
+from .accent_mapper import AccentMapper
 
 __all__ = [
     "MIN_NOTE_DURATION_QL",
@@ -79,4 +80,5 @@ __all__ = [
     "TempoVelocitySmoother",
     "write_demo_bar",
     "render_midi",
+    "AccentMapper",
 ]

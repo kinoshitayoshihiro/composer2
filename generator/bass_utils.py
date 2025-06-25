@@ -141,6 +141,28 @@ def get_approach_note(
     return candidates[0][1] if candidates else None
 
 
+def get_walking_note(
+    prev_pitch: pitch.Pitch,
+    next_root: pitch.Pitch,
+    scale_pitches: Sequence[pitch.Pitch],
+) -> pitch.Pitch:
+    """Return a suitable walking note between prev_pitch and next_root."""
+    candidates = [p for p in scale_pitches if p]
+    if not candidates:
+        candidates = [prev_pitch]
+    best = min(
+        candidates,
+        key=lambda p: (abs(p.ps - next_root.ps), abs(p.ps - prev_pitch.ps)),
+    )
+    if best.ps == prev_pitch.ps:
+        for step in [1, -1, 2, -2]:
+            alt = prev_pitch.transpose(step)
+            if abs(alt.ps - next_root.ps) <= abs(best.ps - next_root.ps):
+                best = alt
+                break
+    return best
+
+
 # --- 既存の関数 (walking_quarters, root_fifth_half, STYLE_DISPATCH, generate_bass_measure) は変更なし ---
 # (ただし、STYLE_DISPATCH内のlambda関数でのlogger呼び出しは、このファイルスコープのloggerを使うように修正を推奨)
 def walking_quarters(cs_now: harmony.ChordSymbol, cs_next: harmony.ChordSymbol, tonic: str, mode: str, octave: int = 3, vocal_notes_in_block: Optional[List[Dict]] = None) -> List[pitch.Pitch]:

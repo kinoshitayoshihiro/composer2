@@ -30,6 +30,7 @@ global_settings:
   heatmap_threshold: 2  # 強度判定の閾値（省略可）
   accent_threshold: 0.6
   ghost_density_range: [0.3, 0.8]
+  random_walk_step: 8  # ±8 の範囲で bar ごとに揺らぐ
   fill_emotion_threshold: 0.8
   fill_fade_beats: 2.0
   use_consonant_sync: false

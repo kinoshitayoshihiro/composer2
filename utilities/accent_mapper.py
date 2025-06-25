@@ -20,24 +20,25 @@ class AccentMapper:
             self.ghost_density_min = 0.3
             self.ghost_density_max = 0.8
         self.rng = rng or random.Random()
-        self._rw_state = 0.0
+        self._rw_state: int = 0
+        self._step_range = int(gs.get("random_walk_step", 8))
 
     def begin_bar(self) -> None:
-        """Advance the random walk for a new bar."""
-        self._random_walk()
+        """Advance the velocity random walk by one step."""
+        step = self.rng.randint(-self._step_range, self._step_range)
+        self._rw_state = int(
+            max(-self._step_range, min(self._step_range, self._rw_state + step))
+        )
 
-    def _random_walk(self) -> float:
-        step = self.rng.uniform(-0.05, 0.05)
-        self._rw_state = max(0.0, min(1.0, self._rw_state + step))
-        return self._rw_state
 
-    def accent(self, rel_beat: int, velocity: int) -> int:
-        """Return velocity with heatmap accent applied."""
+    def accent(self, rel_beat: int, velocity: int, *, apply_walk: bool = False) -> int:
+        """Return velocity with optional accent boost and random walk applied."""
+        vel = int(velocity)
         heat = self.heatmap.get(rel_beat, 0)
-        if heat < self.accent_threshold * self.max_heatmap_value:
-            return velocity
-        factor = 1.0 + 0.2 * self._random_walk()
-        vel = int(round(velocity * factor))
+        if heat >= self.accent_threshold * self.max_heatmap_value:
+            vel = int(round(vel * 1.2))
+        if apply_walk:
+            vel += self._rw_state
         return max(1, min(127, vel))
 
     def maybe_ghost_hat(self, rel_beat: int) -> bool:

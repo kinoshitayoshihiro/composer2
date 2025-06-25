@@ -14,6 +14,7 @@ def _cfg(tmp_path: Path):
         "vocal_midi_path_for_drums": "",
         "heatmap_json_path_for_drums": str(hp),
         "paths": {"rhythm_library_path": "data/rhythm_library.yml"},
+        "global_settings": {},
     }
 
 
@@ -73,24 +74,28 @@ def test_hihat_edge_pedal(tmp_path: Path):
 
 def test_velocity_random_walk(tmp_path: Path):
     cfg = _cfg(tmp_path)
-    cfg["random_walk_step"] = 4
+    cfg["global_settings"]["random_walk_step"] = 4
     cfg["rng_seed"] = 0
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
     part = stream.Part(id="drums")
-    events = [{"instrument": "snare", "offset": i} for i in range(32)]
-    drum._apply_pattern(
-        part,
-        events,
-        0.0,
-        32.0,
-        80,
-        "eighth",
-        0.5,
-        drum.global_ts,
-        {},
-    )
+    for bar in range(8):
+        drum.accent_mapper.begin_bar()
+        events = [
+            {"instrument": "snare", "offset": i} for i in range(4)
+        ]
+        drum._apply_pattern(
+            part,
+            events,
+            bar * 4.0,
+            4.0,
+            80,
+            "eighth",
+            0.5,
+            drum.global_ts,
+            {},
+        )
     notes = list(part.flatten().notes)
-    assert len({n.volume.velocity for n in notes}) > 4
+    assert len({n.volume.velocity for n in notes}) >= 3
 
 
 def test_brush_velocity_scaling(tmp_path: Path):

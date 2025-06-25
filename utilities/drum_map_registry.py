@@ -43,6 +43,7 @@ GM_DRUM_MAP: Dict[str, Tuple[str, int]] = {
     "ride_cymbal_swell": ("ride_cymbal_1", 51),
     "ride_bell": ("ride_cymbal_bell", 53),
     "splash": ("splash_cymbal", 55),
+    "cowbell": ("cowbell", 56),
     "crash_choke": ("crash_cymbal_1", 49),
     # FX
     "chimes": ("triangle", 81),
@@ -73,6 +74,7 @@ _LEGEND_BASE = {
         "ride_bell",
         "splash",
         "crash_choke",
+        "cowbell",
     }
 }
 UJAM_LEGEND_MAP: Dict[str, Tuple[str, int]] = {
@@ -122,6 +124,7 @@ MISSING_DRUM_MAP_FALLBACK = {
     "chimes": "chimes",
     "ride_cymbal_swell": "ride_cymbal_swell",
     "crash_cymbal_soft_swell": "crash_cymbal_soft_swell",
+    "cowbell": "cowbell",
 }
 
 # ---------------------------------------------------------------------------

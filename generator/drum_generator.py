@@ -453,6 +453,11 @@ class DrumGenerator(BasePartGenerator):
         self.consonant_sync_mode = str(
             (global_settings or {}).get("consonant_sync_mode", "bar")
         ).lower()
+        if self.consonant_sync_mode not in {"bar", "note"}:
+            raise ValueError(
+                f"Invalid consonant sync mode: {self.consonant_sync_mode}."
+                " Expected 'bar' or 'note'."
+            )
 
         peak_json_path = (
             self.main_cfg.get("paths", {}).get("vocal_peak_json_for_drums")

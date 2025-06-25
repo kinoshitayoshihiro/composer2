@@ -43,7 +43,7 @@ from utilities.humanizer import apply_humanization_to_element
 from utilities.onset_heatmap import RESOLUTION, load_heatmap
 from utilities.safe_get import safe_get
 from utilities.tempo_utils import TempoMap, load_tempo_map
-from utilities.timing_utils import _combine_timing
+from utilities.timing_utils import _combine_timing, align_to_consonant
 from utilities.velocity_smoother import EMASmoother
 
 from .base_part_generator import BasePartGenerator
@@ -450,6 +450,9 @@ class DrumGenerator(BasePartGenerator):
             "sustain_threshold_ms": float(sync_cfg.get("sustain_threshold_ms", 120.0)),
         }
         self.use_consonant_sync = bool((global_settings or {}).get("use_consonant_sync", False))
+        self.consonant_sync_mode = str(
+            (global_settings or {}).get("consonant_sync_mode", "bar")
+        ).lower()
 
         peak_json_path = (
             self.main_cfg.get("paths", {}).get("vocal_peak_json_for_drums")
@@ -1247,7 +1250,11 @@ class DrumGenerator(BasePartGenerator):
                 resolution=self.groove_resolution,
             )
 
-        if self.use_consonant_sync and self.consonant_peaks:
+        if (
+            self.use_consonant_sync
+            and self.consonant_peaks
+            and self.consonant_sync_mode == "bar"
+        ):
             start_sec = self._convert_ticks_to_seconds(
                 int(bar_start_abs_offset * self.ppq)
             )
@@ -1379,6 +1386,19 @@ class DrumGenerator(BasePartGenerator):
                 max_dur = (0.3 * self.current_bpm) / 60.0
                 clipped_duration_ql = min(clipped_duration_ql, max_dur)
             final_insert_offset_in_score = bar_start_abs_offset + rel_offset_in_pattern
+            if (
+                self.use_consonant_sync
+                and inst_name in {"kick", "snare"}
+                and self.consonant_peaks
+                and self.consonant_sync_mode == "note"
+            ):
+                final_insert_offset_in_score = align_to_consonant(
+                    final_insert_offset_in_score,
+                    self.consonant_peaks,
+                    self.current_bpm,
+                    lag_ms=self.consonant_sync_cfg["lag_ms"],
+                )
+                final_insert_offset_in_score = max(0.0, final_insert_offset_in_score)
             bin_idx = (
                 int(final_insert_offset_in_score * self.heatmap_resolution)
                 % self.heatmap_resolution

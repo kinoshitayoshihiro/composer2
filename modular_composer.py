@@ -309,6 +309,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=DRUM_MAPS.keys(),
         help="使用するドラムマッピングを選択 (default: gm)",
     )
+    p.add_argument(
+        "--consonant-sync-mode",
+        choices=["bar", "note"],
+        help="Consonant sync granularity override",
+    )
     return p
 
 
@@ -322,6 +327,10 @@ def main_cli() -> None:
         main_cfg.setdefault("global_settings", {})["strict_drum_map"] = True
     if args.drum_map:
         main_cfg.setdefault("global_settings", {})["drum_map"] = args.drum_map
+    if args.consonant_sync_mode:
+        main_cfg.setdefault("global_settings", {})[
+            "consonant_sync_mode"
+        ] = args.consonant_sync_mode
     paths = main_cfg.setdefault("paths", {})
     for k, v in (
         ("chordmap_path", args.chordmap),

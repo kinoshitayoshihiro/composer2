@@ -35,7 +35,8 @@ global_settings:
   bass_range_hi: 64
   fill_emotion_threshold: 0.8
   fill_fade_beats: 2.0
-  use_consonant_sync: false
+  use_consonant_sync: true
+  consonant_sync_mode: bar  # 'bar' or 'note'
 
 # ------------------- 2. Paths -----------------------
 paths:

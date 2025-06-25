@@ -1,0 +1,9 @@
+site_name: Composer2 Docs
+nav:
+  - Home: index.md
+  - API Reference:
+      - DrumGenerator: docs/api/drum_generator.md
+plugins:
+  - pdoc:
+      module: generator.drum_generator
+      output_dir: docs/api

@@ -13,3 +13,4 @@ audioread>=2.1.9
 pytest>=8.1.0
 scikit-learn>=1.3
 joblib>=1.3          # ← scikit-learn の実行時依存
+hypothesis>=6

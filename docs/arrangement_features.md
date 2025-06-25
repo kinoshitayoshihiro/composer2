@@ -54,3 +54,22 @@ When calling the internal ``_apply_pattern()`` helper, note that the arguments
 after ``drum_block_params`` are ``velocity_scale`` followed by
 ``velocity_curve``. Passing them in the wrong order will produce unexpected
 velocity values. Using keyword arguments is recommended for clarity.
+
+## Consonant Sync Modes
+
+Drum events can be nudged toward detected consonants from your vocal track. The
+behaviour is controlled by `global_settings.consonant_sync_mode`.
+
+- **`bar`** – shift an entire bar toward the nearest consonant cluster.
+- **`note`** – align each kick and snare hit individually.
+
+The default is `bar` as illustrated in `config/main_cfg.yml`:
+
+```yaml
+global_settings:
+  use_consonant_sync: true
+  consonant_sync_mode: bar  # 'bar' or 'note'
+```
+
+Override the setting from the command line with `--consonant-sync-mode` when
+running `modular_composer.py`.

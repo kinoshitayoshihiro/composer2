@@ -76,3 +76,14 @@ def test_sync_modes(tmp_path: Path, mode: str) -> None:
         assert offsets[1] == pytest.approx(1.0208, abs=1e-3)
         assert offsets[2] == pytest.approx(1.2708, abs=1e-3)
 
+
+def test_invalid_mode_raises(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, "foo")
+    with pytest.raises(ValueError):
+        DrumGenerator(
+            main_cfg=cfg,
+            global_settings=cfg["global_settings"],
+            part_name="drums",
+            part_parameters={},
+        )
+

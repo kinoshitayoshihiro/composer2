@@ -209,6 +209,17 @@ render_midi(str(midi), 'rock_drive_loop.wav', soundfont='/usr/share/sounds/sf2/T
 EOF
 ```
 
+**Spectral Regression:**
+To detect subtle timbral changes, CI runs `pytest tests/test_audio_spectrum.py` comparing FFT magnitudes with a 5% tolerance.
+Run it locally after generating snapshots in the `tmp/` directory with the audio regression step:
+
+```bash
+export SF2_PATH=sf2/TimGM6mb.sf2
+pytest tests/test_audio_spectrum.py
+```
+Baseline snapshots are expected under `data/golden/wav/`. If they are
+absent, the spectrum test will be skipped.
+
 ### Groove Sampler Usage
 
 Build an n-gram model from a folder of MIDI loops:

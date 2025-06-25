@@ -495,14 +495,8 @@ class DrumGenerator(BasePartGenerator):
             or (self.overrides and self.overrides.drum_brush)
         )
 
-        # ランダムウォークのステップ幅（テストで random_walk_step を使う場合）
-        self.random_walk_step = int(self.main_cfg.get("random_walk_step", 0))
-
         # apply groove pretty
         global_cfg = self.main_cfg.get("global_settings", {})
-        self.random_walk_step = int(
-            global_cfg.get("random_walk_step", self.random_walk_step)
-        )
         self.groove_profile_path = global_cfg.get("groove_profile_path")
         self.groove_strength = float(global_cfg.get("groove_strength", 1.0))
         self.groove_profile = {}
@@ -1234,9 +1228,6 @@ class DrumGenerator(BasePartGenerator):
             subdivision_duration_ql = beat_len_ql
         velocity_curve = velocity_curve or [1.0]
 
-        vel_walk_state: int = drum_block_params.setdefault(
-            "_vel_walk", pattern_base_velocity
-        )
 
         if not events and self.groove_model:
             events = groove_sampler.generate_bar(
@@ -1349,13 +1340,7 @@ class DrumGenerator(BasePartGenerator):
             if clipped_duration_ql < MIN_NOTE_DURATION_QL / 8.0:
                 continue
 
-            if self.random_walk_step:
-                step = self.rng.randint(-4, 4)
-                vel_walk_state = max(1, min(127, vel_walk_state + step))
-                drum_block_params["_vel_walk"] = vel_walk_state
-                base_vel_for_hit = vel_walk_state
-            else:
-                base_vel_for_hit = pattern_base_velocity
+            base_vel_for_hit = pattern_base_velocity
 
             if ev_def.get("type") == "ghost":
                 final_event_velocity = int(pattern_base_velocity * 0.2)
@@ -1434,7 +1419,7 @@ class DrumGenerator(BasePartGenerator):
                 and layer_idx is None
             ):
                 final_event_velocity = self.accent_mapper.accent(
-                    bin_idx, final_event_velocity
+                    bin_idx, final_event_velocity, apply_walk=True
                 )
 
             if brush_active and inst_name == "snare":

@@ -66,6 +66,11 @@ jobs:
                   assert frames / rate < 20.0, f"{style}.wav too long"
           EOF
         timeout-minutes: 10
+      - name: Audio Spectrum Regression
+        run: pytest tests/test_audio_spectrum.py
+        timeout-minutes: 5
+        env:
+          SF2_PATH: sf2/TimGM6mb.sf2
       - name: Upload WAVs on failure
         if: failure()
         uses: actions/upload-artifact@v4

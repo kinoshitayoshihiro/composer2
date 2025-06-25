@@ -55,6 +55,9 @@ def test_lock_and_lift(tmp_path):
     assert all(n.volume.velocity >= bass.base_velocity + 10 for n in locked)
     ghosts = [n for n in bass_part.notes if n.volume.velocity <= bass.base_velocity * 0.5]
     assert ghosts
+    on_beats = [n for n in bass_part.notes if abs(n.offset - round(n.offset)) < 1e-3]
+    locked_ratio = len([n for n in on_beats if n in locked]) / len(on_beats)
+    assert locked_ratio > 0.7
 
 
 def test_lock_and_lift_tempo_map(tmp_path):

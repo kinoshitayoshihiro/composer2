@@ -484,6 +484,9 @@ class DrumGenerator(BasePartGenerator):
         if self.main_cfg.get("rng_seed") is not None:
             self.rng.seed(self.main_cfg["rng_seed"])
 
+        # Velocity random walk is now handled entirely by ``AccentMapper``.
+        # The previous ``DrumGenerator.random_walk_step`` attribute has been
+        # removed in favor of this approach.
         self.accent_mapper = AccentMapper(
             self.heatmap,
             self.main_cfg.get("global_settings", {}),

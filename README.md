@@ -261,6 +261,24 @@ Use the JSON with the sampler to synchronise drums with consonants:
 modcompose sample model.pkl --peaks peaks.json --lag 10
 ```
 
+`global_settings.use_consonant_sync` enables this alignment. Set
+`consonant_sync_mode` to control how strictly events follow detected consonants.
+In **`bar`** mode the whole bar shifts toward the nearest consonant cluster,
+whereas **`note`** mode aligns kick and snare hits individually. The default is
+`bar` as shown in [`config/main_cfg.yml`](config/main_cfg.yml):
+
+```yaml
+global_settings:
+  use_consonant_sync: true
+  consonant_sync_mode: bar  # 'bar' or 'note'
+```
+
+You can override this on the command line:
+
+```bash
+python modular_composer.py --main-cfg config/main_cfg.yml --consonant-sync-mode note
+```
+
 Passing `--lag` values below zero will pre-hit the drums. If this causes
 negative beat offsets, set `clip_at_zero=true` in your configuration or pass the
 parameter when using the synchroniser programmatically.

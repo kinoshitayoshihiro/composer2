@@ -213,6 +213,16 @@ class BassGenerator(BasePartGenerator):
         )
         self._add_internal_default_patterns()
 
+        # range and swing settings
+        gs = global_settings or {}
+        self.bass_range_lo = int(gs.get("bass_range_lo", 30))
+        self.bass_range_hi = int(gs.get("bass_range_hi", 72))
+        self.swing_ratio = float(gs.get("swing_ratio", 0.0))
+        self._step_range = int(gs.get("random_walk_step", 8))
+
+        self._root_offsets: List[float] = []
+        self._vel_walk_state: int = 0
+
         self.kick_offsets: List[float] = []
 
     def compose(
@@ -231,7 +241,9 @@ class BassGenerator(BasePartGenerator):
             self.kick_offsets = []
 
         if self.mirror_melody and section_data.get("vocal_notes"):
-            tonic_str = section_data.get("tonic_of_section", self.global_key_tonic) or "C"
+            tonic_str = (
+                section_data.get("tonic_of_section", self.global_key_tonic) or "C"
+            )
             tonic_pitch = pitch.Pitch(tonic_str)
             mirrored = bass_utils.mirror_pitches(
                 section_data.get("vocal_notes", []), tonic_pitch
@@ -243,6 +255,10 @@ class BassGenerator(BasePartGenerator):
                 n = note.Note(mp, quarterLength=vn.quarterLength)
                 bass_part.insert(vn.offset, n)
             return bass_part
+
+        section_data.setdefault("part_params", {}).setdefault(
+            "swing_ratio", self.swing_ratio
+        )
 
         result = super().compose(
             section_data=section_data,
@@ -257,7 +273,12 @@ class BassGenerator(BasePartGenerator):
             self.vel_shift_on_kick = self.overrides.velocity_shift_on_kick
 
         def apply_shift(part: stream.Part):
-            self._postprocess_notes_for_kick_lock(part.flatten().notes, self.kick_offsets)
+            self._postprocess_notes_for_kick_lock(
+                part.flatten().notes, self.kick_offsets
+            )
+            self._apply_velocity_random_walk(part)
+            self._clamp_range(part)
+            self._root_offsets = [float(n.offset) for n in part.flatten().notes]
             return part
 
         if isinstance(result, dict):
@@ -276,7 +297,43 @@ class BassGenerator(BasePartGenerator):
             if any(abs(float(n.offset) - k) < eps for k in kick_offsets):
                 if n.volume is None:
                     n.volume = m21volume.Volume()
-                n.volume.velocity = min(127, (n.volume.velocity or 64) + self.vel_shift_on_kick)
+                n.volume.velocity = min(
+                    127, (n.volume.velocity or 64) + self.vel_shift_on_kick
+                )
+
+    def _apply_velocity_random_walk(self, part: stream.Part) -> None:
+        """Apply small bar-by-bar velocity fluctuation."""
+        if not part.flatten().notes:
+            return
+        bar_len = self.measure_duration
+        notes = sorted(part.flatten().notes, key=lambda n: n.offset)
+        current_bar_start = 0.0
+        self._vel_walk_state = 0
+        for n in notes:
+            while n.offset >= current_bar_start + bar_len - 1e-6:
+                current_bar_start += bar_len
+                step = self.rng.randint(-self._step_range, self._step_range)
+                self._vel_walk_state = max(
+                    -self._step_range,
+                    min(self._step_range, self._vel_walk_state + step),
+                )
+            if n.volume is None:
+                n.volume = m21volume.Volume()
+            n.volume.velocity = max(
+                1,
+                min(127, (n.volume.velocity or 64) + self._vel_walk_state),
+            )
+
+    def _clamp_range(self, part: stream.Part) -> None:
+        """Ensure all notes fall within bass range."""
+        for n in part.flatten().notes:
+            midi = n.pitch.midi
+            while midi > self.bass_range_hi:
+                midi -= 12
+            while midi < self.bass_range_lo:
+                midi += 12
+            midi = max(self.bass_range_lo, min(self.bass_range_hi, midi))
+            n.pitch.midi = midi
 
     def _add_internal_default_patterns(self):
         # (変更なし)
@@ -1287,7 +1344,9 @@ class BassGenerator(BasePartGenerator):
                     continue
                 midi_val = self._get_bass_pitch_in_octave(pitch_obj, target_octave)
                 n_obj = note.Note(pitch.Pitch(midi=midi_val), quarterLength=dur)
-                n_obj.volume.velocity = max(1, int(final_base_velocity_for_algo * vel_factor))
+                n_obj.volume.velocity = max(
+                    1, int(final_base_velocity_for_algo * vel_factor)
+                )
                 notes_tuples.append((rel_offset, n_obj))
         elif pattern_type in [
             "walking_blues",
@@ -1389,7 +1448,9 @@ class BassGenerator(BasePartGenerator):
             )
             return bass_part
 
-        velocity_curve_list = resolve_velocity_curve(pattern_details.get("options", {}).get("velocity_curve"))
+        velocity_curve_list = resolve_velocity_curve(
+            pattern_details.get("options", {}).get("velocity_curve")
+        )
 
         block_q_length = section_data.get("q_length", self.measure_duration)
         if block_q_length <= 0:
@@ -1602,6 +1663,10 @@ class BassGenerator(BasePartGenerator):
             humanizer.apply(bass_part, profile_name)
 
         return bass_part
+
+    def get_root_offsets(self) -> List[float]:
+        """Return offsets of notes generated in the last compose call."""
+        return list(self._root_offsets)
 
 
 # --- END OF FILE generator/bass_generator.py ---

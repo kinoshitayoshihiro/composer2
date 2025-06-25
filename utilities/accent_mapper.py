@@ -31,7 +31,7 @@ class AccentMapper:
         )
 
 
-    def accent(self, rel_beat: int, velocity: int, *, apply_walk: bool = False) -> int:
+    def accent(self, rel_beat: int, velocity: int, *, apply_walk: bool = True) -> int:
         """Return velocity with optional accent boost and random walk applied."""
         vel = int(velocity)
         heat = self.heatmap.get(rel_beat, 0)

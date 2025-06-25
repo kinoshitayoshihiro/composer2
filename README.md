@@ -69,6 +69,7 @@ global_settings:
   tempo_bpm: 88
   tempo_curve_path: "data/tempo_curve.json"  # optional gradual rit./accel.
   random_walk_step: 8  # ±8 range bar by bar
+  bass_range_hi: 64    # optional upper limit for bass notes (default 72)
 paths:
   chordmap_path: "../data/processed_chordmap_with_emotion.yaml"
   rhythm_library_path: "../data/rhythm_library.yml"

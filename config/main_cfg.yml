@@ -31,6 +31,8 @@ global_settings:
   accent_threshold: 0.6
   ghost_density_range: [0.3, 0.8]
   random_walk_step: 8  # ±8 の範囲で bar ごとに揺らぐ
+  # ベース音域の上限を変更したい場合は bass_range_hi を指定 (デフォルト72)
+  bass_range_hi: 64
   fill_emotion_threshold: 0.8
   fill_fade_beats: 2.0
   use_consonant_sync: false

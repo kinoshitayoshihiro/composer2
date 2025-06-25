@@ -1,29 +1,31 @@
 # --- START OF FILE generator/bass_generator.py (S-1 Sprint適用・エラー修正・アルゴリズム拡充・型ヒント修正版) ---
-import music21
+import copy
 import logging
-import random  # ← 追加
+import math
+import random  # 追加
+from collections.abc import Sequence
+from typing import Any
+
+import music21
 from music21 import (
-    stream,
-    note,
-    chord as m21chord,
-    harmony,
-    pitch,
-    tempo,
-    meter,
-    instrument as m21instrument,
-    key,
-    interval,
-    scale,
-    volume as m21volume,
     duration as m21duration,
 )
-from typing import List, Dict, Optional, Any, Tuple, Union, cast, Sequence
+from music21 import (
+    harmony,
+    meter,
+    note,
+    pitch,
+    scale,
+    stream,
+)
+from music21 import (
+    volume as m21volume,
+)
+
+from utilities import humanizer
 from utilities.velocity_curve import resolve_velocity_curve
-import copy
-import math
 
 from .base_part_generator import BasePartGenerator
-from utilities import humanizer
 
 try:
     from utilities.safe_get import safe_get
@@ -48,31 +50,31 @@ except ImportError:
 
 
 try:
+    from utilities import bass_utils
+    from utilities.bass_utils import get_approach_note
     from utilities.core_music_utils import (
+        MIN_NOTE_DURATION_QL,
         get_time_signature_object,
         sanitize_chord_label,
-        MIN_NOTE_DURATION_QL,
     )
-    from utilities.scale_registry import ScaleRegistry
-    from . import bass_utils
-    from .bass_utils import get_approach_note
     from utilities.override_loader import (
         PartOverride,
     )  # ★★★ PartOverrideModel -> PartOverride ★★★
+    from utilities.scale_registry import ScaleRegistry
 except ImportError as e:
     print(f"BassGenerator: Warning - could not import some core utilities: {e}")
     MIN_NOTE_DURATION_QL = 0.125
 
-    def get_time_signature_object(ts_str: Optional[str]) -> meter.TimeSignature:
+    def get_time_signature_object(ts_str: str | None) -> meter.TimeSignature:
         return meter.TimeSignature(ts_str or "4/4")
 
-    def sanitize_chord_label(label: Optional[str]) -> Optional[str]:
+    def sanitize_chord_label(label: str | None) -> str | None:
         return label
 
     class ScaleRegistry:
         @staticmethod
         def get(
-            tonic_str: Optional[str], mode_str: Optional[str]
+            tonic_str: str | None, mode_str: str | None
         ) -> scale.ConcreteScale:
             return scale.MajorScale(tonic_str or "C")
 
@@ -82,7 +84,7 @@ except ImportError as e:
         scale_o,
         style="chromatic_or_diatonic",
         max_s=2,
-        pref_dir: Optional[Union[int, str]] = None,
+        pref_dir: int | str | None = None,
     ):
         if to_p:
             return to_p
@@ -100,11 +102,11 @@ except ImportError as e:
     class PartOverride:  # type: ignore
         model_config = {}
         model_fields = {}
-        velocity_shift: Optional[int] = None
-        velocity_shift_on_kick: Optional[int] = None
-        velocity: Optional[int] = None
-        options: Optional[Dict[str, Any]] = None
-        rhythm_key: Optional[str] = None
+        velocity_shift: int | None = None
+        velocity_shift_on_kick: int | None = None
+        velocity: int | None = None
+        options: dict[str, Any] | None = None
+        rhythm_key: str | None = None
 
         def model_dump(self, exclude_unset=True):
             return {}
@@ -177,6 +179,10 @@ class BassGenerator(BasePartGenerator):
             bass notes. Default is ``False``.  Set this in ``main_cfg.yml`` under
             ``part_defaults.bass`` to apply globally.
         """
+        self.kick_lock_cfg = (global_settings or {}).get("kick_lock", {})
+        seed = self.kick_lock_cfg.get("random_seed")
+        self._rng = random.Random(seed or None)
+
         super().__init__(
             global_settings=global_settings,
             default_instrument=default_instrument,
@@ -184,6 +190,7 @@ class BassGenerator(BasePartGenerator):
             global_time_signature=global_time_signature,
             global_key_signature_tonic=global_key_signature_tonic,
             global_key_signature_mode=global_key_signature_mode,
+            rng=self._rng,
             **kwargs,
         )
         self.cfg: dict = kwargs.copy()
@@ -220,25 +227,32 @@ class BassGenerator(BasePartGenerator):
         self.swing_ratio = float(gs.get("swing_ratio", 0.0))
         self._step_range = int(gs.get("random_walk_step", 8))
 
-        self._root_offsets: List[float] = []
+        self._root_offsets: list[float] = []
         self._vel_walk_state: int = 0
 
-        self.kick_offsets: List[float] = []
+        self.kick_offsets: list[float] = []
+        self.base_velocity = 70
 
     def compose(
         self,
         *,
-        section_data: Dict[str, Any],
-        overrides_root: Optional[Any] = None,
-        groove_profile_path: Optional[str] = None,
-        next_section_data: Optional[Dict[str, Any]] = None,
-        part_specific_humanize_params: Optional[Dict[str, Any]] = None,
-        shared_tracks: Dict[str, Any] | None = None,
+        section_data: dict[str, Any],
+        overrides_root: Any | None = None,
+        groove_profile_path: str | None = None,
+        next_section_data: dict[str, Any] | None = None,
+        part_specific_humanize_params: dict[str, Any] | None = None,
+        shared_tracks: dict[str, Any] | None = None,
     ) -> stream.Part:
         if shared_tracks and "kick_offsets" in shared_tracks:
             self.kick_offsets = list(shared_tracks["kick_offsets"])
         else:
             self.kick_offsets = []
+
+        self.base_velocity = (
+            section_data.get("part_params", {})
+            .get("bass", {})
+            .get("velocity", 70)
+        )
 
         if self.mirror_melody and section_data.get("vocal_notes"):
             tonic_str = (
@@ -278,6 +292,9 @@ class BassGenerator(BasePartGenerator):
             )
             self._apply_velocity_random_walk(part)
             self._clamp_range(part)
+            if self.kick_lock_cfg.get("enabled", False) and shared_tracks is not None:
+                kicks = shared_tracks.get("kick_offsets_sec", [])
+                self._apply_kick_lock(part, kicks)
             self._root_offsets = [float(n.offset) for n in part.flatten().notes]
             return part
 
@@ -289,7 +306,7 @@ class BassGenerator(BasePartGenerator):
             return apply_shift(result)
 
     def _postprocess_notes_for_kick_lock(
-        self, notes: List[note.Note], kick_offsets: Sequence[float], eps: float = 0.03
+        self, notes: list[note.Note], kick_offsets: Sequence[float], eps: float = 0.03
     ) -> None:
         if not kick_offsets:
             return
@@ -312,7 +329,7 @@ class BassGenerator(BasePartGenerator):
         for n in notes:
             while n.offset >= current_bar_start + bar_len - 1e-6:
                 current_bar_start += bar_len
-                step = self.rng.randint(-self._step_range, self._step_range)
+                step = self._rng.randint(-self._step_range, self._step_range)
                 self._vel_walk_state = max(
                     -self._step_range,
                     min(self._step_range, self._vel_walk_state + step),
@@ -334,6 +351,85 @@ class BassGenerator(BasePartGenerator):
                 midi += 12
             midi = max(self.bass_range_lo, min(self.bass_range_hi, midi))
             n.pitch.midi = midi
+
+    def _apply_kick_lock(self, part: stream.Part, kick_offsets_sec: list[float]) -> None:
+        if not kick_offsets_sec:
+            return
+        cfg = self.kick_lock_cfg
+        window = cfg.get("window_ms", 30) / 1000.0
+        vel_boost = int(cfg.get("vel_boost", 12))
+        gb = cfg.get("ghost_before_ms", [30, 90])
+        if not isinstance(gb, (list, tuple)) or len(gb) < 2:
+            gb = [30, 90]
+        ghost_vel_ratio = float(cfg.get("ghost_vel_ratio", 0.35))
+        notes = sorted(part.flatten().notes, key=lambda n: n.offset)
+
+        base_bpm = self.global_tempo or 120
+        if (
+            hasattr(self, "tempo_map")
+            and self.tempo_map
+            and hasattr(self.tempo_map, "get_bpm")
+        ):
+            base_bpm = self.tempo_map.get_bpm(0)
+        seconds_per_beat = 60.0 / base_bpm
+
+        def ql_to_sec(ql: float) -> float:
+            bpm = (
+                self.tempo_map.get_bpm(ql)
+                if hasattr(self, "tempo_map")
+                and self.tempo_map
+                and hasattr(self.tempo_map, "get_bpm")
+                else base_bpm
+            )
+            return ql * 60.0 / bpm
+
+        # Lock velocity boost
+        for n in notes:
+            off_sec = ql_to_sec(float(n.offset))
+            if any(abs(off_sec - k) <= window for k in kick_offsets_sec):
+                if n.volume is None:
+                    n.volume = m21volume.Volume()
+                n.volume.velocity = min(
+                    127, max(1, (n.volume.velocity or self.base_velocity) + vel_boost)
+                )
+
+        # Lift ghost notes
+        if not notes:
+            return
+        root_pitch = notes[0].pitch
+        for k in kick_offsets_sec:
+            delay = self._rng.uniform(gb[0], gb[1]) / 1000.0
+            if delay < 0.001:
+                continue
+            ghost_time = k - delay
+            if ghost_time < 0:
+                continue
+            if (
+                hasattr(self, "tempo_map")
+                and self.tempo_map
+                and hasattr(self.tempo_map, "get_bpm")
+            ):
+                beat_idx = ghost_time / seconds_per_beat
+                cur_bpm = self.tempo_map.get_bpm(beat_idx)
+            else:
+                cur_bpm = self.global_tempo or 120
+            off_ql = ghost_time * cur_bpm / 60.0
+            prev: note.Note | None = None
+            for n in reversed(notes):
+                if n.offset <= off_ql:
+                    prev = n
+                    break
+            pitch_obj = prev.pitch if prev else root_pitch
+            base_vel = (
+                prev.volume.velocity if prev and prev.volume else self.base_velocity
+            )
+            dur = min(0.1, (prev.duration.quarterLength / 2 if prev else 0.1))
+            g = note.Note(pitch_obj)
+            g.duration = m21duration.Duration(dur)
+            g.volume = m21volume.Volume(velocity=int(base_vel * ghost_vel_ratio))
+            g.offset = off_ql
+            part.insert(off_ql, g)
+            notes.append(g)
 
     def _add_internal_default_patterns(self):
         # (変更なし)
@@ -358,6 +454,20 @@ class BassGenerator(BasePartGenerator):
                         "offset": i * 1.0,
                         "duration": 1.0,
                         "velocity_factor": 0.9,
+                        "type": "root",
+                    }
+                    for i in range(int(self.measure_duration))
+                ],
+                "reference_duration_ql": self.measure_duration,
+            },
+            "root_quarters": {
+                "description": "Fixed quarter note roots.",
+                "pattern_type": "fixed_pattern",
+                "pattern": [
+                    {
+                        "offset": i * 1.0,
+                        "duration": 1.0,
+                        "velocity_factor": 1.0,
                         "type": "root",
                     }
                     for i in range(int(self.measure_duration))
@@ -455,7 +565,7 @@ class BassGenerator(BasePartGenerator):
             return "basic_chord_tone_quarters"
         return pattern_key
 
-    def _get_rhythm_pattern_details(self, rhythm_key: str) -> Dict[str, Any]:
+    def _get_rhythm_pattern_details(self, rhythm_key: str) -> dict[str, Any]:
         # (変更なし)
         if not rhythm_key or rhythm_key not in self.part_parameters:  # ←修正
             self.logger.warning(
@@ -487,7 +597,7 @@ class BassGenerator(BasePartGenerator):
         return details
 
     def _get_bass_pitch_in_octave(
-        self, base_pitch_obj: Optional[pitch.Pitch], target_octave: int
+        self, base_pitch_obj: pitch.Pitch | None, target_octave: int
     ) -> int:
         # (変更なし)
         if not base_pitch_obj:
@@ -508,17 +618,17 @@ class BassGenerator(BasePartGenerator):
 
     def _generate_notes_from_fixed_pattern(
         self,
-        pattern_events: List[Dict[str, Any]],
+        pattern_events: list[dict[str, Any]],
         m21_cs: harmony.ChordSymbol,
         block_base_velocity: int,
         target_octave: int,
         block_duration: float,
         pattern_reference_duration_ql: float,
-        current_scale: Optional[scale.ConcreteScale] = None,
-        velocity_curve: List[float] | None = None,
-    ) -> List[Tuple[float, note.Note]]:
+        current_scale: scale.ConcreteScale | None = None,
+        velocity_curve: list[float] | None = None,
+    ) -> list[tuple[float, note.Note]]:
         # (変更なし)
-        notes: List[Tuple[float, note.Note]] = []
+        notes: list[tuple[float, note.Note]] = []
         if not m21_cs or not m21_cs.pitches:
             self.logger.debug(
                 "BassGen _generate_notes_from_fixed_pattern: ChordSymbol is None or has no pitches."
@@ -588,7 +698,7 @@ class BassGenerator(BasePartGenerator):
                         final_velocity = int(final_velocity * velocity_curve[idx])
                 except (TypeError, ValueError):
                     pass
-            chosen_pitch_base: Optional[pitch.Pitch] = None
+            chosen_pitch_base: pitch.Pitch | None = None
             if note_type == "root" and root_pitch_obj:
                 chosen_pitch_base = root_pitch_obj
             elif note_type == "fifth" and fifth_pitch_obj:
@@ -600,11 +710,11 @@ class BassGenerator(BasePartGenerator):
             elif note_type == "octave_up_root" and root_pitch_obj:
                 chosen_pitch_base = root_pitch_obj.transpose(12)
             elif note_type == "random_chord_tone" and chord_tones:
-                chosen_pitch_base = self.rng.choice(chord_tones)
+                chosen_pitch_base = self._rng.choice(chord_tones)
             elif note_type == "scale_tone" and current_scale:
                 try:
                     p_s = current_scale.pitchFromDegree(
-                        self.rng.choice([1, 2, 3, 4, 5, 6, 7])
+                        self._rng.choice([1, 2, 3, 4, 5, 6, 7])
                     )
                 except Exception:
                     p_s = None
@@ -612,7 +722,7 @@ class BassGenerator(BasePartGenerator):
             elif note_type.startswith("approach") and root_pitch_obj:
                 chosen_pitch_base = root_pitch_obj.transpose(-1)
             elif note_type == "chord_tone_any" and chord_tones:
-                chosen_pitch_base = self.rng.choice(chord_tones)
+                chosen_pitch_base = self._rng.choice(chord_tones)
             elif note_type == "scale_approach_up" and root_pitch_obj and current_scale:
                 chosen_pitch_base = current_scale.nextPitch(
                     root_pitch_obj, direction=DIRECTION_UP
@@ -639,12 +749,12 @@ class BassGenerator(BasePartGenerator):
         return notes
 
     def _apply_weak_beat(
-        self, notes_in_measure: List[Tuple[float, note.Note]], style: str
-    ) -> List[Tuple[float, note.Note]]:
+        self, notes_in_measure: list[tuple[float, note.Note]], style: str
+    ) -> list[tuple[float, note.Note]]:
         # (変更なし)
         if style == "none" or not notes_in_measure:
             return notes_in_measure
-        new_notes_tuples: List[Tuple[float, note.Note]] = []
+        new_notes_tuples: list[tuple[float, note.Note]] = []
         beats_in_measure = (
             self.global_time_signature_obj.beatCount
             if self.global_time_signature_obj
@@ -686,14 +796,14 @@ class BassGenerator(BasePartGenerator):
 
     def _insert_approach_note_to_measure(
         self,
-        notes_in_measure: List[Tuple[float, note.Note]],
+        notes_in_measure: list[tuple[float, note.Note]],
         current_chord_symbol: harmony.ChordSymbol,
-        next_chord_root: Optional[pitch.Pitch],
+        next_chord_root: pitch.Pitch | None,
         current_scale: scale.ConcreteScale,
         approach_style: str,
         target_octave: int,
         effective_velocity_for_approach: int,
-    ) -> List[Tuple[float, note.Note]]:
+    ) -> list[tuple[float, note.Note]]:
         # (変更なし)
         if not next_chord_root or self.measure_duration < 1.0:
             return notes_in_measure
@@ -704,7 +814,7 @@ class BassGenerator(BasePartGenerator):
         if approach_note_rel_offset < 0:
             return notes_in_measure
         can_insert = True
-        original_last_note_tuple: Optional[Tuple[float, note.Note]] = None
+        original_last_note_tuple: tuple[float, note.Note] | None = None
         sorted_notes_in_measure = sorted(notes_in_measure, key=lambda x: x[0])
         for rel_offset, note_obj_iter in reversed(sorted_notes_in_measure):
             if rel_offset >= approach_note_rel_offset:
@@ -762,16 +872,16 @@ class BassGenerator(BasePartGenerator):
         self,
         pattern_type: str,
         m21_cs: harmony.ChordSymbol,
-        algo_pattern_options: Dict[str, Any],
+        algo_pattern_options: dict[str, Any],
         initial_base_velocity: int,
         target_octave: int,
         block_offset_ignored: float,
         block_duration: float,
         current_scale: scale.ConcreteScale,
-        next_chord_root: Optional[pitch.Pitch] = None,
+        next_chord_root: pitch.Pitch | None = None,
         # section_overrides_for_algo は self.overrides を直接参照するため引数から削除
-    ) -> List[Tuple[float, note.Note]]:
-        notes_tuples: List[Tuple[float, note.Note]] = []
+    ) -> list[tuple[float, note.Note]]:
+        notes_tuples: list[tuple[float, note.Note]] = []
         if not m21_cs or not m21_cs.pitches:
             return notes_tuples
         root_note_obj = m21_cs.root()
@@ -866,7 +976,7 @@ class BassGenerator(BasePartGenerator):
             )
             for measure_idx in range(num_measures_in_block):
                 measure_offset = measure_idx * self.measure_duration
-                measure_notes_raw: List[Tuple[float, note.Note]] = []
+                measure_notes_raw: list[tuple[float, note.Note]] = []
                 remaining_in_section = block_duration - measure_offset
                 approach_on_4th_this = approach_on_4th_final or (
                     remaining_in_section <= self.measure_duration * 2
@@ -901,7 +1011,7 @@ class BassGenerator(BasePartGenerator):
                         MIN_NOTE_DURATION_QL / 16.0
                     ):
                         break
-                    chosen_pitch_base: Optional[pitch.Pitch] = None
+                    chosen_pitch_base: pitch.Pitch | None = None
                     current_note_velocity = final_base_velocity_for_algo
                     note_duration_ql = beat_duration_ql
                     if beat_idx == 0:
@@ -1003,7 +1113,7 @@ class BassGenerator(BasePartGenerator):
             arrangement_idx = 0
             while current_block_pos_ql < block_duration - (MIN_NOTE_DURATION_QL / 16.0):
                 note_type_char = arrangement[arrangement_idx % num_steps_in_arrangement]
-                chosen_pitch_for_step: Optional[pitch.Pitch] = None
+                chosen_pitch_for_step: pitch.Pitch | None = None
                 if note_type_char == "R":
                     chosen_pitch_for_step = root_note_obj
                 elif note_type_char == "5":
@@ -1081,14 +1191,14 @@ class BassGenerator(BasePartGenerator):
                 actual_dur = min(step_ql, block_duration - current_rel_offset)
                 if actual_dur < MIN_NOTE_DURATION_QL:
                     continue
-                chosen_pitch_for_step: Optional[pitch.Pitch] = None
+                chosen_pitch_for_step: pitch.Pitch | None = None
                 is_last_step_before_next_chord_block = (
                     i + 1
                 ) * step_ql >= block_duration - (step_ql / 2.0)
                 if (
                     is_last_step_before_next_chord_block
                     and next_chord_root
-                    and self.rng.random() < approach_prob
+                    and self._rng.random() < approach_prob
                 ):
                     chosen_pitch_for_step = get_approach_note(
                         last_pitch_obj, next_chord_root, current_scale, approach_style
@@ -1101,7 +1211,7 @@ class BassGenerator(BasePartGenerator):
                     if i == 0:
                         chosen_pitch_for_step = root_note_obj
                     else:
-                        direction_choice = self.rng.choice(
+                        direction_choice = self._rng.choice(
                             [
                                 DIRECTION_UP,
                                 DIRECTION_DOWN,
@@ -1110,7 +1220,7 @@ class BassGenerator(BasePartGenerator):
                                 0,
                             ]
                         )
-                        next_candidate: Optional[pitch.Pitch] = None
+                        next_candidate: pitch.Pitch | None = None
                         if direction_choice != 0:
                             try:
                                 next_candidate = current_scale.nextPitch(
@@ -1136,7 +1246,7 @@ class BassGenerator(BasePartGenerator):
                                     if t
                                 ]
                             chosen_pitch_for_step = (
-                                self.rng.choice(available_tones)
+                                self._rng.choice(available_tones)
                                 if available_tones
                                 else root_note_obj
                             )
@@ -1276,7 +1386,7 @@ class BassGenerator(BasePartGenerator):
                     continue
                 chosen_pitch_for_step = root_note_obj
                 current_velocity = final_base_velocity_for_algo
-                if self.rng.random() < octave_jump_prob:
+                if self._rng.random() < octave_jump_prob:
                     chosen_pitch_for_step = root_note_obj.transpose(12)
                 beat_pos_in_measure_ql = current_rel_offset % self.measure_duration
                 beat_unit_ql = (
@@ -1400,8 +1510,8 @@ class BassGenerator(BasePartGenerator):
 
     def _render_part(
         self,
-        section_data: Dict[str, Any],
-        next_section_data: Optional[Dict[str, Any]] = None,
+        section_data: dict[str, Any],
+        next_section_data: dict[str, Any] | None = None,
     ) -> stream.Part:
         bass_part = stream.Part(id=self.part_name)
         actual_instrument = copy.deepcopy(self.default_instrument)
@@ -1457,9 +1567,9 @@ class BassGenerator(BasePartGenerator):
             block_q_length = self.measure_duration
 
         chord_label_str = section_data.get("chord_symbol_for_voicing", "C")
-        m21_cs_obj: Optional[harmony.ChordSymbol] = None
+        m21_cs_obj: harmony.ChordSymbol | None = None
         sanitized_label = sanitize_chord_label(chord_label_str)
-        final_bass_str_for_set: Optional[str] = None
+        final_bass_str_for_set: str | None = None
 
         if sanitized_label and sanitized_label.lower() != "rest":
             try:
@@ -1521,7 +1631,7 @@ class BassGenerator(BasePartGenerator):
                 self.global_key_tonic if self.global_key_tonic else "C"
             )
 
-        next_chord_root_pitch: Optional[pitch.Pitch] = None
+        next_chord_root_pitch: pitch.Pitch | None = None
         if next_section_data:
             next_chord_label_str = next_section_data.get(
                 "chord_symbol_for_voicing",
@@ -1536,7 +1646,7 @@ class BassGenerator(BasePartGenerator):
                             "specified_bass_for_voicing"
                         )
                         if next_specified_bass:
-                            final_next_bass_str: Optional[str] = None
+                            final_next_bass_str: str | None = None
                             final_next_bass_str = sanitize_chord_label(
                                 next_specified_bass
                             )
@@ -1550,7 +1660,7 @@ class BassGenerator(BasePartGenerator):
                     except Exception:
                         pass
 
-        generated_notes_for_block: List[Tuple[float, note.Note]] = []
+        generated_notes_for_block: list[tuple[float, note.Note]] = []
         pattern_type_from_lib = pattern_details.get("pattern_type")
         if not pattern_type_from_lib:
             pattern_type_from_lib = "fixed_pattern"
@@ -1664,7 +1774,7 @@ class BassGenerator(BasePartGenerator):
 
         return bass_part
 
-    def get_root_offsets(self) -> List[float]:
+    def get_root_offsets(self) -> list[float]:
         """Return offsets of notes generated in the last compose call."""
         return list(self._root_offsets)
 

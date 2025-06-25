@@ -1,0 +1,3 @@
+modules:
+  - generator.drum_generator
+output_directory: docs/api

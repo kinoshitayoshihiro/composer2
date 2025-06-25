@@ -68,6 +68,7 @@ global_settings:
   time_signature: "4/4"
   tempo_bpm: 88
   tempo_curve_path: "data/tempo_curve.json"  # optional gradual rit./accel.
+  random_walk_step: 8  # ±8 range bar by bar
 paths:
   chordmap_path: "../data/processed_chordmap_with_emotion.yaml"
   rhythm_library_path: "../data/rhythm_library.yml"

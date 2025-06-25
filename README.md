@@ -69,6 +69,8 @@ global_settings:
   tempo_bpm: 88
   tempo_curve_path: "data/tempo_curve.json"  # optional gradual rit./accel.
   random_walk_step: 8  # ±8 range bar by bar
+  # DrumGenerator.random_walk_step is deprecated; AccentMapper
+  # now uses this value internally for both drums and bass.
   bass_range_hi: 64    # optional upper limit for bass notes (default 72)
 paths:
   chordmap_path: "../data/processed_chordmap_with_emotion.yaml"

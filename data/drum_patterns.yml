@@ -1361,6 +1361,129 @@ drum_patterns:
       - {instrument: hh, offset: 3.0, duration: 1.0}
       - {instrument: hh, offset: 3.5, duration: 1.0}
 
+  rock_drive_loop:
+    description: "Driving rock loop"
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    drum_base_velocity: 90
+    tags: ["rock", "drive", "medium"]
+    options:
+      velocity_curve: crescendo
+    pattern:
+      - {instrument: kick, offset: 0.0, duration: 1.0}
+      - {instrument: snare, offset: 1.0, duration: 1.0}
+      - {instrument: kick, offset: 2.0, duration: 1.0}
+      - {instrument: snare, offset: 3.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 0.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 0.5, duration: 1.0}
+      - {instrument: hat_closed, offset: 1.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 1.5, duration: 1.0}
+      - {instrument: hat_closed, offset: 2.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 2.5, duration: 1.0}
+      - {instrument: hat_closed, offset: 3.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 3.5, duration: 1.0}
+
+  brush_ballad_loop:
+    description: "Gentle brush ballad"
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    drum_base_velocity: 70
+    tags: ["ballad", "brush", "low"]
+    options:
+      velocity_curve: flat
+    pattern:
+      - {instrument: kick, offset: 0.0, duration: 1.0}
+      - {instrument: snare_brush, offset: 2.0, duration: 1.0}
+      - {instrument: hh_pedal, offset: 0.0, duration: 1.0}
+      - {instrument: hh_pedal, offset: 1.0, duration: 1.0}
+      - {instrument: hh_pedal, offset: 2.0, duration: 1.0}
+      - {instrument: hh_pedal, offset: 3.0, duration: 1.0}
+
+  funk_shuffle:
+    description: "Funky shuffle"
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    drum_base_velocity: 85
+    tags: ["funk", "shuffle", "high"]
+    options:
+      velocity_curve: swell
+    pattern:
+      - {instrument: kick, offset: 0.0, duration: 1.0}
+      - {instrument: snare, offset: 0.75, duration: 1.0}
+      - {instrument: kick, offset: 1.5, duration: 1.0}
+      - {instrument: snare, offset: 2.25, duration: 1.0}
+      - {instrument: kick, offset: 3.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 0.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 0.75, duration: 1.0}
+      - {instrument: hat_closed, offset: 1.5, duration: 1.0}
+      - {instrument: hat_closed, offset: 2.25, duration: 1.0}
+      - {instrument: hat_closed, offset: 3.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 3.75, duration: 1.0}
+
+  latin_groove:
+    description: "Latin groove with cowbell"
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    drum_base_velocity: 80
+    tags: ["latin", "groove", "medium"]
+    options:
+      velocity_curve: decrescendo
+    pattern:
+      - {instrument: kick, offset: 0.0, duration: 1.0}
+      - {instrument: snare, offset: 1.0, duration: 1.0}
+      - {instrument: kick, offset: 2.0, duration: 1.0}
+      - {instrument: snare, offset: 3.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 0.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 0.5, duration: 1.0}
+      - {instrument: hat_closed, offset: 1.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 1.5, duration: 1.0}
+      - {instrument: hat_closed, offset: 2.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 2.5, duration: 1.0}
+      - {instrument: hat_closed, offset: 3.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 3.5, duration: 1.0}
+      - {instrument: cowbell, offset: 1.5, duration: 1.0}
+      - {instrument: cowbell, offset: 3.5, duration: 1.0}
+
+  ballad_backbeat:
+    description: "Sparse ballad backbeat"
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    drum_base_velocity: 75
+    tags: ["ballad", "backbeat", "low"]
+    options:
+      velocity_curve: flat
+    pattern:
+      - {instrument: kick, offset: 0.0, duration: 1.0}
+      - {instrument: snare, offset: 2.0, duration: 1.0}
+
+  swing_medium:
+    description: "Medium swing groove"
+    time_signature: "4/4"
+    pattern_type: "fixed_pattern"
+    length_beats: 4.0
+    drum_base_velocity: 88
+    tags: ["swing", "medium", "groove"]
+    options:
+      velocity_curve: crescendo
+    pattern:
+      - {instrument: kick, offset: 0.0, duration: 1.0}
+      - {instrument: snare, offset: 0.75, duration: 1.0}
+      - {instrument: kick, offset: 1.5, duration: 1.0}
+      - {instrument: snare, offset: 2.25, duration: 1.0}
+      - {instrument: kick, offset: 3.0, duration: 1.0}
+      - {instrument: snare, offset: 3.75, duration: 1.0}
+      - {instrument: hat_closed, offset: 0.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 0.75, duration: 1.0}
+      - {instrument: hat_closed, offset: 1.5, duration: 1.0}
+      - {instrument: hat_closed, offset: 2.25, duration: 1.0}
+      - {instrument: hat_closed, offset: 3.0, duration: 1.0}
+      - {instrument: hat_closed, offset: 3.75, duration: 1.0}
+
 flam_test:
   pattern_type: simple
   pattern:

@@ -474,6 +474,16 @@ class BassGenerator(BasePartGenerator):
                 ],
                 "reference_duration_ql": self.measure_duration,
             },
+            "walking_quarters": {
+                "description": "Quarter roots with walking approach notes.",
+                "pattern_type": "walking_quarters",
+                "options": {
+                    "velocity_base": 70,
+                    "velocity_factor": 1.0,
+                    "target_octave": 2,
+                },
+                "reference_duration_ql": self.measure_duration,
+            },
             "root_only": {
                 "description": "Algorithmic whole notes on root.",
                 "pattern_type": "algorithmic_root_only",
@@ -1260,6 +1270,30 @@ class BassGenerator(BasePartGenerator):
                     )
                     n_obj.volume.velocity = final_base_velocity_for_algo
                     notes_tuples.append((current_rel_offset, n_obj))
+        elif pattern_type == "walking_quarters":
+            self.logger.info(
+                f"BassGen: Generating walking_quarters for {m21_cs.figure}"
+            )
+            beats = int(block_duration)
+            if beats <= 0:
+                beats = 4
+            beat_len = block_duration / beats
+            half = beat_len / 2.0
+            scale_tones = [p for p in [m21_cs.third, m21_cs.fifth] if p]
+            next_root_pitch = next_chord_root if next_chord_root else root_note_obj
+            for i in range(beats):
+                off = i * beat_len
+                root_pitch = m21_cs.root() if m21_cs.root() else root_note_obj
+                midi_root = self._get_bass_pitch_in_octave(root_pitch, target_octave)
+                n_root = note.Note(pitch.Pitch(midi=midi_root), quarterLength=half)
+                n_root.volume.velocity = final_base_velocity_for_algo
+                notes_tuples.append((off, n_root))
+                target = next_root_pitch if i == beats - 1 else root_pitch
+                walk_p = bass_utils.get_walking_note(n_root.pitch, target, scale_tones)
+                midi_walk = self._get_bass_pitch_in_octave(walk_p, target_octave)
+                n_walk = note.Note(pitch.Pitch(midi=midi_walk), quarterLength=half)
+                n_walk.volume.velocity = final_base_velocity_for_algo
+                notes_tuples.append((off + half, n_walk))
         elif pattern_type == "algorithmic_pedal":
             self.logger.info(
                 f"BassGen: Generating algorithmic_pedal for {m21_cs.figure} with options {algo_pattern_options}"

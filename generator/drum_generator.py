@@ -1241,6 +1241,14 @@ class DrumGenerator(BasePartGenerator):
             subdivision_duration_ql = beat_len_ql
         velocity_curve = velocity_curve or [1.0]
 
+        if self.use_consonant_sync and self.consonant_sync_mode not in {
+            "bar",
+            "note",
+        }:
+            raise ValueError(
+                f"invalid consonant_sync_mode '{self.consonant_sync_mode}'"
+            )
+
 
         if not events and self.groove_model:
             events = groove_sampler.generate_bar(

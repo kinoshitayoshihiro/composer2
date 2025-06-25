@@ -1,48 +1,52 @@
-import logging
-import random
 import copy
-import math
-import yaml
-from pathlib import Path
 import json
+import logging
+import math
+import random
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
-from typing import Any, Dict, List, Optional, Tuple, Set, Sequence
+import yaml
 from music21 import (
-    stream,
+    converter,
+    meter,
     note,
     pitch,
-    meter,
-    instrument as m21instrument,
-    duration as m21duration,
-    volume as m21volume,
+    stream,
     tie,
-    converter,
+)
+from music21 import (
+    duration as m21duration,
+)
+from music21 import (
+    instrument as m21instrument,
+)
+from music21 import (
+    volume as m21volume,
 )
 
-from .base_part_generator import BasePartGenerator
+from tools.peak_synchroniser import PeakSynchroniser
+from utilities import fill_dsl, groove_sampler, humanizer
+from utilities.accent_mapper import AccentMapper
 from utilities.core_music_utils import (
-    get_time_signature_object,
     MIN_NOTE_DURATION_QL,
-)
-from utilities.onset_heatmap import build_heatmap, RESOLUTION, load_heatmap
-from utilities import humanizer
-from utilities import groove_sampler
-from utilities import fill_dsl
-from utilities.humanizer import apply_humanization_to_element
-from utilities.safe_get import safe_get
-from utilities.drum_map_registry import (
-    DRUM_MAP,
-    get_drum_map,
-    GM_DRUM_MAP,
-    MISSING_DRUM_MAP_FALLBACK,
+    get_time_signature_object,
 )
 from utilities.drum_map import GENERAL_MIDI_MAP
-from utilities.timing_utils import TimingBlend, interp_curve, _combine_timing
+from utilities.drum_map_registry import (
+    GM_DRUM_MAP,
+    MISSING_DRUM_MAP_FALLBACK,
+    get_drum_map,
+)
+from utilities.humanizer import apply_humanization_to_element
+from utilities.onset_heatmap import RESOLUTION, load_heatmap
+from utilities.safe_get import safe_get
 from utilities.tempo_utils import TempoMap, load_tempo_map
+from utilities.timing_utils import _combine_timing
 from utilities.velocity_smoother import EMASmoother
-from tools.peak_synchroniser import PeakSynchroniser
-from utilities.accent_mapper import AccentMapper
 
+from .base_part_generator import BasePartGenerator
 
 logger = logging.getLogger("modular_composer.drum_generator")
 
@@ -64,7 +68,7 @@ EMOTION_INTENSITY_LUT = {
     ("super_drive", "high"): "rock_drive_loop",
 }
 
-DRUM_ALIAS: Dict[str, str] = {
+DRUM_ALIAS: dict[str, str] = {
     "hh": "hh",
     "hat_closed": "hat_closed",
     "ohh": "ohh",
@@ -79,9 +83,9 @@ DRUM_ALIAS: Dict[str, str] = {
     "edge": "hh_edge",
     "pedal": "hh_pedal",
 }
-GHOST_ALIAS: Dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
+GHOST_ALIAS: dict[str, str] = {"ghost_snare": "snare", "gs": "snare"}
 # Map stick articulations to their brush counterparts
-BRUSH_MAP: Dict[str, str] = {"kick": "brush_kick", "snare": "snare_brush"}
+BRUSH_MAP: dict[str, str] = {"kick": "brush_kick", "snare": "snare_brush"}
 
 
 class HoldTie(tie.Tie):
@@ -94,7 +98,7 @@ class HoldTie(tie.Tie):
         self.tieType = "hold"
 
 
-def resolve_velocity_curve(curve_spec: Any) -> List[float]:
+def resolve_velocity_curve(curve_spec: Any) -> list[float]:
     """Return list of velocity multipliers from specification.
 
     Parameters
@@ -139,20 +143,20 @@ class FillInserter:
 
     def __init__(
         self,
-        pattern_lib: Dict[str, Any],
+        pattern_lib: dict[str, Any],
         rng: random.Random | None = None,
         base_velocity: int = 80,
     ) -> None:
         self.pattern_lib = pattern_lib
         self.rng = rng or random.Random()
-        self.drum_map: Dict[str, tuple[str, int]] = {}
+        self.drum_map: dict[str, tuple[str, int]] = {}
         self.base_velocity = base_velocity
 
     def insert(
         self,
         part: stream.Part,
-        section_data: Dict[str, Any],
-        fill_key: Optional[str] = None,
+        section_data: dict[str, Any],
+        fill_key: str | None = None,
     ) -> None:
         key = fill_key or section_data.get("drum_fill_at_end")
         if not key:
@@ -212,7 +216,7 @@ class FillInserter:
             prev_offset = offset_val
 
 
-EMOTION_TO_BUCKET: Dict[str, str] = {  # (前回と同様)
+EMOTION_TO_BUCKET: dict[str, str] = {  # (前回と同様)
     "quiet_pain_and_nascent_strength": "ballad_soft",
     "self_reproach_regret_deep_sadness": "ballad_soft",
     "memory_unresolved_feelings_silence": "ballad_soft",
@@ -229,7 +233,7 @@ EMOTION_TO_BUCKET: Dict[str, str] = {  # (前回と同様)
     "default": "groove_mid",
     "neutral": "groove_mid",
 }
-BUCKET_INTENSITY_TO_STYLE: Dict[str, Dict[str, str]] = {  # (前回と同様)
+BUCKET_INTENSITY_TO_STYLE: dict[str, dict[str, str]] = {  # (前回と同様)
     "ballad_soft": {
         "low": "no_drums_or_gentle_cymbal_swell",
         "medium_low": "ballad_soft_kick_snare_8th_hat",
@@ -265,7 +269,7 @@ BUCKET_INTENSITY_TO_STYLE: Dict[str, Dict[str, str]] = {  # (前回と同様)
 }
 
 
-def _resolve_style(emotion: str, intensity: str, pattern_lib: Dict[str, Any]) -> str:
+def _resolve_style(emotion: str, intensity: str, pattern_lib: dict[str, Any]) -> str:
     # (前回と同様)
     bucket = EMOTION_TO_BUCKET.get(emotion.lower(), "default_fallback_bucket")
     style_map_for_bucket = BUCKET_INTENSITY_TO_STYLE.get(bucket)
@@ -290,7 +294,7 @@ def _resolve_style(emotion: str, intensity: str, pattern_lib: Dict[str, Any]) ->
     return resolved_style
 
 
-def extract_tempo_map_from_midi(vocal_midi_path: str) -> List[Tuple[float, float]]:
+def extract_tempo_map_from_midi(vocal_midi_path: str) -> list[tuple[float, float]]:
     # 提案通りの実装
     tempo_map = []
     try:
@@ -307,13 +311,13 @@ def extract_tempo_map_from_midi(vocal_midi_path: str) -> List[Tuple[float, float
     return tempo_map
 
 
-def load_heatmap_data(heatmap_path: Optional[str]) -> Dict[int, int]:
+def load_heatmap_data(heatmap_path: str | None) -> dict[int, int]:
     """ヒートマップデータをJSONファイルから読み込み、{grid_index: count} の辞書を返す。"""
     if not heatmap_path or not Path(heatmap_path).exists():
         logger.warning(f"Heatmap not found at '{heatmap_path}'. Using empty heatmap.")
         return {}
     try:
-        with open(heatmap_path, "r", encoding="utf-8") as f:
+        with open(heatmap_path, encoding="utf-8") as f:
             data = json.load(f)
             # JSONが [{"grid_index": 0, "count": 99}, ...] の形式であると仮定
             heatmap_dict = {item["grid_index"]: item["count"] for item in data}
@@ -357,9 +361,9 @@ class DrumGenerator(BasePartGenerator):
         # ここに他の初期化処理をまとめて書く
         self.logger = logging.getLogger("modular_composer.drum_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
-        self.kick_offsets: List[float] = []
+        self.kick_offsets: list[float] = []
         # Track fill offsets along with fade width for each fill
-        self.fill_offsets: List[Tuple[float, float]] = []
+        self.fill_offsets: list[tuple[float, float]] = []
         global_cfg = self.main_cfg.get("global_settings", {}) if self.main_cfg else {}
         self.fade_beats_default = float(global_cfg.get("fill_fade_beats", 2.0))
         self.strict_drum_map = bool(
@@ -368,7 +372,7 @@ class DrumGenerator(BasePartGenerator):
         self.drum_map_name = (global_settings or {}).get("drum_map", "gm")
         self.drum_map = get_drum_map(self.drum_map_name)
         # Simplified mapping to MIDI note numbers for internal use
-        self.gm_pitch_map: Dict[str, int] = {}
+        self.gm_pitch_map: dict[str, int] = {}
         for label, (gm_name, midi) in self.drum_map.items():
             self.gm_pitch_map[label] = midi
             self.gm_pitch_map[gm_name] = midi
@@ -451,7 +455,7 @@ class DrumGenerator(BasePartGenerator):
             self.main_cfg.get("paths", {}).get("vocal_peak_json_for_drums")
             or self.main_cfg.get("vocal_peak_json_for_drums")
         )
-        self.consonant_peaks: List[float] = self._load_consonant_peaks(peak_json_path)
+        self.consonant_peaks: list[float] = self._load_consonant_peaks(peak_json_path)
 
         # Use path settings from main_cfg, preferring an explicit MIDI file path
         self.vocal_midi_path = (
@@ -459,7 +463,7 @@ class DrumGenerator(BasePartGenerator):
             or self.main_cfg.get("vocal_midi_path_for_drums")
             or self.main_cfg.get("paths", {}).get("vocal_note_data_path")
         )
-        self.vocal_end_times: List[float] = self._load_vocal_end_times(
+        self.vocal_end_times: list[float] = self._load_vocal_end_times(
             self.vocal_midi_path
         )
 
@@ -502,7 +506,7 @@ class DrumGenerator(BasePartGenerator):
         self.groove_profile = {}
         if self.groove_profile_path:
             try:
-                with open(self.groove_profile_path, "r", encoding="utf-8") as f:
+                with open(self.groove_profile_path, encoding="utf-8") as f:
                     self.groove_profile = json.load(f)
             except Exception as e:
                 logger.warning(
@@ -521,7 +525,7 @@ class DrumGenerator(BasePartGenerator):
                 )
             except Exception as e:  # pragma: no cover - optional feature
                 logger.warning(f"Failed to load grooves from {groove_dir}: {e}")
-        self._groove_history: List[str] = []
+        self._groove_history: list[str] = []
 
         self.push_pull_map = global_cfg.get("push_pull_curve", {})
         self.current_push_pull_curve = None
@@ -562,7 +566,7 @@ class DrumGenerator(BasePartGenerator):
             if self.part_parameters is not None
             else {}
         )
-        self.pattern_lib_cache: Dict[str, Dict[str, Any]] = {}
+        self.pattern_lib_cache: dict[str, dict[str, Any]] = {}
         logger.info(
             f"DrumGen __init__: Initialized with {len(self.raw_pattern_lib)} raw drum patterns."
         )
@@ -648,7 +652,7 @@ class DrumGenerator(BasePartGenerator):
                 logger.info(
                     f"DrumGen __init__: Added/updated placeholder for style '{k}'."
                 )
-        all_referenced_styles_in_luts: Set[str] = set()
+        all_referenced_styles_in_luts: set[str] = set()
         for bucket_styles in BUCKET_INTENSITY_TO_STYLE.values():
             all_referenced_styles_in_luts.update(bucket_styles.values())
         for style_key in all_referenced_styles_in_luts:
@@ -683,7 +687,7 @@ class DrumGenerator(BasePartGenerator):
         )
         lib_path = str(Path(lib_path).expanduser())
         try:
-            with open(lib_path, "r", encoding="utf-8") as fh:
+            with open(lib_path, encoding="utf-8") as fh:
                 library_data = yaml.safe_load(fh) or {}
                 if isinstance(library_data, dict):
                     self.raw_pattern_lib.update(library_data.get("drum_patterns", {}))
@@ -707,7 +711,7 @@ class DrumGenerator(BasePartGenerator):
         self,
         emotion: str | None,
         intensity: str | None,
-        musical_intent: Optional[Dict[str, Any]] = None,
+        musical_intent: dict[str, Any] | None = None,
     ) -> str:
         emo = (emotion or "default").lower()
         inten = (intensity or "medium").lower()
@@ -723,8 +727,8 @@ class DrumGenerator(BasePartGenerator):
         return base_key
 
     def _get_effective_pattern_def(
-        self, style_key: str, visited: Optional[Set[str]] = None
-    ) -> Dict[str, Any]:
+        self, style_key: str, visited: set[str] | None = None
+    ) -> dict[str, Any]:
         # (前回と同様の継承解決ロジック)
         if visited is None:
             visited = set()
@@ -809,12 +813,12 @@ class DrumGenerator(BasePartGenerator):
     def compose(
         self,
         *,
-        section_data: Optional[Dict[str, Any]] = None,
-        overrides_root: Optional[Any] = None,
-        groove_profile_path: Optional[str] = None,
-        next_section_data: Optional[Dict[str, Any]] = None,
-        part_specific_humanize_params: Optional[Dict[str, Any]] = None,
-        shared_tracks: Dict[str, Any] | None = None,
+        section_data: dict[str, Any] | None = None,
+        overrides_root: Any | None = None,
+        groove_profile_path: str | None = None,
+        next_section_data: dict[str, Any] | None = None,
+        part_specific_humanize_params: dict[str, Any] | None = None,
+        shared_tracks: dict[str, Any] | None = None,
     ) -> stream.Part:
         """
         mode == "independent" : ボーカル熱マップ主導で全曲を一括生成
@@ -873,13 +877,15 @@ class DrumGenerator(BasePartGenerator):
         if section_data:
             self.fill_inserter.insert(part, section_data)
         self._sync_hihat_with_vocals(part)
+        if shared_tracks is not None:
+            shared_tracks["kick_offsets_sec"] = self.get_kick_offsets_sec()
         return part
 
     def _render(
         self,
-        blocks: Sequence[Dict[str, Any]],
+        blocks: Sequence[dict[str, Any]],
         part: stream.Part,
-        section_data: Optional[Dict[str, Any]] = None,
+        section_data: dict[str, Any] | None = None,
     ):
         ms_since_fill = 0
         bars_since_section_start = 0
@@ -941,7 +947,7 @@ class DrumGenerator(BasePartGenerator):
             base_vel = max(1, min(127, base_vel))
             # --- ここまで base_vel ---
 
-            pat_events: List[Dict[str, Any]] = style_def.get("pattern", [])
+            pat_events: list[dict[str, Any]] = style_def.get("pattern", [])
             pat_ts_str = style_def.get("time_signature", self.global_time_signature_str)
             pat_ts = get_time_signature_object(pat_ts_str)
             if not pat_ts:
@@ -1025,7 +1031,8 @@ class DrumGenerator(BasePartGenerator):
                 bars_since_section_start = 0
             current_pos_within_block = 0.0
             while remaining_ql_in_block > MIN_NOTE_DURATION_QL / 8.0:
-                self.accent_mapper.begin_bar()
+                if current_pos_within_block == 0.0:
+                    self.accent_mapper.begin_bar()
                 # (フィルインロジック、パターンの適用は前回と同様、base_vel を _apply_pattern に渡す)
                 current_pattern_iteration_ql = min(
                     pattern_unit_length_ql, remaining_ql_in_block
@@ -1186,16 +1193,16 @@ class DrumGenerator(BasePartGenerator):
     def _apply_pattern(
         self,
         part: stream.Part,
-        events: List[Dict[str, Any]],
+        events: list[dict[str, Any]],
         bar_start_abs_offset: float,
         current_bar_actual_len_ql: float,
         pattern_base_velocity: int,
         swing_type: str,
         swing_ratio: float,
         current_pattern_ts: meter.TimeSignature,
-        drum_block_params: Dict[str, Any],
+        drum_block_params: dict[str, Any],
         velocity_scale: float = 1.0,
-        velocity_curve: List[float] | None = None,
+        velocity_curve: list[float] | None = None,
         legato: bool = False,
     ) -> None:
         """Insert a list of drum events into ``part``.
@@ -1213,7 +1220,7 @@ class DrumGenerator(BasePartGenerator):
             When calling this method directly, pass ``velocity_scale`` first
             and then ``velocity_curve`` to avoid mis-scaled velocities.
         """
-        log_apply_prefix = f"DrumGen.ApplyPattern"
+        log_apply_prefix = "DrumGen.ApplyPattern"
         self.current_bpm = self._current_bpm(bar_start_abs_offset)
         if self.use_velocity_ema:
             self.vel_smoother.reset()
@@ -1259,7 +1266,7 @@ class DrumGenerator(BasePartGenerator):
                     ],
                 )
 
-        prev_note: Optional[note.Note] = None
+        prev_note: note.Note | None = None
         prev_vel_scale = 1.0
         alpha = 0.5
         for ev_idx, ev_def in enumerate(events):
@@ -1370,7 +1377,7 @@ class DrumGenerator(BasePartGenerator):
                 clipped_duration_ql = min(clipped_duration_ql, max_dur)
             final_insert_offset_in_score = bar_start_abs_offset + rel_offset_in_pattern
             bin_idx = (
-                int((final_insert_offset_in_score * self.heatmap_resolution))
+                int(final_insert_offset_in_score * self.heatmap_resolution)
                 % self.heatmap_resolution
             )
             bin_count = self.heatmap.get(bin_idx, 0)
@@ -1579,8 +1586,8 @@ class DrumGenerator(BasePartGenerator):
             self._groove_history = self._groove_history[-(n_hist - 1) :]
 
     def _make_hit(
-        self, name: str, vel: int, ql: float, ev_def: Optional[Dict[str, Any]] = None
-    ) -> Optional[note.Note]:
+        self, name: str, vel: int, ql: float, ev_def: dict[str, Any] | None = None
+    ) -> note.Note | None:
         """Return a ``music21.note.Note`` for a single drum hit.
 
         Parameters
@@ -1752,7 +1759,7 @@ class DrumGenerator(BasePartGenerator):
         main.offset = 0.0
         part.insert(offset, main)
 
-    def _load_vocal_end_times(self, midi_path: str) -> List[float]:
+    def _load_vocal_end_times(self, midi_path: str) -> list[float]:
         if not midi_path or not Path(midi_path).exists():
             return []
         try:
@@ -1766,11 +1773,11 @@ class DrumGenerator(BasePartGenerator):
             logger.warning(f"DrumGen: failed to load vocal MIDI for hi-hat sync: {exc}")
             return []
 
-    def _load_consonant_peaks(self, json_path: str | None) -> List[float]:
+    def _load_consonant_peaks(self, json_path: str | None) -> list[float]:
         if not json_path or not Path(json_path).exists():
             return []
         try:
-            with open(json_path, "r", encoding="utf-8") as fh:
+            with open(json_path, encoding="utf-8") as fh:
                 data = json.load(fh)
             return sorted(float(p) for p in data)
         except Exception as exc:
@@ -1904,7 +1911,7 @@ class DrumGenerator(BasePartGenerator):
             if key not in self.part_parameters:
                 self.part_parameters[key] = val
 
-    def _load_pattern_lib(self, paths: List[str | Path]) -> Dict[str, Any]:
+    def _load_pattern_lib(self, paths: list[str | Path]) -> dict[str, Any]:
         """Load drum pattern definitions from YAML files.
 
         Parameters
@@ -1920,7 +1927,7 @@ class DrumGenerator(BasePartGenerator):
             Combined pattern dictionary keyed by style name.
         """
 
-        library: Dict[str, Any] = {}
+        library: dict[str, Any] = {}
         for p in paths:
             p = Path(p)
             if not p.is_absolute():
@@ -1947,9 +1954,9 @@ class DrumGenerator(BasePartGenerator):
 
     def _resolve_style_key(
         self,
-        musical_intent: Dict[str, Any],
-        overrides: Dict[str, Any],
-        section_data: Optional[Dict[str, Any]] = None,
+        musical_intent: dict[str, Any],
+        overrides: dict[str, Any],
+        section_data: dict[str, Any] | None = None,
     ) -> str:
         """オーバーライドと感情から最終的なリズムキーを決定する"""
         if overrides and overrides.get("rhythm_key"):
@@ -1973,8 +1980,8 @@ class DrumGenerator(BasePartGenerator):
 
     def _render_part(
         self,
-        section_data: Dict[str, Any],
-        next_section_data: Optional[Dict[str, Any]] = None,
+        section_data: dict[str, Any],
+        next_section_data: dict[str, Any] | None = None,
     ) -> stream.Part:
         """Generate a drum part for a single section."""
         part = stream.Part(id=self.part_name)
@@ -1994,10 +2001,35 @@ class DrumGenerator(BasePartGenerator):
         self._render([section_data], part, section_data)
         return part
 
-    def get_kick_offsets(self) -> List[float]:
+    def get_kick_offsets(self) -> list[float]:
         return list(self.kick_offsets)
 
-    def get_fill_offsets(self) -> List[float]:
+    def get_kick_offsets_sec(self) -> list[float]:
+        return [
+            self._convert_ticks_to_seconds(int(o * self.ppq)) for o in self.kick_offsets
+        ]
+
+    def get_fill_offsets(self) -> list[float]:
         return [
             off if not isinstance(off, tuple) else off[0] for off in self.fill_offsets
         ]
+
+    def render_kick_track(self, length_beats: float) -> stream.Part:
+        """Return a simple kick-only part for ``length_beats`` beats."""
+        part = stream.Part(id=f"{self.part_name}_kick_track")
+        part.insert(0, self.default_instrument)
+        self.current_bpm = self._current_bpm(0.0)
+        self.kick_offsets.clear()
+        events = [{"instrument": "kick", "offset": float(b)} for b in range(int(length_beats))]
+        self._apply_pattern(
+            part,
+            events,
+            0.0,
+            length_beats,
+            90,
+            "eighth",
+            0.5,
+            self.global_ts,
+            {},
+        )
+        return part

@@ -1,5 +1,6 @@
 import math
 from typing import List, NamedTuple
+
 class TimingBlend(NamedTuple):
     """Container for timing offset and velocity scaling."""
 
@@ -116,3 +117,56 @@ def _combine_timing(
 
     result = TimingBlend(new_offset, vel_scale)
     return result if return_vel else result.offset_ql
+
+
+def align_to_consonant(
+    offset_ql: float,
+    peaks_sec: list[float],
+    bpm: float,
+    lag_ms: float = 10.0,
+    window_beats: float = 0.25,
+) -> float:
+    """Return ``offset_ql`` shifted earlier if a peak is nearby.
+
+    Parameters
+    ----------
+    offset_ql : float
+        Note position in beats.
+    peaks_sec : list[float]
+        Absolute consonant peak times in seconds.
+    bpm : float
+        Current tempo in beats per minute.
+    lag_ms : float, optional
+        Amount to shift earlier when aligned, by default ``10.0``.
+    window_beats : float, optional
+        Search window around ``offset_ql`` in beats, by default ``0.25``.
+
+    Returns
+    -------
+    float
+        Corrected offset. If no peak is found within ``window_beats`` of the
+        position, the original value is returned.
+    """
+
+    if not peaks_sec:
+        return offset_ql
+
+    sec_per_beat = 60.0 / bpm
+    offset_sec = offset_ql * sec_per_beat
+    window_sec = abs(window_beats) * sec_per_beat
+    lag_sec = lag_ms / 1000.0
+
+    closest_peak: float | None = None
+    min_abs_diff: float | None = None
+    for peak in peaks_sec:
+        diff = peak - offset_sec
+        if abs(diff) <= window_sec:
+            if min_abs_diff is None or abs(diff) < min_abs_diff:
+                min_abs_diff = abs(diff)
+                closest_peak = peak
+
+    if closest_peak is not None:
+        corrected_sec = max(0.0, closest_peak - lag_sec)
+        return corrected_sec / sec_per_beat
+
+    return offset_ql

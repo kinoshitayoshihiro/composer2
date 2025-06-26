@@ -18,6 +18,11 @@ utilities package -- 音楽生成プロジェクト全体で利用されるコ�
 """
 
 from .accent_mapper import AccentMapper
+from .consonant_extract import (
+    EssentiaUnavailable,
+    detect_consonant_peaks,
+    extract_to_json,
+)
 from .core_music_utils import (
     MIN_NOTE_DURATION_QL,
     get_time_signature_object,
@@ -80,4 +85,7 @@ __all__ = [
     "write_demo_bar",
     "render_midi",
     "AccentMapper",
+    "EssentiaUnavailable",
+    "detect_consonant_peaks",
+    "extract_to_json",
 ]

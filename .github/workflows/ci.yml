@@ -21,6 +21,22 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e ".[dev]"
+      - name: Restore Essentia wheel cache
+        if: runner.os == 'Linux'
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels
+          key: ${{ runner.os }}-essentia-2_1
+      - name: Install Essentia extras
+        if: runner.os == 'Linux'
+        run: |
+          pip install -e ".[essentia]"
+      - name: Save Essentia wheel cache
+        if: runner.os == 'Linux'
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/essentia*.whl
+          key: ${{ runner.os }}-essentia-2_1
       - name: Cache SoundFont
         id: cache-sf2
         uses: actions/cache@v3
@@ -41,7 +57,10 @@ jobs:
       - name: Mypy
         run: mypy modular_composer utilities tests --strict
       - name: Pytest
-        run: pytest -q --cov --cov-report=xml
+        run: pytest -q -m "not ess_optional" --cov --cov-report=xml
+      - name: Pytest Essentia
+        if: runner.os == 'Linux'
+        run: pytest -q -m ess_optional --cov --cov-append
       - name: MIDI Regression Tests
         run: pytest tests/test_midi_regression.py
         env:

@@ -14,6 +14,7 @@ from typing import Iterable, Set
 import yaml
 
 from generator.drum_generator import GM_DRUM_MAP
+from utilities.fill_dsl import parse_fill_dsl
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,19 @@ def check_drum_patterns(path: Path = Path("data/drum_patterns.yml")) -> Set[str]
     unknown: Set[str] = set()
 
     for pat_def in patterns.values():
-        for event in pat_def.get("pattern", []):
+        pat = pat_def.get("pattern", [])
+        events: Iterable[dict]
+        if isinstance(pat, str):
+            try:
+                events = parse_fill_dsl(pat)
+            except Exception as exc:  # pragma: no cover - parsing errors reported
+                logger.warning("Failed to parse DSL pattern: %s", exc)
+                continue
+        else:
+            events = pat
+        for event in events:
+            if not isinstance(event, dict):
+                continue
             inst = event.get("instrument")
             if inst and inst not in GM_DRUM_MAP:
                 unknown.add(inst)
@@ -55,6 +68,8 @@ def _check_events(events: Iterable[dict]) -> Set[str]:
 
     unknown: Set[str] = set()
     for ev in events:
+        if not isinstance(ev, dict):
+            continue
         inst = ev.get("instrument")
         if inst and inst not in GM_DRUM_MAP:
             unknown.add(inst)

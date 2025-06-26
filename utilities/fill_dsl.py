@@ -1,4 +1,5 @@
 from typing import TypedDict, List
+from dataclasses import dataclass
 
 # Mapping from simple DSL tokens to drum instrument labels
 
@@ -8,6 +9,7 @@ TOKEN_MAP: dict[str, str] = {
     "T3": "tom3",
     "K": "kick",
     "SN": "snare",
+    "S": "snare",
     "CRASH": "crash",
 }
 
@@ -160,3 +162,193 @@ def parse(
         idx += 1
 
     return events
+
+
+class FillDSLParseError(Exception):
+    """Raised when the tom-run DSL cannot be parsed."""
+
+
+@dataclass
+class _Hit:
+    token: str
+
+
+@dataclass
+class _Rest:
+    pass
+
+
+@dataclass
+class _Tie:
+    pass
+
+
+@dataclass
+class _Velocity:
+    value: float
+
+
+@dataclass
+class _Offset:
+    pos: int
+
+
+@dataclass
+class _Repeat:
+    nodes: list
+    times: int
+
+
+def _tokenize_dsl(src: str) -> list[str]:
+    """Return token list for tom-run DSL."""
+    tokens: list[str] = []
+    i = 0
+    src = src.strip()
+    while i < len(src):
+        c = src[i]
+        if c.isspace():
+            i += 1
+            continue
+        if src.startswith("T1", i) or src.startswith("T2", i) or src.startswith("T3", i):
+            tokens.append(src[i : i + 2])
+            i += 2
+            continue
+        if c in ("K", "S"):
+            tokens.append(c)
+            i += 1
+            continue
+        if c == "+":
+            tokens.append("+")
+            i += 1
+            continue
+        if c == ".":
+            tokens.append(".")
+            i += 1
+            continue
+        if c == "(":
+            tokens.append("(")
+            i += 1
+            continue
+        if c == ")":
+            tokens.append(")")
+            i += 1
+            continue
+        if c == "x":
+            j = i + 1
+            while j < len(src) and src[j].isdigit():
+                j += 1
+            if j == i + 1:
+                raise FillDSLParseError("Missing repeat count after 'x'")
+            tokens.append(src[i:j])
+            i = j
+            continue
+        if c == ">":
+            j = i + 1
+            while j < len(src) and (src[j].isdigit() or src[j] == "."):
+                j += 1
+            tokens.append(src[i:j])
+            i = j
+            continue
+        if c == "@":
+            j = i + 1
+            while j < len(src) and src[j].isdigit():
+                j += 1
+            if j == i + 1:
+                raise FillDSLParseError("Missing digits after '@'")
+            tokens.append(src[i:j])
+            i = j
+            continue
+        raise FillDSLParseError(f"Unexpected character '{c}' at position {i}")
+    return tokens
+
+
+def _parse_seq(tokens: list[str], idx: int = 0) -> tuple[list, int]:
+    nodes: list = []
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if tok == ")":
+            idx += 1
+            break
+        if tok == "(":
+            inner, idx = _parse_seq(tokens, idx + 1)
+            if idx < len(tokens) and tokens[idx].startswith("x"):
+                times = int(tokens[idx][1:])
+                idx += 1
+            else:
+                times = 1
+            nodes.append(_Repeat(inner, times))
+            continue
+        if tok in {"T1", "T2", "T3", "K", "S"}:
+            nodes.append(_Hit(tok))
+            idx += 1
+            continue
+        if tok == ".":
+            nodes.append(_Rest())
+            idx += 1
+            continue
+        if tok == "+":
+            nodes.append(_Tie())
+            idx += 1
+            continue
+        if tok.startswith(">"):
+            nodes.append(_Velocity(float(tok[1:])))
+            idx += 1
+            continue
+        if tok.startswith("@"):
+            pos = int(tok[1:])
+            if pos < 0 or pos > 63:
+                raise FillDSLParseError("Offset out of range")
+            nodes.append(_Offset(pos))
+            idx += 1
+            continue
+        raise FillDSLParseError(f"Unknown token '{tok}'")
+    return nodes, idx
+
+
+def _eval_nodes(nodes: list) -> list[DrumEvent]:
+    events: list[DrumEvent] = []
+    offset_16th = 0
+    current_vel = 1.0
+
+    def process(seq: list) -> None:
+        nonlocal offset_16th, current_vel
+        for n in seq:
+            if isinstance(n, _Hit):
+                events.append(
+                    {
+                        "instrument": TOKEN_MAP[n.token],
+                        "offset": offset_16th * 0.25,
+                        "duration": 0.25,
+                        "velocity_factor": current_vel,
+                    }
+                )
+                offset_16th += 1
+                current_vel = 1.0
+            elif isinstance(n, _Rest):
+                offset_16th += 1
+            elif isinstance(n, _Tie):
+                if not events:
+                    raise FillDSLParseError("'+' with no preceding hit")
+                events[-1]["duration"] += 0.25
+                offset_16th += 1
+            elif isinstance(n, _Velocity):
+                current_vel = n.value
+            elif isinstance(n, _Offset):
+                offset_16th = n.pos
+            elif isinstance(n, _Repeat):
+                for _ in range(n.times):
+                    process(n.nodes)
+    process(nodes)
+    return events
+
+
+def parse_fill_dsl(template: str) -> list[DrumEvent]:
+    """Parse tom-run DSL string into drum events."""
+    tokens = _tokenize_dsl(template or "")
+    if not tokens:
+        return []
+    ast, idx = _parse_seq(tokens)
+    if idx != len(tokens):
+        raise FillDSLParseError("Trailing tokens after parse")
+    return _eval_nodes(ast)
+

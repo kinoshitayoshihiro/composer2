@@ -155,4 +155,21 @@ Example:
 dg._insert_grace_chain(part, 1.0, 38, 90, n_hits=3)
 ```
 
+### Tom DSL Fill Patterns
+
+`FillInserter` supports a compact DSL for tom fills when `pattern_type` is set to `"tom_dsl_fill"`.
+Tokens like `T1`, `T2`, `T3`, `K` and `S` trigger drum hits, `+` extends the previous hit by a 16th note and `.` inserts a rest. Velocity modifiers such as `>1.2` scale the next hit, groups may repeat using `( ... )xN` (or default to one time when `xN` is omitted) and `@N` jumps to an absolute 16th offset.
+
+Example YAML pattern:
+
+```yaml
+tom_run_short:
+  description: "1 小節前半にタム回し"
+  pattern_type: "tom_dsl_fill"
+  length_beats: 1.0
+  drum_base_velocity: 88
+  pattern: |
+    (T1 T2 T3 S)
+```
+
 

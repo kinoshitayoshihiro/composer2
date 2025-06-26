@@ -51,6 +51,14 @@ part = dg.compose(section_data=my_section)
 - `random_walk_step` (int): base step range of the velocity random walk.
 - `bar_start_abs_offset` is forwarded to `AccentMapper.begin_bar` so debug CC timings align.
 
+### Consonant Sync Settings
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `consonant_sync_mode` | `'bar'` or `'note'` | `'bar'` |
+| `consonant_sync.note_radius_ms` | search radius around a hit when aligning in note mode | `30.0` |
+| `consonant_sync.velocity_boost` | velocity increase applied when a hit is shifted (use `return_vel=True` with `align_to_consonant` to get the boost) | `6` |
+
 #### `compose(self, *, section_data: Optional[Dict[str, Any]] = None, overrides_root: Optional[Any] = None, groove_profile_path: Optional[str] = None, next_section_data: Optional[Dict[str, Any]] = None, part_specific_humanize_params: Optional[Dict[str, Any]] = None, shared_tracks: Dict[str, Any] | None = None) -> stream.Part`
 ```python
 def compose(

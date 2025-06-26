@@ -183,6 +183,21 @@ If the command finishes without errors you should see the message:
 drum_patterns の duration 欠損が解消されました
 ```
 
+## 標準パターン拡充
+
+`data/drum_patterns.yml` に `tom_dsl_fill` タイプのフィルを追加しました。以下のように簡潔な DSL でタム回しを記述できます。
+
+```yaml
+tom_run_short:
+  description: "1 小節前半にタム回し"
+  pattern_type: "tom_dsl_fill"
+  length_beats: 1.0
+  drum_base_velocity: 88
+  pattern: |
+    (T1 T2 T3 S)
+```
+`export_random_walk_cc: true` を設定すると、ランダムウォーク値を CC20 として書き出せます。
+
 ## Running Tests
 
 Be sure you have installed the requirements via `bash setup.sh` (or

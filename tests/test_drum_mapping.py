@@ -19,9 +19,19 @@ def test_all_drum_keys_mapped():
             else:
                 library.update(doc)
 
+    from utilities.fill_dsl import parse_fill_dsl
+
     inst_names = set()
     for pat in library.values():
-        for ev in pat.get('pattern', []):
+        pattern_data = pat.get('pattern', [])
+        if isinstance(pattern_data, str):
+            try:
+                events = parse_fill_dsl(pattern_data)
+            except Exception:
+                continue
+        else:
+            events = pattern_data
+        for ev in events:
             name = ev.get('instrument')
             if name:
                 inst_names.add(name.lower())

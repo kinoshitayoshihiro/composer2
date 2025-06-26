@@ -38,6 +38,9 @@ audio = [
   "soundfile>=0.12",
   "fluidsynth",
 ]
+essentia = [
+  "essentia>=2.1",
+]
 
 [project.scripts]
 modcompose = "modular_composer.cli:main"

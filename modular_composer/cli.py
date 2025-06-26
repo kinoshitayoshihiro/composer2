@@ -12,7 +12,6 @@ import pretty_midi
 from utilities import synth
 from utilities.golden import compare_midi, update_golden
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
-from utilities.peak_extractor import PeakExtractorConfig, extract_peaks
 from utilities.peak_synchroniser import PeakSynchroniser
 from utilities.tempo_utils import beat_to_seconds
 from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple
@@ -92,45 +91,10 @@ def _cmd_sample(args: list[str]) -> None:
 
 
 def _cmd_peaks(args: list[str]) -> None:
-    ap = argparse.ArgumentParser(prog="modcompose peaks")
-    ap.add_argument("wav", type=Path)
-    ap.add_argument("-o", "--out", type=Path, default=Path("peaks.json"))
-    ap.add_argument("--cfg", type=Path)
-    ap.add_argument("--plot", action="store_true")
-    ns = ap.parse_args(args)
+    """Wrapper around :func:`utilities.consonant_extract.main`."""
+    from utilities import consonant_extract
 
-    import json
-
-    import librosa
-    import matplotlib.pyplot as plt
-    import yaml  # type: ignore
-    from scipy.ndimage import uniform_filter1d
-
-    cfg = PeakExtractorConfig()
-    if ns.cfg:
-        with ns.cfg.open() as fh:
-            cfg = PeakExtractorConfig(**yaml.safe_load(fh))
-    peaks = extract_peaks(ns.wav, cfg)
-    with ns.out.open("w") as fh:
-        json.dump(peaks, fh)
-
-    if ns.plot:
-        y, sr = librosa.load(ns.wav, sr=cfg.sr, mono=True)
-        rms = librosa.feature.rms(y=y, frame_length=cfg.frame_length, hop_length=cfg.hop_length)[0]
-        rms_db = librosa.amplitude_to_db(rms, ref=1.0)
-        win = max(1, int(round(cfg.rms_smooth_ms / 1000 * sr / cfg.hop_length)))
-        rms_db = uniform_filter1d(rms_db, win)
-        times = librosa.frames_to_time(range(len(rms_db)), sr=sr, hop_length=cfg.hop_length)
-        plt.step(times, rms_db, where="mid")
-        for p in peaks:
-            plt.axvline(p, color="r", linestyle="--")
-        plt.xlabel("Time (s)")
-        plt.ylabel("RMS (dB)")
-        plt.tight_layout()
-        plt.savefig(ns.out.with_suffix(".png"))
-        plt.close()
-
-    print(f"{len(peaks)} peaks -> {ns.out}")
+    consonant_extract.main(args)
 
 
 def _cmd_render(args: list[str]) -> None:

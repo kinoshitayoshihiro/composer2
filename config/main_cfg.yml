@@ -54,6 +54,8 @@ consonant_sync:
   lag_ms: 10.0
   min_distance_beats: 0.25
   sustain_threshold_ms: 120.0
+  note_radius_ms: 30.0
+  velocity_boost: 6
 
 # ---------------- 3. Part Defaults ------------------
 part_defaults:

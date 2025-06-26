@@ -293,6 +293,9 @@ whereas **`note`** mode aligns kick and snare hits individually. The default is
 global_settings:
   use_consonant_sync: true
   consonant_sync_mode: bar  # 'bar' or 'note'
+consonant_sync:
+  note_radius_ms: 30.0
+  velocity_boost: 6  # set return_vel=True when using align_to_consonant directly
 ```
 
 You can override this on the command line:

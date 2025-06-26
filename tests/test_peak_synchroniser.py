@@ -1,5 +1,8 @@
-from tools.peak_synchroniser import PeakSynchroniser
+"""Tests for bar-level consonant synchronisation used in note mode docs."""
+
 import pytest
+
+from tools.peak_synchroniser import PeakSynchroniser
 
 
 def test_sync_moves_event_to_peak():

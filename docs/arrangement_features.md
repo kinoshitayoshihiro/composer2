@@ -63,6 +63,13 @@ behaviour is controlled by `global_settings.consonant_sync_mode`.
 - **`bar`** – shift an entire bar toward the nearest consonant cluster.
 - **`note`** – align each kick and snare hit individually.
 
+Additional parameters under `consonant_sync` tune note mode:
+
+- `note_radius_ms` – search window for nearby peaks (default `30.0`).
+- `velocity_boost` – MIDI velocity increase applied when a hit is aligned. When
+  calling `align_to_consonant` directly, use `return_vel=True` to also receive
+  this increment.
+
 The default is `bar` as illustrated in `config/main_cfg.yml`:
 
 ```yaml

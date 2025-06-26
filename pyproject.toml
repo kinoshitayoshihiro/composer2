@@ -31,6 +31,7 @@ dev = [
   "pytest",
   "mypy",
   "ruff",
+  "mido>=1.2",
 ]
 audio = [
   "librosa>=0.10",

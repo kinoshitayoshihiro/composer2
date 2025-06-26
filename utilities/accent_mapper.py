@@ -3,11 +3,22 @@ from __future__ import annotations
 import random
 from typing import Dict
 
+from .velocity_smoother import EMASmoother
+
 
 class AccentMapper:
     """Map accent intensity and ghost-hat density using a vocal heatmap."""
 
-    def __init__(self, heatmap: Dict[int, int] | None, global_settings: Dict[str, object] | None, *, rng: random.Random | None = None) -> None:
+    def __init__(
+        self,
+        heatmap: Dict[int, int] | None,
+        global_settings: Dict[str, object] | None,
+        *,
+        rng: random.Random | None = None,
+        ema_smoother: EMASmoother | None = None,
+        use_velocity_ema: bool = False,
+        walk_after_ema: bool | None = None,
+    ) -> None:
         self.heatmap = heatmap or {}
         self.max_heatmap_value = max(self.heatmap.values()) if self.heatmap else 0
         gs = global_settings or {}
@@ -22,13 +33,34 @@ class AccentMapper:
         self.rng = rng or random.Random()
         self._rw_state: int = 0
         self._step_range = int(gs.get("random_walk_step", 8))
+        if "walk_after_ema" in gs and walk_after_ema is not None and bool(gs["walk_after_ema"]) != bool(walk_after_ema):
+            raise ValueError("walk_after_ema specified twice with different values.")
+        self.walk_after_ema = bool(walk_after_ema if walk_after_ema is not None else gs.get("walk_after_ema", False))
+        self.use_velocity_ema = use_velocity_ema
+        self.ema_smoother = ema_smoother or EMASmoother(window=16)
+        self.debug_rw_values: list[tuple[float, int]] = []
 
-    def begin_bar(self) -> None:
-        """Advance the velocity random walk by one step."""
+    def set_step_range(self, step: int) -> None:
+        """Set the random walk step range."""
+        self._step_range = int(step)
+
+    def begin_bar(self, bar_start_offset_ql: float = 0.0, step_range: int | None = None) -> None:
+        """Advance the velocity random walk by one step.
+
+        Parameters
+        ----------
+        bar_start_offset_ql : float, optional
+            Absolute start offset of the bar in quarter lengths.
+        step_range : int | None, optional
+            If provided, update the random walk step range before advancing.
+        """
+        if step_range is not None:
+            self._step_range = int(step_range)
         step = self.rng.randint(-self._step_range, self._step_range)
         self._rw_state = int(
             max(-self._step_range, min(self._step_range, self._rw_state + step))
         )
+        self.debug_rw_values.append((bar_start_offset_ql, self._rw_state))
 
 
     def accent(self, rel_beat: int, velocity: int, *, apply_walk: bool = True) -> int:
@@ -37,7 +69,16 @@ class AccentMapper:
         heat = self.heatmap.get(rel_beat, 0)
         if heat >= self.accent_threshold * self.max_heatmap_value:
             vel = int(round(vel * 1.2))
-        if apply_walk:
+        if self.use_velocity_ema:
+            if self.walk_after_ema:
+                vel = self.ema_smoother.update(vel)
+                if apply_walk:
+                    vel += self._rw_state
+            else:
+                if apply_walk:
+                    vel += self._rw_state
+                vel = self.ema_smoother.update(vel)
+        elif apply_walk:
             vel += self._rw_state
         return max(1, min(127, vel))
 

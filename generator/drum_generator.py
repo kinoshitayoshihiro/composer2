@@ -460,12 +460,40 @@ class DrumGenerator(BasePartGenerator):
         )
         self.vel_smoother = EMASmoother(window=16)
 
-        sync_cfg = global_cfg.get("consonant_sync", {})
-        self.consonant_sync_cfg = {
-            "lag_ms": float(sync_cfg.get("lag_ms", 10.0)),
-            "min_distance_beats": float(sync_cfg.get("min_distance_beats", 0.25)),
-            "sustain_threshold_ms": float(sync_cfg.get("sustain_threshold_ms", 120.0)),
+        sync_cfg = global_cfg.get(
+            "consonant_sync", self.main_cfg.get("consonant_sync", {})
+        )
+        defaults = {
+            "lag_ms": 10.0,
+            "min_distance_beats": 0.25,
+            "sustain_threshold_ms": 120.0,
+            "note_radius_ms": 30.0,
+            "velocity_boost": 6,
         }
+        self.consonant_sync_cfg = {**defaults, **dict(sync_cfg)}
+        self.consonant_sync_cfg["lag_ms"] = float(self.consonant_sync_cfg["lag_ms"])
+        self.consonant_sync_cfg["min_distance_beats"] = float(
+            self.consonant_sync_cfg["min_distance_beats"]
+        )
+        self.consonant_sync_cfg["sustain_threshold_ms"] = float(
+            self.consonant_sync_cfg["sustain_threshold_ms"]
+        )
+        self.consonant_sync_cfg["note_radius_ms"] = float(
+            self.consonant_sync_cfg["note_radius_ms"]
+        )
+        self.consonant_sync_cfg["velocity_boost"] = int(
+            self.consonant_sync_cfg["velocity_boost"]
+        )
+        radius = self.consonant_sync_cfg["note_radius_ms"]
+        if not (1.0 <= radius <= 200.0):
+            raise ValueError(
+                "consonant_sync.note_radius_ms must be 1-200 ms"
+            )
+        boost = self.consonant_sync_cfg["velocity_boost"]
+        if not (0 <= boost <= 32):
+            raise ValueError(
+                "consonant_sync.velocity_boost must be 0-32"
+            )
         self.use_consonant_sync = bool(self.global_settings.get("use_consonant_sync", False))
         self.consonant_sync_mode = str(
             self.global_settings.get("consonant_sync_mode", "bar")
@@ -1430,14 +1458,22 @@ class DrumGenerator(BasePartGenerator):
                 and inst_name in {"kick", "snare"}
                 and self.consonant_peaks
                 and self.consonant_sync_mode == "note"
+                and ev_def.get("type") not in {"drag", "ruff"}
             ):
-                final_insert_offset_in_score = align_to_consonant(
+                shifted, vel_up = align_to_consonant(
                     final_insert_offset_in_score,
                     self.consonant_peaks,
                     self.current_bpm,
-                    lag_ms=self.consonant_sync_cfg["lag_ms"],
+                    lag_ms=self.consonant_sync_cfg.get("lag_ms", 10.0),
+                    radius_ms=self.consonant_sync_cfg.get("note_radius_ms", 30.0),
+                    velocity_boost=int(
+                        self.consonant_sync_cfg.get("velocity_boost", 0)
+                    ),
+                    return_vel=True,
                 )
-                final_insert_offset_in_score = max(0.0, final_insert_offset_in_score)
+                if shifted != final_insert_offset_in_score:
+                    final_insert_offset_in_score = max(0.0, shifted)
+                    final_event_velocity = min(127, final_event_velocity + vel_up)
             bin_idx = (
                 int(final_insert_offset_in_score * self.heatmap_resolution)
                 % self.heatmap_resolution
@@ -1647,19 +1683,18 @@ class DrumGenerator(BasePartGenerator):
         if n_hist > 1 and len(self._groove_history) > n_hist - 1:
             self._groove_history = self._groove_history[-(n_hist - 1) :]
 
-        if self.export_random_walk_cc and hasattr(self.accent_mapper, "debug_rw_values"):
-            if self.accent_mapper.debug_rw_values:
-                cc_events = getattr(part, "extra_cc", [])
-                for off, val in self.accent_mapper.debug_rw_values:
-                    cc_events.append(
-                        {
-                            "time": off,
-                            "number": 20,
-                            "value": max(0, min(127, val + 64)),
-                        }
-                    )
-                part.extra_cc = cc_events
-                self.accent_mapper.debug_rw_values.clear()
+        if self.export_random_walk_cc and self.accent_mapper.debug_rw_values:
+            cc_events = getattr(part, "extra_cc", [])
+            for off, val in self.accent_mapper.debug_rw_values:
+                cc_events.append(
+                    {
+                        "time": off,
+                        "number": 20,  # CC20 for debug
+                        "value": max(0, min(127, val + 64)),
+                    }
+                )
+            part.extra_cc = cc_events
+            self.accent_mapper.debug_rw_values.clear()
 
     def _make_hit(
         self, name: str, vel: int, ql: float, ev_def: dict[str, Any] | None = None

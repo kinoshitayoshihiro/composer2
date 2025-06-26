@@ -1,5 +1,7 @@
 import math
-from typing import List, NamedTuple
+from collections.abc import Sequence
+from typing import NamedTuple
+
 
 class TimingBlend(NamedTuple):
     """Container for timing offset and velocity scaling."""
@@ -8,7 +10,7 @@ class TimingBlend(NamedTuple):
     vel_scale: float
 
 
-def interp_curve(curve: List[float], steps: int) -> List[float]:
+def interp_curve(curve: list[float], steps: int) -> list[float]:
     """Return ``curve`` resampled to ``steps`` points using linear interpolation."""
     if steps <= 0:
         return []
@@ -18,7 +20,7 @@ def interp_curve(curve: List[float], steps: int) -> List[float]:
         return [float(curve[0])] * steps
     if len(curve) == steps:
         return [float(v) for v in curve]
-    resampled: List[float] = []
+    resampled: list[float] = []
     span = len(curve) - 1
     for i in range(steps):
         pos = i * span / float(steps - 1)
@@ -30,7 +32,7 @@ def interp_curve(curve: List[float], steps: int) -> List[float]:
     return resampled
 
 
-def interp_tempo(beat: float, curve: List[tuple[float, float]], default_bpm: float) -> float:
+def interp_tempo(beat: float, curve: list[tuple[float, float]], default_bpm: float) -> float:
     """Return BPM at ``beat`` using ``curve`` with linear interpolation."""
     if not curve:
         return default_bpm
@@ -58,7 +60,7 @@ def _combine_timing(
     *,
     swing_ratio: float = 0.5,
     swing_type: str = "eighth",
-    push_pull_curve: List[float] | None = None,
+    push_pull_curve: list[float] | None = None,
     tempo_bpm: float,
     max_push_ms: float = 80.0,
     vel_range: tuple[float, float] = (0.9, 1.1),
@@ -121,52 +123,74 @@ def _combine_timing(
 
 def align_to_consonant(
     offset_ql: float,
-    peaks_sec: list[float],
+    peaks_sec: Sequence[float],
     bpm: float,
+    *,
     lag_ms: float = 10.0,
-    window_beats: float = 0.25,
-) -> float:
+    radius_ms: float = 30.0,
+    velocity_boost: int = 0,
+    return_vel: bool = False,
+) -> float | tuple[float, int]:
     """Return ``offset_ql`` shifted earlier if a peak is nearby.
 
     Parameters
     ----------
     offset_ql : float
-        Note position in beats.
-    peaks_sec : list[float]
+        Note position in quarter lengths.
+    peaks_sec : Sequence[float]
         Absolute consonant peak times in seconds.
     bpm : float
         Current tempo in beats per minute.
     lag_ms : float, optional
-        Amount to shift earlier when aligned, by default ``10.0``.
-    window_beats : float, optional
-        Search window around ``offset_ql`` in beats, by default ``0.25``.
+        Amount to shift earlier when aligned. Defaults to ``10.0``.
+    radius_ms : float, optional
+        Search radius around ``offset_ql`` in milliseconds. Defaults to ``30.0``.
+    velocity_boost : int, optional
+        Velocity increment applied when alignment occurs. Defaults to ``0``.
+    return_vel : bool, optional
+        When ``True`` or ``velocity_boost > 0``, also return the velocity
+        increment.
 
     Returns
     -------
-    float
-        Corrected offset. If no peak is found within ``window_beats`` of the
-        position, the original value is returned.
+    float | tuple[float, int]
+        Corrected offset, optionally with a velocity increment. If no peak is
+        found within ``radius_ms`` of the position, the original value and ``0``
+        are returned.
     """
 
+    radius_ms = float(radius_ms)
+    if not (1.0 <= radius_ms <= 200.0):
+        raise ValueError("radius_ms must be between 1 and 200 ms")
+    velocity_boost = int(velocity_boost)
+    if not (0 <= velocity_boost <= 32):
+        raise ValueError("velocity_boost must be between 0 and 32")
+
     if not peaks_sec:
-        return offset_ql
+        result_off = offset_ql
+        vel = 0
+        return (result_off, vel) if (return_vel or velocity_boost) else result_off
 
     sec_per_beat = 60.0 / bpm
     offset_sec = offset_ql * sec_per_beat
-    window_sec = abs(window_beats) * sec_per_beat
+    radius_sec = abs(radius_ms) / 1000.0
     lag_sec = lag_ms / 1000.0
 
     closest_peak: float | None = None
     min_abs_diff: float | None = None
     for peak in peaks_sec:
         diff = peak - offset_sec
-        if abs(diff) <= window_sec:
+        if abs(diff) <= radius_sec:
             if min_abs_diff is None or abs(diff) < min_abs_diff:
                 min_abs_diff = abs(diff)
                 closest_peak = peak
 
     if closest_peak is not None:
         corrected_sec = max(0.0, closest_peak - lag_sec)
-        return corrected_sec / sec_per_beat
+        result_off = corrected_sec / sec_per_beat
+        vel = velocity_boost
+    else:
+        result_off = offset_ql
+        vel = 0
 
-    return offset_ql
+    return (result_off, vel) if (return_vel or velocity_boost) else result_off

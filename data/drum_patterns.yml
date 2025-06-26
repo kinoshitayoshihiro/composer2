@@ -283,6 +283,22 @@ drum_patterns:
         offset: 4.0
         duration: 1.0
 
+  tom_run_short:
+    description: "1 小節前半にタム回し"
+    pattern_type: "tom_dsl_fill"
+    length_beats: 1.0
+    drum_base_velocity: 88
+    pattern: |
+      (T1 T2 T3 S)x1
+
+  tom_cascade:
+    description: "下降タム＋キック〆"
+    pattern_type: "tom_dsl_fill"
+    length_beats: 1.0
+    drum_base_velocity: 92
+    pattern: |
+      >1.1 T3 T2 T1 . K
+
   ghost_hat_ballad:
     description: "静かなバラードでの繊細な表現"
     pattern_type: "simple"
@@ -600,6 +616,7 @@ cymbal_swell_fill:
     - instrument: crash
       offset: 4.0
 
+
 # --- ゴーストノート多用型 ---
 ghost_hat_ballad:
   description: "静かなバラードでの繊細な表現"
@@ -693,31 +710,6 @@ default_drum_pattern:
       velocity_factor: 1.0
       duration: 0.15
 
-drum_patterns:
-  default_drum_pattern:
-    description: "Default simple kick and snare (Global Fallback)."
-    time_signature: "4/4"
-    pattern_type: "fixed_pattern"
-    length_beats: 4.0
-    drum_base_velocity: 90
-    tags: ["drum", "default", "minimal", "kick_snare"]
-    pattern:
-      - instrument: kick
-        offset: 0.0
-        velocity_factor: 1.0
-        duration: 0.15
-      - instrument: snare
-        offset: 1.0
-        velocity_factor: 1.0
-        duration: 0.15
-      - instrument: kick
-        offset: 2.0
-        velocity_factor: 1.0
-        duration: 0.15
-      - instrument: snare
-        offset: 3.0
-        velocity_factor: 1.0
-        duration: 0.15
 
   ballad_soft_kick_snare_8th_hat:
     description: "Refined soft ballad with subtle ghost snare and expressive hats."

@@ -167,10 +167,19 @@ class FillInserter:
         if fill_def is None:
             logger.warning("FillInserter.insert: fill pattern '%s' not found", key)
             return
+        pattern_type = str(fill_def.get("pattern_type", "")).lower()
         template = fill_def.get("template")
         if isinstance(template, list):
             template = self.rng.choice(template)
-        if template is not None:
+
+        if pattern_type == "tom_dsl_fill":
+            dsl = str(fill_def.get("pattern", ""))
+            try:
+                events = fill_dsl.parse_fill_dsl(dsl)
+            except fill_dsl.FillDSLParseError as exc:
+                logger.warning("FillInserter.insert: DSL parse error: %s", exc)
+                return
+        elif template is not None:
             events = fill_dsl.parse(
                 str(template),
                 fill_def.get("length_beats", 1.0),

@@ -42,6 +42,15 @@ dg = DrumGenerator(main_cfg=my_cfg, global_settings=cli_args)
 part = dg.compose(section_data=my_section)
 ```
 
+### Global Settings
+
+- `walk_after_ema` (bool): when `use_velocity_ema` is enabled, controls whether
+  the random walk is applied after smoothing (`True`) or before (`False`).
+- `export_random_walk_cc` (bool): if `True`, writes the random walk value to
+  controller **20** once per bar for debugging.
+- `random_walk_step` (int): base step range of the velocity random walk.
+- `bar_start_abs_offset` is forwarded to `AccentMapper.begin_bar` so debug CC timings align.
+
 #### `compose(self, *, section_data: Optional[Dict[str, Any]] = None, overrides_root: Optional[Any] = None, groove_profile_path: Optional[str] = None, next_section_data: Optional[Dict[str, Any]] = None, part_specific_humanize_params: Optional[Dict[str, Any]] = None, shared_tracks: Dict[str, Any] | None = None) -> stream.Part`
 ```python
 def compose(

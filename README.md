@@ -170,6 +170,13 @@ Alternatively run `make` directly:
 bash -c "make demo && echo 'OK'"
 ```
 
+## Velocity Random Walk debug CC
+
+Enable `export_random_walk_cc: true` under `global_settings` to export the
+random walk value as MIDI CC20 once per bar. The CC value is scaled so 64
+represents no offset and values stay within the 0–127 range.
+The bar's absolute start offset (`bar_start_abs_offset`) is passed through so timings match the score.
+
 If the command finishes without errors you should see the message:
 
 ```

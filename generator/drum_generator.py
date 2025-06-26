@@ -68,6 +68,8 @@ EMOTION_INTENSITY_LUT = {
     ("super_drive", "high"): "rock_drive_loop",
 }
 
+INTENSITY_FACTOR = {"low": 0.5, "medium": 1.0, "high": 1.5}
+
 DRUM_ALIAS: dict[str, str] = {
     "hh": "hh",
     "hat_closed": "hat_closed",
@@ -357,6 +359,8 @@ class DrumGenerator(BasePartGenerator):
             global_key_signature_mode=global_key_signature_mode,
             **kwargs,
         )
+        # keep a reference for later use
+        self.global_settings: dict[str, Any] = global_settings or {}
         self.overrides = None
         # ここに他の初期化処理をまとめて書く
         self.logger = logging.getLogger("modular_composer.drum_generator")
@@ -367,9 +371,9 @@ class DrumGenerator(BasePartGenerator):
         global_cfg = self.main_cfg.get("global_settings", {}) if self.main_cfg else {}
         self.fade_beats_default = float(global_cfg.get("fill_fade_beats", 2.0))
         self.strict_drum_map = bool(
-            (global_settings or {}).get("strict_drum_map", False)
+            self.global_settings.get("strict_drum_map", False)
         )
-        self.drum_map_name = (global_settings or {}).get("drum_map", "gm")
+        self.drum_map_name = self.global_settings.get("drum_map", "gm")
         self.drum_map = get_drum_map(self.drum_map_name)
         # Simplified mapping to MIDI note numbers for internal use
         self.gm_pitch_map: dict[str, int] = {}
@@ -385,8 +389,8 @@ class DrumGenerator(BasePartGenerator):
             self.tempo_map = tempo_map
         else:
             curve_path = (
-                (global_settings or {}).get("tempo_curve_path")
-                or (global_settings or {}).get("tempo_curve_json")
+                self.global_settings.get("tempo_curve_path")
+                or self.global_settings.get("tempo_curve_json")
                 or (
                     self.main_cfg.get("paths", {}).get("tempo_curve_path")
                     if self.main_cfg
@@ -409,7 +413,7 @@ class DrumGenerator(BasePartGenerator):
                             [
                                 {
                                     "beat": 0.0,
-                                    "bpm": (global_settings or {}).get(
+                                    "bpm": self.global_settings.get(
                                         "tempo_bpm", 120
                                     ),
                                 }
@@ -420,7 +424,7 @@ class DrumGenerator(BasePartGenerator):
                         [
                             {
                                 "beat": 0.0,
-                                "bpm": (global_settings or {}).get("tempo_bpm", 120),
+                                "bpm": self.global_settings.get("tempo_bpm", 120),
                             }
                         ]
                     )
@@ -429,7 +433,7 @@ class DrumGenerator(BasePartGenerator):
                     [
                         {
                             "beat": 0.0,
-                            "bpm": (global_settings or {}).get("tempo_bpm", 120),
+                            "bpm": self.global_settings.get("tempo_bpm", 120),
                         }
                     ]
                 )
@@ -437,9 +441,13 @@ class DrumGenerator(BasePartGenerator):
         # Initialize with the BPM at beat 0 so that grace calculations use
         # the correct starting tempo even when a tempo map is provided.
         self.current_bpm = self._current_bpm(0.0)
-        self.ppq = int((global_settings or {}).get("ppq", 480))
+        self.ppq = int(self.global_settings.get("ppq", 480))
         self.use_velocity_ema = bool(
-            (global_settings or {}).get("use_velocity_ema", False)
+            self.global_settings.get("use_velocity_ema", False)
+        )
+        self.walk_after_ema = bool(self.global_settings.get("walk_after_ema", False))
+        self.export_random_walk_cc = bool(
+            self.global_settings.get("export_random_walk_cc", False)
         )
         self.vel_smoother = EMASmoother(window=16)
 
@@ -449,9 +457,9 @@ class DrumGenerator(BasePartGenerator):
             "min_distance_beats": float(sync_cfg.get("min_distance_beats", 0.25)),
             "sustain_threshold_ms": float(sync_cfg.get("sustain_threshold_ms", 120.0)),
         }
-        self.use_consonant_sync = bool((global_settings or {}).get("use_consonant_sync", False))
+        self.use_consonant_sync = bool(self.global_settings.get("use_consonant_sync", False))
         self.consonant_sync_mode = str(
-            (global_settings or {}).get("consonant_sync_mode", "bar")
+            self.global_settings.get("consonant_sync_mode", "bar")
         ).lower()
         if self.consonant_sync_mode not in {"bar", "note"}:
             raise ValueError(
@@ -499,6 +507,9 @@ class DrumGenerator(BasePartGenerator):
             self.heatmap,
             self.main_cfg.get("global_settings", {}),
             rng=self.rng,
+            ema_smoother=self.vel_smoother,
+            use_velocity_ema=self.use_velocity_ema,
+            walk_after_ema=self.walk_after_ema,
         )
         self.ghost_hat_on_offbeat = self.main_cfg.get("ghost_hat_on_offbeat", True)
 
@@ -1042,8 +1053,13 @@ class DrumGenerator(BasePartGenerator):
                 bars_since_section_start = 0
             current_pos_within_block = 0.0
             while remaining_ql_in_block > MIN_NOTE_DURATION_QL / 8.0:
-                if current_pos_within_block == 0.0:
-                    self.accent_mapper.begin_bar()
+                bar_start_abs_offset = offset_in_score + current_pos_within_block
+                if not getattr(self, "_walk_advanced", False):
+                    intensity = drums_params.get("musical_intent", {}).get("intensity", "medium")
+                    step_base = self.global_settings.get("random_walk_step", 8)
+                    step_range = int(step_base * INTENSITY_FACTOR.get(intensity, 1.0))
+                    self.accent_mapper.begin_bar(bar_start_abs_offset, step_range)
+                    self._walk_advanced = True
                 # (フィルインロジック、パターンの適用は前回と同様、base_vel を _apply_pattern に渡す)
                 current_pattern_iteration_ql = min(
                     pattern_unit_length_ql, remaining_ql_in_block
@@ -1174,7 +1190,7 @@ class DrumGenerator(BasePartGenerator):
                 self._apply_pattern(
                     part,
                     pattern_to_use_for_iteration,
-                    offset_in_score + current_pos_within_block,
+                    bar_start_abs_offset,
                     current_pattern_iteration_ql,
                     base_vel,
                     swing_type,
@@ -1192,6 +1208,7 @@ class DrumGenerator(BasePartGenerator):
                 current_pos_within_block += current_pattern_iteration_ql
                 remaining_ql_in_block -= current_pattern_iteration_ql
                 bars_since_section_start += 1
+                self._walk_advanced = False
 
             running_beats += blk_data.get(
                 "humanized_duration_beats",
@@ -1620,6 +1637,20 @@ class DrumGenerator(BasePartGenerator):
         n_hist = int(self.groove_model.get("n", 3)) if self.groove_model else 0
         if n_hist > 1 and len(self._groove_history) > n_hist - 1:
             self._groove_history = self._groove_history[-(n_hist - 1) :]
+
+        if self.export_random_walk_cc and hasattr(self.accent_mapper, "debug_rw_values"):
+            if self.accent_mapper.debug_rw_values:
+                cc_events = getattr(part, "extra_cc", [])
+                for off, val in self.accent_mapper.debug_rw_values:
+                    cc_events.append(
+                        {
+                            "time": off,
+                            "number": 20,
+                            "value": max(0, min(127, val + 64)),
+                        }
+                    )
+                part.extra_cc = cc_events
+                self.accent_mapper.debug_rw_values.clear()
 
     def _make_hit(
         self, name: str, vel: int, ql: float, ev_def: dict[str, Any] | None = None

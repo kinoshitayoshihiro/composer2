@@ -17,6 +17,7 @@ or equivalently
 
 ```bash
 pip install -r requirements.txt
+pip install -e ".[essentia]"  # to enable Essentia backend for consonant peaks
 ```
 
 Without these packages `pytest` and the composer modules will fail to import.
@@ -275,6 +276,18 @@ saved to JSON so they can be used for later synchronization tools:
 
 ```bash
 modcompose peaks path/to/vocal.wav -o peaks.json --plot
+```
+
+Alternatively you can invoke the extraction helper directly:
+
+```bash
+python -m utilities.consonant_extract path/to/vocal.wav -o peaks.json
+```
+
+To use the Essentia backend:
+
+```bash
+modcompose peaks vocal.wav -o peaks.json --algo essentia
 ```
 
 Use the JSON with the sampler to synchronise drums with consonants:

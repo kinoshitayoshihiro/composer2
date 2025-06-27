@@ -6,24 +6,22 @@ import hashlib
 import io
 import json
 import pickle
+import re
 import sys
-from collections import Counter, defaultdict
+import warnings
+from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from random import Random
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 import click
 import numpy as np
 import pretty_midi
 
+from utilities.loop_ingest import scan_loops
+
 from .drum_map_registry import GM_DRUM_MAP
-from groove_sampler.loop_ingest import (
-    _iter_midi,
-    _iter_wav,
-    scan_loops as _load_events,
-    LoadResult,
-)
 
 PPQ = 480
 RESOLUTION = 16
@@ -36,6 +34,7 @@ _PITCH_TO_LABEL: dict[int, str] = {val[1]: k for k, val in GM_DRUM_MAP.items()}
 
 State = tuple[int, str]
 HashKey = tuple[State | int, ...]
+Intensity = Literal["low", "mid", "high"]
 
 
 class Model(TypedDict):
@@ -50,6 +49,10 @@ class Model(TypedDict):
     mean_velocity: dict[str, float]
     vel_deltas: dict[str, Counter[int]]
     micro_offsets: dict[str, Counter[int]]
+    aux_cache: dict[int, tuple[str, str, str]]
+    use_sha1: bool
+    num_tokens: int
+    train_perplexity: float
 
 
 
@@ -57,15 +60,115 @@ class Model(TypedDict):
 DEFAULT_AUX = {"section": "verse", "heat_bin": 0, "intensity": "mid"}
 
 _AUX_HASH_CACHE: dict[int, tuple[str, str, str]] = {}
+_AUX_TUPLE_MAP: dict[tuple[str, str, str], int] = {}
+_AUX_USE_SHA1 = False
+
+ctx_cache: OrderedDict[HashKey, list[tuple[State, float]]] = OrderedDict()
+MAX_CACHE = 4096
+
+
+def _hash_bytes(data: bytes, sha1: bool) -> int:
+    if sha1:
+        return int.from_bytes(hashlib.sha1(data).digest()[:8], "big")
+    return int.from_bytes(hashlib.blake2s(data, digest_size=8).digest(), "big")
 
 
 def _hash_aux(aux: tuple[str, str, str]) -> int:
+    global _AUX_USE_SHA1
+    if aux in _AUX_TUPLE_MAP:
+        return _AUX_TUPLE_MAP[aux]
     data = "|".join(aux).encode("utf-8")
-    val = int.from_bytes(hashlib.blake2s(data, digest_size=4).digest(), "big")
-    prev = _AUX_HASH_CACHE.setdefault(val, aux)
-    if prev != aux:
-        raise RuntimeError(f"hash collision: {prev} vs {aux}")
+    val = _hash_bytes(data, _AUX_USE_SHA1)
+    prev = _AUX_HASH_CACHE.get(val)
+    if prev is not None and prev != aux:
+        if not _AUX_USE_SHA1:
+            warnings.warn(
+                "aux hash collision detected; switching to SHA-1",
+                RuntimeWarning,
+            )
+            _AUX_USE_SHA1 = True
+            val = _hash_bytes(data, True)
+            prev = _AUX_HASH_CACHE.get(val)
+        if prev is not None and prev != aux:
+            warnings.warn(
+                f"SHA-1 collision for {aux} vs {prev}; using fallback", RuntimeWarning
+            )
+            val = hash(aux) & ((1 << 64) - 1)
+    _AUX_HASH_CACHE[val] = aux
+    _AUX_TUPLE_MAP[aux] = val
     return val
+
+
+def _load_events(loop_dir: Path, exts: Sequence[str]) -> tuple[
+    list[tuple[list[State], str]],
+    dict[str, float],
+    dict[str, Counter[int]],
+    dict[str, Counter[int]],
+]:
+    """Return token sequences and velocity statistics."""
+
+    entries = scan_loops(loop_dir, exts=exts)
+    events: list[tuple[list[State], str]] = []
+    vel_map: dict[str, list[int]] = defaultdict(list)
+    micro_map: dict[str, list[int]] = defaultdict(list)
+
+    for entry in entries:
+        seq: list[State] = []
+        for step, label, vel, micro in entry["tokens"]:
+            seq.append((step % RESOLUTION, label))
+            vel_map[label].append(vel)
+            micro_map[label].append(micro)
+        if seq:
+            events.append((sorted(seq, key=lambda x: x[0]), entry["file"]))
+
+    mean_velocity = {k: sum(v) / len(v) for k, v in vel_map.items() if v}
+    vel_deltas = {
+        k: Counter(int(v - mean_velocity[k]) for v in vals)
+        for k, vals in vel_map.items()
+    }
+    micro_offsets = {k: Counter(vals) for k, vals in micro_map.items()}
+    return events, mean_velocity, vel_deltas, micro_offsets
+
+
+def validate_aux_map(
+    aux_map: dict[str, dict[str, Any]],
+    *,
+    states: set[str] | None = None,
+    filenames: Sequence[str] | None = None,
+) -> None:
+    """Validate auxiliary metadata map.
+
+    Args:
+        aux_map: Mapping from filename to auxiliary attribute dict.
+        states: Required keys; defaults to ``{"section", "heat_bin", "intensity"}``.
+        filenames: Optional sequence of filenames that must appear in ``aux_map``.
+
+    Raises:
+        ValueError: If required keys are missing, values are invalid or any
+        filename in ``filenames`` is absent.
+    """
+
+    req = states or {"section", "heat_bin", "intensity"}
+    for name, meta in aux_map.items():
+        missing = [k for k in req if k not in meta]
+        if missing:
+            raise ValueError(f"aux entry '{name}' missing keys: {', '.join(missing)}")
+        section = str(meta.get("section", ""))
+        if not (1 <= len(section) <= 32) or not re.fullmatch(r"[a-z0-9_-]+", section):
+            raise ValueError(f"invalid section for {name}: {section!r}")
+        try:
+            heat = int(meta.get("heat_bin"))
+        except Exception:
+            raise ValueError(f"heat_bin not integer for {name}") from None
+        if not 0 <= heat <= 15:
+            raise ValueError(f"heat_bin out of range for {name}: {heat}")
+        intensity = str(meta.get("intensity", ""))
+        if intensity not in {"low", "mid", "high"}:
+            raise ValueError(f"invalid intensity for {name}: {intensity!r}")
+    if filenames is not None:
+        missing_names = [n for n in filenames if n not in aux_map]
+        if missing_names:
+            raise ValueError(f"aux map missing entries for: {', '.join(missing_names)}")
 
 
 def _count_ngrams(
@@ -97,7 +200,19 @@ def _kneser_ney_base_unigram_prob(
     states: set[State],
     discount: float,
 ) -> tuple[dict[HashKey, dict[State, float]], dict[State, float]]:
-    """Return unigram probabilities and base continuation distribution."""
+    """Return unigram probabilities and continuation base distribution.
+
+    Args:
+        freq_0: Mapping of empty context to state counts.
+        freq_1: Bigram frequencies used for continuation counts.
+        states: Complete set of states in the training data.
+        discount: Absolute discount value.
+
+    Returns:
+        Two dictionaries: the unigram log-probabilities indexed by the
+        empty context and the base continuation probabilities for each
+        state.
+    """
 
     cont_sets: dict[State, set[HashKey]] = defaultdict(set)
     for ctx, counter in freq_1.items():
@@ -133,7 +248,18 @@ def _kneser_ney_higher_orders(
     states: set[State],
     discount: float,
 ) -> dict[int, dict[HashKey, dict[State, float]]]:
-    """Compute higher-order Kneser-Ney probabilities."""
+    """Compute higher-order Kneser-Ney log-probabilities.
+
+    Args:
+        freq: Frequency tables for each order.
+        prob0: Unigram log-probabilities.
+        base_prob: Continuation probabilities from ``_kneser_ney_base_unigram_prob``.
+        states: All states observed during training.
+        discount: Absolute discount value.
+
+    Returns:
+        Mapping from order to context-conditioned log-probabilities.
+    """
 
     prob: dict[int, dict[HashKey, dict[State, float]]] = {0: prob0}
     max_order = max(freq) + 1
@@ -240,10 +366,13 @@ def _perplexity(
 ) -> float:
     """Return perplexity of ``seqs`` under ``prob``.
 
-    The function walks each sequence once, summing log probabilities with
-    back-off as necessary. The returned value is ``exp(-L/N)`` where ``L`` is the
-    total log likelihood and ``N`` the number of tokens. When ``seqs`` is empty
-    ``inf`` is returned.
+    Args:
+        prob: Log-probability tables for each order.
+        seqs: Evaluation sequences of states.
+        order: Maximum history length.
+
+    Returns:
+        Perplexity value. If ``seqs`` is empty ``float('inf')`` is returned.
     """
     total_log = 0.0
     count = 0
@@ -263,7 +392,16 @@ def _perplexity(
 def auto_select_order(
     seqs: list[list[State]], max_order: int = 5, validation_split: float = 0.1
 ) -> int:
-    """Return the n-gram order with minimal perplexity."""
+    """Return the n-gram order with minimal perplexity.
+
+    Args:
+        seqs: Training sequences used to estimate perplexity.
+        max_order: Maximum order to consider.
+        validation_split: Fraction of ``seqs`` to hold out for validation.
+
+    Returns:
+        The order achieving the lowest perplexity on the validation split.
+    """
 
     if not seqs:
         raise ValueError("no sequences provided")
@@ -297,12 +435,26 @@ def train(
     alpha: float = ALPHA,
     discount: float = 0.75,
 ) -> Model:
-    """Train an n-gram model from MIDI/WAV loops.
+    """Train an n-gram model from loops.
 
-    If ``order`` is ``"auto"``, the order is chosen via minimal perplexity on a
-    held-out validation set.
-    ``discount`` controls absolute discounting for Kneser-Ney.
+    Args:
+        loop_dir: Folder containing MIDI or WAV loops.
+        ext: Comma separated extensions to load.
+        order: N-gram order or ``"auto"`` for automatic selection.
+        aux_map: Optional mapping from filename to auxiliary metadata.
+        smoothing: Smoothing strategy.
+        alpha: Additive constant for ``"add_alpha"`` smoothing.
+        discount: Discount used by Kneser–Ney.
+
+    Returns:
+        Trained model with probability tables and statistics.
     """
+
+    _AUX_HASH_CACHE.clear()
+    _AUX_TUPLE_MAP.clear()
+    global _AUX_USE_SHA1
+    _AUX_USE_SHA1 = False
+    ctx_cache.clear()
 
     exts = [e.strip().lower() for e in ext.split(",") if e]
     seqs, mean_vel, vel_deltas, micro_offsets = _load_events(loop_dir, exts)
@@ -317,6 +469,9 @@ def train(
         raise ValueError("order must be >= 1")
 
     aux_map = aux_map or {}
+    if aux_map:
+        filenames = [name for _, name in seqs]
+        validate_aux_map(aux_map, filenames=filenames)
 
     freq: dict[int, dict[tuple[State, ...], Counter[State]]] = {
         i: defaultdict(Counter) for i in range(n)
@@ -344,6 +499,9 @@ def train(
         freq, smoothing=smoothing, alpha=alpha, discount=discount
     )
 
+    num_tokens = sum(len(s) for s, _ in seqs)
+    train_perplexity = _perplexity(prob, [s for s, _ in seqs], n)
+
     model: Model = Model(
         version=VERSION,
         resolution=RESOLUTION,
@@ -353,6 +511,10 @@ def train(
         mean_velocity=mean_vel,
         vel_deltas=vel_deltas,
         micro_offsets=micro_offsets,
+        aux_cache=dict(_AUX_HASH_CACHE),
+        use_sha1=_AUX_USE_SHA1,
+        num_tokens=num_tokens,
+        train_perplexity=train_perplexity,
     )
     return model
 
@@ -372,7 +534,17 @@ def load(path: Path) -> Model:
         raise RuntimeError("incompatible model version")
     # drop legacy keys from older model versions
     data.pop("aux_dims", None)
-    return Model(**data)
+    data.setdefault("num_tokens", 0)
+    data.setdefault("train_perplexity", float("inf"))
+    model = Model(**data)
+    _AUX_HASH_CACHE.clear()
+    _AUX_HASH_CACHE.update(model.get("aux_cache", {}))
+    _AUX_TUPLE_MAP.clear()
+    for val, tup in _AUX_HASH_CACHE.items():
+        _AUX_TUPLE_MAP[tup] = val
+    global _AUX_USE_SHA1
+    _AUX_USE_SHA1 = model.get("use_sha1", False)
+    return model
 
 
 def _choose(probs: dict[State, float], rng: Random) -> State:
@@ -410,15 +582,29 @@ def _sample_next(
         )
         if not with_intensity:
             intensity = "*"
-        return _hash_aux((section, heat_bin, intensity))
+        val = _hash_aux((section, heat_bin, intensity))
+        if val not in model["aux_cache"]:
+            warnings.warn(
+                f"unknown aux ({section}, {heat_bin}, {intensity}); falling back",
+                RuntimeWarning,
+            )
+            val = _hash_aux((section, "*", "*"))
+        return val
 
     aux_full = _aux_hash(True)
     aux_any = _aux_hash(False)
+    aux_section = _hash_aux((
+        str(cond.get("section", DEFAULT_AUX["section"])) if cond else DEFAULT_AUX["section"],
+        "*",
+        "*",
+    ))
     for order in range(min(len(history), n - 1), -1, -1):
         ctx = tuple(history[-order:])
         dist = model["prob"].get(order, {}).get(ctx + (aux_full,))
         if not dist:
             dist = model["prob"].get(order, {}).get(ctx + (aux_any,))
+        if not dist:
+            dist = model["prob"].get(order, {}).get(ctx + (aux_section,))
         if not dist:
             dist = model["prob"].get(order, {}).get(ctx)
         if dist:
@@ -427,14 +613,26 @@ def _sample_next(
         dist = model["prob"][0].get((), {})
     if not dist:
         raise RuntimeError("No probability mass")
-    linear = {k: float(np.exp(v)) for k, v in dist.items()}
-    if top_k is not None:
-        linear = dict(sorted(linear.items(), key=lambda x: x[1], reverse=True)[:top_k])
+    linear_list: list[tuple[State, float]]
+    key = ctx + (aux_full,)
+    if top_k:
+        linear_list = ctx_cache.get(key)
+        if linear_list is not None:
+            ctx_cache.move_to_end(key)
+        if linear_list is None:
+            linear_list = sorted(dist.items(), key=lambda x: x[1], reverse=True)
+            ctx_cache[key] = linear_list
+            if len(ctx_cache) > MAX_CACHE:
+                ctx_cache.popitem(last=False)
+        linear_list = linear_list[:top_k]
+        linear_list = [(k, float(np.exp(v))) for k, v in linear_list]
+    else:
+        linear_list = [(k, float(np.exp(v))) for k, v in dist.items()]
     if temperature != 1.0:
-        linear = {k: v ** (1.0 / temperature) for k, v in linear.items()}
-        total = sum(linear.values())
-        linear = {k: v / total for k, v in linear.items()}
-    return _choose(linear, rng)
+        linear_list = [(k, v ** (1.0 / temperature)) for k, v in linear_list]
+        total = sum(v for _, v in linear_list)
+        linear_list = [(k, v / total) for k, v in linear_list]
+    return _choose(dict(linear_list), rng)
 
 
 def sample(
@@ -446,7 +644,19 @@ def sample(
     seed: int | None = None,
     cond: dict[str, Any] | None = None,
 ) -> list[dict[str, float | str]]:
-    """Generate events using the trained model."""
+    """Generate a sequence of drum events.
+
+    Args:
+        model: Trained n-gram model.
+        bars: Number of bars to generate.
+        temperature: Sampling temperature.
+        top_k: If set, restrict choices to the top ``k`` states.
+        seed: Optional random seed.
+        cond: Optional auxiliary conditioning dict.
+
+    Returns:
+        List of event dictionaries sorted by onset time.
+    """
 
     rng = Random(seed)
     events: list[dict[str, float | str]] = []
@@ -547,6 +757,10 @@ def train_cmd(
     if aux_path and aux_path.exists():
         with aux_path.open("r", encoding="utf-8") as fh:
             aux_map = json.load(fh)
+        try:
+            validate_aux_map(aux_map)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc)) from exc
     model = train(
         loop_dir,
         ext=ext,
@@ -562,6 +776,7 @@ def train_cmd(
 
 @cli.command()
 @click.argument("model_path", type=Path)
+@click.option("--list-aux", is_flag=True, help="List known aux tuples and exit")
 @click.option("-l", "--length", default=4, type=int)
 @click.option("--temperature", default=1.0, type=float)
 @click.option("--seed", default=42, type=int)
@@ -576,16 +791,70 @@ def sample_cmd(
     temperature: float,
     seed: int,
     cond: str | None,
+    list_aux: bool,
 ) -> None:
-    """Generate MIDI from a model."""
+    """Generate MIDI from a model.
+
+    If ``--list-aux`` is provided or length is ``0`` the available auxiliary
+    combinations are printed instead of generating events.
+    """
 
     model = load(model_path)
+    combos = sorted(model.get("aux_cache", {}).values())
+    if list_aux or length == 0:
+        if length == 0:
+            click.echo(json.dumps(combos))
+        else:
+            for tup in combos:
+                click.echo("|".join(tup))
+        return
     cond_map = json.loads(cond) if cond else None
     ev = sample(model, bars=length, temperature=temperature, seed=seed, cond=cond_map)
     pm = events_to_midi(ev)
     buf = io.BytesIO()
     pm.write(buf)
     sys.stdout.buffer.write(buf.getvalue())
+
+
+@cli.command()
+@click.argument("model_path", type=Path)
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON summary")
+@click.option("--stats", is_flag=True, help="Include perplexity and token count")
+def info_cmd(model_path: Path, as_json: bool, stats: bool) -> None:
+    """Print basic information about a model."""
+
+    model = load(model_path)
+    order = model["order"]
+    ctxs = len(model["prob"].get(order - 1, {}))
+    aux_cache = model.get("aux_cache", {})
+    sections = {t[0] for t in aux_cache.values()}
+    heat_bins = {t[1] for t in aux_cache.values()}
+    intensities = {t[2] for t in aux_cache.values()}
+    tokens = model.get("num_tokens", 0)
+    ppx = model.get("train_perplexity", float("inf"))
+    if as_json:
+        data = {
+            "order": order,
+            "contexts": ctxs,
+            "sections": sorted(sections),
+            "heat_bins": sorted(map(int, heat_bins)),
+            "intensities": sorted(intensities),
+            **({"tokens": tokens, "perplexity": ppx} if stats else {}),
+        }
+        click.echo(json.dumps(data))
+    else:
+        click.echo(f"order: {order}")
+        click.echo(f"contexts: {ctxs}")
+        click.echo(f"sections: {', '.join(sorted(sections)) if sections else 'n/a'}")
+        click.echo(
+            f"heat_bins: {', '.join(sorted(map(str, heat_bins))) if heat_bins else 'n/a'}"
+        )
+        click.echo(
+            f"intensities: {', '.join(sorted(intensities)) if intensities else 'n/a'}"
+        )
+        if stats:
+            click.echo(f"tokens: {tokens}")
+            click.echo(f"perplexity: {ppx:.2f}")
 
 
 def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover

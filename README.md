@@ -20,16 +20,18 @@ pip install -r requirements.txt
 pip install -e ".[essentia]"  # to enable Essentia backend for consonant peaks
 pip install click  # required for the groove sampler CLI
 pip install -e .[audio]  # optional, enables WAV groove extraction
+pip install -e .[groove]  # required for MIDI/WAV ingestion
 ```
 
 Without these packages `pytest` and the composer modules will fail to import.
 
 ## Required Libraries
 - **music21** – MIDI and score manipulation
-- **pretty_midi** – MIDI export utilities
+- **pretty_midi** – MIDI export utilities (install via `[groove]`)
 - **numpy** – numerical routines
 - **PyYAML** – YAML configuration loader
 - **pydantic** – configuration models
+- **librosa** – WAV feature extraction (install via `[groove]`)
 - **pydub** (optional) – audio post‑processing
 - **mido** – MIDI utilities
 - **scipy** – signal processing helpers

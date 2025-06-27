@@ -1,0 +1,261 @@
+from __future__ import annotations
+
+import glob
+import pickle
+import warnings
+from collections.abc import Sequence
+from pathlib import Path
+from statistics import mean
+from typing import TypedDict
+
+import click
+import pretty_midi
+
+from .drum_map_registry import GM_DRUM_MAP
+
+try:  # optional dependency
+    import librosa
+    HAVE_LIBROSA = True
+except Exception:  # pragma: no cover - optional dependency missing
+    librosa = None  # type: ignore
+    HAVE_LIBROSA = False
+
+Token = tuple[int, str, int, int]
+
+
+class LoopEntry(TypedDict):
+    file: str
+    tokens: list[Token]
+    tempo_bpm: float
+    bar_beats: int
+
+
+_PITCH_TO_LABEL = {val[1]: key for key, val in GM_DRUM_MAP.items()}
+
+
+def _quantize(
+    beat: float, bar_beats: int, resolution: int, ppq: int
+) -> tuple[int, int]:
+    raw_step = round(beat * resolution / bar_beats)
+    step = int(raw_step)
+    q_pos = step * bar_beats / resolution
+    micro = int(round((beat - q_pos) * ppq))
+    if step < 0 or step >= resolution:
+        clamped = max(0, min(resolution - 1, step))
+        warnings.warn(
+            f"quantised step {step} outside 0..{resolution - 1}; clamped",
+            RuntimeWarning,
+        )
+        step = clamped
+    return step, micro
+
+
+def _scan_midi(path: Path, resolution: int, ppq: int) -> LoopEntry:
+    pm = pretty_midi.PrettyMIDI(str(path))
+    tempo = pm.get_tempo_changes()[1]
+    bpm = float(tempo[0]) if tempo.size else 120.0
+    sec_per_beat = 60.0 / bpm
+    bar_beats = max(1, int(round(pm.get_end_time() / sec_per_beat)))
+    tokens: list[Token] = []
+    for inst in pm.instruments:
+        if not inst.is_drum:
+            continue
+        for note in inst.notes:
+            beat = note.start / sec_per_beat
+            step, micro = _quantize(beat, bar_beats, resolution, ppq)
+            label = _PITCH_TO_LABEL.get(note.pitch, str(note.pitch))
+            tokens.append((step, label, note.velocity, micro))
+    return {
+        "file": path.name,
+        "tokens": tokens,
+        "tempo_bpm": bpm,
+        "bar_beats": bar_beats,
+    }
+
+
+def _scan_wav(path: Path, resolution: int, ppq: int) -> LoopEntry:
+    if not HAVE_LIBROSA:
+        raise RuntimeError("librosa is required for WAV scanning")
+    assert librosa is not None
+    y, sr = librosa.load(path, sr=None, mono=True)
+    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    bpm = float(tempo) if tempo else 120.0
+    sec_per_beat = 60.0 / bpm
+    bar_beats = max(1, int(round(len(y) / sr / sec_per_beat)))
+    onsets = librosa.onset.onset_detect(y=y, sr=sr, units="time")
+    tokens: list[Token] = []
+    for t in onsets:
+        beat = t / sec_per_beat
+        step, micro = _quantize(beat, bar_beats, resolution, ppq)
+        tokens.append((step, "perc", 100, micro))
+    return {
+        "file": path.name,
+        "tokens": tokens,
+        "tempo_bpm": bpm,
+        "bar_beats": bar_beats,
+    }
+
+
+def _scan_file(path: Path, resolution: int, ppq: int) -> LoopEntry | None:
+    suf = path.suffix.lower()
+    if suf in {".mid", ".midi"}:
+        return _scan_midi(path, resolution, ppq)
+    if suf == ".wav":
+        try:
+            return _scan_wav(path, resolution, ppq)
+        except RuntimeError:
+            return None
+    return None
+
+
+def scan_loops(
+    loop_dir: Path,
+    exts: Sequence[str] | None = None,
+    resolution: int = 16,
+    ppq: int = 480,
+) -> list[LoopEntry]:
+    """Return token sequences for all loops in ``loop_dir``."""
+
+    extset = {
+        e.lower().lstrip(".").replace("midi", "mid")
+        for e in (exts or ["mid", "wav"])
+    }
+    data: list[LoopEntry] = []
+    for path in sorted(loop_dir.iterdir()):
+        suf = path.suffix.lower().lstrip(".")
+        if suf == "midi":
+            suf = "mid"
+        if suf not in extset:
+            continue
+        entry = _scan_file(path, resolution, ppq)
+        if entry:
+            data.append(entry)
+    return data
+
+
+def save_cache(
+    data: Sequence[LoopEntry], out_path: Path, *, ppq: int, resolution: int
+) -> None:
+    """Serialize ``data`` to ``out_path`` using pickle."""
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("wb") as fh:
+        pickle.dump({"ppq": ppq, "resolution": resolution, "data": list(data)}, fh)
+
+
+def load_cache(path: Path) -> list[LoopEntry]:
+    obj: object
+    with path.open("rb") as fh:
+        obj = pickle.load(fh)
+    if not isinstance(obj, dict) or not {
+        "ppq",
+        "resolution",
+        "data",
+    }.issubset(obj.keys()):
+        raise ValueError("invalid loop cache")
+    return list(obj["data"])
+
+
+# --------------------------- CLI -------------------------------------------
+
+
+@click.group()
+def cli() -> None:
+    """Loop ingestion utilities."""
+
+
+@cli.command()
+@click.argument("paths", nargs=-1, type=str)
+@click.option("--ext", default="mid,wav", help="Comma separated extensions")
+@click.option("--out", "out_path", type=Path, default=Path("cache.pkl"))
+@click.option("--resolution", default=16, type=int)
+@click.option("--ppq", default=480, type=int)
+@click.option("--progress/--no-progress", default=True)
+def scan(
+    paths: tuple[str, ...],
+    ext: str,
+    out_path: Path,
+    resolution: int,
+    ppq: int,
+    progress: bool,
+) -> None:
+    """Scan loops and save a token cache."""
+
+    extset = {e.strip().lower().replace("midi", "mid") for e in ext.split(",") if e.strip()}
+    file_list: list[Path] = []
+    if not paths:
+        paths = (".",)
+    for pat in paths:
+        for match in glob.glob(pat):
+            p = Path(match)
+            if p.is_dir():
+                for f in p.iterdir():
+                    suf = f.suffix.lower().lstrip(".")
+                    if suf == "midi":
+                        suf = "mid"
+                    if suf in extset:
+                        file_list.append(f)
+            elif p.is_file():
+                suf = p.suffix.lower().lstrip(".")
+                if suf == "midi":
+                    suf = "mid"
+                if suf in extset:
+                    file_list.append(p)
+    iterator = file_list
+    bar = None
+    if progress:
+        try:
+            from tqdm import tqdm  # type: ignore
+
+            bar = tqdm(file_list, unit="file")
+            iterator = bar  # type: ignore[assignment]
+        except Exception:
+            pass
+    data: list[LoopEntry] = []
+    skipped = 0
+    warned_librosa = False
+    for f in iterator:
+        entry = _scan_file(f, resolution, ppq)
+        if entry:
+            data.append(entry)
+        elif f.suffix.lower() == ".wav" and not HAVE_LIBROSA:
+            if not warned_librosa:
+                click.echo(
+                    'WAV files detected but skipped due to missing dependency "librosa". '
+                    'Install it with pip install librosa.'
+                )
+                warned_librosa = True
+            skipped += 1
+    if bar is not None:
+        bar.close()
+    save_cache(data, out_path, ppq=ppq, resolution=resolution)
+    total = sum(len(d["tokens"]) for d in data)
+    msg = f"{len(data)} files, {total} tokens"
+    if skipped:
+        msg += f" | WAV skipped (librosa missing): {skipped}"
+    click.echo(msg)
+
+
+@cli.command()
+@click.argument("cache", type=Path)
+def info(cache: Path) -> None:
+    """Print summary statistics for a loop cache."""
+
+    data = load_cache(cache)
+    total = sum(len(d["tokens"]) for d in data)
+    instruments = sorted({t[1] for d in data for t in d["tokens"]})
+    tempos = [d["tempo_bpm"] for d in data]
+    click.echo(f"files: {len(data)}")
+    click.echo(f"total tokens: {total}")
+    click.echo(f"instruments: {', '.join(instruments)}")
+    click.echo(
+        f"tempo BPM min/mean/max: {min(tempos):.1f}/{mean(tempos):.1f}/{max(tempos):.1f}"
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover - CLI entry
+    cli.main(args=list(argv) if argv is not None else None, standalone_mode=False)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()

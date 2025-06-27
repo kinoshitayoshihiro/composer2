@@ -142,13 +142,15 @@ def train(
     """Train an n-gram model from MIDI/WAV loops."""
 
     exts = [e.strip().lower() for e in ext.split(",") if e]
-    if order == "auto":
-        n = 3
-    else:
-        n = int(order)
     seqs, mean_vel, vel_deltas, micro_offsets = _load_events(loop_dir, exts)
     if not seqs:
         raise ValueError("no events found")
+
+    if order == "auto":
+        avg_len = sum(len(seq) for seq, _ in seqs) / len(seqs)
+        n = 3 if avg_len >= 8 else 2
+    else:
+        n = int(order)
 
     aux_map = aux_map or {}
 

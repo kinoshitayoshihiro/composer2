@@ -1,12 +1,14 @@
-import random
+import pickle
 from pathlib import Path
 
 import pretty_midi
-from utilities import groove_sampler
+import pytest
+
+from utilities import groove_sampler_ngram
+from utilities.drum_map_registry import GM_DRUM_MAP
 
 
-def _create_loop_midi(tmp_path: Path) -> Path:
-    """Create a simple 4-beat kick loop and return its path."""
+def _make_loop(path: Path) -> None:
     pm = pretty_midi.PrettyMIDI(initial_tempo=120)
     inst = pretty_midi.Instrument(program=0, is_drum=True)
     for i in range(4):
@@ -14,59 +16,66 @@ def _create_loop_midi(tmp_path: Path) -> Path:
             pretty_midi.Note(velocity=100, pitch=36, start=i * 0.5, end=i * 0.5 + 0.1)
         )
     pm.instruments.append(inst)
-    midi_path = tmp_path / "loop.mid"
-    pm.write(str(midi_path))
-    return midi_path
+    pm.write(str(path))
 
 
-def test_given_loop_when_load_grooves_then_model_contains_transitions(tmp_path: Path):
-    _create_loop_midi(tmp_path)
-    model = groove_sampler.load_grooves(tmp_path)
-    assert model["n"] == 2
-    assert model["resolution"] == 16
-    key = ((0, "kick"),)
-    assert key in model["prob"][1]
-    assert (16, "kick") in model["prob"][1][key]
+def test_sample_non_empty(tmp_path: Path) -> None:
+    for i in range(5):
+        _make_loop(tmp_path / f"{i}.mid")
+    model = groove_sampler_ngram.train(tmp_path, ext="midi", order=3)
+    events = groove_sampler_ngram.sample(model, bars=1, seed=0)
+    assert events
+
+    assert model["version"] == groove_sampler_ngram.VERSION
+    assert model["resolution"] == groove_sampler_ngram.RESOLUTION
 
 
-def test_given_n_parameter_when_load_grooves_then_stored(tmp_path: Path):
-    _create_loop_midi(tmp_path)
-    model = groove_sampler.load_grooves(tmp_path, n=3)
-    assert model["n"] == 3
+def test_perc_label_exists() -> None:
+    assert "perc" in GM_DRUM_MAP
 
 
-def test_given_context_when_sample_next_then_returns_expected(tmp_path: Path):
-    # create alternating kick-snare pattern
+def test_train_wav(tmp_path: Path) -> None:
+    pytest.importorskip("librosa")
+    import numpy as np
+    import soundfile as sf
+
+    wav = tmp_path / "loop.wav"
+    sf.write(wav, np.zeros(1000), 22050)
+    with pytest.raises(ValueError):
+        groove_sampler_ngram.train(tmp_path, ext="wav", order=2)
+
+
+def test_load_mismatch(tmp_path: Path) -> None:
+    _make_loop(tmp_path / "a.mid")
+    model = groove_sampler_ngram.train(tmp_path, ext="midi", order=2)
+    path = tmp_path / "m.pkl"
+    groove_sampler_ngram.save(model, path)
+    with path.open("rb") as fh:
+        data = pickle.load(fh)
+    data["resolution"] = groove_sampler_ngram.RESOLUTION + 1
+    with path.open("wb") as fh:
+        pickle.dump(data, fh)
+    with pytest.raises(RuntimeError):
+        groove_sampler_ngram.load(path)
+
+
+def _make_two_bar_loop(path: Path) -> None:
     pm = pretty_midi.PrettyMIDI(initial_tempo=120)
     inst = pretty_midi.Instrument(program=0, is_drum=True)
-    pitches = [36, 38, 36, 38]
-    for i, p in enumerate(pitches):
+    for i in range(8):
         inst.notes.append(
-            pretty_midi.Note(velocity=100, pitch=p, start=i * 0.5, end=i * 0.5 + 0.1)
+            pretty_midi.Note(velocity=100, pitch=36, start=i * 0.5, end=i * 0.5 + 0.1)
         )
     pm.instruments.append(inst)
-    midi_path = tmp_path / "alt.mid"
-    pm.write(str(midi_path))
-    model = groove_sampler.load_grooves(tmp_path)
-    next_state = groove_sampler.sample_next([(0, "kick")], model, random.Random(0))
-    assert next_state == (16, "snare")
+    pm.write(str(path))
 
 
-def test_given_model_when_generate_bar_then_events_valid(tmp_path: Path):
-    _create_loop_midi(tmp_path)
-    model = groove_sampler.load_grooves(tmp_path, resolution=32)
-    events = groove_sampler.generate_bar([], model, random.Random(0), resolution=32)
-    assert len(events) > 0
-    for e in events:
-        valid = {lbl for d in model["prob"].values() for ctx in d for _, lbl in ctx}
-        assert e["instrument"] in valid
-        assert abs(e["offset"] * 32 - round(e["offset"] * 32)) < 1e-6
+def test_multi_bar_training(tmp_path: Path) -> None:
+    _make_two_bar_loop(tmp_path / "two.mid")
+    model = groove_sampler_ngram.train(tmp_path, ext="midi", order=2)
+    steps = {state[0] for state in model["freq"][0][()].keys()}
+    assert steps and all(0 <= s < groove_sampler_ngram.RESOLUTION for s in steps)
+    events = groove_sampler_ngram.sample(model, bars=1, seed=1)
+    assert len(events) <= groove_sampler_ngram.RESOLUTION
+    assert all(ev["offset"] < 4.0 for ev in events)
 
-
-def test_given_default_jitter_when_generate_bar_then_in_range(tmp_path: Path):
-    rng = random.Random(0)
-    _create_loop_midi(tmp_path)
-    model = groove_sampler.load_grooves(tmp_path)
-    events = groove_sampler.generate_bar([], model, rng, resolution=16)
-    vals = {e["velocity_factor"] for e in events}
-    assert all(0.95 <= v <= 1.05 for v in vals)

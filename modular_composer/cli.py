@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pretty_midi
 
-from utilities import synth
+from utilities import groove_sampler_ngram, synth
 from utilities.golden import compare_midi, update_golden
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
 from utilities.peak_synchroniser import PeakSynchroniser
@@ -106,7 +106,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml
+        import yaml  # type: ignore[import-untyped]
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}
@@ -181,7 +181,7 @@ def main(argv: list[str] | None = None) -> None:
     if not argv or argv[0] in {"-h", "--help"}:
         print(
             "usage: modcompose <command> [<args>]\n\n"
-            "commands: demo, sample, peaks, render, gm-test"
+            "commands: demo, sample, peaks, render, gm-test, groove"
         )
         sys.exit(0)
     cmd, *rest = argv
@@ -195,6 +195,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_render(rest)
     elif cmd == "gm-test":
         _cmd_gm_test(rest)
+    elif cmd == "groove":
+        groove_sampler_ngram.main(rest)
     else:
         sys.exit(f"unknown command {cmd!r}")
 

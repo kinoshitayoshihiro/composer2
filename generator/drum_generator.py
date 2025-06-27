@@ -1310,12 +1310,25 @@ class DrumGenerator(BasePartGenerator):
 
 
         if not events and self.groove_model:
-            events = groove_sampler.generate_bar(
-                prev_history=self._groove_history,
-                model=self.groove_model,
-                rng=self.rng,
-                resolution=self.groove_resolution,
-            )
+            try:
+                from utilities import groove_sampler_ngram
+
+                model_obj: dict
+                if isinstance(self.groove_model, (str, Path)):
+                    model_obj = groove_sampler_ngram.load(Path(self.groove_model))
+                else:
+                    model_obj = self.groove_model
+
+                events = groove_sampler_ngram.sample(
+                    model_obj, bars=1, seed=self.rng.randint(0, 2**32 - 1)
+                )
+            except Exception:  # pragma: no cover - fallback
+                events = groove_sampler.generate_bar(
+                    prev_history=self._groove_history,
+                    model=self.groove_model,
+                    rng=self.rng,
+                    resolution=self.groove_resolution,
+                )
 
         if (
             self.use_consonant_sync
@@ -1386,7 +1399,7 @@ class DrumGenerator(BasePartGenerator):
                 default=0.0,
                 cast_to=float,
                 log_name=f"{log_event_prefix}.Offset",
-            )
+            ) % current_bar_actual_len_ql
             event_bpm = self._current_bpm(bar_start_abs_offset + rel_offset_in_pattern)
             self.current_bpm = event_bpm
             blend = _combine_timing(
@@ -2144,3 +2157,6 @@ class DrumGenerator(BasePartGenerator):
             {},
         )
         return part
+
+
+__all__ = ["DrumGenerator", "GM_DRUM_MAP"]

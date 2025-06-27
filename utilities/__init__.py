@@ -17,12 +17,28 @@ utilities package -- 音楽生成プロジェクト全体で利用されるコ�
         - NUMPY_AVAILABLE
 """
 
+import importlib
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover - used for type checking only
+    from . import groove_sampler_ngram as groove_sampler_ngram
 from .accent_mapper import AccentMapper
-from .consonant_extract import (
-    EssentiaUnavailable,
-    detect_consonant_peaks,
-    extract_to_json,
-)
+
+try:
+    from .consonant_extract import (
+        EssentiaUnavailable,
+        detect_consonant_peaks,
+        extract_to_json,
+    )
+except Exception:  # pragma: no cover - optional dependency
+    class EssentiaUnavailable(RuntimeError):
+        """Raised when librosa-based peak extraction is unavailable."""
+
+    def detect_consonant_peaks(*_args: Any, **_kwargs: Any) -> list[float]:
+        raise EssentiaUnavailable("librosa is required for peak detection")
+
+    def extract_to_json(*_args: Any, **_kwargs: Any) -> None:
+        raise EssentiaUnavailable("librosa is required for peak detection")
 from .core_music_utils import (
     MIN_NOTE_DURATION_QL,
     get_time_signature_object,
@@ -84,8 +100,18 @@ __all__ = [
     "TempoVelocitySmoother",
     "write_demo_bar",
     "render_midi",
+    "get_drum_map",
     "AccentMapper",
     "EssentiaUnavailable",
     "detect_consonant_peaks",
     "extract_to_json",
+    "groove_sampler_ngram",
 ]
+
+
+def __getattr__(name: str) -> Any:  # pragma: no cover - thin wrapper
+    if name == "groove_sampler_ngram":
+        module = importlib.import_module("utilities.groove_sampler_ngram")
+        globals()[name] = module
+        return module
+    raise AttributeError(name)

@@ -19,6 +19,17 @@ def _make_loop(path: Path) -> None:
     pm.write(str(path))
 
 
+def _make_snare_loop(path: Path) -> None:
+    pm = pretty_midi.PrettyMIDI(initial_tempo=120)
+    inst = pretty_midi.Instrument(program=0, is_drum=True)
+    for i in range(4):
+        inst.notes.append(
+            pretty_midi.Note(velocity=100, pitch=38, start=i * 0.5, end=i * 0.5 + 0.1)
+        )
+    pm.instruments.append(inst)
+    pm.write(str(path))
+
+
 def test_sample_non_empty(tmp_path: Path) -> None:
     for i in range(5):
         _make_loop(tmp_path / f"{i}.mid")
@@ -78,4 +89,33 @@ def test_multi_bar_training(tmp_path: Path) -> None:
     events = groove_sampler_ngram.sample(model, bars=1, seed=1)
     assert len(events) <= groove_sampler_ngram.RESOLUTION
     assert all(ev["offset"] < 4.0 for ev in events)
+
+
+def test_aux_condition_sampling(tmp_path: Path) -> None:
+    kick = tmp_path / "kick.mid"
+    snare = tmp_path / "snare.mid"
+    _make_loop(kick)
+    _make_snare_loop(snare)
+    # Ensure pitch labels map to base names for this test
+    groove_sampler_ngram._PITCH_TO_LABEL[36] = "kick"
+    groove_sampler_ngram._PITCH_TO_LABEL[38] = "snare"
+    aux = {
+        "kick.mid": {"section": "verse", "intensity": "low"},
+        "snare.mid": {"section": "chorus", "intensity": "high"},
+    }
+    model = groove_sampler_ngram.train(tmp_path, ext="midi", order=2, aux_map=aux)
+    ev1 = groove_sampler_ngram.sample(
+        model,
+        bars=1,
+        seed=0,
+        cond={"section": "chorus", "intensity": "high", "heat_bin": 0},
+    )
+    assert any(e["instrument"] == "snare" for e in ev1)
+    ev2 = groove_sampler_ngram.sample(
+        model,
+        bars=1,
+        seed=0,
+        cond={"section": "verse", "intensity": "low", "heat_bin": 0},
+    )
+    assert any(e["instrument"] == "kick" for e in ev2)
 

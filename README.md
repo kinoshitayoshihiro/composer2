@@ -17,6 +17,7 @@ or equivalently
 
 ```bash
 pip install -r requirements.txt
+pip install -r requirements-optional.txt  # optional WAV support
 pip install -e ".[essentia]"  # to enable Essentia backend for consonant peaks
 pip install click  # required for the groove sampler CLI
 pip install -e .[audio]  # optional, enables WAV groove extraction
@@ -33,8 +34,12 @@ Without these packages `pytest` and the composer modules will fail to import.
 - **pydub** (optional) – audio post‑processing
 - **mido** – MIDI utilities
 - **scipy** – signal processing helpers
+- **tqdm** – progress bars
 - **tomli** – TOML parser
 - **pytest** – test runner
+
+For WAV file ingestion install the optional dependencies listed in
+`requirements-optional.txt`.
 
 The same list appears in [`requirements.txt`](requirements.txt) for reference.
 Install the requirements before you invoke `modular_composer.py` or run
@@ -257,6 +262,18 @@ Train a groove model and generate MIDI directly via the CLI:
 modcompose groove train data/loops --ext midi --out model.pkl
 modcompose groove sample model.pkl -l 4 --temperature 0.8 --seed 42 > groove.mid
 ```
+
+### Training your first groove model
+
+Prepare a loop cache for faster experiments:
+
+```bash
+modcompose loops scan data/loops --ext midi,wav --out loops.pkl
+modcompose loops info loops.pkl
+```
+
+WAV support requires `librosa`. Install via `pip install librosa` if you want to
+include audio loops.
 
 Groove Sampler **v1.1** supports auxiliary conditioning on section type,
 heatmap bin and intensity bucket. Provide a JSON map at train time and pass

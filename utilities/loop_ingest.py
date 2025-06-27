@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from statistics import mean
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 import click
 import pretty_midi
@@ -22,12 +22,17 @@ except Exception:  # pragma: no cover - optional dependency missing
 
 Token = tuple[int, str, int, int]
 
+Intensity = Literal["low", "mid", "high"]
 
-class LoopEntry(TypedDict):
+
+class LoopEntry(TypedDict, total=False):
     file: str
     tokens: list[Token]
     tempo_bpm: float
     bar_beats: int
+    section: str
+    heat_bin: int
+    intensity: Intensity
 
 
 _PITCH_TO_LABEL = {val[1]: key for key, val in GM_DRUM_MAP.items()}
@@ -70,6 +75,9 @@ def _scan_midi(path: Path, resolution: int, ppq: int) -> LoopEntry:
         "tokens": tokens,
         "tempo_bpm": bpm,
         "bar_beats": bar_beats,
+        "section": "unknown",
+        "heat_bin": 0,
+        "intensity": "mid",
     }
 
 
@@ -93,19 +101,25 @@ def _scan_wav(path: Path, resolution: int, ppq: int) -> LoopEntry:
         "tokens": tokens,
         "tempo_bpm": bpm,
         "bar_beats": bar_beats,
+        "section": "unknown",
+        "heat_bin": 0,
+        "intensity": "mid",
     }
 
 
 def _scan_file(path: Path, resolution: int, ppq: int) -> LoopEntry | None:
     suf = path.suffix.lower()
+    entry: LoopEntry | None = None
     if suf in {".mid", ".midi"}:
-        return _scan_midi(path, resolution, ppq)
-    if suf == ".wav":
+        entry = _scan_midi(path, resolution, ppq)
+    elif suf == ".wav":
         try:
-            return _scan_wav(path, resolution, ppq)
+            entry = _scan_wav(path, resolution, ppq)
         except RuntimeError:
             return None
-    return None
+    if entry is not None and entry.get("section") == "unknown":
+        entry["section"] = path.parent.name or "unknown"
+    return entry
 
 
 def scan_loops(
@@ -171,6 +185,7 @@ def cli() -> None:
 @click.option("--resolution", default=16, type=int)
 @click.option("--ppq", default=480, type=int)
 @click.option("--progress/--no-progress", default=True)
+@click.option("--auto-aux/--no-auto-aux", default=False, help="Infer aux metadata")
 def scan(
     paths: tuple[str, ...],
     ext: str,
@@ -178,8 +193,13 @@ def scan(
     resolution: int,
     ppq: int,
     progress: bool,
+    auto_aux: bool,
 ) -> None:
-    """Scan loops and save a token cache."""
+    """Scan loops and save a token cache.
+
+    If ``auto_aux`` is true the intensity and heat bin are inferred from each
+    loop and written to the cache.
+    """
 
     extset = {e.strip().lower().replace("midi", "mid") for e in ext.split(",") if e.strip()}
     file_list: list[Path] = []
@@ -217,6 +237,15 @@ def scan(
     for f in iterator:
         entry = _scan_file(f, resolution, ppq)
         if entry:
+            if auto_aux:
+                vel_mean = mean(t[2] for t in entry["tokens"]) if entry["tokens"] else 0
+                if vel_mean <= 60:
+                    entry["intensity"] = "low"
+                elif vel_mean <= 100:
+                    entry["intensity"] = "mid"
+                else:
+                    entry["intensity"] = "high"
+                entry["heat_bin"] = len(entry["tokens"]) % 16
             data.append(entry)
         elif f.suffix.lower() == ".wav" and not HAVE_LIBROSA:
             if not warned_librosa:

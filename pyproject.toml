@@ -36,6 +36,7 @@ audio = [
   "librosa>=0.10",
   "soundfile>=0.12",
   "fluidsynth",
+  "tqdm",
 ]
 essentia = [
   "essentia>=2.1",

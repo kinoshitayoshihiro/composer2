@@ -22,6 +22,7 @@ pip install -e ".[essentia]"  # to enable Essentia backend for consonant peaks
 pip install click  # required for the groove sampler CLI
 pip install -e .[audio]  # optional, enables WAV groove extraction
 pip install -e .[groove]  # required for MIDI/WAV ingestion
+pip install modular-composer[audio]  # quick install via PyPI
 ```
 
 Without these packages `pytest` and the composer modules will fail to import.
@@ -270,16 +271,27 @@ modcompose groove sample model.pkl -l 4 --temperature 0.8 --seed 42 > groove.mid
 Prepare a loop cache for faster experiments:
 
 ```bash
-modcompose loops scan data/loops --ext midi,wav --out loops.pkl
+modcompose loops scan data/loops --ext midi,wav --out loops.pkl --auto-aux
 modcompose loops info loops.pkl
 ```
+
+The ``--auto-aux`` option infers ``intensity`` and ``heat_bin`` from each loop.
 
 WAV support requires `librosa`. Install via `pip install librosa` if you want to
 include audio loops.
 
 Groove Sampler **v1.1** supports auxiliary conditioning on section type,
 heatmap bin and intensity bucket. Provide a JSON map at train time and pass
-`--cond` when sampling:
+`--cond` when sampling. The JSON should map each loop file to its metadata:
+
+```json
+{
+  "verse.mid": {"section": "verse", "heat_bin": 3, "intensity": "mid"},
+  "chorus.mid": {"section": "chorus", "heat_bin": 7, "intensity": "high"}
+}
+```
+
+Then train and sample as follows:
 
 ```bash
 modcompose groove train data/loops --aux aux.json
@@ -287,6 +299,12 @@ modcompose groove sample model.pkl --cond '{"section":"chorus","intensity":"high
 ```
 
 If you omit `--aux` the model behaves like version 1.0.
+See [docs/aux_features.md](docs/aux_features.md) for the schema specification.
+Inspect a saved model with:
+
+```bash
+modcompose groove info model.pkl --json --stats
+```
 
 Order can be selected automatically using minimal perplexity on a validation
 split. The CLI exposes smoothing parameters as well. Use ``--alpha`` to control

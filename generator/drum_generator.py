@@ -1328,8 +1328,8 @@ class DrumGenerator(BasePartGenerator):
                 if section_data is not None:
                     intent = section_data.get("musical_intent", {})
                     cond = {
-                        "section": section_data.get("section_type", "verse"),
-                        "heat_bin": self.current_heat_bin,
+                        "section": intent.get("section", "verse"),
+                        "heat_bin": intent.get("heat_bin", 0),
                         "intensity": intent.get("intensity", "mid"),
                     }
 

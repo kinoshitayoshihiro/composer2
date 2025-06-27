@@ -269,6 +269,23 @@ modcompose groove sample model.pkl --cond '{"section":"chorus","intensity":"high
 
 If you omit `--aux` the model behaves like version 1.0.
 
+Order can be selected automatically using minimal perplexity on a validation
+split. The CLI exposes smoothing parameters as well. Use ``--alpha`` to control
+additive smoothing strength and ``--discount`` for Kneser–Ney:
+
+```bash
+modcompose groove train loops/ --ext wav,midi --order auto \
+    --smoothing add_alpha --alpha 0.1 --out model.pkl
+```
+
+Kneser–Ney smoothing often yields lower perplexity on sparse or highly
+heterogeneous data. A discount around ``0.75`` works well in most cases:
+
+```bash
+modcompose groove train loops/ --ext wav,midi --order auto \
+    --smoothing kneser_ney --discount 0.75 --out model.pkl
+```
+
 ### Groove Sampler v2
 
 Build and sample using the optimized model:

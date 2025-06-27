@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Dict, Tuple, Union
-
 # ---------------------------------------------------------------------------
 # ① 共通で使う定数
 # ---------------------------------------------------------------------------
 
-HH_EDGE: Tuple[str, int] = ("closed_hi_hat_edge", 22)
+HH_EDGE: tuple[str, int] = ("closed_hi_hat_edge", 22)
 """GM note mapping for closed hi-hat "edge" sample."""
 
-HH_PEDAL: Tuple[str, int] = ("pedal_hi_hat", 44)
+HH_PEDAL: tuple[str, int] = ("pedal_hi_hat", 44)
 """GM note mapping for hi-hat pedal "chick"."""
-SNARE_RUFF: Tuple[str, int] = ("acoustic_snare", 38)
+SNARE_RUFF: tuple[str, int] = ("acoustic_snare", 38)
 
 # ---------------------------------------------------------------------------
 # ② GM ベース (infra/zero-green 起点)
 # ---------------------------------------------------------------------------
 
-GM_DRUM_MAP: Dict[str, Tuple[str, int]] = {
+GM_DRUM_MAP: dict[str, tuple[str, int]] = {
     # Hi-hat
     "chh": ("closed_hi_hat", 42),
     "hh": ("closed_hi_hat", 42),
@@ -48,6 +46,7 @@ GM_DRUM_MAP: Dict[str, Tuple[str, int]] = {
     # FX
     "chimes": ("triangle", 81),
     "shaker_soft": ("shaker", 82),
+    "perc": ("shaker", 82),
     # Brushes
     "brush_kick": ("acoustic_bass_drum", 36),
     "brush_snare": ("acoustic_snare", 38),
@@ -75,9 +74,10 @@ _LEGEND_BASE = {
         "splash",
         "crash_choke",
         "cowbell",
+        "perc",
     }
 }
-UJAM_LEGEND_MAP: Dict[str, Tuple[str, int]] = {
+UJAM_LEGEND_MAP: dict[str, tuple[str, int]] = {
     **_LEGEND_BASE,  # まず GM をベースにコピーし、一部だけ差し替え
     "kick": ("acoustic_bass_drum", 36),
     "snare": ("acoustic_snare", 38),
@@ -91,11 +91,11 @@ UJAM_LEGEND_MAP: Dict[str, Tuple[str, int]] = {
 # ---------------------------------------------------------------------------
 
 
-def _mk(desc: str, note: int) -> Tuple[str, int]:
+def _mk(desc: str, note: int) -> tuple[str, int]:
     return desc, note
 
 
-BEATMAKER_V3_MAP: Dict[str, Tuple[str, int]] = {
+BEATMAKER_V3_MAP: dict[str, tuple[str, int]] = {
     "kick": _mk("kick", 36),
     "snare": _mk("snare", 38),
     "closed_hi_hat": _mk("closed_hi_hat", 42),
@@ -131,14 +131,14 @@ MISSING_DRUM_MAP_FALLBACK = {
 # ⑥ マップレジストリ & API
 # ---------------------------------------------------------------------------
 
-DRUM_MAPS: Dict[str, Dict[str, Tuple[str, int]]] = {
+DRUM_MAPS: dict[str, dict[str, tuple[str, int]]] = {
     "gm": GM_DRUM_MAP,
     "ujam_legend": UJAM_LEGEND_MAP,
     "beatmaker_v3": BEATMAKER_V3_MAP,
 }
 
 
-def _as_int_map(mapping: Dict[str, Tuple[str, int]]) -> Dict[str, int]:
+def _as_int_map(mapping: dict[str, tuple[str, int]]) -> dict[str, int]:
     """int だけ欲しい場合に変換して返す."""
     return {k: v[1] if isinstance(v, tuple) else v for k, v in mapping.items()}
 

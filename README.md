@@ -18,6 +18,8 @@ or equivalently
 ```bash
 pip install -r requirements.txt
 pip install -e ".[essentia]"  # to enable Essentia backend for consonant peaks
+pip install click  # required for the groove sampler CLI
+pip install -e .[audio]  # optional, enables WAV groove extraction
 ```
 
 Without these packages `pytest` and the composer modules will fail to import.
@@ -249,13 +251,12 @@ absent, the spectrum test will be skipped.
 
 ### Groove Sampler Usage
 
-Build an n-gram model from a folder of MIDI loops:
+Train a groove model and generate MIDI directly via the CLI:
 
 ```bash
-python -m utilities.groove_sampler data/loops --stats
+modcompose groove train data/loops --ext midi --out model.pkl
+modcompose groove sample model.pkl -l 4 --temperature 0.8 --seed 42 > groove.mid
 ```
-
-The command prints detected resolution and the chosen order.
 
 ### Groove Sampler v2
 

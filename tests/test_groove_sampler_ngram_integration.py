@@ -4,6 +4,7 @@ from unittest import mock
 import pretty_midi
 
 from utilities import groove_sampler_ngram
+from groove_sampler import loop_ingest
 
 
 def _make_midi(path: Path, pitches: list[int]) -> None:
@@ -28,7 +29,7 @@ def test_train_sample_mixed(tmp_path: Path, monkeypatch: mock.MagicMock) -> None
     _make_midi(tmp_path / "b.mid", [36, 38, 42, 46])
     wav_path = tmp_path / "c.wav"
     wav_path.write_bytes(b"\x00\x00")
-    monkeypatch.setattr(groove_sampler_ngram, "_iter_wav", _fake_iter_wav)
+    monkeypatch.setattr(loop_ingest, "_iter_wav", _fake_iter_wav)
     model = groove_sampler_ngram.train(tmp_path, ext="mid,wav", order="auto")
     events = groove_sampler_ngram.sample(model, bars=1, seed=0)
     assert events

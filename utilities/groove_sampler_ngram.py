@@ -8,15 +8,22 @@ import json
 import pickle
 import sys
 from collections import Counter, defaultdict
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from random import Random
 from typing import Any, TypedDict
 
 import click
+import numpy as np
 import pretty_midi
 
 from .drum_map_registry import GM_DRUM_MAP
+from groove_sampler.loop_ingest import (
+    _iter_midi,
+    _iter_wav,
+    scan_loops as _load_events,
+    LoadResult,
+)
 
 PPQ = 480
 RESOLUTION = 16
@@ -29,14 +36,6 @@ _PITCH_TO_LABEL: dict[int, str] = {val[1]: k for k, val in GM_DRUM_MAP.items()}
 
 State = tuple[int, str]
 HashKey = tuple[State | int, ...]
-LoadResult = (
-    tuple[
-        list[tuple[list[State], str]],
-        dict[str, float],
-        dict[str, Counter[int]],
-        dict[str, Counter[int]],
-    ]
-)
 
 
 class Model(TypedDict):
@@ -46,83 +45,13 @@ class Model(TypedDict):
     resolution: int
     order: int
     freq: dict[int, dict[HashKey, Counter[State]]]
+    # Log-probabilities for each context/state pair
     prob: dict[int, dict[HashKey, dict[State, float]]]
     mean_velocity: dict[str, float]
     vel_deltas: dict[str, Counter[int]]
     micro_offsets: dict[str, Counter[int]]
 
 
-def _iter_midi(path: Path) -> Iterator[tuple[float, str, int, int]]:
-    """Yield quantised events from a MIDI file."""
-
-    pm = pretty_midi.PrettyMIDI(str(path))
-    tempo = pm.get_tempo_changes()[1]
-    bpm = float(tempo[0]) if tempo.size else 120.0
-    sec_per_beat = 60.0 / bpm
-
-    for inst in pm.instruments:
-        if not inst.is_drum:
-            continue
-        for note in inst.notes:
-            beat = note.start / sec_per_beat
-            step = int(round(beat * (RESOLUTION / 4)))
-            q_pos = step / (RESOLUTION / 4)
-            micro = int(round((beat - q_pos) * PPQ))
-            label = _PITCH_TO_LABEL.get(note.pitch, str(note.pitch))
-            yield step, label, note.velocity, micro
-
-
-def _iter_wav(path: Path) -> Iterator[tuple[int, str, int, int]]:
-    """Return onset positions from a WAV file using librosa."""
-
-    try:
-        import librosa
-    except ImportError as exc:  # pragma: no cover - optional dependency
-        raise RuntimeError("WAV support requires librosa") from exc
-
-    y, sr = librosa.load(path, sr=None, mono=True)
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    bpm = float(tempo) if tempo else 120.0
-    sec_per_beat = 60.0 / bpm
-    onsets = librosa.onset.onset_detect(y=y, sr=sr, units="time")
-    for t in onsets:
-        beat = t / sec_per_beat
-        step = int(round(beat * (RESOLUTION / 4)))
-        micro = 0
-        yield step, "perc", 100, micro
-
-
-def _load_events(
-    loop_dir: Path, exts: Sequence[str]
-) -> LoadResult:
-    events: list[tuple[list[State], str]] = []
-    vel_map: dict[str, list[int]] = defaultdict(list)
-    micro_map: dict[str, list[int]] = defaultdict(list)
-
-    normalized = {e.replace("midi", "mid") for e in exts}
-    for p in loop_dir.iterdir():
-        suf = p.suffix.lower().lstrip(".")
-        suf = "mid" if suf in {"mid", "midi"} else suf
-        if suf not in normalized:
-            continue
-        seq: list[State] = []
-        if p.suffix.lower() in {".mid", ".midi"}:
-            iterator = _iter_midi(p)
-        else:
-            iterator = _iter_wav(p)
-        for step, lbl, vel, micro in iterator:
-            seq.append(((step % RESOLUTION), lbl))
-            vel_map[lbl].append(vel)
-            micro_map[lbl].append(micro)
-        if seq:
-            events.append((sorted(seq, key=lambda x: x[0]), p.name))
-    mean_velocity = {k: sum(v) / len(v) for k, v in vel_map.items() if v}
-    vel_deltas = {
-        k: Counter(int(v - mean_velocity[k]) for v in vals)
-        for k, vals in vel_map.items()
-    }
-    micro_offsets = {k: Counter(vals) for k, vals in micro_map.items()}
-    return events, mean_velocity, vel_deltas, micro_offsets
 
 
 DEFAULT_AUX = {"section": "verse", "heat_bin": 0, "intensity": "mid"}
@@ -139,18 +68,240 @@ def _hash_aux(aux: tuple[str, str, str]) -> int:
     return val
 
 
+def _count_ngrams(
+    seqs: list[list[State]], order: int
+) -> dict[int, dict[tuple[State, ...], Counter[State]]]:
+    """Return n-gram frequency tables for ``seqs`` up to ``order``.
+
+    The zeroth table stores unigram counts, while higher orders index by a
+    history tuple of length ``i``.
+    """
+
+    freq: dict[int, dict[tuple[State, ...], Counter[State]]] = {
+        i: defaultdict(Counter) for i in range(order)
+    }
+    for seq in seqs:
+        for s in seq:
+            freq[0][()][s] += 1
+        for i in range(1, order):
+            for idx in range(len(seq) - i):
+                ctx = tuple(seq[idx : idx + i])
+                nxt = seq[idx + i]
+                freq[i][ctx][nxt] += 1
+    return freq
+
+
+def _kneser_ney_base_unigram_prob(
+    freq_0: dict[HashKey, Counter[State]],
+    freq_1: dict[HashKey, Counter[State]],
+    states: set[State],
+    discount: float,
+) -> tuple[dict[HashKey, dict[State, float]], dict[State, float]]:
+    """Return unigram probabilities and base continuation distribution."""
+
+    cont_sets: dict[State, set[HashKey]] = defaultdict(set)
+    for ctx, counter in freq_1.items():
+        for state in counter:
+            cont_sets[state].add(ctx)
+    cont_counts = {s: len(v) for s, v in cont_sets.items()}
+    total_cont = sum(cont_counts.values()) or 1
+    base_prob = {
+        s: max(cont_counts.get(s, 0), 1e-12) / total_cont for s in states
+    }
+
+    prob0: dict[HashKey, dict[State, float]] = {}
+    for ctx, counter in freq_0.items():
+        total = sum(counter.values())
+        if total == 0:
+            raise ValueError(f"zero frequency for context {ctx}")
+        lambda_w = discount * len(counter) / total
+        dist: dict[State, float] = {}
+        for s in states:
+            p = max(counter.get(s, 0) - discount, 0) / total
+            p += lambda_w * base_prob[s]
+            val = float(np.log(max(p, 1e-12)))
+            assert np.isfinite(val)
+            dist[s] = val
+        prob0[ctx] = dist
+    return prob0, base_prob
+
+
+def _kneser_ney_higher_orders(
+    freq: dict[int, dict[HashKey, Counter[State]]],
+    prob0: dict[HashKey, dict[State, float]],
+    base_prob: dict[State, float],
+    states: set[State],
+    discount: float,
+) -> dict[int, dict[HashKey, dict[State, float]]]:
+    """Compute higher-order Kneser-Ney probabilities."""
+
+    prob: dict[int, dict[HashKey, dict[State, float]]] = {0: prob0}
+    max_order = max(freq) + 1
+    for order_i in range(1, max_order):
+        prob[order_i] = {}
+        for ctx, counter in freq.get(order_i, {}).items():
+            total = sum(counter.values())
+            if total == 0:
+                raise ValueError(f"zero frequency for context {ctx}")
+            base_ctx = ctx[1:] if order_i > 1 else ()
+            base_dist = prob[order_i - 1].get(base_ctx, prob[order_i - 1].get(()))
+            lambda_w = discount * len(counter) / total
+            dist: dict[State, float] = {}
+            for s in states:
+                lower_p = (
+                    np.exp(base_dist.get(s, np.log(base_prob.get(s, 1e-12))))
+                    if base_dist is not None
+                    else base_prob.get(s, 1e-12)
+                )
+                p = max(counter.get(s, 0) - discount, 0) / total
+                p += lambda_w * lower_p
+                val = float(np.log(max(p, 1e-12)))
+                assert np.isfinite(val)
+                dist[s] = val
+            prob[order_i][ctx] = dist
+    return prob
+
+
+def _freq_to_log_prob(
+    freq: dict[int, dict[HashKey, Counter[State]]],
+    *,
+    smoothing: str,
+    alpha: float,
+    discount: float = 0.75,
+) -> dict[int, dict[HashKey, dict[State, float]]]:
+    """Convert n-gram frequencies to log-probabilities.
+
+    ``add_alpha`` applies simple additive smoothing. ``kneser_ney`` uses
+    absolute discounting with back-off to lower-order models. Both variants
+    guard against zero counts and emit finite log values.
+
+    Parameters
+    ----------
+    freq:
+        N-gram counts indexed by history context.
+    smoothing:
+        Either ``"add_alpha"`` or ``"kneser_ney"``.
+    alpha:
+        Additive constant for add-α smoothing.
+    discount:
+        Discount factor for Kneser–Ney smoothing.
+    """
+
+    prob: dict[int, dict[HashKey, dict[State, float]]] = {i: {} for i in freq}
+
+    # collect global state set
+    states: set[State] = set()
+    for ctx_map in freq.get(0, {}).values():
+        states.update(ctx_map.keys())
+
+    if smoothing == "kneser_ney":
+        prob0, base_prob = _kneser_ney_base_unigram_prob(
+            freq.get(0, {}), freq.get(1, {}), states, discount
+        )
+        prob.update(
+            _kneser_ney_higher_orders(freq, prob0, base_prob, states, discount)
+        )
+    elif smoothing == "add_alpha":
+        for order_i, ctx_map in freq.items():
+            for ctx, counter in ctx_map.items():
+                total = sum(counter.values())
+                if total == 0:
+                    raise ValueError(f"zero frequency for context {ctx}")
+                v = len(counter)
+                denom = total + alpha * v
+                dist = {s: float(np.log((c + alpha) / denom)) for s, c in counter.items()}
+                assert all(np.isfinite(v) for v in dist.values())
+                prob[order_i][ctx] = dist
+    else:
+        raise ValueError(f"unknown smoothing: {smoothing}")
+    return prob
+
+
+def _get_log_prob(
+    history: Sequence[State],
+    state: State,
+    prob: dict[int, dict[HashKey, dict[State, float]]],
+    order: int,
+) -> float:
+    """Return log probability of ``state`` given ``history``."""
+    for order_i in range(min(len(history), order - 1), -1, -1):
+        ctx = tuple(history[-order_i:])
+        dist = prob.get(order_i, {}).get(ctx)
+        if dist and state in dist:
+            return dist[state]
+    dist = prob.get(0, {}).get((), {})
+    return dist.get(state, float(np.log(1e-12)))
+
+
+def _perplexity(
+    prob: dict[int, dict[HashKey, dict[State, float]]],
+    seqs: list[list[State]],
+    order: int,
+) -> float:
+    """Return perplexity of ``seqs`` under ``prob``.
+
+    The function walks each sequence once, summing log probabilities with
+    back-off as necessary. The returned value is ``exp(-L/N)`` where ``L`` is the
+    total log likelihood and ``N`` the number of tokens. When ``seqs`` is empty
+    ``inf`` is returned.
+    """
+    total_log = 0.0
+    count = 0
+    for seq in seqs:
+        history: list[State] = []
+        for state in seq:
+            total_log += _get_log_prob(history, state, prob, order)
+            count += 1
+            history.append(state)
+            if len(history) > order - 1:
+                history.pop(0)
+    if count == 0:
+        return float("inf")
+    return float(np.exp(-total_log / count))
+
+
+def auto_select_order(
+    seqs: list[list[State]], max_order: int = 5, validation_split: float = 0.1
+) -> int:
+    """Return the n-gram order with minimal perplexity."""
+
+    if not seqs:
+        raise ValueError("no sequences provided")
+    rng = Random(0)
+    seqs_copy = seqs[:]
+    rng.shuffle(seqs_copy)
+    split = max(1, int(len(seqs_copy) * validation_split))
+    val_seqs = seqs_copy[:split]
+    train_seqs = seqs_copy[split:] or seqs_copy[:1]
+    best_order = 1
+    best_ppx = float("inf")
+    for order in range(1, min(max_order, 5) + 1):
+        freq = _count_ngrams(train_seqs, order)
+        prob = _freq_to_log_prob(
+            freq, smoothing="add_alpha", alpha=ALPHA, discount=0.75
+        )
+        ppx = _perplexity(prob, val_seqs, order)
+        if ppx < best_ppx:
+            best_order = order
+            best_ppx = ppx
+    return best_order
+
+
 def train(
     loop_dir: Path,
     *,
     ext: str = "midi",
     order: int | str = "auto",
     aux_map: dict[str, dict[str, Any]] | None = None,
+    smoothing: str = "add_alpha",
+    alpha: float = ALPHA,
+    discount: float = 0.75,
 ) -> Model:
     """Train an n-gram model from MIDI/WAV loops.
 
-    If ``order`` is ``"auto"``, the order is chosen based on the average
-    token length of the training sequences: ``3`` when the average length is
-    eight or more, otherwise ``2``.
+    If ``order`` is ``"auto"``, the order is chosen via minimal perplexity on a
+    held-out validation set.
+    ``discount`` controls absolute discounting for Kneser-Ney.
     """
 
     exts = [e.strip().lower() for e in ext.split(",") if e]
@@ -159,8 +310,7 @@ def train(
         raise ValueError("no events found")
 
     if order == "auto":
-        avg_len = sum(len(seq) for seq, _ in seqs) / len(seqs)
-        n = 3 if avg_len >= 8 else 2
+        n = auto_select_order([s for s, _ in seqs])
     else:
         n = int(order)
     if n < 1:
@@ -190,16 +340,9 @@ def train(
                 freq[i][ctx + (aux_any_int,)][nxt] += 1
                 freq[i][ctx][nxt] += 1
 
-    prob: dict[int, dict[tuple[State, ...], dict[State, float]]] = {i: {} for i in range(n)}
-    for order_i, ctx_map in freq.items():
-        for ctx, counter in ctx_map.items():
-            total = sum(counter.values())
-            if total == 0:
-                continue
-            v = len(counter)
-            prob[order_i][ctx] = {
-                s: (c + ALPHA) / (total + ALPHA * v) for s, c in counter.items()
-            }
+    prob = _freq_to_log_prob(
+        freq, smoothing=smoothing, alpha=alpha, discount=discount
+    )
 
     model: Model = Model(
         version=VERSION,
@@ -284,13 +427,14 @@ def _sample_next(
         dist = model["prob"][0].get((), {})
     if not dist:
         raise RuntimeError("No probability mass")
+    linear = {k: float(np.exp(v)) for k, v in dist.items()}
     if top_k is not None:
-        dist = dict(sorted(dist.items(), key=lambda x: x[1], reverse=True)[:top_k])
+        linear = dict(sorted(linear.items(), key=lambda x: x[1], reverse=True)[:top_k])
     if temperature != 1.0:
-        dist = {k: v ** (1.0 / temperature) for k, v in dist.items()}
-        total = sum(dist.values())
-        dist = {k: v / total for k, v in dist.items()}
-    return _choose(dist, rng)
+        linear = {k: v ** (1.0 / temperature) for k, v in linear.items()}
+        total = sum(linear.values())
+        linear = {k: v / total for k, v in linear.items()}
+    return _choose(linear, rng)
 
 
 def sample(
@@ -365,7 +509,20 @@ def cli() -> None:
 @cli.command()
 @click.argument("loop_dir", type=Path)
 @click.option("--ext", default="wav,midi", help="Comma separated extensions")
-@click.option("--order", default="auto", help="n-gram order or 'auto'")
+@click.option(
+    "--order",
+    default="auto",
+    help="n-gram order or 'auto' for perplexity-based selection",
+)
+@click.option(
+    "--smoothing",
+    default="add_alpha",
+    type=click.Choice(["add_alpha", "kneser_ney"]),
+    show_default=True,
+    help="Smoothing method (use 'kneser_ney' for small or sparse datasets)",
+)
+@click.option("--alpha", default=ALPHA, type=float, show_default=True)
+@click.option("--discount", default=0.75, type=float, show_default=True)
 @click.option("--out", "out_path", type=Path, default=Path("model.pkl"))
 @click.option(
     "--aux",
@@ -374,14 +531,31 @@ def cli() -> None:
     default=None,
     help="JSON map of loop names to aux data, e.g. '{\"foo.mid\": {\"section\": \"chorus\"}}'",
 )
-def train_cmd(loop_dir: Path, ext: str, order: str, out_path: Path, aux_path: Path | None) -> None:
+def train_cmd(
+    loop_dir: Path,
+    ext: str,
+    order: str,
+    smoothing: str,
+    alpha: float,
+    discount: float,
+    out_path: Path,
+    aux_path: Path | None,
+) -> None:
     """Train a model from loops."""
 
     aux_map = None
     if aux_path and aux_path.exists():
         with aux_path.open("r", encoding="utf-8") as fh:
             aux_map = json.load(fh)
-    model = train(loop_dir, ext=ext, order=order, aux_map=aux_map)
+    model = train(
+        loop_dir,
+        ext=ext,
+        order=order,
+        aux_map=aux_map,
+        smoothing=smoothing,
+        alpha=alpha,
+        discount=discount,
+    )
     save(model, out_path)
     click.echo(f"saved model to {out_path}")
 

@@ -21,16 +21,18 @@ pip install -r requirements-optional.txt  # optional WAV support
 pip install -e ".[essentia]"  # to enable Essentia backend for consonant peaks
 pip install click  # required for the groove sampler CLI
 pip install -e .[audio]  # optional, enables WAV groove extraction
+pip install -e .[groove]  # required for MIDI/WAV ingestion
 ```
 
 Without these packages `pytest` and the composer modules will fail to import.
 
 ## Required Libraries
 - **music21** – MIDI and score manipulation
-- **pretty_midi** – MIDI export utilities
+- **pretty_midi** – MIDI export utilities (install via `[groove]`)
 - **numpy** – numerical routines
 - **PyYAML** – YAML configuration loader
 - **pydantic** – configuration models
+- **librosa** – WAV feature extraction (install via `[groove]`)
 - **pydub** (optional) – audio post‑processing
 - **mido** – MIDI utilities
 - **scipy** – signal processing helpers
@@ -285,6 +287,23 @@ modcompose groove sample model.pkl --cond '{"section":"chorus","intensity":"high
 ```
 
 If you omit `--aux` the model behaves like version 1.0.
+
+Order can be selected automatically using minimal perplexity on a validation
+split. The CLI exposes smoothing parameters as well. Use ``--alpha`` to control
+additive smoothing strength and ``--discount`` for Kneser–Ney:
+
+```bash
+modcompose groove train loops/ --ext wav,midi --order auto \
+    --smoothing add_alpha --alpha 0.1 --out model.pkl
+```
+
+Kneser–Ney smoothing often yields lower perplexity on sparse or highly
+heterogeneous data. A discount around ``0.75`` works well in most cases:
+
+```bash
+modcompose groove train loops/ --ext wav,midi --order auto \
+    --smoothing kneser_ney --discount 0.75 --out model.pkl
+```
 
 ### Groove Sampler v2
 

@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import pickle
 import sys
 from collections import Counter, defaultdict
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from random import Random
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import click
 import pretty_midi
@@ -26,6 +28,7 @@ ALPHA = 0.1
 _PITCH_TO_LABEL: dict[int, str] = {val[1]: k for k, val in GM_DRUM_MAP.items()}
 
 State = tuple[int, str]
+HashKey = tuple[State | int, ...]
 
 
 class Model(TypedDict):
@@ -34,11 +37,12 @@ class Model(TypedDict):
     version: int
     resolution: int
     order: int
-    freq: dict[int, dict[tuple[State, ...], Counter[State]]]
-    prob: dict[int, dict[tuple[State, ...], dict[State, float]]]
+    freq: dict[int, dict[HashKey, Counter[State]]]
+    prob: dict[int, dict[HashKey, dict[State, float]]]
     mean_velocity: dict[str, float]
     vel_deltas: dict[str, Counter[int]]
     micro_offsets: dict[str, Counter[int]]
+    aux_dims: list[str]
 
 
 def _iter_midi(path: Path) -> Iterator[tuple[float, str, int, int]]:
@@ -83,8 +87,8 @@ def _iter_wav(path: Path) -> Iterator[tuple[int, str, int, int]]:
 
 def _load_events(
     loop_dir: Path, exts: Sequence[str]
-) -> tuple[list[list[State]], dict[str, float], dict[str, Counter[int]], dict[str, Counter[int]]]:
-    events: list[list[State]] = []
+) -> tuple[list[tuple[list[State], str]], dict[str, float], dict[str, Counter[int]], dict[str, Counter[int]]]:
+    events: list[tuple[list[State], str]] = []
     vel_map: dict[str, list[int]] = defaultdict(list)
     micro_map: dict[str, list[int]] = defaultdict(list)
 
@@ -104,7 +108,7 @@ def _load_events(
             vel_map[lbl].append(vel)
             micro_map[lbl].append(micro)
         if seq:
-            events.append(sorted(seq, key=lambda x: x[0]))
+            events.append((sorted(seq, key=lambda x: x[0]), p.name))
     mean_velocity = {k: sum(v) / len(v) for k, v in vel_map.items() if v}
     vel_deltas = {
         k: Counter(int(v - mean_velocity[k]) for v in vals)
@@ -114,7 +118,27 @@ def _load_events(
     return events, mean_velocity, vel_deltas, micro_offsets
 
 
-def train(loop_dir: Path, *, ext: str = "midi", order: int | str = "auto") -> Model:
+DEFAULT_AUX = {"section": "verse", "heat_bin": 0, "intensity": "mid"}
+
+_AUX_HASH_CACHE: dict[int, tuple[str, str, str]] = {}
+
+
+def _hash_aux(aux: tuple[str, str, str]) -> int:
+    data = "|".join(aux).encode("utf-8")
+    val = int.from_bytes(hashlib.blake2s(data, digest_size=4).digest(), "big")
+    prev = _AUX_HASH_CACHE.setdefault(val, aux)
+    if prev != aux:
+        raise RuntimeError(f"hash collision: {prev} vs {aux}")
+    return val
+
+
+def train(
+    loop_dir: Path,
+    *,
+    ext: str = "midi",
+    order: int | str = "auto",
+    aux_map: dict[str, dict[str, Any]] | None = None,
+) -> Model:
     """Train an n-gram model from MIDI/WAV loops."""
 
     exts = [e.strip().lower() for e in ext.split(",") if e]
@@ -123,19 +147,32 @@ def train(loop_dir: Path, *, ext: str = "midi", order: int | str = "auto") -> Mo
     else:
         n = int(order)
     seqs, mean_vel, vel_deltas, micro_offsets = _load_events(loop_dir, exts)
-    if not any(seqs):
+    if not seqs:
         raise ValueError("no events found")
+
+    aux_map = aux_map or {}
 
     freq: dict[int, dict[tuple[State, ...], Counter[State]]] = {
         i: defaultdict(Counter) for i in range(n)
     }
-    for seq in seqs:
+    aux_dims = ["section", "heat_bin", "intensity"]
+    for seq, name in seqs:
+        meta = aux_map.get(name, {})
+        section = str(meta.get("section", DEFAULT_AUX["section"]))
+        heat_bin = str(meta.get("heat_bin", DEFAULT_AUX["heat_bin"]))
+        intensity = str(meta.get("intensity", DEFAULT_AUX["intensity"]))
+        aux_full = _hash_aux((section, heat_bin, intensity))
+        aux_any_int = _hash_aux((section, heat_bin, "*"))
         for s in seq:
+            freq[0][(aux_full,)][s] += 1
+            freq[0][(aux_any_int,)][s] += 1
             freq[0][()][s] += 1
         for i in range(1, n):
             for idx in range(len(seq) - i):
                 ctx = tuple(seq[idx : idx + i])
                 nxt = seq[idx + i]
+                freq[i][ctx + (aux_full,)][nxt] += 1
+                freq[i][ctx + (aux_any_int,)][nxt] += 1
                 freq[i][ctx][nxt] += 1
 
     prob: dict[int, dict[tuple[State, ...], dict[State, float]]] = {i: {} for i in range(n)}
@@ -158,6 +195,7 @@ def train(loop_dir: Path, *, ext: str = "midi", order: int | str = "auto") -> Mo
         mean_velocity=mean_vel,
         vel_deltas=vel_deltas,
         micro_offsets=micro_offsets,
+        aux_dims=aux_dims,
     )
     return model
 
@@ -189,17 +227,37 @@ def _sample_next(
     model: Model,
     rng: Random,
     *,
+    cond: dict[str, Any] | None = None,
     temperature: float = 1.0,
     top_k: int | None = None,
 ) -> State:
     n = model["order"]
+    aux_dims = model.get("aux_dims", [])
+    def _aux_hash(with_intensity: bool = True) -> int:
+        if not aux_dims:
+            return 0
+        section = str(cond.get("section", DEFAULT_AUX["section"])) if cond else DEFAULT_AUX["section"]
+        heat_bin = str(cond.get("heat_bin", DEFAULT_AUX["heat_bin"])) if cond else str(DEFAULT_AUX["heat_bin"])
+        intensity = str(cond.get("intensity", DEFAULT_AUX["intensity"])) if cond else DEFAULT_AUX["intensity"]
+        if not with_intensity:
+            intensity = "*"
+        return _hash_aux((section, heat_bin, intensity))
+
+    aux_full = _aux_hash(True)
+    aux_any = _aux_hash(False)
     for order in range(min(len(history), n - 1), -1, -1):
         ctx = tuple(history[-order:])
-        dist = model["prob"].get(order, {}).get(ctx)
+        dist = model["prob"].get(order, {}).get(ctx + (aux_full,))
+        if not dist:
+            dist = model["prob"].get(order, {}).get(ctx + (aux_any,))
+        if not dist:
+            dist = model["prob"].get(order, {}).get(ctx)
         if dist:
             break
     if not dist:
-        dist = model["prob"][0][()]
+        dist = model["prob"][0].get((), {})
+    if not dist:
+        raise RuntimeError("No probability mass")
     if top_k is not None:
         dist = dict(sorted(dist.items(), key=lambda x: x[1], reverse=True)[:top_k])
     if temperature != 1.0:
@@ -216,6 +274,7 @@ def sample(
     temperature: float = 1.0,
     top_k: int | None = None,
     seed: int | None = None,
+    cond: dict[str, Any] | None = None,
 ) -> list[dict[str, float | str]]:
     """Generate events using the trained model."""
 
@@ -225,7 +284,14 @@ def sample(
     for bar in range(bars):
         next_bin = 0
         while next_bin < RESOLUTION:
-            state = _sample_next(history, model, rng, temperature=temperature, top_k=top_k)
+            state = _sample_next(
+                history,
+                model,
+                rng,
+                temperature=temperature,
+                top_k=top_k,
+                cond=cond,
+            )
             step, lbl = state
             if step < next_bin:
                 step = next_bin
@@ -275,10 +341,21 @@ def cli() -> None:
 @click.option("--ext", default="wav,midi", help="Comma separated extensions")
 @click.option("--order", default="auto", help="n-gram order or 'auto'")
 @click.option("--out", "out_path", type=Path, default=Path("model.pkl"))
-def train_cmd(loop_dir: Path, ext: str, order: str, out_path: Path) -> None:
+@click.option(
+    "--aux",
+    "aux_path",
+    type=Path,
+    default=None,
+    help="JSON map of loop names to aux data, e.g. '{\"foo.mid\": {\"section\": \"chorus\"}}'",
+)
+def train_cmd(loop_dir: Path, ext: str, order: str, out_path: Path, aux_path: Path | None) -> None:
     """Train a model from loops."""
 
-    model = train(loop_dir, ext=ext, order=order)
+    aux_map = None
+    if aux_path and aux_path.exists():
+        with aux_path.open("r", encoding="utf-8") as fh:
+            aux_map = json.load(fh)
+    model = train(loop_dir, ext=ext, order=order, aux_map=aux_map)
     save(model, out_path)
     click.echo(f"saved model to {out_path}")
 
@@ -288,11 +365,17 @@ def train_cmd(loop_dir: Path, ext: str, order: str, out_path: Path) -> None:
 @click.option("-l", "--length", default=4, type=int)
 @click.option("--temperature", default=1.0, type=float)
 @click.option("--seed", default=42, type=int)
-def sample_cmd(model_path: Path, length: int, temperature: float, seed: int) -> None:
+@click.option(
+    "--cond",
+    default=None,
+    help="JSON aux condition, e.g. '{\"section\":\"chorus\"}'",
+)
+def sample_cmd(model_path: Path, length: int, temperature: float, seed: int, cond: str | None) -> None:
     """Generate MIDI from a model."""
 
     model = load(model_path)
-    ev = sample(model, bars=length, temperature=temperature, seed=seed)
+    cond_map = json.loads(cond) if cond else None
+    ev = sample(model, bars=length, temperature=temperature, seed=seed, cond=cond_map)
     pm = events_to_midi(ev)
     buf = io.BytesIO()
     pm.write(buf)

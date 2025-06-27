@@ -37,6 +37,7 @@ def test_hihat_articulations(tmp_path: Path):
         0.5,
         drum.global_ts,
         {},
+        None,
     )
     pitches = {n.pitch.midi for n in part.flatten().notes}
     expected = {
@@ -65,6 +66,7 @@ def test_hihat_edge_pedal(tmp_path: Path):
         0.5,
         drum.global_ts,
         {},
+        None,
     )
     notes = sorted(part.flatten().notes, key=lambda n: n.offset)
     assert len(notes) == 2
@@ -93,6 +95,7 @@ def test_velocity_random_walk(tmp_path: Path):
             0.5,
             drum.global_ts,
             {},
+            None,
         )
     notes = list(part.flatten().notes)
     assert len({n.volume.velocity for n in notes}) >= 3
@@ -126,6 +129,7 @@ def test_brush_override_scaling(tmp_path: Path):
         0.5,
         drum.global_ts,
         {},
+        None,
     )
     velocities = [n.volume.velocity for n in part.flatten().notes]
     assert velocities and all(v < o for v, o in zip(velocities, orig_vel))
@@ -150,6 +154,7 @@ def test_intro_ride_notes(tmp_path: Path):
         0.5,
         drum.global_ts,
         {},
+        None,
     )
     notes = list(part.flatten().notes)
     assert notes
@@ -174,6 +179,7 @@ def test_drag_ruff(tmp_path: Path):
         0.5,
         drum.global_ts,
         {},
+        None,
     )
     notes = list(part.flatten().notes)
     assert len(notes) == 7

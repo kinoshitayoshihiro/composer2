@@ -258,6 +258,17 @@ modcompose groove train data/loops --ext midi --out model.pkl
 modcompose groove sample model.pkl -l 4 --temperature 0.8 --seed 42 > groove.mid
 ```
 
+Groove Sampler **v1.1** supports auxiliary conditioning on section type,
+heatmap bin and intensity bucket. Provide a JSON map at train time and pass
+`--cond` when sampling:
+
+```bash
+modcompose groove train data/loops --aux aux.json
+modcompose groove sample model.pkl --cond '{"section":"chorus","intensity":"high"}' > groove.mid
+```
+
+If you omit `--aux` the model behaves like version 1.0.
+
 ### Groove Sampler v2
 
 Build and sample using the optimized model:

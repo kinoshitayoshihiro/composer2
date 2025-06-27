@@ -450,6 +450,7 @@ class DrumGenerator(BasePartGenerator):
         # Initialize with the BPM at beat 0 so that grace calculations use
         # the correct starting tempo even when a tempo map is provided.
         self.current_bpm = self._current_bpm(0.0)
+        self.current_heat_bin = 0
         self.ppq = int(self.global_settings.get("ppq", 480))
         self.use_velocity_ema = bool(
             self.global_settings.get("use_velocity_ema", False)
@@ -1234,6 +1235,7 @@ class DrumGenerator(BasePartGenerator):
                     swing_ratio_val,
                     pat_ts if pat_ts else self.global_ts,
                     drums_params,
+                    section_data,
                     velocity_scale,
                     velocity_curve_list,
                     legato=fill_legato,
@@ -1266,6 +1268,7 @@ class DrumGenerator(BasePartGenerator):
         swing_ratio: float,
         current_pattern_ts: meter.TimeSignature,
         drum_block_params: dict[str, Any],
+        section_data: dict[str, Any] | None = None,
         velocity_scale: float = 1.0,
         velocity_curve: list[float] | None = None,
         legato: bool = False,
@@ -1309,6 +1312,8 @@ class DrumGenerator(BasePartGenerator):
             )
 
 
+        self.current_heat_bin = int(bar_start_abs_offset * RESOLUTION) % RESOLUTION
+
         if not events and self.groove_model:
             try:
                 from utilities import groove_sampler_ngram
@@ -1319,8 +1324,20 @@ class DrumGenerator(BasePartGenerator):
                 else:
                     model_obj = self.groove_model
 
+                cond = None
+                if section_data is not None:
+                    intent = section_data.get("musical_intent", {})
+                    cond = {
+                        "section": section_data.get("section_type", "verse"),
+                        "heat_bin": self.current_heat_bin,
+                        "intensity": intent.get("intensity", "mid"),
+                    }
+
                 events = groove_sampler_ngram.sample(
-                    model_obj, bars=1, seed=self.rng.randint(0, 2**32 - 1)
+                    model_obj,
+                    bars=1,
+                    seed=self.rng.randint(0, 2**32 - 1),
+                    cond=cond,
                 )
             except Exception:  # pragma: no cover - fallback
                 events = groove_sampler.generate_bar(
@@ -2155,6 +2172,7 @@ class DrumGenerator(BasePartGenerator):
             0.5,
             self.global_ts,
             {},
+            None,
         )
         return part
 

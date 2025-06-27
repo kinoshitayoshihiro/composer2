@@ -29,6 +29,14 @@ _PITCH_TO_LABEL: dict[int, str] = {val[1]: k for k, val in GM_DRUM_MAP.items()}
 
 State = tuple[int, str]
 HashKey = tuple[State | int, ...]
+LoadResult = (
+    tuple[
+        list[tuple[list[State], str]],
+        dict[str, float],
+        dict[str, Counter[int]],
+        dict[str, Counter[int]],
+    ]
+)
 
 
 class Model(TypedDict):
@@ -42,7 +50,6 @@ class Model(TypedDict):
     mean_velocity: dict[str, float]
     vel_deltas: dict[str, Counter[int]]
     micro_offsets: dict[str, Counter[int]]
-    aux_dims: list[str]
 
 
 def _iter_midi(path: Path) -> Iterator[tuple[float, str, int, int]]:
@@ -87,7 +94,7 @@ def _iter_wav(path: Path) -> Iterator[tuple[int, str, int, int]]:
 
 def _load_events(
     loop_dir: Path, exts: Sequence[str]
-) -> tuple[list[tuple[list[State], str]], dict[str, float], dict[str, Counter[int]], dict[str, Counter[int]]]:
+) -> LoadResult:
     events: list[tuple[list[State], str]] = []
     vel_map: dict[str, list[int]] = defaultdict(list)
     micro_map: dict[str, list[int]] = defaultdict(list)
@@ -139,7 +146,12 @@ def train(
     order: int | str = "auto",
     aux_map: dict[str, dict[str, Any]] | None = None,
 ) -> Model:
-    """Train an n-gram model from MIDI/WAV loops."""
+    """Train an n-gram model from MIDI/WAV loops.
+
+    If ``order`` is ``"auto"``, the order is chosen based on the average
+    token length of the training sequences: ``3`` when the average length is
+    eight or more, otherwise ``2``.
+    """
 
     exts = [e.strip().lower() for e in ext.split(",") if e]
     seqs, mean_vel, vel_deltas, micro_offsets = _load_events(loop_dir, exts)
@@ -151,13 +163,14 @@ def train(
         n = 3 if avg_len >= 8 else 2
     else:
         n = int(order)
+    if n < 1:
+        raise ValueError("order must be >= 1")
 
     aux_map = aux_map or {}
 
     freq: dict[int, dict[tuple[State, ...], Counter[State]]] = {
         i: defaultdict(Counter) for i in range(n)
     }
-    aux_dims = ["section", "heat_bin", "intensity"]
     for seq, name in seqs:
         meta = aux_map.get(name, {})
         section = str(meta.get("section", DEFAULT_AUX["section"]))
@@ -197,7 +210,6 @@ def train(
         mean_velocity=mean_vel,
         vel_deltas=vel_deltas,
         micro_offsets=micro_offsets,
-        aux_dims=aux_dims,
     )
     return model
 
@@ -215,6 +227,8 @@ def load(path: Path) -> Model:
         or data.get("version") != VERSION
     ):
         raise RuntimeError("incompatible model version")
+    # drop legacy keys from older model versions
+    data.pop("aux_dims", None)
     return Model(**data)
 
 
@@ -234,13 +248,23 @@ def _sample_next(
     top_k: int | None = None,
 ) -> State:
     n = model["order"]
-    aux_dims = model.get("aux_dims", [])
+
     def _aux_hash(with_intensity: bool = True) -> int:
-        if not aux_dims:
-            return 0
-        section = str(cond.get("section", DEFAULT_AUX["section"])) if cond else DEFAULT_AUX["section"]
-        heat_bin = str(cond.get("heat_bin", DEFAULT_AUX["heat_bin"])) if cond else str(DEFAULT_AUX["heat_bin"])
-        intensity = str(cond.get("intensity", DEFAULT_AUX["intensity"])) if cond else DEFAULT_AUX["intensity"]
+        section = (
+            str(cond.get("section", DEFAULT_AUX["section"]))
+            if cond
+            else DEFAULT_AUX["section"]
+        )
+        heat_bin = (
+            str(cond.get("heat_bin", DEFAULT_AUX["heat_bin"]))
+            if cond
+            else str(DEFAULT_AUX["heat_bin"])
+        )
+        intensity = (
+            str(cond.get("intensity", DEFAULT_AUX["intensity"]))
+            if cond
+            else DEFAULT_AUX["intensity"]
+        )
         if not with_intensity:
             intensity = "*"
         return _hash_aux((section, heat_bin, intensity))
@@ -372,7 +396,13 @@ def train_cmd(loop_dir: Path, ext: str, order: str, out_path: Path, aux_path: Pa
     default=None,
     help="JSON aux condition, e.g. '{\"section\":\"chorus\"}'",
 )
-def sample_cmd(model_path: Path, length: int, temperature: float, seed: int, cond: str | None) -> None:
+def sample_cmd(
+    model_path: Path,
+    length: int,
+    temperature: float,
+    seed: int,
+    cond: str | None,
+) -> None:
     """Generate MIDI from a model."""
 
     model = load(model_path)

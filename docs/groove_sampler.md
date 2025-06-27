@@ -34,3 +34,6 @@ modcompose groove sample model.pkl --cond '{"section":"chorus","intensity":"high
 
 If you omit the `--aux` option during training, the sampler behaves exactly as
 in version 1.0 and ignores auxiliary conditions.
+
+Models generated prior to commit 608fdda no longer include the
+deprecated `aux_dims` field and should be retrained.

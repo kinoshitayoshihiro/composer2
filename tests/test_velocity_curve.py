@@ -42,6 +42,7 @@ def test_velocity_curve_scaling(tmp_path: Path):
         0.5,
         gen.global_ts,
         {},
+        None,
         1.0,
         [0.5, 0.75, 1.0],
     )

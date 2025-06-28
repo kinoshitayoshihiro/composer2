@@ -27,7 +27,7 @@ from music21 import (
 )
 
 from tools.peak_synchroniser import PeakSynchroniser
-from utilities import fill_dsl, groove_sampler, humanizer
+from utilities import fill_dsl, groove_sampler, groove_sampler_ngram, humanizer
 from utilities.accent_mapper import AccentMapper
 from utilities.core_music_utils import (
     MIN_NOTE_DURATION_QL,
@@ -585,8 +585,7 @@ class DrumGenerator(BasePartGenerator):
                 )
             except Exception as e:  # pragma: no cover - optional feature
                 logger.warning(f"Failed to load grooves from {groove_dir}: {e}")
-        self._groove_history: list[str] = []
-        self._ngram_history: list[tuple[int, str]] = []
+        self._groove_history: list[tuple[int, str]] = []
 
         self.push_pull_map = global_cfg.get("push_pull_curve", {})
         self.current_push_pull_curve = None
@@ -1316,44 +1315,32 @@ class DrumGenerator(BasePartGenerator):
         self.current_heat_bin = int(bar_start_abs_offset * RESOLUTION) % RESOLUTION
 
         if not events and self.groove_model:
-            try:
-                from utilities import groove_sampler_ngram
+            model_obj: dict
+            if isinstance(self.groove_model, (str, Path)):
+                model_obj = groove_sampler_ngram.load(Path(self.groove_model))
+            else:
+                model_obj = self.groove_model
 
-                model_obj: dict
-                if isinstance(self.groove_model, (str, Path)):
-                    model_obj = groove_sampler_ngram.load(Path(self.groove_model))
-                else:
-                    model_obj = self.groove_model
+            musical_intent = section_data.get("musical_intent", {}) if section_data else {}
+            cond = {
+                "section": section_data.get("section_name", "verse") if section_data else "verse",
+                "heat_bin": self.current_heat_bin,
+                "intensity": musical_intent.get("intensity", "mid"),
+            }
 
-                cond = None
-                if section_data is not None:
-                    intent = section_data.get("musical_intent", {})
-                    cond = {
-                        "section": intent.get("section", "verse"),
-                        "heat_bin": intent.get("heat_bin", 0),
-                        "intensity": intent.get("intensity", "mid"),
-                    }
+            tk = self.global_settings.get("groove_top_k")
+            tk_val = int(tk) if isinstance(tk, (int, str)) and str(tk).isdigit() else None
 
-                tk = self.global_settings.get("groove_top_k")
-                tk_val = int(tk) if isinstance(tk, (int, str)) and str(tk).isdigit() else None
-                events = groove_sampler_ngram.sample(
-                    model_obj,
-                    bars=1,
-                    seed=self.rng.randint(0, 2**32 - 1),
-                    temperature=float(self.global_settings.get("groove_temperature", 1.0)),
-                    top_k=tk_val,
-                    cond=cond,
-                    humanize_vel=bool(self.global_settings.get("humanize_profile", "")),
-                    humanize_micro=self.groove_strength > 0,
-                    history=self._ngram_history,
-                )
-            except Exception:  # pragma: no cover - fallback
-                events = groove_sampler.generate_bar(
-                    prev_history=self._groove_history,
-                    model=self.groove_model,
-                    rng=self.rng,
-                    resolution=self.groove_resolution,
-                )
+            events, self._groove_history = groove_sampler_ngram.generate_bar(
+                self._groove_history,
+                model_obj,
+                temperature=float(self.global_settings.get("groove_temperature", 1.0)),
+                top_k=tk_val,
+                cond=cond,
+                humanize_vel=bool(self.global_settings.get("humanize_profile")),
+                humanize_micro=self.groove_strength > 0,
+                rng=self.rng,
+            )
 
         if (
             self.use_consonant_sync
@@ -1715,11 +1702,16 @@ class DrumGenerator(BasePartGenerator):
             mapped_name_for_history = getattr(
                 drum_hit_note.editorial, "mapped_name", inst_name
             )
-            self._groove_history.append(mapped_name_for_history)
+            step_idx = int(round(rel_offset_in_pattern * RESOLUTION / current_bar_actual_len_ql))
+            step_idx = max(0, min(RESOLUTION - 1, step_idx))
+            self._groove_history.append((step_idx, mapped_name_for_history))
 
         n_hist = int(self.groove_model.get("n", 3)) if self.groove_model else 0
-        if n_hist > 1 and len(self._groove_history) > n_hist - 1:
-            self._groove_history = self._groove_history[-(n_hist - 1) :]
+        max_len = max(n_hist - 1, 0)
+        if len(self._groove_history) > max_len:
+            self._groove_history = (
+                self._groove_history[-max_len:] if max_len else []
+            )
 
         if self.export_random_walk_cc and self.accent_mapper.debug_rw_values:
             cc_events = getattr(part, "extra_cc", [])

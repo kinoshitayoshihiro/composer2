@@ -5,3 +5,5 @@ Welcome to the documentation for **Composer2**, a framework that merges poetic J
 Browse the API reference to learn how to integrate the generators into your workflow.
 
 See [Groove Sampler](groove_sampler.md) for training drum models.
+Auxiliary conditioning and deterministic sampling are covered in
+[Aux Features](aux_features.md).

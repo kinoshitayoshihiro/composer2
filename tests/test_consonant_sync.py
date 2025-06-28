@@ -5,6 +5,8 @@ import pytest
 from music21 import meter, stream
 
 from generator.drum_generator import RESOLUTION, DrumGenerator
+from utilities.groove_sampler_ngram import Event
+from typing import cast
 from utilities.timing_utils import align_to_consonant
 
 
@@ -75,12 +77,12 @@ def _cfg(tmp_path: Path, mode: str) -> dict:
 def _apply_hits(drum: DrumGenerator) -> list[tuple[float, int]]:
     part = stream.Part(id="drums")
     events = [
-        {"instrument": "kick", "offset": 0.5},
-        {"instrument": "snare", "offset": 1.25},
+        cast(Event, {"instrument": "kick", "offset": 0.5}),
+        cast(Event, {"instrument": "snare", "offset": 1.25}),
     ]
     drum._apply_pattern(
         part,
-        events,
+        cast(list[Event], events),
         0.0,
         2.0,
         100,

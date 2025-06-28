@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from music21 import stream
 from generator.drum_generator import DrumGenerator, RESOLUTION
+from utilities.groove_sampler_ngram import Event
+from typing import cast
 
 
 def make_gen(tmp_path: Path):
@@ -34,7 +36,7 @@ def test_velocity_curve_scaling(tmp_path: Path):
     part = stream.Part(id="drums")
     gen._apply_pattern(
         part,
-        gen.part_parameters["main"]["pattern"],
+        cast(list[Event], gen.part_parameters["main"]["pattern"]),
         0.0,
         4.0,
         100,

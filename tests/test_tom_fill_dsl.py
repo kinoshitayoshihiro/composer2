@@ -6,6 +6,8 @@ from music21 import stream, meter
 
 from utilities.fill_dsl import parse_fill_dsl, FillDSLParseError
 from generator.drum_generator import DrumGenerator, GM_DRUM_MAP
+from utilities.groove_sampler_ngram import Event
+from typing import cast
 
 
 def _cfg(tmp_path: Path) -> dict:
@@ -40,7 +42,7 @@ def test_apply_pattern_from_dsl(tmp_path: Path):
     events = parse_fill_dsl("T1 T2")
     gen._apply_pattern(
         part,
-        events,
+        cast(list[Event], events),
         0.0,
         1.0,
         90,

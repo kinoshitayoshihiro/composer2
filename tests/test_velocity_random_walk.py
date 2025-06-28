@@ -3,6 +3,8 @@ import random
 from utilities.accent_mapper import AccentMapper
 from utilities.velocity_smoother import EMASmoother
 from generator.drum_generator import DrumGenerator, RESOLUTION, INTENSITY_FACTOR
+from utilities.groove_sampler_ngram import Event
+from typing import cast
 from music21 import stream
 
 def test_velocity_random_walk_per_bar():
@@ -89,7 +91,7 @@ def test_intensity_step_scaling(tmp_path):
         gen.accent_mapper.begin_bar(bar * 4.0, low_step)
         gen._apply_pattern(
             part_low,
-            pattern["main"]["pattern"],
+            cast(list[Event], pattern["main"]["pattern"]),
             bar * 4.0,
             4.0,
             80,
@@ -107,7 +109,7 @@ def test_intensity_step_scaling(tmp_path):
         gen.accent_mapper.begin_bar(bar * 4.0, high_step)
         gen._apply_pattern(
             part_high,
-            pattern["main"]["pattern"],
+            cast(list[Event], pattern["main"]["pattern"]),
             bar * 4.0,
             4.0,
             80,
@@ -151,7 +153,7 @@ def test_random_walk_cc_export(tmp_path):
         gen.accent_mapper.begin_bar(bar * 4.0, mid_step)
         gen._apply_pattern(
             part,
-            pattern["main"]["pattern"],
+            cast(list[Event], pattern["main"]["pattern"]),
             bar * 4.0,
             4.0,
             80,

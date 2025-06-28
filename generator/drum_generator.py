@@ -586,6 +586,7 @@ class DrumGenerator(BasePartGenerator):
             except Exception as e:  # pragma: no cover - optional feature
                 logger.warning(f"Failed to load grooves from {groove_dir}: {e}")
         self._groove_history: list[str] = []
+        self._ngram_history: list[tuple[int, str]] = []
 
         self.push_pull_map = global_cfg.get("push_pull_curve", {})
         self.current_push_pull_curve = None
@@ -1333,11 +1334,18 @@ class DrumGenerator(BasePartGenerator):
                         "intensity": intent.get("intensity", "mid"),
                     }
 
+                tk = self.global_settings.get("groove_top_k")
+                tk_val = int(tk) if isinstance(tk, (int, str)) and str(tk).isdigit() else None
                 events = groove_sampler_ngram.sample(
                     model_obj,
                     bars=1,
                     seed=self.rng.randint(0, 2**32 - 1),
+                    temperature=float(self.global_settings.get("groove_temperature", 1.0)),
+                    top_k=tk_val,
                     cond=cond,
+                    humanize_vel=bool(self.global_settings.get("humanize_profile", "")),
+                    humanize_micro=self.groove_strength > 0,
+                    history=self._ngram_history,
                 )
             except Exception:  # pragma: no cover - fallback
                 events = groove_sampler.generate_bar(

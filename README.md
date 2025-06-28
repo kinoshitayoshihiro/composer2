@@ -276,6 +276,9 @@ modcompose loops info loops.pkl
 ```
 
 The ``--auto-aux`` option infers ``intensity`` and ``heat_bin`` from each loop.
+Intensity is ``low`` when mean velocity is ``<=60``, ``mid`` for ``61-100`` and
+``high`` above that. ``heat_bin`` is derived from the step with the most hits
+using a 4-bit index.
 
 WAV support requires `librosa`. Install via `pip install librosa` if you want to
 include audio loops.
@@ -291,7 +294,7 @@ heatmap bin and intensity bucket. Provide a JSON map at train time and pass
 }
 ```
 
-Then train and sample as follows:
+Then train and sample as follows (``aux.json`` may also be ``aux.yaml``):
 
 ```bash
 modcompose groove train data/loops --aux aux.json
@@ -322,6 +325,20 @@ heterogeneous data. A discount around ``0.75`` works well in most cases:
 modcompose groove train loops/ --ext wav,midi --order auto \
     --smoothing kneser_ney --discount 0.75 --out model.pkl
 ```
+
+### Humanise
+
+Add subtle velocity and timing variation using the trained histograms:
+
+```bash
+modcompose groove sample model.pkl -l 8 --humanize vel,micro > groove.mid
+```
+
+### DAW Usage
+
+Import the resulting ``groove.mid`` into your DAW (Ableton, Logic, etc.).
+Velocity humanisation stays within MIDI 1–127 while micro timing
+deviations are clipped to ±45 ticks so alignment remains manageable.
 
 ### Groove Sampler v2
 

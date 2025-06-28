@@ -6,12 +6,13 @@ import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from statistics import mean
-from typing import Literal, TypedDict
+from typing import TypedDict
 
 import click
 import pretty_midi
 
 from .drum_map_registry import GM_DRUM_MAP
+from .types import Intensity
 
 try:  # optional dependency
     import librosa
@@ -21,8 +22,6 @@ except Exception:  # pragma: no cover - optional dependency missing
     HAVE_LIBROSA = False
 
 Token = tuple[int, str, int, int]
-
-Intensity = Literal["low", "mid", "high"]
 
 
 class LoopEntry(TypedDict, total=False):
@@ -75,9 +74,6 @@ def _scan_midi(path: Path, resolution: int, ppq: int) -> LoopEntry:
         "tokens": tokens,
         "tempo_bpm": bpm,
         "bar_beats": bar_beats,
-        "section": "unknown",
-        "heat_bin": 0,
-        "intensity": "mid",
     }
 
 
@@ -101,9 +97,6 @@ def _scan_wav(path: Path, resolution: int, ppq: int) -> LoopEntry:
         "tokens": tokens,
         "tempo_bpm": bpm,
         "bar_beats": bar_beats,
-        "section": "unknown",
-        "heat_bin": 0,
-        "intensity": "mid",
     }
 
 
@@ -117,8 +110,8 @@ def _scan_file(path: Path, resolution: int, ppq: int) -> LoopEntry | None:
             entry = _scan_wav(path, resolution, ppq)
         except RuntimeError:
             return None
-    if entry is not None and entry.get("section") == "unknown":
-        entry["section"] = path.parent.name or "unknown"
+    if entry is not None:
+        entry["file"] = path.name
     return entry
 
 
@@ -127,15 +120,35 @@ def scan_loops(
     exts: Sequence[str] | None = None,
     resolution: int = 16,
     ppq: int = 480,
+    progress: bool = False,
 ) -> list[LoopEntry]:
-    """Return token sequences for all loops in ``loop_dir``."""
+    """Return token sequences for all loops in ``loop_dir``.
+
+    Args:
+        loop_dir: Directory containing loops.
+        exts: Extensions to load.
+        resolution: Quantisation steps per bar.
+        ppq: Pulses per quarter note for micro offsets.
+        progress: Show a progress bar when more than 100 files are scanned.
+    """
 
     extset = {
         e.lower().lstrip(".").replace("midi", "mid")
         for e in (exts or ["mid", "wav"])
     }
     data: list[LoopEntry] = []
-    for path in sorted(loop_dir.iterdir()):
+    files = [p for p in sorted(loop_dir.iterdir()) if p.suffix.lower().lstrip(".") in extset or (p.suffix.lower().lstrip(".") == "midi" and "mid" in extset)]
+    iterator: Sequence[Path] = files
+    bar = None
+    if progress and len(files) > 100:
+        try:
+            from tqdm import tqdm  # type: ignore
+
+            bar = tqdm(files, unit="file")
+            iterator = bar  # type: ignore[assignment]
+        except Exception:
+            pass
+    for path in iterator:
         suf = path.suffix.lower().lstrip(".")
         if suf == "midi":
             suf = "mid"
@@ -144,6 +157,8 @@ def scan_loops(
         entry = _scan_file(path, resolution, ppq)
         if entry:
             data.append(entry)
+    if bar is not None:
+        bar.close()
     return data
 
 
@@ -197,8 +212,10 @@ def scan(
 ) -> None:
     """Scan loops and save a token cache.
 
-    If ``auto_aux`` is true the intensity and heat bin are inferred from each
-    loop and written to the cache.
+    If ``auto_aux`` is true missing ``section``, ``heat_bin`` and ``intensity``
+    are inferred for each loop. The mean velocity determines the intensity bucket:
+    ``<=60`` -> ``low``, ``61-100`` -> ``mid``, ``>100`` -> ``high``.
+    The heat bin is the step with the highest hit count modulo ``16``.
     """
 
     extset = {e.strip().lower().replace("midi", "mid") for e in ext.split(",") if e.strip()}
@@ -238,13 +255,11 @@ def scan(
         entry = _scan_file(f, resolution, ppq)
         if entry:
             if auto_aux:
+                entry.setdefault("section", f.parent.name or "unknown")
                 vel_mean = mean(t[2] for t in entry["tokens"]) if entry["tokens"] else 0
-                if vel_mean <= 60:
-                    entry["intensity"] = "low"
-                elif vel_mean <= 100:
-                    entry["intensity"] = "mid"
-                else:
-                    entry["intensity"] = "high"
+                entry["intensity"] = (
+                    "low" if vel_mean <= 60 else "mid" if vel_mean <= 100 else "high"
+                )
                 entry["heat_bin"] = len(entry["tokens"]) % 16
             data.append(entry)
         elif f.suffix.lower() == ".wav" and not HAVE_LIBROSA:
@@ -280,6 +295,17 @@ def info(cache: Path) -> None:
     click.echo(
         f"tempo BPM min/mean/max: {min(tempos):.1f}/{mean(tempos):.1f}/{max(tempos):.1f}"
     )
+
+__all__ = [
+    "LoopEntry",
+    "scan_loops",
+    "save_cache",
+    "load_cache",
+    "cli",
+    "scan",
+    "info",
+    "main",
+]
 
 
 def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover - CLI entry

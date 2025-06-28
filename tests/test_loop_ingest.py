@@ -11,9 +11,9 @@ from click.testing import CliRunner
 from utilities.loop_ingest import cli, load_cache, save_cache, scan_loops
 
 try:
-    import librosa  # noqa: F401
+    librosa = pytest.importorskip("librosa")
     HAVE_LIBROSA = True
-except Exception:
+except pytest.SkipTest:
     HAVE_LIBROSA = False
 
 

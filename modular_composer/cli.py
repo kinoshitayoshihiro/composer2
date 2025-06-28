@@ -7,6 +7,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import click
 import pretty_midi
 
 import utilities.loop_ingest as loop_ingest
@@ -17,6 +18,29 @@ from utilities.peak_synchroniser import PeakSynchroniser
 from utilities.tempo_utils import beat_to_seconds
 from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple
 
+
+@click.group()
+def cli() -> None:
+    """Command group for modular-composer."""
+
+
+@cli.group()
+def groove() -> None:
+    """Groove sampler commands."""
+
+
+groove.add_command(groove_sampler_ngram.train_cmd, name="train")
+groove.add_command(groove_sampler_ngram.sample_cmd, name="sample")
+groove.add_command(groove_sampler_ngram.info_cmd, name="info")
+
+
+@cli.group()
+def loops() -> None:
+    """Loop ingestion utilities."""
+
+
+loops.add_command(loop_ingest.scan)
+loops.add_command(loop_ingest.info)
 try:
     __version__ = _md.version("modular_composer")
 except _md.PackageNotFoundError:
@@ -179,29 +203,22 @@ def main(argv: list[str] | None = None) -> None:
     import sys
 
     argv = sys.argv[1:] if argv is None else argv
-    if not argv or argv[0] in {"-h", "--help"}:
-        print(
-            "usage: modcompose <command> [<args>]\n\n"
-            "commands: demo, sample, peaks, render, gm-test, groove, loops"
-        )
-        sys.exit(0)
-    cmd, *rest = argv
+    if not argv:
+        cli.main(args=[], standalone_mode=False)
+        return
+    cmd = argv[0]
     if cmd == "demo":
-        _cmd_demo(rest)
+        _cmd_demo(argv[1:])
     elif cmd == "sample":
-        _cmd_sample(rest)
+        _cmd_sample(argv[1:])
     elif cmd == "peaks":
-        _cmd_peaks(rest)
+        _cmd_peaks(argv[1:])
     elif cmd == "render":
-        _cmd_render(rest)
+        _cmd_render(argv[1:])
     elif cmd == "gm-test":
-        _cmd_gm_test(rest)
-    elif cmd == "groove":
-        groove_sampler_ngram.main(rest)
-    elif cmd == "loops":
-        loop_ingest.main(rest)
+        _cmd_gm_test(argv[1:])
     else:
-        sys.exit(f"unknown command {cmd!r}")
+        cli.main(args=argv, standalone_mode=False)
 
 
 if __name__ == "__main__":

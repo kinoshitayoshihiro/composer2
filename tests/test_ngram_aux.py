@@ -1,4 +1,7 @@
-from collections import Counter
+import pytest
+
+pytest.importorskip("scipy.stats")
+from scipy.stats import ks_2samp
 from pathlib import Path
 
 import numpy as np
@@ -37,8 +40,8 @@ def test_aux_conditioning(tmp_path: Path) -> None:
 
     model = groove_sampler_ngram.train(tmp_path, aux_map=aux_map, order=1)
 
-    def _sample(section: str) -> Counter[str]:
-        counts: Counter[str] = Counter()
+    def _sample(section: str) -> list[str]:
+        names: list[str] = []
         for seed in range(20):
             events = groove_sampler_ngram.sample(
                 model,
@@ -46,27 +49,17 @@ def test_aux_conditioning(tmp_path: Path) -> None:
                 seed=seed,
                 cond={"section": section},
             )
-            counts.update(ev["instrument"] for ev in events)
-        return counts
+            names.extend(ev["instrument"] for ev in events)
+        return names
 
-    c_chorus = _sample("chorus")
-    c_verse = _sample("verse")
+    names_chorus = _sample("chorus")
+    names_verse = _sample("verse")
 
-    instruments = sorted(set(c_chorus) | set(c_verse))
-    obs = np.array(
-        [
-            [c_chorus.get(i, 0) for i in instruments],
-            [c_verse.get(i, 0) for i in instruments],
-        ]
-    )
+    inst_map = {n: i for i, n in enumerate(sorted(set(names_chorus + names_verse)))}
+    arr_chorus = [inst_map[n] for n in names_chorus]
+    arr_verse = [inst_map[n] for n in names_verse]
 
-    row_tot = obs.sum(axis=1, keepdims=True)
-    col_tot = obs.sum(axis=0, keepdims=True)
-    expected = row_tot * col_tot / obs.sum()
-    chi2 = float(((obs - expected) ** 2 / expected).sum())
-    dof = (obs.shape[0] - 1) * (obs.shape[1] - 1)
-    critical = {1: 3.841, 2: 5.991, 3: 7.815}.get(dof, 0.0)
-    p = 0.0 if chi2 > critical else 1.0
+    _stat, p = ks_2samp(arr_chorus, arr_verse)
 
-    assert p < 0.05
+    assert p < 0.01
 

@@ -644,7 +644,23 @@ def _sample_next(
     cond: dict[str, Any] | None = None,
     temperature: float = 1.0,
     top_k: int | None = None,
+    cache: dict[CacheKey, list[tuple[State, float]]] | None = None,
 ) -> State:
+    """Return the next state given ``history``.
+
+    Args:
+        history: Current n-gram context.
+        model: Loaded model.
+        rng: Random number generator.
+        cond: Optional auxiliary conditioning dictionary.
+        temperature: Sampling temperature.
+        top_k: If set, restrict choices to the ``k`` highest-probability states.
+        cache: Optional distribution cache reused within a bar.
+
+    Returns:
+        Selected ``(step, label)`` state.
+    """
+
     n = model["order"]
 
     def _aux_hash(with_intensity: bool = True) -> int:
@@ -702,9 +718,14 @@ def _sample_next(
     key = (ctx + (aux_full,), top_k or 0)
     if temperature <= 0:
         return max(dist, key=dist.get)
-    cached = _dist_cache.get(key)
+    cached = None
+    if cache is not None:
+        cached = cache.get(key)
+    if cached is None:
+        cached = _dist_cache.get(key)
+        if cached is not None:
+            _dist_cache.move_to_end(key)
     if cached is not None:
-        _dist_cache.move_to_end(key)
         linear_list = cached
     else:
         linear_list = sorted(dist.items(), key=lambda x: x[1], reverse=True)
@@ -714,6 +735,8 @@ def _sample_next(
         _dist_cache[key] = linear_list
         if len(_dist_cache) > MAX_CACHE:
             _dist_cache.popitem(last=False)
+    if cache is not None:
+        cache[key] = linear_list
     
     if temperature != 1.0:
         linear_list = [(k, v ** (1.0 / temperature)) for k, v in linear_list]
@@ -740,17 +763,17 @@ def sample(
     Args:
         model: Trained n-gram model.
         bars: Number of bars to generate.
-        temperature: Sampling temperature.
-        top_k: If set, restrict choices to the top ``k`` states.
-        seed: Optional random seed.
-        cond: Optional auxiliary conditioning dict.
-        progress: Display a progress bar when ``bars`` ≥ 128.
+        temperature: Sampling temperature (``0`` for deterministic).
+        top_k: Restrict choices to the ``k`` most likely states.
+        seed: Optional RNG seed for reproducible output.
+        cond: Optional auxiliary conditioning dictionary.
+        progress: Display a progress bar when ``bars`` is large.
         humanize_vel: Apply velocity deltas from the training data.
         humanize_micro: Apply micro timing offsets from the training data.
         history: Mutable list updated with the final history context.
 
     Returns:
-        List of event dictionaries sorted by onset time.
+        Sorted list of generated ``Event`` objects.
     """
 
     rng = Random(seed)
@@ -807,24 +830,24 @@ def generate_bar(
     """Generate one bar of events.
 
     Args:
-        prev_history: Previous state history or ``None``.
-        model: Trained n-gram model.
-        temperature: Sampling temperature. ``0`` selects the most probable
-            state.
-        top_k: If given, restrict choices to the ``k`` highest-probability
-            states.
+        prev_history: Previous n-gram history or ``None`` to start fresh.
+        model: Trained n-gram model to sample from.
+        temperature: Sampling temperature. ``0`` selects the most probable state.
+        top_k: Restrict choices to the ``k`` most likely states.
         cond: Optional auxiliary conditioning dictionary.
-        humanize_vel: Apply velocity jitter sampled from ``vel_deltas``.
+        humanize_vel: Apply velocity jitter from ``vel_deltas``.
         humanize_micro: Apply micro timing offsets from ``micro_offsets``.
         rng: Optional random number generator.
 
     Returns:
-        Tuple of the generated events list and the updated history.
+        Tuple ``(events, history)`` where ``events`` is a list of ``Event``
+        objects and ``history`` holds the updated n-gram context.
     """
 
     rand = rng or Random()
     history = list(prev_history) if prev_history is not None else []
     events: list[Event] = []
+    bar_cache: dict[CacheKey, list[tuple[State, float]]] = {}
     vel_bounds = {
         k: min(float(np.percentile(np.abs(list(c.elements())), 95)), 45)
         if list(c.elements())
@@ -847,13 +870,12 @@ def generate_bar(
             temperature=temperature,
             top_k=top_k,
             cond=cond,
+            cache=bar_cache,
         )
         step, lbl = state
         if step < 0 or step >= RESOLUTION:
-            warnings.warn(
-                f"step {step} out of range; clamping", RuntimeWarning
-            )
-            step = max(0, min(RESOLUTION - 1, step))
+            warnings.warn(f"step {step} out of range; skipping", RuntimeWarning)
+            continue
         if step < next_bin:
             step = next_bin
         offset_beats = step / (RESOLUTION / 4)
@@ -877,14 +899,13 @@ def generate_bar(
                 delta = max(-limit, min(limit, delta))
                 vel += delta
         vel = max(1, min(127, vel))
-        events.append(
-            {
-                "instrument": lbl,
-                "offset": offset_beats + micro / PPQ,
-                "duration": 0.25,
-                "velocity": vel,
-            }
-        )
+        ev: Event = {
+            "instrument": lbl,
+            "offset": offset_beats + micro / PPQ,
+            "duration": 0.25,
+            "velocity": vel,
+        }
+        events.append(ev)
         history.append((step, lbl))
         if len(history) > model["order"] - 1:
             history.pop(0)
@@ -894,7 +915,7 @@ def generate_bar(
     return events, history
 
 
-def events_to_midi(events: Sequence[dict[str, float | str]]) -> pretty_midi.PrettyMIDI:
+def events_to_midi(events: Sequence[Event]) -> pretty_midi.PrettyMIDI:
     pm = pretty_midi.PrettyMIDI(initial_tempo=120)
     inst = pretty_midi.Instrument(program=0, is_drum=True)
     pitch_map = {k: v[1] for k, v in GM_DRUM_MAP.items()}
@@ -950,7 +971,19 @@ def train_cmd(
     aux_path: Path | None,
     progress: bool,
 ) -> None:
-    """Train a model from loops."""
+    """Train a groove model from loops.
+
+    Args:
+        loop_dir: Folder containing MIDI or WAV loops.
+        ext: Comma separated list of file extensions to scan.
+        order: N-gram order or ``"auto"`` for perplexity-based selection.
+        smoothing: Probability smoothing method.
+        alpha: Add-alpha constant when using additive smoothing.
+        discount: Discount value for Kneser–Ney.
+        out_path: Output path for the pickled model.
+        aux_path: Optional JSON/YAML mapping of loop names to aux info.
+        progress: Display a progress bar during training.
+    """
 
     aux_map = None
     if aux_path and aux_path.exists():
@@ -1000,11 +1033,22 @@ def sample_cmd(
     progress: bool,
     humanize: str,
 ) -> None:
-    """Generate MIDI from a model.
+    """Generate MIDI from a trained model.
 
-    If ``--list-aux`` is provided or length is ``0`` the available auxiliary
-    combinations are printed instead of generating events. The ``--humanize``
-    option enables velocity and/or micro-timing variation.
+    Args:
+        model_path: Path to the model ``.pkl`` file.
+        length: Number of bars to generate.
+        temperature: Sampling temperature.
+        seed: Random seed for deterministic output.
+        cond: JSON mapping of auxiliary conditions.
+        list_aux: List available aux tuples instead of generating.
+        progress: Display a progress bar when ``length`` is large.
+        humanize: Comma separated options ``"vel"`` and/or ``"micro"``.
+
+    Notes:
+        When ``--list-aux`` or ``length`` equals ``0`` the function prints
+        available auxiliary combinations. Otherwise a MIDI file is written to
+        ``stdout``.
     """
 
     model = load(model_path)
@@ -1044,47 +1088,50 @@ def sample_cmd(
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON summary")
 @click.option("--stats", is_flag=True, help="Include perplexity and token count")
 def info_cmd(model_path: Path, as_json: bool, stats: bool) -> None:
-    """Print basic information about a model."""
+    """Show model statistics.
+
+    Args:
+        model_path: Path to the pickled model.
+        as_json: Emit machine-readable JSON instead of plain text.
+        stats: Include token and perplexity statistics as well as a
+            per-instrument token histogram.
+    """
 
     model = load(model_path)
     order = model["order"]
-    ctxs = len(model["prob"].get(order - 1, {}))
-    aux_cache = model.get("aux_cache", {})
-    sections = {t[0] for t in aux_cache.values()}
-    heat_bins = {t[1] for t in aux_cache.values()}
-    intensities = {t[2] for t in aux_cache.values()}
+    aux_tuples = sorted(set(model.get("aux_cache", {}).values()))
     tokens = model.get("num_tokens", 0)
     ppx = model.get("train_perplexity", float("inf"))
-    tsec = model.get("train_seconds", 0.0)
+    size_mb = len(pickle.dumps(model)) / (1024 * 1024)
+    token_hist: dict[str, int] = {}
+    if stats:
+        counter = Counter()
+        for (step, inst), cnt in model.get("freq", {}).get(0, {}).get((), Counter()).items():
+            counter[inst] += cnt
+        token_hist = dict(sorted(counter.items()))
+    data = {
+        "order": order,
+        "aux_tuples": aux_tuples,
+        "size_mb": round(size_mb, 2),
+    }
+    if stats:
+        data.update({"num_tokens": tokens, "perplexity": ppx, "tokens_per_instrument": token_hist})
     if as_json:
-        data = {
-            "order": order,
-            "contexts": ctxs,
-            "sections": sorted(sections),
-            "heat_bins": sorted(map(int, heat_bins)),
-            "intensities": sorted(intensities),
-            **(
-                {"tokens": tokens, "perplexity": ppx, "seconds": tsec}
-                if stats
-                else {}
-            ),
-        }
         click.echo(json.dumps(data))
     else:
         click.echo(f"order: {order}")
-        click.echo(f"contexts: {ctxs}")
-        click.echo(f"sections: {', '.join(sorted(sections)) if sections else 'n/a'}")
         click.echo(
-            f"heat_bins: {', '.join(sorted(map(str, heat_bins))) if heat_bins else 'n/a'}"
+            "aux_tuples: "
+            + (", ".join("|".join(t) for t in aux_tuples) if aux_tuples else "n/a")
         )
-        click.echo(
-            f"intensities: {', '.join(sorted(intensities)) if intensities else 'n/a'}"
-        )
+        click.echo(f"size_mb: {data['size_mb']:.2f}")
         if stats:
-            click.echo(f"tokens: {tokens}")
+            click.echo(f"num_tokens: {tokens}")
             click.echo(f"perplexity: {ppx:.2f}")
-            if tokens and tsec > 0:
-                click.echo(f"tokens/s: {tokens / tsec:.1f}")
+            if token_hist:
+                click.echo("tokens_per_instrument:")
+                for inst, cnt in token_hist.items():
+                    click.echo(f"  {inst}: {cnt}")
 
 
 def profile_train_sample() -> tuple[float, float]:

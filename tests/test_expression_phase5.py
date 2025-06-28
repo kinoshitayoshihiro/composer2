@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 from music21 import stream, note
 from generator.drum_generator import DrumGenerator, GM_DRUM_MAP
+from utilities.groove_sampler_ngram import Event
+from typing import cast
 from utilities import humanizer
 
 
@@ -27,10 +29,10 @@ def test_open_hat_pedal_choke(tmp_path: Path):
     cfg = _cfg(tmp_path, {"open_hat_choke_prob": 1.0})
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
     part = stream.Part(id="drums")
-    events = [{"instrument": "ohh", "offset": 0.0, "velocity": 100}]
+    events = [cast(Event, {"instrument": "ohh", "offset": 0.0, "velocity": 100})]
     drum._apply_pattern(
         part,
-        events,
+        cast(list[Event], events),
         0.0,
         1.0,
         100,
@@ -56,13 +58,13 @@ def test_cymbal_articulations(tmp_path: Path):
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
     part = stream.Part(id="drums")
     events = [
-        {"instrument": "ride", "offset": 0.0, "velocity": 90, "articulation": "bell"},
-        {"instrument": "crash", "offset": 1.0, "velocity": 80, "articulation": "splash", "duration": 1.0},
-        {"instrument": "crash", "offset": 2.0, "velocity": 70, "articulation": "choke"},
+        cast(Event, {"instrument": "ride", "offset": 0.0, "velocity": 90, "articulation": "bell"}),
+        cast(Event, {"instrument": "crash", "offset": 1.0, "velocity": 80, "articulation": "splash", "duration": 1.0}),
+        cast(Event, {"instrument": "crash", "offset": 2.0, "velocity": 70, "articulation": "choke"}),
     ]
     drum._apply_pattern(
         part,
-        events,
+        cast(list[Event], events),
         0.0,
         4.0,
         100,

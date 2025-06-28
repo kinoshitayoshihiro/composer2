@@ -3,6 +3,8 @@ from pathlib import Path
 
 from music21 import stream, pitch, note, duration as m21duration, volume as m21volume
 from generator.drum_generator import DrumGenerator, RESOLUTION
+from utilities.groove_sampler_ngram import Event
+from typing import cast
 
 class CurveDrum(DrumGenerator):
     def _resolve_style_key(self, musical_intent, overrides, section_data=None):
@@ -12,24 +14,30 @@ class CurveDrum(DrumGenerator):
         part = stream.Part(id=self.part_name)
         part.insert(0, self.default_instrument)
         events = [
-            {
-                "offset": 0.0,
-                "duration": 0.25,
-                "instrument": "snare",
-                "velocity_factor": 1.0,
-                "velocity_layer": 0,
-            },
-            {
-                "offset": 0.5,
-                "duration": 0.25,
-                "instrument": "snare",
-                "velocity_factor": 1.0,
-                "velocity_layer": 1,
-            },
+            cast(
+                Event,
+                {
+                    "offset": 0.0,
+                    "duration": 0.25,
+                    "instrument": "snare",
+                    "velocity_factor": 1.0,
+                    "velocity_layer": 0,
+                },
+            ),
+            cast(
+                Event,
+                {
+                    "offset": 0.5,
+                    "duration": 0.25,
+                    "instrument": "snare",
+                    "velocity_factor": 1.0,
+                    "velocity_layer": 1,
+                },
+            ),
         ]
         self._apply_pattern(
             part,
-            events,
+            cast(list[Event], events),
             section_data.get("absolute_offset", 0.0),
             4.0,
             80,

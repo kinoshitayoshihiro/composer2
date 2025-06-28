@@ -24,3 +24,8 @@ Inspect a saved model with:
 ```bash
 modcompose groove info model.pkl --json --stats
 ```
+
+The `--auto-aux` option of `modcompose loops scan` estimates metadata
+automatically. Intensity is `low` for mean velocity ≤60, `mid` for 61–100
+and `high` otherwise. The heat bin corresponds to the step with the
+highest number of hits modulo 16.

@@ -19,8 +19,12 @@ def test_hash_collision(monkeypatch: mock.MagicMock, tmp_path: Path) -> None:
     _make_loop(tmp_path / "a.mid")
     _make_loop(tmp_path / "b.mid")
 
-    def const_hash(_data: bytes, _sha1: bool) -> int:
-        return 1
+    def const_hash(_data: bytes, _sha1: bool, _bits: int = 64) -> int:
+        if not _sha1:
+            return 1
+        if _bits == 64:
+            return 1
+        return 2
 
     monkeypatch.setattr(groove_sampler_ngram, "_hash_bytes", const_hash)
     with warnings.catch_warnings(record=True) as rec:

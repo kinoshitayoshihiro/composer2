@@ -3,23 +3,27 @@
 from __future__ import annotations
 
 import hashlib
+import time
 import io
 import json
 import pickle
 import re
 import sys
+import tempfile
+import shutil
 import warnings
 from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from random import Random
-from typing import Any, Literal, TypedDict
+from typing import Any, TypedDict
 
 import click
 import numpy as np
 import pretty_midi
 
 from utilities.loop_ingest import scan_loops
+from utilities.types import AuxTuple, Intensity
 
 from .drum_map_registry import GM_DRUM_MAP
 
@@ -34,7 +38,7 @@ _PITCH_TO_LABEL: dict[int, str] = {val[1]: k for k, val in GM_DRUM_MAP.items()}
 
 State = tuple[int, str]
 HashKey = tuple[State | int, ...]
-Intensity = Literal["low", "mid", "high"]
+
 
 
 class Model(TypedDict):
@@ -49,36 +53,43 @@ class Model(TypedDict):
     mean_velocity: dict[str, float]
     vel_deltas: dict[str, Counter[int]]
     micro_offsets: dict[str, Counter[int]]
-    aux_cache: dict[int, tuple[str, str, str]]
+    aux_cache: dict[int, AuxTuple]
     use_sha1: bool
     num_tokens: int
     train_perplexity: float
+    train_seconds: float
 
 
 
 
 DEFAULT_AUX = {"section": "verse", "heat_bin": 0, "intensity": "mid"}
 
-_AUX_HASH_CACHE: dict[int, tuple[str, str, str]] = {}
-_AUX_TUPLE_MAP: dict[tuple[str, str, str], int] = {}
+_AUX_HASH_CACHE: dict[int, AuxTuple] = {}
+_AUX_TUPLE_MAP: dict[AuxTuple, int] = {}
 _AUX_USE_SHA1 = False
+_AUX_HASH_BITS = 64
 
 ctx_cache: OrderedDict[HashKey, list[tuple[State, float]]] = OrderedDict()
 MAX_CACHE = 4096
 
 
-def _hash_bytes(data: bytes, sha1: bool) -> int:
+def _hash_bytes(data: bytes, sha1: bool, bits: int = 64) -> int:
+    """Return an integer hash of ``data`` using BLAKE2 or SHA-1."""
+
+    size = bits // 8
     if sha1:
-        return int.from_bytes(hashlib.sha1(data).digest()[:8], "big")
-    return int.from_bytes(hashlib.blake2s(data, digest_size=8).digest(), "big")
+        return int.from_bytes(hashlib.sha1(data).digest()[:size], "big")
+    return int.from_bytes(hashlib.blake2s(data, digest_size=size).digest(), "big")
 
 
-def _hash_aux(aux: tuple[str, str, str]) -> int:
-    global _AUX_USE_SHA1
+def _hash_aux(aux: AuxTuple) -> int:
+    """Return deterministic hash for an auxiliary tuple."""
+
+    global _AUX_USE_SHA1, _AUX_HASH_BITS
     if aux in _AUX_TUPLE_MAP:
         return _AUX_TUPLE_MAP[aux]
     data = "|".join(aux).encode("utf-8")
-    val = _hash_bytes(data, _AUX_USE_SHA1)
+    val = _hash_bytes(data, _AUX_USE_SHA1, _AUX_HASH_BITS)
     prev = _AUX_HASH_CACHE.get(val)
     if prev is not None and prev != aux:
         if not _AUX_USE_SHA1:
@@ -87,27 +98,39 @@ def _hash_aux(aux: tuple[str, str, str]) -> int:
                 RuntimeWarning,
             )
             _AUX_USE_SHA1 = True
-            val = _hash_bytes(data, True)
+            val = _hash_bytes(data, True, _AUX_HASH_BITS)
             prev = _AUX_HASH_CACHE.get(val)
         if prev is not None and prev != aux:
-            warnings.warn(
-                f"SHA-1 collision for {aux} vs {prev}; using fallback", RuntimeWarning
-            )
-            val = hash(aux) & ((1 << 64) - 1)
+            if _AUX_HASH_BITS == 64:
+                warnings.warn(
+                    "SHA-1 collision; extending hash to 96 bits",
+                    RuntimeWarning,
+                )
+                _AUX_HASH_BITS = 96
+                val = _hash_bytes(data, True, _AUX_HASH_BITS)
+                prev = _AUX_HASH_CACHE.get(val)
+            if prev is not None and prev != aux:
+                raise RuntimeError(f"Hash collision for {aux} vs {prev}")
     _AUX_HASH_CACHE[val] = aux
     _AUX_TUPLE_MAP[aux] = val
     return val
 
 
-def _load_events(loop_dir: Path, exts: Sequence[str]) -> tuple[
+def _load_events(loop_dir: Path, exts: Sequence[str], progress: bool = False) -> tuple[
     list[tuple[list[State], str]],
     dict[str, float],
     dict[str, Counter[int]],
     dict[str, Counter[int]],
 ]:
-    """Return token sequences and velocity statistics."""
+    """Return token sequences and velocity statistics.
 
-    entries = scan_loops(loop_dir, exts=exts)
+    Args:
+        loop_dir: Folder containing loops.
+        exts: Extensions to load.
+        progress: Show a progress bar when more than 100 files are scanned.
+    """
+
+    entries = scan_loops(loop_dir, exts=exts, progress=progress)
     events: list[tuple[list[State], str]] = []
     vel_map: dict[str, list[int]] = defaultdict(list)
     micro_map: dict[str, list[int]] = defaultdict(list)
@@ -130,29 +153,64 @@ def _load_events(loop_dir: Path, exts: Sequence[str]) -> tuple[
     return events, mean_velocity, vel_deltas, micro_offsets
 
 
+def load_aux_map(aux_path: Path) -> dict[str, dict[str, Any]]:
+    """Load auxiliary metadata from JSON or YAML."""
+
+    if aux_path.suffix.lower() in {".yaml", ".yml"}:
+        try:
+            from ruamel.yaml import YAML  # type: ignore
+            from ruamel.yaml.constructor import DuplicateKeyError  # type: ignore
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise click.BadParameter(
+                "Install ruamel.yaml to use YAML aux files"
+            ) from exc
+        yaml = YAML(typ="safe")
+        yaml.allow_duplicate_keys = False
+        with aux_path.open("r", encoding="utf-8") as fh:
+            try:
+                data = yaml.load(fh) or {}
+            except DuplicateKeyError as exc:  # pragma: no cover - dupes
+                raise ValueError(str(exc)) from exc
+            except Exception as exc:  # pragma: no cover - invalid yaml
+                raise ValueError(str(exc)) from exc
+    else:
+        with aux_path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    assert isinstance(data, dict)
+    return data
+
+
 def validate_aux_map(
     aux_map: dict[str, dict[str, Any]],
     *,
     states: set[str] | None = None,
     filenames: Sequence[str] | None = None,
 ) -> None:
-    """Validate auxiliary metadata map.
+    """Validate an auxiliary metadata mapping.
 
     Args:
-        aux_map: Mapping from filename to auxiliary attribute dict.
-        states: Required keys; defaults to ``{"section", "heat_bin", "intensity"}``.
-        filenames: Optional sequence of filenames that must appear in ``aux_map``.
+        aux_map: Mapping from filename to auxiliary metadata.
+        states: Required attribute keys. Defaults to ``{"section", "heat_bin", "intensity"}``.
+        filenames: Filenames that must exist in ``aux_map``.
 
     Raises:
-        ValueError: If required keys are missing, values are invalid or any
-        filename in ``filenames`` is absent.
+        ValueError: If a required key is missing, a value is malformed or
+        any filename from ``filenames`` is absent. Extra keys trigger a warning.
     """
 
     req = states or {"section", "heat_bin", "intensity"}
     for name, meta in aux_map.items():
         missing = [k for k in req if k not in meta]
         if missing:
-            raise ValueError(f"aux entry '{name}' missing keys: {', '.join(missing)}")
+            raise ValueError(
+                f"aux entry '{name}' missing keys: {', '.join(missing)}"
+            )
+        extra = [k for k in meta if k not in req]
+        if extra:
+            warnings.warn(
+                f"aux entry '{name}' has extra keys: {', '.join(extra)}",
+                RuntimeWarning,
+            )
         section = str(meta.get("section", ""))
         if not (1 <= len(section) <= 32) or not re.fullmatch(r"[a-z0-9_-]+", section):
             raise ValueError(f"invalid section for {name}: {section!r}")
@@ -434,6 +492,7 @@ def train(
     smoothing: str = "add_alpha",
     alpha: float = ALPHA,
     discount: float = 0.75,
+    progress: bool = False,
 ) -> Model:
     """Train an n-gram model from loops.
 
@@ -450,14 +509,16 @@ def train(
         Trained model with probability tables and statistics.
     """
 
+    start = time.time()
     _AUX_HASH_CACHE.clear()
     _AUX_TUPLE_MAP.clear()
-    global _AUX_USE_SHA1
+    global _AUX_USE_SHA1, _AUX_HASH_BITS
     _AUX_USE_SHA1 = False
+    _AUX_HASH_BITS = 64
     ctx_cache.clear()
 
     exts = [e.strip().lower() for e in ext.split(",") if e]
-    seqs, mean_vel, vel_deltas, micro_offsets = _load_events(loop_dir, exts)
+    seqs, mean_vel, vel_deltas, micro_offsets = _load_events(loop_dir, exts, progress=progress)
     if not seqs:
         raise ValueError("no events found")
 
@@ -501,6 +562,7 @@ def train(
 
     num_tokens = sum(len(s) for s, _ in seqs)
     train_perplexity = _perplexity(prob, [s for s, _ in seqs], n)
+    duration = time.time() - start
 
     model: Model = Model(
         version=VERSION,
@@ -515,6 +577,7 @@ def train(
         use_sha1=_AUX_USE_SHA1,
         num_tokens=num_tokens,
         train_perplexity=train_perplexity,
+        train_seconds=duration,
     )
     return model
 
@@ -536,14 +599,24 @@ def load(path: Path) -> Model:
     data.pop("aux_dims", None)
     data.setdefault("num_tokens", 0)
     data.setdefault("train_perplexity", float("inf"))
+    data.setdefault("train_seconds", 0.0)
     model = Model(**data)
     _AUX_HASH_CACHE.clear()
     _AUX_HASH_CACHE.update(model.get("aux_cache", {}))
     _AUX_TUPLE_MAP.clear()
     for val, tup in _AUX_HASH_CACHE.items():
         _AUX_TUPLE_MAP[tup] = val
-    global _AUX_USE_SHA1
+    global _AUX_USE_SHA1, _AUX_HASH_BITS
     _AUX_USE_SHA1 = model.get("use_sha1", False)
+    big_hash = any(v > (1 << 64) - 1 for v in _AUX_HASH_CACHE)
+    if big_hash and not model.get("use_sha1", False):
+        warnings.warn(
+            "Model uses 96-bit aux hashes; re-save to persist upgrade.",
+            RuntimeWarning,
+        )
+        model["use_sha1"] = True
+        _AUX_USE_SHA1 = True
+    _AUX_HASH_BITS = 96 if big_hash else 64
     return model
 
 
@@ -643,6 +716,10 @@ def sample(
     top_k: int | None = None,
     seed: int | None = None,
     cond: dict[str, Any] | None = None,
+    progress: bool = False,
+    humanize_vel: bool = False,
+    humanize_micro: bool = False,
+    history: list[State] | None = None,
 ) -> list[dict[str, float | str]]:
     """Generate a sequence of drum events.
 
@@ -653,6 +730,10 @@ def sample(
         top_k: If set, restrict choices to the top ``k`` states.
         seed: Optional random seed.
         cond: Optional auxiliary conditioning dict.
+        progress: Display a progress bar when ``bars`` ≥ 128.
+        humanize_vel: Apply velocity deltas from the training data.
+        humanize_micro: Apply micro timing offsets from the training data.
+        history: Mutable list updated with the final history context.
 
     Returns:
         List of event dictionaries sorted by onset time.
@@ -660,8 +741,31 @@ def sample(
 
     rng = Random(seed)
     events: list[dict[str, float | str]] = []
-    history: list[State] = []
-    for bar in range(bars):
+    history_arg = history
+    history = list(history) if history is not None else []
+    vel_bounds = {
+        k: min(float(np.percentile(np.abs(list(c.elements())), 95)), 45)
+        if list(c.elements())
+        else 0.0
+        for k, c in model.get("vel_deltas", {}).items()
+    }
+    micro_bounds = {
+        k: min(float(np.percentile(np.abs(list(c.elements())), 95)), 45)
+        if list(c.elements())
+        else 0.0
+        for k, c in model.get("micro_offsets", {}).items()
+    }
+    iterable = range(bars)
+    bar_obj = None
+    if progress and bars >= 128:
+        try:
+            from tqdm import tqdm  # type: ignore
+
+            bar_obj = tqdm(range(bars), unit="bar")
+            iterable = bar_obj  # type: ignore[assignment]
+        except Exception:
+            pass
+    for bar in iterable:
         next_bin = 0
         while next_bin < RESOLUTION:
             state = _sample_next(
@@ -676,24 +780,40 @@ def sample(
             if step < next_bin:
                 step = next_bin
             offset_beats = (bar * RESOLUTION + step) / (RESOLUTION / 4)
-            micro_choices = list(model["micro_offsets"].get(lbl, {0: 1}).elements())
-            micro = rng.choice(micro_choices) if micro_choices else 0
+            micro = 0
+            if humanize_micro:
+                offset_choices = list(model["micro_offsets"].get(lbl, {}).elements())
+                if offset_choices:
+                    micro = int(rng.choice(offset_choices))
+                    limit = micro_bounds.get(lbl, 45)
+                    micro = max(-limit, min(limit, micro))
             vel_mean = int(model["mean_velocity"].get(lbl, 100))
-            delta_choices = list(model["vel_deltas"].get(lbl, {0: 1}).elements())
-            vel = int(vel_mean + (rng.choice(delta_choices) if delta_choices else 0))
+            vel = vel_mean
+            if humanize_vel:
+                delta_choices = list(model["vel_deltas"].get(lbl, {}).elements())
+                if delta_choices:
+                    delta = int(rng.choice(delta_choices))
+                    limit = vel_bounds.get(lbl, 45)
+                    delta = max(-limit, min(limit, delta))
+                    vel += delta
+            vel = max(1, min(127, vel))
             events.append(
                 {
                     "instrument": lbl,
                     "offset": offset_beats + micro / PPQ,
                     "duration": 0.25,
-                    "velocity": max(1, min(127, vel)),
+                    "velocity": vel,
                 }
             )
             history.append((step, lbl))
             if len(history) > model["order"] - 1:
                 history.pop(0)
             next_bin = step + 1
+    if bar_obj is not None:
+        bar_obj.close()
     events.sort(key=lambda x: x["offset"])
+    if history_arg is not None:
+        history_arg[:] = history
     return events
 
 
@@ -741,6 +861,7 @@ def cli() -> None:
     default=None,
     help="JSON map of loop names to aux data, e.g. '{\"foo.mid\": {\"section\": \"chorus\"}}'",
 )
+@click.option("--progress/--no-progress", default=True, help="Show progress bar")
 def train_cmd(
     loop_dir: Path,
     ext: str,
@@ -750,13 +871,13 @@ def train_cmd(
     discount: float,
     out_path: Path,
     aux_path: Path | None,
+    progress: bool,
 ) -> None:
     """Train a model from loops."""
 
     aux_map = None
     if aux_path and aux_path.exists():
-        with aux_path.open("r", encoding="utf-8") as fh:
-            aux_map = json.load(fh)
+        aux_map = load_aux_map(aux_path)
         try:
             validate_aux_map(aux_map)
         except ValueError as exc:
@@ -769,6 +890,7 @@ def train_cmd(
         smoothing=smoothing,
         alpha=alpha,
         discount=discount,
+        progress=progress,
     )
     save(model, out_path)
     click.echo(f"saved model to {out_path}")
@@ -785,6 +907,12 @@ def train_cmd(
     default=None,
     help="JSON aux condition, e.g. '{\"section\":\"chorus\"}'",
 )
+@click.option("--progress/--no-progress", default=True, help="Show progress bar")
+@click.option(
+    "--humanize",
+    default="",
+    help="Comma separated options: 'vel', 'micro'",
+)
 def sample_cmd(
     model_path: Path,
     length: int,
@@ -792,11 +920,14 @@ def sample_cmd(
     seed: int,
     cond: str | None,
     list_aux: bool,
+    progress: bool,
+    humanize: str,
 ) -> None:
     """Generate MIDI from a model.
 
     If ``--list-aux`` is provided or length is ``0`` the available auxiliary
-    combinations are printed instead of generating events.
+    combinations are printed instead of generating events. The ``--humanize``
+    option enables velocity and/or micro-timing variation.
     """
 
     model = load(model_path)
@@ -809,7 +940,22 @@ def sample_cmd(
                 click.echo("|".join(tup))
         return
     cond_map = json.loads(cond) if cond else None
-    ev = sample(model, bars=length, temperature=temperature, seed=seed, cond=cond_map)
+    if cond_map:
+        for k in list(cond_map.keys()):
+            if k not in {"section", "heat_bin", "intensity"}:
+                warnings.warn(f"unknown condition key: {k}", RuntimeWarning)
+                cond_map.pop(k)
+    h_opts = {opt.strip() for opt in humanize.split(',') if opt.strip()}
+    ev = sample(
+        model,
+        bars=length,
+        temperature=temperature,
+        seed=seed,
+        cond=cond_map,
+        progress=progress,
+        humanize_vel="vel" in h_opts,
+        humanize_micro="micro" in h_opts,
+    )
     pm = events_to_midi(ev)
     buf = io.BytesIO()
     pm.write(buf)
@@ -832,6 +978,7 @@ def info_cmd(model_path: Path, as_json: bool, stats: bool) -> None:
     intensities = {t[2] for t in aux_cache.values()}
     tokens = model.get("num_tokens", 0)
     ppx = model.get("train_perplexity", float("inf"))
+    tsec = model.get("train_seconds", 0.0)
     if as_json:
         data = {
             "order": order,
@@ -839,7 +986,11 @@ def info_cmd(model_path: Path, as_json: bool, stats: bool) -> None:
             "sections": sorted(sections),
             "heat_bins": sorted(map(int, heat_bins)),
             "intensities": sorted(intensities),
-            **({"tokens": tokens, "perplexity": ppx} if stats else {}),
+            **(
+                {"tokens": tokens, "perplexity": ppx, "seconds": tsec}
+                if stats
+                else {}
+            ),
         }
         click.echo(json.dumps(data))
     else:
@@ -855,6 +1006,58 @@ def info_cmd(model_path: Path, as_json: bool, stats: bool) -> None:
         if stats:
             click.echo(f"tokens: {tokens}")
             click.echo(f"perplexity: {ppx:.2f}")
+            if tokens and tsec > 0:
+                click.echo(f"tokens/s: {tokens / tsec:.1f}")
+
+
+def profile_train_sample() -> tuple[float, float]:
+    """Measure training and sampling speed.
+
+    Returns:
+        Tuple ``(train_seconds, sample_seconds_per_bar)`` computed from
+        a synthetic 500-loop workload and 256-bar generation.
+    """
+
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        for i in range(500):
+            pm = pretty_midi.PrettyMIDI(initial_tempo=120)
+            inst = pretty_midi.Instrument(program=0, is_drum=True)
+            for j in range(4):
+                inst.notes.append(
+                    pretty_midi.Note(
+                        velocity=100,
+                        pitch=36,
+                        start=j * 0.25,
+                        end=j * 0.25 + 0.1,
+                    )
+                )
+            pm.instruments.append(inst)
+            pm.write(str(tmp / f"{i}.mid"))
+        t0 = time.time()
+        model = train(tmp, order=1)
+        train_time = time.time() - t0
+        t0 = time.time()
+        sample(model, bars=256)
+        samp_time = time.time() - t0
+    finally:
+        shutil.rmtree(tmp)
+    return train_time, samp_time / 256
+
+__all__ = [
+    "DEFAULT_AUX",
+    "load_aux_map",
+    "validate_aux_map",
+    "auto_select_order",
+    "train",
+    "save",
+    "load",
+    "sample",
+    "events_to_midi",
+    "profile_train_sample",
+    "cli",
+    "main",
+]
 
 
 def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
@@ -863,3 +1066,4 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
 
 if __name__ == "__main__":  # pragma: no cover
     main()
+

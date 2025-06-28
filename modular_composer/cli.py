@@ -6,6 +6,7 @@ import importlib.metadata as _md
 import json
 import tempfile
 from pathlib import Path
+from typing import cast
 
 import click
 import pretty_midi
@@ -13,6 +14,7 @@ import pretty_midi
 import utilities.loop_ingest as loop_ingest
 from utilities import groove_sampler_ngram, synth
 from utilities.golden import compare_midi, update_golden
+from utilities.groove_sampler_ngram import Event
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
 from utilities.peak_synchroniser import PeakSynchroniser
 from utilities.tempo_utils import beat_to_seconds
@@ -86,13 +88,16 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("--tempo-curve", type=Path)
     ns = ap.parse_args(args)
     model = load(ns.model)
-    ev = generate_events(
-        model,
-        bars=ns.length,
-        temperature=ns.temperature,
-        seed=ns.seed,
-        cond_velocity=ns.cond_velocity,
-        cond_kick=ns.cond_kick,
+    ev = cast(
+        list[Event],
+        generate_events(
+            model,
+            bars=ns.length,
+            temperature=ns.temperature,
+            seed=ns.seed,
+            cond_velocity=ns.cond_velocity,
+            cond_kick=ns.cond_kick,
+        ),
     )
     if ns.peaks:
         import json
@@ -131,7 +136,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml  # type: ignore[import-untyped]
+        import yaml
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}
@@ -144,7 +149,10 @@ def _cmd_render(args: list[str]) -> None:
     peaks = spec.get("peaks", [])
     if peaks:
         events = PeakSynchroniser.sync_events(
-            peaks, events, tempo_bpm=spec.get("tempo_bpm", 120), lag_ms=10.0
+            peaks,
+            cast(list[Event], events),
+            tempo_bpm=spec.get("tempo_bpm", 120),
+            lag_ms=10.0,
         )
 
     pm = pretty_midi.PrettyMIDI(initial_tempo=tempo_curve[0]["bpm"] if tempo_curve else 120)

@@ -28,7 +28,7 @@ def test_groove_info_json(tmp_path: Path) -> None:
         "order",
         "num_tokens",
         "perplexity",
-        "aux_tuples",
-        "size_mb",
+        "size_bytes",
+        "sha1",
         "tokens_per_instrument",
     }

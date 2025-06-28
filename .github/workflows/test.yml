@@ -10,6 +10,5 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - run: ruff check .
-      - run: mypy modular_composer utilities tests --strict
+      - run: bash scripts/ci_groove.sh
       - run: pytest -q

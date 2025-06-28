@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from music21 import stream
 from generator.drum_generator import DrumGenerator, GM_DRUM_MAP
+from utilities.groove_sampler_ngram import Event
+from typing import cast
 
 
 def _minimal_cfg(tmp_path: Path):
@@ -21,7 +23,7 @@ def _collect_notes(drum: DrumGenerator, event: dict) -> list:
     part = stream.Part(id="drums")
     drum._apply_pattern(
         part,
-        [event],
+        cast(list[Event], [cast(Event, event)]),
         0.0,
         2.0,
         event.get("velocity", 90),

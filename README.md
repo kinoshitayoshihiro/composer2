@@ -6,6 +6,7 @@ This project blends poetic Japanese narration with emotive musical arrangements.
 
 It automatically generates chords, melodies and instrumental parts for each chapter of a text, allowing verse, chorus and bridge sections to be arranged with human‑like expressiveness.
 
+
 ## Setup
 Before running any tests or generation scripts you must install the project dependencies.  Execute
 
@@ -266,6 +267,13 @@ modcompose groove train data/loops --ext midi --out model.pkl
 modcompose groove sample model.pkl -l 4 --temperature 0.8 --seed 42 > groove.mid
 ```
 
+Deterministic sampling (always pick the most likely state) can be used for
+quick previews:
+
+```bash
+modcompose groove sample model.pkl -l 4 --temperature 0 --top-k 1 > beat.mid
+```
+
 ### Training your first groove model
 
 Prepare a loop cache for faster experiments:
@@ -309,7 +317,8 @@ Inspect a saved model with:
 modcompose groove info model.pkl --json --stats
 ```
 This displays the model order, auxiliary tuples, token counts per instrument,
-and the serialized size.
+and the serialized size. ``groove info --stats`` also prints a short ``sha1``
+hash derived from the pickle payload so you can quickly compare models.
 
 Order can be selected automatically using minimal perplexity on a validation
 split. The CLI exposes smoothing parameters as well. Use ``--alpha`` to control

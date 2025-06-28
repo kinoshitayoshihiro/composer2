@@ -5,7 +5,7 @@ import math
 import random
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from music21 import (
@@ -28,6 +28,7 @@ from music21 import (
 
 from tools.peak_synchroniser import PeakSynchroniser
 from utilities import fill_dsl, groove_sampler, groove_sampler_ngram, humanizer
+from utilities.groove_sampler_ngram import Event as GrooveEvent
 from utilities.accent_mapper import AccentMapper
 from utilities.core_music_utils import (
     MIN_NOTE_DURATION_QL,
@@ -1227,7 +1228,7 @@ class DrumGenerator(BasePartGenerator):
                 velocity_scale = 1.2 if max_bin_val > self.heatmap_threshold else 1.0
                 self._apply_pattern(
                     part,
-                    pattern_to_use_for_iteration,
+                    cast(list[GrooveEvent], pattern_to_use_for_iteration),
                     bar_start_abs_offset,
                     current_pattern_iteration_ql,
                     base_vel,
@@ -1260,7 +1261,7 @@ class DrumGenerator(BasePartGenerator):
     def _apply_pattern(
         self,
         part: stream.Part,
-        events: list[dict[str, Any]],
+        events: list[GrooveEvent],
         bar_start_abs_offset: float,
         current_bar_actual_len_ql: float,
         pattern_base_velocity: int,
@@ -1727,7 +1728,7 @@ class DrumGenerator(BasePartGenerator):
             self.accent_mapper.debug_rw_values.clear()
 
     def _make_hit(
-        self, name: str, vel: int, ql: float, ev_def: dict[str, Any] | None = None
+        self, name: str, vel: int, ql: float, ev_def: GrooveEvent | None = None
     ) -> note.Note | None:
         """Return a ``music21.note.Note`` for a single drum hit.
 
@@ -1739,7 +1740,7 @@ class DrumGenerator(BasePartGenerator):
             MIDI velocity (1-127).
         ql : float
             Duration in quarterLength units.
-        ev_def : dict | None
+        ev_def : GrooveEvent | None
             Original event definition to inspect flags such as ``pedal``.
 
         Returns
@@ -2164,7 +2165,7 @@ class DrumGenerator(BasePartGenerator):
         events = [{"instrument": "kick", "offset": float(b)} for b in range(int(length_beats))]
         self._apply_pattern(
             part,
-            events,
+            cast(list[GrooveEvent], events),
             0.0,
             length_beats,
             90,

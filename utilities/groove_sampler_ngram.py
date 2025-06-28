@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 import pickle
 import re
 import shutil
@@ -78,8 +79,9 @@ _AUX_TUPLE_MAP: dict[AuxTuple, int] = {}
 _AUX_USE_SHA1 = False
 _AUX_HASH_BITS = 64
 
-CacheKey = tuple[HashKey, int]
+CacheKey = tuple[HashKey, int | None]
 _dist_cache: OrderedDict[CacheKey, list[tuple[State, float]]] = OrderedDict()
+_lin_prob: dict[CacheKey, list[tuple[State, float]]] = {}
 MAX_CACHE = 2048
 
 
@@ -514,6 +516,7 @@ def train(
         smoothing: Smoothing strategy.
         alpha: Additive constant for ``"add_alpha"`` smoothing.
         discount: Discount used by Kneser–Ney.
+        progress: Display a progress bar during training.
 
     Returns:
         Trained model with probability tables and statistics.
@@ -526,6 +529,7 @@ def train(
     _AUX_USE_SHA1 = False
     _AUX_HASH_BITS = 64
     _dist_cache.clear()
+    _lin_prob.clear()
 
     exts = [e.strip().lower() for e in ext.split(",") if e]
     seqs, mean_vel, vel_deltas, micro_offsets = _load_events(loop_dir, exts, progress=progress)
@@ -600,6 +604,8 @@ def save(model: Model, path: Path) -> None:
 def load(path: Path) -> Model:
     with path.open("rb") as fh:
         data = pickle.load(fh)
+    _dist_cache.clear()
+    _lin_prob.clear()
     if (
         data.get("resolution") != RESOLUTION
         or data.get("version") != VERSION
@@ -715,7 +721,7 @@ def _sample_next(
             f"No probability mass for context {ctx!r} aux {aux_full!r}"
         )
     linear_list: list[tuple[State, float]]
-    key = (ctx + (aux_full,), top_k or 0)
+    key = (ctx + (aux_full,), top_k)
     if temperature <= 0:
         return max(dist, key=dist.get)
     cached = None
@@ -728,10 +734,13 @@ def _sample_next(
     if cached is not None:
         linear_list = cached
     else:
-        linear_list = sorted(dist.items(), key=lambda x: x[1], reverse=True)
-        if top_k:
-            linear_list = linear_list[:top_k]
-        linear_list = [(k, float(np.exp(v))) for k, v in linear_list]
+        linear_list = _lin_prob.get(key)
+        if linear_list is None:
+            linear_list = sorted(dist.items(), key=lambda x: x[1], reverse=True)
+            if top_k:
+                linear_list = linear_list[:top_k]
+            linear_list = [(k, float(math.exp(v))) for k, v in linear_list]
+            _lin_prob[key] = linear_list
         _dist_cache[key] = linear_list
         if len(_dist_cache) > MAX_CACHE:
             _dist_cache.popitem(last=False)
@@ -874,7 +883,7 @@ def generate_bar(
         )
         step, lbl = state
         if step < 0 or step >= RESOLUTION:
-            warnings.warn(f"step {step} out of range; skipping", RuntimeWarning)
+            warnings.warn(f"invalid step {step}, dropped", RuntimeWarning)
             continue
         if step < next_bin:
             step = next_bin
@@ -1102,7 +1111,9 @@ def info_cmd(model_path: Path, as_json: bool, stats: bool) -> None:
     aux_tuples = sorted(set(model.get("aux_cache", {}).values()))
     tokens = model.get("num_tokens", 0)
     ppx = model.get("train_perplexity", float("inf"))
-    size_mb = len(pickle.dumps(model)) / (1024 * 1024)
+    pkl_bytes = model_path.read_bytes()
+    size_b = len(pkl_bytes)
+    sha1 = hashlib.sha1(pkl_bytes).hexdigest()[:8]
     token_hist: dict[str, int] = {}
     if stats:
         counter = Counter()
@@ -1111,27 +1122,34 @@ def info_cmd(model_path: Path, as_json: bool, stats: bool) -> None:
         token_hist = dict(sorted(counter.items()))
     data = {
         "order": order,
-        "aux_tuples": aux_tuples,
-        "size_mb": round(size_mb, 2),
+        "resolution": model.get("resolution", RESOLUTION),
+        "num_tokens": tokens,
+        "perplexity": ppx,
+        "unique_aux": len(aux_tuples),
+        "aux_sample": aux_tuples[:5],
+        "size_bytes": size_b,
+        "sha1": sha1,
     }
     if stats:
-        data.update({"num_tokens": tokens, "perplexity": ppx, "tokens_per_instrument": token_hist})
+        data["tokens_per_instrument"] = token_hist
     if as_json:
         click.echo(json.dumps(data))
     else:
         click.echo(f"order: {order}")
+        click.echo(f"resolution: {data['resolution']}")
+        click.echo(f"num_tokens: {tokens}")
+        click.echo(f"perplexity: {ppx:.2f}")
         click.echo(
-            "aux_tuples: "
-            + (", ".join("|".join(t) for t in aux_tuples) if aux_tuples else "n/a")
+            "aux_sample: "
+            + (", ".join("|".join(t) for t in aux_tuples[:5]) if aux_tuples else "n/a")
         )
-        click.echo(f"size_mb: {data['size_mb']:.2f}")
-        if stats:
-            click.echo(f"num_tokens: {tokens}")
-            click.echo(f"perplexity: {ppx:.2f}")
-            if token_hist:
-                click.echo("tokens_per_instrument:")
-                for inst, cnt in token_hist.items():
-                    click.echo(f"  {inst}: {cnt}")
+        click.echo(f"unique_aux: {len(aux_tuples)}")
+        click.echo(f"size_bytes: {size_b}")
+        click.echo(f"sha1: {sha1}")
+        if stats and token_hist:
+            click.echo("tokens_per_instrument:")
+            for inst, cnt in token_hist.items():
+                click.echo(f"  {inst}: {cnt}")
 
 
 def profile_train_sample() -> tuple[float, float]:

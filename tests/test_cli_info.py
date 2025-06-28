@@ -24,5 +24,5 @@ def test_root_cli_info(tmp_path: Path) -> None:
     res = runner.invoke(cli.cli, ["groove", "info", str(tmp_path / "m.pkl"), "--json"])
     assert res.exit_code == 0
     data = json.loads(res.output)
-    assert set(data.keys()) >= {"order", "aux_tuples", "size_mb"}
+    assert set(data.keys()) >= {"order", "size_bytes", "sha1"}
 

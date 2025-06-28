@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .groove_sampler_ngram import Event
+
 
 @dataclass
 class PeakSyncConfig:
@@ -22,7 +24,7 @@ class PeakSynchroniser:
 
     @staticmethod
     def _add_event(
-        events: list[dict[str, float | str]],
+        events: list[Event],
         instrument: str,
         offset: float,
         *,
@@ -44,14 +46,14 @@ class PeakSynchroniser:
     @staticmethod
     def sync_events(
         peaks: list[float],
-        base_events: list[dict[str, float | str]],
+        base_events: list[Event],
         *,
         tempo_bpm: float,
         lag_ms: float = 10.0,
         min_distance_beats: float = 0.25,
         sustain_threshold_ms: float = 120.0,
         clip_at_zero: bool = False,
-    ) -> list[dict[str, float | str]]:
+    ) -> list[Event]:
         """Return ``base_events`` augmented with hits aligned to ``peaks``.
 
         ``clip_at_zero`` ensures negative offsets caused by a negative lag are

@@ -308,6 +308,8 @@ Inspect a saved model with:
 ```bash
 modcompose groove info model.pkl --json --stats
 ```
+This displays the model order, auxiliary tuples, token counts per instrument,
+and the serialized size.
 
 Order can be selected automatically using minimal perplexity on a validation
 split. The CLI exposes smoothing parameters as well. Use ``--alpha`` to control
@@ -343,6 +345,13 @@ updated n‑gram history:
 from utilities import groove_sampler_ngram as gs
 model = gs.load(Path("model.pkl"))
 events, history = gs.generate_bar(None, model, temperature=0.0, top_k=1, rng=random.Random(0))
+```
+
+Deterministic generation can be achieved by setting ``temperature`` to ``0``
+and ``top_k`` to ``1``:
+
+```python
+events, _ = gs.generate_bar(history, model, temperature=0, top_k=1, rng=random.Random(1))
 ```
 
 You may constrain choices to the top ``k`` states and condition on auxiliary

@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-import time
 import io
 import json
 import pickle
 import re
+import shutil
 import sys
 import tempfile
-import shutil
+import time
 import warnings
 from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Sequence
@@ -23,7 +23,7 @@ import numpy as np
 import pretty_midi
 
 from utilities.loop_ingest import scan_loops
-from utilities.types import AuxTuple, Intensity
+from utilities.types import AuxTuple
 
 from .drum_map_registry import GM_DRUM_MAP
 
@@ -38,6 +38,15 @@ _PITCH_TO_LABEL: dict[int, str] = {val[1]: k for k, val in GM_DRUM_MAP.items()}
 
 State = tuple[int, str]
 HashKey = tuple[State | int, ...]
+
+
+class Event(TypedDict):
+    """Drum event definition."""
+
+    instrument: str
+    offset: float
+    duration: float
+    velocity: int
 
 
 
@@ -69,8 +78,9 @@ _AUX_TUPLE_MAP: dict[AuxTuple, int] = {}
 _AUX_USE_SHA1 = False
 _AUX_HASH_BITS = 64
 
-ctx_cache: OrderedDict[HashKey, list[tuple[State, float]]] = OrderedDict()
-MAX_CACHE = 4096
+CacheKey = tuple[HashKey, int]
+_dist_cache: OrderedDict[CacheKey, list[tuple[State, float]]] = OrderedDict()
+MAX_CACHE = 2048
 
 
 def _hash_bytes(data: bytes, sha1: bool, bits: int = 64) -> int:
@@ -515,7 +525,7 @@ def train(
     global _AUX_USE_SHA1, _AUX_HASH_BITS
     _AUX_USE_SHA1 = False
     _AUX_HASH_BITS = 64
-    ctx_cache.clear()
+    _dist_cache.clear()
 
     exts = [e.strip().lower() for e in ext.split(",") if e]
     seqs, mean_vel, vel_deltas, micro_offsets = _load_events(loop_dir, exts, progress=progress)
@@ -685,22 +695,26 @@ def _sample_next(
     if not dist:
         dist = model["prob"][0].get((), {})
     if not dist:
-        raise RuntimeError("No probability mass")
+        raise RuntimeError(
+            f"No probability mass for context {ctx!r} aux {aux_full!r}"
+        )
     linear_list: list[tuple[State, float]]
-    key = ctx + (aux_full,)
-    if top_k:
-        linear_list = ctx_cache.get(key)
-        if linear_list is not None:
-            ctx_cache.move_to_end(key)
-        if linear_list is None:
-            linear_list = sorted(dist.items(), key=lambda x: x[1], reverse=True)
-            ctx_cache[key] = linear_list
-            if len(ctx_cache) > MAX_CACHE:
-                ctx_cache.popitem(last=False)
-        linear_list = linear_list[:top_k]
-        linear_list = [(k, float(np.exp(v))) for k, v in linear_list]
+    key = (ctx + (aux_full,), top_k or 0)
+    if temperature <= 0:
+        return max(dist, key=dist.get)
+    cached = _dist_cache.get(key)
+    if cached is not None:
+        _dist_cache.move_to_end(key)
+        linear_list = cached
     else:
-        linear_list = [(k, float(np.exp(v))) for k, v in dist.items()]
+        linear_list = sorted(dist.items(), key=lambda x: x[1], reverse=True)
+        if top_k:
+            linear_list = linear_list[:top_k]
+        linear_list = [(k, float(np.exp(v))) for k, v in linear_list]
+        _dist_cache[key] = linear_list
+        if len(_dist_cache) > MAX_CACHE:
+            _dist_cache.popitem(last=False)
+    
     if temperature != 1.0:
         linear_list = [(k, v ** (1.0 / temperature)) for k, v in linear_list]
         total = sum(v for _, v in linear_list)
@@ -720,7 +734,7 @@ def sample(
     humanize_vel: bool = False,
     humanize_micro: bool = False,
     history: list[State] | None = None,
-) -> list[dict[str, float | str]]:
+) -> list[Event]:
     """Generate a sequence of drum events.
 
     Args:
@@ -740,9 +754,77 @@ def sample(
     """
 
     rng = Random(seed)
-    events: list[dict[str, float | str]] = []
+    events: list[Event] = []
     history_arg = history
     history = list(history) if history is not None else []
+
+    iterable = range(bars)
+    bar_obj = None
+    if progress and bars >= 128:
+        try:
+            from tqdm import tqdm  # type: ignore
+
+            bar_obj = tqdm(range(bars), unit="bar")
+            iterable = bar_obj  # type: ignore[assignment]
+        except Exception:
+            pass
+
+    for bar in iterable:
+        bar_events, history = generate_bar(
+            history,
+            model,
+            temperature=temperature,
+            top_k=top_k,
+            cond=cond,
+            humanize_vel=humanize_vel,
+            humanize_micro=humanize_micro,
+            rng=rng,
+        )
+        for ev in bar_events:
+            ev["offset"] += bar * 4
+        events.extend(bar_events)
+
+    if bar_obj is not None:
+        bar_obj.close()
+
+    events.sort(key=lambda x: x["offset"])
+    if history_arg is not None:
+        history_arg[:] = history
+    return events
+
+
+def generate_bar(
+    prev_history: list[State] | None,
+    model: Model,
+    *,
+    temperature: float = 1.0,
+    top_k: int | None = None,
+    cond: dict[str, Any] | None = None,
+    humanize_vel: bool = False,
+    humanize_micro: bool = False,
+    rng: Random | None = None,
+) -> tuple[list[Event], list[State]]:
+    """Generate one bar of events.
+
+    Args:
+        prev_history: Previous state history or ``None``.
+        model: Trained n-gram model.
+        temperature: Sampling temperature. ``0`` selects the most probable
+            state.
+        top_k: If given, restrict choices to the ``k`` highest-probability
+            states.
+        cond: Optional auxiliary conditioning dictionary.
+        humanize_vel: Apply velocity jitter sampled from ``vel_deltas``.
+        humanize_micro: Apply micro timing offsets from ``micro_offsets``.
+        rng: Optional random number generator.
+
+    Returns:
+        Tuple of the generated events list and the updated history.
+    """
+
+    rand = rng or Random()
+    history = list(prev_history) if prev_history is not None else []
+    events: list[Event] = []
     vel_bounds = {
         k: min(float(np.percentile(np.abs(list(c.elements())), 95)), 45)
         if list(c.elements())
@@ -755,66 +837,61 @@ def sample(
         else 0.0
         for k, c in model.get("micro_offsets", {}).items()
     }
-    iterable = range(bars)
-    bar_obj = None
-    if progress and bars >= 128:
-        try:
-            from tqdm import tqdm  # type: ignore
 
-            bar_obj = tqdm(range(bars), unit="bar")
-            iterable = bar_obj  # type: ignore[assignment]
-        except Exception:
-            pass
-    for bar in iterable:
-        next_bin = 0
-        while next_bin < RESOLUTION:
-            state = _sample_next(
-                history,
-                model,
-                rng,
-                temperature=temperature,
-                top_k=top_k,
-                cond=cond,
+    next_bin = 0
+    while next_bin < RESOLUTION:
+        state = _sample_next(
+            history,
+            model,
+            rand,
+            temperature=temperature,
+            top_k=top_k,
+            cond=cond,
+        )
+        step, lbl = state
+        if step < 0 or step >= RESOLUTION:
+            warnings.warn(
+                f"step {step} out of range; clamping", RuntimeWarning
             )
-            step, lbl = state
-            if step < next_bin:
-                step = next_bin
-            offset_beats = (bar * RESOLUTION + step) / (RESOLUTION / 4)
-            micro = 0
-            if humanize_micro:
-                offset_choices = list(model["micro_offsets"].get(lbl, {}).elements())
-                if offset_choices:
-                    micro = int(rng.choice(offset_choices))
-                    limit = micro_bounds.get(lbl, 45)
-                    micro = max(-limit, min(limit, micro))
-            vel_mean = int(model["mean_velocity"].get(lbl, 100))
-            vel = vel_mean
-            if humanize_vel:
-                delta_choices = list(model["vel_deltas"].get(lbl, {}).elements())
-                if delta_choices:
-                    delta = int(rng.choice(delta_choices))
-                    limit = vel_bounds.get(lbl, 45)
-                    delta = max(-limit, min(limit, delta))
-                    vel += delta
-            vel = max(1, min(127, vel))
-            events.append(
-                {
-                    "instrument": lbl,
-                    "offset": offset_beats + micro / PPQ,
-                    "duration": 0.25,
-                    "velocity": vel,
-                }
-            )
-            history.append((step, lbl))
-            if len(history) > model["order"] - 1:
-                history.pop(0)
-            next_bin = step + 1
-    if bar_obj is not None:
-        bar_obj.close()
+            step = max(0, min(RESOLUTION - 1, step))
+        if step < next_bin:
+            step = next_bin
+        offset_beats = step / (RESOLUTION / 4)
+        micro = 0
+        if humanize_micro:
+            choices = list(model["micro_offsets"].get(lbl, Counter()).elements())
+            if choices:
+                micro = int(rand.choice(choices))
+                limit = micro_bounds.get(lbl, 45)
+                micro = max(-limit, min(limit, micro))
+            else:
+                micro = int(rand.gauss(0.0, 12.0))
+                micro = max(-45, min(45, micro))
+        vel_mean = int(model["mean_velocity"].get(lbl, 100))
+        vel = vel_mean
+        if humanize_vel:
+            choices = list(model["vel_deltas"].get(lbl, {}).elements())
+            if choices:
+                delta = int(rand.choice(choices))
+                limit = vel_bounds.get(lbl, 45)
+                delta = max(-limit, min(limit, delta))
+                vel += delta
+        vel = max(1, min(127, vel))
+        events.append(
+            {
+                "instrument": lbl,
+                "offset": offset_beats + micro / PPQ,
+                "duration": 0.25,
+                "velocity": vel,
+            }
+        )
+        history.append((step, lbl))
+        if len(history) > model["order"] - 1:
+            history.pop(0)
+        next_bin = step + 1
+
     events.sort(key=lambda x: x["offset"])
-    if history_arg is not None:
-        history_arg[:] = history
-    return events
+    return events, history
 
 
 def events_to_midi(events: Sequence[dict[str, float | str]]) -> pretty_midi.PrettyMIDI:

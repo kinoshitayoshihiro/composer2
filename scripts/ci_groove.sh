@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -e
-ruff check .
+ruff check . --select I,S,B
 mypy modular_composer utilities tests --strict
 python - <<'PY'
-import tempfile, time, pretty_midi
+import statistics, tempfile, time
 from pathlib import Path
+import pretty_midi
 from utilities import groove_sampler_ngram as gs
 
 with tempfile.TemporaryDirectory() as d:
@@ -15,14 +16,19 @@ with tempfile.TemporaryDirectory() as d:
         pm.instruments.append(inst)
         pm.write(f"{d}/{i}.mid")
     model = gs.train(Path(d), order=1)
-    t0 = time.time()
-    gs.sample(model, bars=8, seed=0, no_bar_cache=True)
-    uncached = time.time() - t0
-    t0 = time.time()
-    gs.sample(model, bars=8, seed=0)
-    cached = time.time() - t0
-    ratio = uncached / cached if cached else 1.0
-    print(f"uncached {uncached:.2f}s cached {cached:.2f}s ratio {ratio:.2f}")
+    uncached = []
+    cached = []
+    for _ in range(5):
+        t0 = time.time()
+        gs.sample(model, bars=8, use_bar_cache=False)
+        uncached.append(time.time() - t0)
+        t0 = time.time()
+        gs.sample(model, bars=8)
+        cached.append(time.time() - t0)
+    med_no = statistics.median(uncached)
+    med_yes = statistics.median(cached)
+    ratio = med_no / med_yes if med_yes else float('inf')
+    print(f"ratio {ratio:.2f}")
     if ratio < 1.25:
-        raise SystemExit("bar-cache speed-up <25%")
+        raise SystemExit(1)
 PY

@@ -1051,7 +1051,13 @@ def train_cmd(
 
 @cli.command()
 @click.argument("model_path", type=Path)
-@click.option("--list-aux", is_flag=True, help="List known aux tuples and exit")
+@click.option(
+    "--list-aux",
+    "--aux-list",
+    "list_aux",
+    is_flag=True,
+    help="List known aux tuples and exit",
+)
 @click.option("-l", "--length", default=4, type=int)
 @click.option("--temperature", default=1.0, type=float)
 @click.option("--seed", default=42, type=int)

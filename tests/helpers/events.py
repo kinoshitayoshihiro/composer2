@@ -1,9 +1,9 @@
-from typing import Any, cast
+from typing import Any
 
 from utilities.groove_sampler_ngram import Event
 
 
-def make_event(
+def ev(
     *,
     instrument: str,
     offset: float,
@@ -12,11 +12,14 @@ def make_event(
     **extra: Any,
 ) -> Event:
     """Create an ``Event`` with defaults and allow extra keys."""
-    data: dict[str, Any] = {
+    data: Event = {
         "instrument": instrument,
         "offset": float(offset),
         "duration": float(duration),
         "velocity": int(velocity),
     }
     data.update(extra)
-    return cast(Event, data)
+    return data
+
+
+make_event = ev

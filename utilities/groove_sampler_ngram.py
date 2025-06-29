@@ -8,14 +8,15 @@ import json
 import math
 import pickle
 import re
+import logging
+import os
 import shutil
 import subprocess
-import webbrowser
 import sys
 import tempfile
 import time
 import warnings
-import os
+import webbrowser
 from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Sequence
 from pathlib import Path
@@ -28,6 +29,7 @@ import pretty_midi
 
 from utilities.loop_ingest import scan_loops
 from utilities.types import AuxTuple
+from utilities import cli_playback
 
 from .drum_map_registry import GM_DRUM_MAP
 
@@ -35,6 +37,8 @@ PPQ = 480
 RESOLUTION = 16
 VERSION = 1
 ALPHA = 0.1
+
+logger = logging.getLogger(__name__)
 
 
 # mapping from MIDI pitch to drum label
@@ -1118,56 +1122,12 @@ def sample_cmd(
     pm.write(buf)
     if play:
         data = buf.getvalue()
-        player_args: list[str] | None = None
-        cleanup: str | None = None
-        if sys.platform == "darwin":
-            player = shutil.which("afplay")
-            if player:
-                with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
-                    tmp.write(data)
-                    tmp.flush()
-                    path = tmp.name
-                player_args = [player, path]
-                cleanup = path
-        elif sys.platform.startswith("win"):
-            player = shutil.which("wmplayer")
-            if player:
-                with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
-                    tmp.write(data)
-                    tmp.flush()
-                    path = tmp.name
-                player_args = [player, path]
-                cleanup = path
-            else:
-                player = shutil.which("start")
-                if player:
-                    with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
-                        tmp.write(data)
-                        tmp.flush()
-                        path = tmp.name
-                    player_args = [player, path]
-                    cleanup = path
+        player = cli_playback.find_player()
+        if player:
+            player(data)
         else:
-            player = shutil.which("timidity") or shutil.which("fluidsynth")
-            if player:
-                player_args = [player, "-"]
-        if player_args:
-            if player_args[-1] == "-":
-                subprocess.run(player_args, input=data)
-            else:
-                subprocess.run(player_args, shell=player_args[0].lower() == "start")
-            if cleanup:
-                try:
-                    os.unlink(cleanup)
-                except OSError:
-                    pass
-        else:
-            with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
-                tmp.write(data)
-                tmp.flush()
-                path = tmp.name
-            webbrowser.open(path)
-            warnings.warn("no MIDI player found; opened browser", RuntimeWarning)
+            logger.warning("no MIDI player found; writing to stdout")
+            sys.stdout.buffer.write(data)
     else:
         sys.stdout.buffer.write(buf.getvalue())
 

@@ -1,4 +1,3 @@
-import random
 from pathlib import Path
 
 import pretty_midi
@@ -26,4 +25,4 @@ def test_sampler_humanize_flag(tmp_path: Path) -> None:
     for e in ev:
         assert 1 <= e["velocity"] <= 127
         micro = round(e["offset"] * gs.PPQ) % (gs.PPQ // 4)
-        assert -45 <= micro <= 45
+        assert -30 <= micro <= 30

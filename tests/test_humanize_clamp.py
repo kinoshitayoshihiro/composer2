@@ -1,6 +1,7 @@
 from pathlib import Path
-import json
+
 import pretty_midi
+
 from utilities import groove_sampler_ngram as gs
 
 
@@ -29,5 +30,5 @@ def test_humanize_ranges(tmp_path: Path) -> None:
     for e in ev:
         assert 1 <= int(e["velocity"]) <= 127
         micro = _micro_from_offset(float(e["offset"]))
-        assert abs(micro) <= 45
+        assert abs(micro) <= 30
 

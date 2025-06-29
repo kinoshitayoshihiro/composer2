@@ -3,8 +3,10 @@ from pathlib import Path
 import pretty_midi
 from click.testing import CliRunner
 
-from utilities import groove_sampler_ngram as gs
 from utilities import cli_playback
+from utilities import groove_sampler_ngram as gs
+import sys
+import pytest
 
 
 def _loop(p: Path) -> None:
@@ -15,11 +17,13 @@ def _loop(p: Path) -> None:
     pm.write(str(p))
 
 
-def test_cli_preview_fallback(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
+def test_cli_preview_fallback(tmp_path: Path, monkeypatch, platform: str) -> None:
     _loop(tmp_path / "a.mid")
     model = gs.train(tmp_path, order=1)
     gs.save(model, tmp_path / "m.pkl")
     monkeypatch.setattr(cli_playback, "find_player", lambda: None)
+    monkeypatch.setattr(sys, "platform", platform, raising=False)
     runner = CliRunner()
     res = runner.invoke(gs.cli, ["sample", str(tmp_path / "m.pkl"), "-l", "1", "--play"])
     assert res.exit_code == 0

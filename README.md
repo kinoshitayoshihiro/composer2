@@ -279,7 +279,7 @@ modcompose groove sample model.pkl -l 1 --play
 ```
 List auxiliary tuples without generating MIDI:
 ```bash
-modcompose groove sample model.pkl -l 0 --list-aux
+modcompose groove sample model.pkl --list-aux
 ```
 
 If no MIDI player is detected a warning is emitted and the raw MIDI is written to ``stdout``.

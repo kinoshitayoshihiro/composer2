@@ -22,6 +22,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from random import Random
 from typing import Any, TypedDict
+from typing_extensions import Required
 
 import click
 import numpy as np
@@ -48,13 +49,13 @@ State = tuple[int, str]
 HashKey = tuple[State | int, ...]
 
 
-class Event(TypedDict):
+class Event(TypedDict, total=False):
     """Drum event definition."""
 
-    instrument: str
-    offset: float
-    duration: float
-    velocity: int
+    instrument: Required[str]
+    offset: Required[float]
+    duration: Required[float]
+    velocity: Required[int]
 
 
 def init_history_from_events(events: Sequence[Event], order: int = 3) -> list[State]:

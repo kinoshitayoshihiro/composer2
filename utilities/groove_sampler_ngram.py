@@ -799,6 +799,7 @@ def sample(
     progress: bool = False,
     humanize_vel: bool = False,
     humanize_micro: bool = False,
+    no_bar_cache: bool = False,
     history: list[State] | None = None,
 ) -> list[Event]:
     """Generate a sequence of drum events.
@@ -813,6 +814,7 @@ def sample(
         progress: Display a progress bar when ``bars`` is large.
         humanize_vel: Apply velocity deltas from the training data.
         humanize_micro: Apply micro timing offsets from the training data.
+        no_bar_cache: Disable per-bar cache for benchmarking.
         history: Mutable list updated with the final history context.
 
     Returns:
@@ -844,6 +846,7 @@ def sample(
             cond=cond,
             humanize_vel=humanize_vel,
             humanize_micro=humanize_micro,
+            no_bar_cache=no_bar_cache,
             rng=rng,
         )
         for ev in bar_events:
@@ -868,6 +871,7 @@ def generate_bar(
     cond: dict[str, Any] | None = None,
     humanize_vel: bool = False,
     humanize_micro: bool = False,
+    no_bar_cache: bool = False,
     rng: Random | None = None,
 ) -> tuple[list[Event], list[State]]:
     """Generate one bar of events.
@@ -880,6 +884,7 @@ def generate_bar(
         cond: Optional auxiliary conditioning dictionary.
         humanize_vel: Apply velocity jitter from ``vel_deltas``.
         humanize_micro: Apply micro timing offsets from ``micro_offsets``.
+        no_bar_cache: Disable per-bar distribution cache for debugging.
         rng: Optional random number generator.
 
     Returns:
@@ -890,7 +895,8 @@ def generate_bar(
     rand = rng or Random()
     history = list(prev_history) if prev_history is not None else []
     events: list[Event] = []
-    bar_cache: dict[CacheKey, list[tuple[State, float]]] = {}
+    bar_cache: dict[CacheKey, list[tuple[State, float]]] | None
+    bar_cache = None if no_bar_cache else {}
     vel_bounds = {
         k: min(float(np.percentile(np.abs(list(c.elements())), 95)), 45)
         if list(c.elements())
@@ -1058,6 +1064,7 @@ def train_cmd(
     is_flag=True,
     help="List known aux tuples and exit",
 )
+@click.option("--no-bar-cache", is_flag=True, help="Disable per-bar cache")
 @click.option("-l", "--length", default=4, type=int)
 @click.option("--temperature", default=1.0, type=float)
 @click.option("--seed", default=42, type=int)
@@ -1080,6 +1087,7 @@ def sample_cmd(
     seed: int,
     cond: str | None,
     list_aux: bool,
+    no_bar_cache: bool,
     progress: bool,
     humanize: str,
     play: bool,
@@ -1093,6 +1101,7 @@ def sample_cmd(
         seed: Random seed for deterministic output.
         cond: JSON mapping of auxiliary conditions.
         list_aux: List available aux tuples instead of generating.
+        no_bar_cache: Disable per-bar cache for debugging or benchmarking.
         progress: Display a progress bar when ``length`` is large.
         humanize: Comma separated options ``"vel"`` and/or ``"micro"``.
 
@@ -1104,15 +1113,31 @@ def sample_cmd(
 
     model = load(model_path)
     combos = sorted(model.get("aux_cache", {}).values())
-    if list_aux or length == 0:
-        click.echo(json.dumps(combos))
-        return
     cond_map = json.loads(cond) if cond else None
     if cond_map:
         for k in list(cond_map.keys()):
             if k not in {"section", "heat_bin", "intensity"}:
                 warnings.warn(f"unknown condition key: {k}", RuntimeWarning)
                 cond_map.pop(k)
+    if list_aux or length == 0:
+        if cond_map:
+            combos = [
+                tup
+                for tup in combos
+                if (
+                    ("section" not in cond_map or cond_map["section"] == tup[0])
+                    and (
+                        "heat_bin" not in cond_map
+                        or str(cond_map["heat_bin"]) == tup[1]
+                    )
+                    and (
+                        "intensity" not in cond_map
+                        or cond_map["intensity"] == tup[2]
+                    )
+                )
+            ]
+        click.echo(json.dumps(combos))
+        return
     h_opts = {opt.strip() for opt in humanize.split(',') if opt.strip()}
     ev = sample(
         model,
@@ -1123,6 +1148,7 @@ def sample_cmd(
         progress=progress,
         humanize_vel="vel" in h_opts,
         humanize_micro="micro" in h_opts,
+        no_bar_cache=no_bar_cache,
     )
     pm = events_to_midi(ev)
     buf = io.BytesIO()

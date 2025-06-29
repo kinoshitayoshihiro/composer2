@@ -280,6 +280,10 @@ modcompose groove sample model.pkl -l 1 --play
 List auxiliary tuples without generating MIDI:
 ```bash
 modcompose groove sample model.pkl --list-aux  # alias: --aux-list
+# with filtering
+modcompose groove sample model.pkl --list-aux --cond '{"section":"chorus"}'
+# disable per-bar caching for profiling
+modcompose groove sample model.pkl -l 8 --no-bar-cache
 ```
 
 If no MIDI player is detected a warning is emitted and the raw MIDI is written to ``stdout``.

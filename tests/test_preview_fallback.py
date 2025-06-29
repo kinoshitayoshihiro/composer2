@@ -1,13 +1,13 @@
+import logging
+import sys
 from pathlib import Path
 
 import pretty_midi
+import pytest
 from click.testing import CliRunner
-import logging
 
 from utilities import cli_playback
 from utilities import groove_sampler_ngram as gs
-import sys
-import pytest
 
 
 def _loop(p: Path) -> None:

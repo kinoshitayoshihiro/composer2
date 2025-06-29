@@ -9,8 +9,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Final, List, Literal, Optional, Union
 
-import yaml  # type: ignore
-import tomli  # type: ignore
+import yaml
+import tomli
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 LOGGER = logging.getLogger(__name__)

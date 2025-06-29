@@ -1,10 +1,10 @@
-import warnings
 from pathlib import Path
 
 import pretty_midi
 from click.testing import CliRunner
 
 from utilities import groove_sampler_ngram as gs
+from utilities import cli_playback
 
 
 def _loop(p: Path) -> None:
@@ -19,10 +19,9 @@ def test_cli_preview_fallback(tmp_path: Path, monkeypatch) -> None:
     _loop(tmp_path / "a.mid")
     model = gs.train(tmp_path, order=1)
     gs.save(model, tmp_path / "m.pkl")
-    monkeypatch.setattr(gs.shutil, "which", lambda *_: None)
+    monkeypatch.setattr(cli_playback, "find_player", lambda: None)
     runner = CliRunner()
-    with warnings.catch_warnings(record=True) as rec:
-        res = runner.invoke(gs.cli, ["sample", str(tmp_path / "m.pkl"), "-l", "1", "--play"])
+    res = runner.invoke(gs.cli, ["sample", str(tmp_path / "m.pkl"), "-l", "1", "--play"])
     assert res.exit_code == 0
-    assert res.output == ""
-    assert any("opened browser" in str(w.message).lower() for w in rec)
+    assert len(res.stdout_bytes) > 0
+

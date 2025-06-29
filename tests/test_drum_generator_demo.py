@@ -1,6 +1,9 @@
 import json
+
 import pytest
+
 from generator.drum_generator import DrumGenerator
+from tests.helpers.events import make_event
 
 
 def _make_basic_cfg(tmp_path):
@@ -15,7 +18,12 @@ def _make_basic_cfg(tmp_path):
     }
 
 
-pattern_lib = {"calm_backbeat": {"pattern": [{"offset": 0.0, "instrument": "kick"}], "length_beats": 4.0}}
+pattern_lib = {
+    "calm_backbeat": {
+        "pattern": [make_event(instrument="kick", offset=0.0)],
+        "length_beats": 4.0,
+    }
+}
 
 
 def test_independent_mode_creates_part(tmp_path):

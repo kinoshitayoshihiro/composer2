@@ -4,6 +4,7 @@ from music21 import stream
 from generator.drum_generator import DrumGenerator, GM_DRUM_MAP
 from utilities.groove_sampler_ngram import Event
 from typing import cast
+from tests.helpers.events import make_event
 
 
 def _minimal_cfg(tmp_path: Path):
@@ -19,11 +20,11 @@ def _minimal_cfg(tmp_path: Path):
     }
 
 
-def _collect_notes(drum: DrumGenerator, event: dict) -> list:
+def _collect_notes(drum: DrumGenerator, event: Event) -> list:
     part = stream.Part(id="drums")
     drum._apply_pattern(
         part,
-        cast(list[Event], [cast(Event, event)]),
+        [event],
         0.0,
         2.0,
         event.get("velocity", 90),
@@ -39,8 +40,8 @@ def test_drag_and_ruff(tmp_path: Path):
     cfg = _minimal_cfg(tmp_path)
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
 
-    drag_evt = {"instrument": "snare", "offset": 0.5, "type": "drag", "velocity": 100}
-    ruff_evt = {"instrument": "snare", "offset": 1.5, "type": "ruff", "velocity": 100}
+    drag_evt = make_event(instrument="snare", offset=0.5, type="drag", velocity=100)
+    ruff_evt = make_event(instrument="snare", offset=1.5, type="ruff", velocity=100)
 
     drag_notes = _collect_notes(drum, drag_evt)
     ruff_notes = _collect_notes(drum, ruff_evt)

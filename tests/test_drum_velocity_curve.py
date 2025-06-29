@@ -1,10 +1,14 @@
 import json
 from pathlib import Path
 
-from music21 import stream, pitch, note, duration as m21duration, volume as m21volume
-from generator.drum_generator import DrumGenerator, RESOLUTION
+from music21 import duration as m21duration
+from music21 import note, pitch, stream
+from music21 import volume as m21volume
+
+from generator.drum_generator import RESOLUTION, DrumGenerator
+from tests.helpers.events import make_event
 from utilities.groove_sampler_ngram import Event
-from typing import cast
+
 
 class CurveDrum(DrumGenerator):
     def _resolve_style_key(self, musical_intent, overrides, section_data=None):
@@ -13,31 +17,27 @@ class CurveDrum(DrumGenerator):
     def _render_part(self, section_data, next_section_data=None):
         part = stream.Part(id=self.part_name)
         part.insert(0, self.default_instrument)
-        events = [
-            cast(
-                Event,
-                {
-                    "offset": 0.0,
-                    "duration": 0.25,
-                    "instrument": "snare",
-                    "velocity_factor": 1.0,
-                    "velocity_layer": 0,
-                },
+        events: list[Event] = [
+            make_event(
+                instrument="snare",
+                offset=0.0,
+                duration=0.25,
+                velocity=80,
+                velocity_factor=1.0,
+                velocity_layer=0,
             ),
-            cast(
-                Event,
-                {
-                    "offset": 0.5,
-                    "duration": 0.25,
-                    "instrument": "snare",
-                    "velocity_factor": 1.0,
-                    "velocity_layer": 1,
-                },
+            make_event(
+                instrument="snare",
+                offset=0.5,
+                duration=0.25,
+                velocity=80,
+                velocity_factor=1.0,
+                velocity_layer=1,
             ),
         ]
         self._apply_pattern(
             part,
-            cast(list[Event], events),
+            events,
             section_data.get("absolute_offset", 0.0),
             4.0,
             80,
@@ -69,12 +69,13 @@ def test_velocity_curve_applied(tmp_path: Path, rhythm_library):
         "vocal_midi_path_for_drums": "",
         "heatmap_json_path_for_drums": str(heatmap_path),
         "paths": {"drum_pattern_files": []},
+        "global_settings": {"random_walk_step": 0},
     }
     pattern_lib = {
         "curve": {
             "pattern": [
-                {"offset": 0.0, "duration": 0.25, "instrument": "snare", "velocity_factor": 1.0},
-                {"offset": 0.5, "duration": 0.25, "instrument": "snare", "velocity_factor": 1.0},
+                make_event(instrument="snare", offset=0.0, duration=0.25, velocity_factor=1.0),
+                make_event(instrument="snare", offset=0.5, duration=0.25, velocity_factor=1.0),
             ],
             "length_beats": 4.0,
             "velocity_base": 80,

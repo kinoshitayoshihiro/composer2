@@ -3,8 +3,9 @@ from pathlib import Path
 
 from generator.drum_generator import DrumGenerator
 from modular_composer import compose
-
+from tests.helpers.events import make_event
 from utilities.rhythm_library_loader import load_rhythm_library
+
 
 class EightKickDrum(DrumGenerator):
     def _resolve_style_key(self, musical_intent, overrides, section_data=None):
@@ -17,7 +18,7 @@ def test_drum_kick_offsets(tmp_path):
     with open(heatmap_path, "w") as f:
         json.dump(heatmap, f)
 
-    pattern = [{"offset": i * 0.5, "instrument": "kick"} for i in range(8)]
+    pattern = [make_event(instrument="kick", offset=i * 0.5) for i in range(8)]
     lib = {"eight_kick": {"pattern": pattern, "length_beats": 4.0}}
     cfg = {
         "vocal_midi_path_for_drums": "",

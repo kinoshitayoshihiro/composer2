@@ -1,4 +1,5 @@
 import random
+import weakref
 from pathlib import Path
 import pretty_midi
 
@@ -13,7 +14,7 @@ def _loop(path: Path) -> None:
     pm.write(str(path))
 
 
-class CountingDict(dict):
+class CountingCache(weakref.WeakValueDictionary):
     def __init__(self) -> None:
         super().__init__()
         self.calls = 0
@@ -28,7 +29,7 @@ def test_bar_cache_reduces_lin_prob(tmp_path: Path, monkeypatch) -> None:
     model = gs.train(tmp_path, order=2)
     orig = gs._sample_next
 
-    cd = CountingDict()
+    cd = CountingCache()
     monkeypatch.setattr(gs, "_lin_prob", cd, raising=False)
 
     def no_cache(history, model_arg, rng, **kwargs):
@@ -39,10 +40,19 @@ def test_bar_cache_reduces_lin_prob(tmp_path: Path, monkeypatch) -> None:
     gs.generate_bar([], model, rng=random.Random(0))
     no_cache_calls = cd.calls
 
-    cd2 = CountingDict()
+    cd2 = CountingCache()
     monkeypatch.setattr(gs, "_lin_prob", cd2, raising=False)
     monkeypatch.setattr(gs, "_sample_next", orig)
     gs.generate_bar([], model, rng=random.Random(0))
     with_cache_calls = cd2.calls
 
     assert with_cache_calls < no_cache_calls
+
+
+def test_sample_consistency_no_cache(tmp_path: Path) -> None:
+    _loop(tmp_path / "b.mid")
+    model = gs.train(tmp_path, order=1)
+    ev_cache = gs.sample(model, bars=2, seed=0, use_bar_cache=True)
+    ev_no = gs.sample(model, bars=2, seed=0, use_bar_cache=False)
+    key = lambda e: (e["offset"], e["instrument"])
+    assert sorted(ev_cache, key=key) == sorted(ev_no, key=key)

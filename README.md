@@ -282,7 +282,7 @@ List auxiliary tuples without generating MIDI:
 modcompose groove sample model.pkl --list-aux  # alias: --aux-list
 # with filtering
 modcompose groove sample model.pkl --list-aux --cond '{"section":"chorus"}'
-# disable per-bar caching for profiling
+# toggle per-bar caching for profiling
 modcompose groove sample model.pkl -l 8 --no-bar-cache
 ```
 

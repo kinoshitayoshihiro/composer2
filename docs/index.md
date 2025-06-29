@@ -7,3 +7,11 @@ Browse the API reference to learn how to integrate the generators into your work
 See [Groove Sampler](groove_sampler.md) for training drum models.
 Auxiliary conditioning and deterministic sampling are covered in
 [Aux Features](aux_features.md).
+
+Install optional extras for the GUI and RNN baseline:
+`pip install -e .[audio,gui,rnn,essentia]`.
+
+For a live comparison of the n-gram and RNN models check out the
+Streamlit GUI:
+
+Real-time playback is available via `modcompose realtime`.

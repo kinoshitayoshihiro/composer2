@@ -19,6 +19,13 @@ Generate a four bar MIDI groove:
 modcompose groove sample model.pkl -l 4 --temperature 0.8 --seed 42 > out.mid
 ```
 
+An experimental RNN baseline can be trained from the cached loops:
+
+```bash
+modcompose rnn train loops.json --epochs 6 --out rnn.pt
+modcompose rnn sample rnn.pt -l 4 > rnn.mid
+```
+
 ## Aux-feature training / sampling
 
 You can condition groove generation on section type, vocal heatmap bin and

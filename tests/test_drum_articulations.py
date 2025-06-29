@@ -4,6 +4,7 @@ from music21 import stream
 from generator.drum_generator import DrumGenerator, GM_DRUM_MAP
 from utilities.groove_sampler_ngram import Event
 from typing import cast
+from tests.helpers.events import make_event
 from utilities.override_loader import PartOverride
 
 
@@ -25,9 +26,9 @@ def test_hihat_articulations(tmp_path: Path):
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
     part = stream.Part(id="drums")
     events = [
-        cast(Event, {"instrument": "chh", "offset": 0.0, "velocity": 30}),
-        cast(Event, {"instrument": "chh", "offset": 1.0, "velocity": 90}),
-        cast(Event, {"instrument": "chh", "offset": 2.0, "velocity": 80, "pedal": True}),
+        make_event(instrument="chh", offset=0.0, velocity=30),
+        make_event(instrument="chh", offset=1.0, velocity=90),
+        make_event(instrument="chh", offset=2.0, velocity=80, pedal=True),
     ]
     drum._apply_pattern(
         part,
@@ -55,8 +56,8 @@ def test_hihat_edge_pedal(tmp_path: Path):
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
     part = stream.Part(id="drums")
     events = [
-        cast(Event, {"instrument": "chh", "offset": 0.0, "velocity": 30}),
-        cast(Event, {"instrument": "chh", "offset": 1.0, "velocity": 80, "pedal": True}),
+        make_event(instrument="chh", offset=0.0, velocity=30),
+        make_event(instrument="chh", offset=1.0, velocity=80, pedal=True),
     ]
     drum._apply_pattern(
         part,
@@ -84,12 +85,10 @@ def test_velocity_random_walk(tmp_path: Path):
     part = stream.Part(id="drums")
     for bar in range(8):
         drum.accent_mapper.begin_bar()
-        events = [
-            cast(Event, {"instrument": "snare", "offset": i}) for i in range(4)
-        ]
+        events = [make_event(instrument="snare", offset=i) for i in range(4)]
         drum._apply_pattern(
             part,
-            cast(list[Event], events),
+            events,
             bar * 4.0,
             4.0,
             80,
@@ -117,13 +116,13 @@ def test_brush_override_scaling(tmp_path: Path):
     drum.overrides = PartOverride(drum_brush=True)
     part = stream.Part(id="drums")
     events = [
-        cast(Event, {"instrument": "snare", "offset": 0.0, "velocity": 90}),
-        cast(Event, {"instrument": "snare", "offset": 1.0, "velocity": 100}),
+        make_event(instrument="snare", offset=0.0, velocity=90),
+        make_event(instrument="snare", offset=1.0, velocity=100),
     ]
     orig_vel = [e["velocity"] for e in events]
     drum._apply_pattern(
         part,
-        cast(list[Event], events),
+        events,
         0.0,
         2.0,
         80,
@@ -143,12 +142,12 @@ def test_intro_ride_notes(tmp_path: Path):
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
     part = stream.Part(id="drums")
     events = [
-        cast(Event, {"instrument": "ride", "offset": 0.0, "velocity": 90}),
-        cast(Event, {"instrument": "ride", "offset": 1.0, "velocity": 90}),
+        make_event(instrument="ride", offset=0.0, velocity=90),
+        make_event(instrument="ride", offset=1.0, velocity=90),
     ]
     drum._apply_pattern(
         part,
-        cast(list[Event], events),
+        events,
         0.0,
         4.0,
         100,
@@ -168,12 +167,12 @@ def test_drag_ruff(tmp_path: Path):
     drum = DrumGenerator(main_cfg=cfg, part_name="drums", part_parameters={})
     part = stream.Part(id="drums")
     events = [
-        cast(Event, {"instrument": "snare", "offset": 0.5, "type": "drag"}),
-        cast(Event, {"instrument": "snare", "offset": 1.5, "type": "ruff"}),
+        make_event(instrument="snare", offset=0.5, type="drag"),
+        make_event(instrument="snare", offset=1.5, type="ruff"),
     ]
     drum._apply_pattern(
         part,
-        cast(list[Event], events),
+        events,
         0.0,
         2.0,
         100,

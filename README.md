@@ -267,12 +267,26 @@ modcompose groove train data/loops --ext midi --out model.pkl
 modcompose groove sample model.pkl -l 4 --temperature 0.8 --seed 42 > groove.mid
 ```
 
-Deterministic sampling (always pick the most likely state) can be used for
-quick previews:
+#### Quick preview
+Deterministic sampling lets you audition a groove without randomness:
 
 ```bash
 modcompose groove sample model.pkl -l 4 --temperature 0 --top-k 1 > beat.mid
 ```
+Add ``--play`` for an instant listen (uses ``timidity`` or ``fluidsynth`` if available):
+```bash
+modcompose groove sample model.pkl -l 1 --play
+```
+List auxiliary tuples without generating MIDI:
+```bash
+modcompose groove sample model.pkl -l 0 --list-aux
+```
+
+If no MIDI player is detected ``--play`` opens a temporary file in your default browser.
+
+Generator fallback: if a drum part has an empty pattern and a groove model is
+provided, a bar is sampled automatically so silent placeholders turn into
+grooved backing.
 
 ### Training your first groove model
 
@@ -316,9 +330,14 @@ Inspect a saved model with:
 ```bash
 modcompose groove info model.pkl --json --stats
 ```
+For a quick textual overview you can also run:
+```bash
+modcompose groove info model.pkl --stats
+```
 This displays the model order, auxiliary tuples, token counts per instrument,
-and the serialized size. ``groove info --stats`` also prints a short ``sha1``
-hash derived from the pickle payload so you can quickly compare models.
+and the serialized size. ``groove info --stats`` also prints the token count
+and training perplexity along with a short ``sha1`` hash derived from the pickle
+payload so you can quickly compare models.
 
 Order can be selected automatically using minimal perplexity on a validation
 split. The CLI exposes smoothing parameters as well. Use ``--alpha`` to control

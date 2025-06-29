@@ -1,8 +1,11 @@
 import json
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
+
 from music21 import volume
+
 from generator.drum_generator import DrumGenerator
+from tests.helpers.events import make_event
 
 
 def _basic_cfg(tmp_path: Path):
@@ -21,11 +24,11 @@ def _basic_cfg(tmp_path: Path):
 pattern_lib = {
     "main": {
         "pattern": [
-            {
-                "instrument": "kick",
-                "offset": 0.0,
-                "humanize_template": "flam_legato_ghost",
-            }
+            make_event(
+                instrument="kick",
+                offset=0.0,
+                humanize_template="flam_legato_ghost",
+            )
         ],
         "length_beats": 1.0,
     }
@@ -34,11 +37,11 @@ pattern_lib = {
 pattern_lib_multi = {
     "main": {
         "pattern": [
-            {
-                "instrument": "kick",
-                "offset": 0.0,
-                "humanize_templates": ["drum_tight", "flam_legato_ghost"],
-            }
+            make_event(
+                instrument="kick",
+                offset=0.0,
+                humanize_templates=["drum_tight", "flam_legato_ghost"],
+            )
         ],
         "length_beats": 1.0,
     }
@@ -47,12 +50,12 @@ pattern_lib_multi = {
 pattern_lib_random = {
     "main": {
         "pattern": [
-            {
-                "instrument": "kick",
-                "offset": 0.0,
-                "humanize_templates": ["drum_tight", "flam_legato_ghost"],
-                "humanize_templates_mode": "random",
-            }
+            make_event(
+                instrument="kick",
+                offset=0.0,
+                humanize_templates=["drum_tight", "flam_legato_ghost"],
+                humanize_templates_mode="random",
+            )
         ],
         "length_beats": 1.0,
     }

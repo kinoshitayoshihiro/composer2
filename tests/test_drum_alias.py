@@ -3,6 +3,7 @@ from pathlib import Path
 from music21 import note
 
 from generator.drum_generator import DrumGenerator, GM_DRUM_MAP, RESOLUTION
+from tests.helpers.events import make_event
 
 class AliasDrum(DrumGenerator):
     def _resolve_style_key(self, musical_intent, overrides, section_data=None):
@@ -16,9 +17,9 @@ def test_drum_alias_mapping(tmp_path, rhythm_library):
     pattern_lib = {
         "alias_pattern": {
             "pattern": [
-                {"instrument": "hh", "offset": 0.0, "duration": 0.25},
-                {"instrument": "shaker_soft", "offset": 1.0, "duration": 0.25},
-                {"instrument": "hat_closed", "offset": 1.5, "duration": 0.25},
+                make_event(instrument="hh", offset=0.0, duration=0.25),
+                make_event(instrument="shaker_soft", offset=1.0, duration=0.25),
+                make_event(instrument="hat_closed", offset=1.5, duration=0.25),
             ],
             "length_beats": 2.0,
         }

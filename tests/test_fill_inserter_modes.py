@@ -2,6 +2,7 @@ import random
 import pytest
 from music21 import stream
 from generator.drum_generator import FillInserter, HoldTie
+from tests.helpers.events import make_event
 
 
 def test_template_list_choice():
@@ -20,8 +21,8 @@ def test_legato_mode_ties():
     lib = {
         "leg": {
             "pattern": [
-                {"instrument": "snare", "offset": 0.0},
-                {"instrument": "snare", "offset": 0.5},
+                make_event(instrument="snare", offset=0.0),
+                make_event(instrument="snare", offset=0.5),
             ],
             "mode": "legato",
         }
@@ -39,8 +40,8 @@ def test_velocity_curve_applied():
     lib = {
         "vel": {
             "pattern": [
-                {"instrument": "snare", "offset": 0.0, "velocity_factor": 1.0},
-                {"instrument": "snare", "offset": 1.0, "velocity_factor": 1.0},
+                make_event(instrument="snare", offset=0.0, velocity_factor=1.0),
+                make_event(instrument="snare", offset=1.0, velocity_factor=1.0),
             ],
             "velocity_curve": [0.5, 1.5],
         }
@@ -57,7 +58,7 @@ def test_base_velocity_override():
     lib = {
         "b": {
             "pattern": [
-                {"instrument": "snare", "offset": 0.0, "velocity_factor": 1.0},
+                make_event(instrument="snare", offset=0.0, velocity_factor=1.0),
             ],
             "base_velocity": 100,
         }

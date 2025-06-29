@@ -14,7 +14,6 @@ import sys
 import tempfile
 import time
 import warnings
-import weakref
 from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Sequence
 from pathlib import Path
@@ -929,7 +928,7 @@ def generate_bar(
         for k, c in model.get("vel_deltas", {}).items()
     }
     micro_bounds = {
-        k: min(float(np.percentile(np.abs(list(c.elements())), 95)), 45)
+        k: min(float(np.percentile(np.abs(list(c.elements())), 95)), 30)
         if list(c.elements())
         else 0.0
         for k, c in model.get("micro_offsets", {}).items()
@@ -960,11 +959,10 @@ def generate_bar(
             choices = list(model["micro_offsets"].get(lbl, Counter()).elements())
             if choices:
                 micro = int(rand.choice(choices))
-                limit = micro_bounds.get(lbl, 45)
+                limit = micro_bounds.get(lbl, 30)
                 micro = max(-limit, min(limit, micro))
             else:
-                micro = int(rand.gauss(0.0, 12.0))
-                micro = max(-45, min(45, micro))
+                micro = 0
         vel_mean = int(model["mean_velocity"].get(lbl, 100))
         vel = vel_mean
         if humanize_vel:

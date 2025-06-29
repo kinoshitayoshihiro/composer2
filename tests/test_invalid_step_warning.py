@@ -1,5 +1,5 @@
+import logging
 import random
-import warnings
 from pathlib import Path
 
 import pretty_midi
@@ -15,7 +15,7 @@ def _make_loop(path: Path) -> None:
     pm.write(str(path))
 
 
-def test_invalid_step_warning(tmp_path: Path, monkeypatch) -> None:
+def test_invalid_step_warning(tmp_path: Path, monkeypatch, caplog) -> None:
     _make_loop(tmp_path / "a.mid")
     model = gs.train(tmp_path, order=1)
 
@@ -30,12 +30,10 @@ def test_invalid_step_warning(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(gs, "_sample_next", fake_sample_next)
 
     prev = [(gs.RESOLUTION * 2, "snare")]
-    with warnings.catch_warnings(record=True) as rec:
+    with caplog.at_level(logging.DEBUG):
         events, history = gs.generate_bar(prev, model, rng=random.Random(0))
 
-    assert len(rec) == 1
-    assert issubclass(rec[0].category, RuntimeWarning)
-    assert "invalid step" in str(rec[0].message)
+    assert "invalid step" in caplog.text
     assert len(history) == len(prev)
 
     monkeypatch.setattr(gs, "_sample_next", orig)

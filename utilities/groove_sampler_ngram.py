@@ -17,6 +17,7 @@ import tempfile
 import time
 import warnings
 import webbrowser
+import weakref
 from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Sequence
 from pathlib import Path
@@ -115,7 +116,16 @@ _AUX_HASH_BITS = 64
 
 CacheKey = tuple[HashKey, int | None]
 _dist_cache: OrderedDict[CacheKey, list[tuple[State, float]]] = OrderedDict()
-_lin_prob: dict[CacheKey, list[tuple[State, float]]] = {}
+
+
+class _CacheList:
+    __slots__ = ("val", "__weakref__")
+
+    def __init__(self, val: list[tuple[State, float]]) -> None:
+        self.val = val
+
+
+_lin_prob: weakref.WeakValueDictionary[CacheKey, _CacheList] = weakref.WeakValueDictionary()
 MAX_CACHE = 2048
 
 
@@ -768,13 +778,16 @@ def _sample_next(
     if cached is not None:
         linear_list = cached
     else:
-        linear_list = _lin_prob.get(key)
-        if linear_list is None:
+        wrapper = _lin_prob.get(key)
+        if wrapper is None:
             linear_list = sorted(dist.items(), key=lambda x: x[1], reverse=True)
             if top_k:
                 linear_list = linear_list[:top_k]
             linear_list = [(k, float(math.exp(v))) for k, v in linear_list]
-            _lin_prob[key] = linear_list
+            wrapper = _CacheList(linear_list)
+            _lin_prob[key] = wrapper
+        else:
+            linear_list = wrapper.val
         _dist_cache[key] = linear_list
         if len(_dist_cache) > MAX_CACHE:
             _dist_cache.popitem(last=False)
@@ -799,8 +812,9 @@ def sample(
     progress: bool = False,
     humanize_vel: bool = False,
     humanize_micro: bool = False,
-    no_bar_cache: bool = False,
+    use_bar_cache: bool = True,
     history: list[State] | None = None,
+    **kwargs: Any,
 ) -> list[Event]:
     """Generate a sequence of drum events.
 
@@ -814,12 +828,17 @@ def sample(
         progress: Display a progress bar when ``bars`` is large.
         humanize_vel: Apply velocity deltas from the training data.
         humanize_micro: Apply micro timing offsets from the training data.
-        no_bar_cache: Disable per-bar cache for benchmarking.
+        use_bar_cache: Enable per-bar cache for benchmarking.
         history: Mutable list updated with the final history context.
 
     Returns:
         Sorted list of generated ``Event`` objects.
     """
+
+    if "no_bar_cache" in kwargs:
+        use_bar_cache = not bool(kwargs.pop("no_bar_cache"))
+    if kwargs:
+        raise TypeError(f"unexpected keys: {', '.join(kwargs)}")
 
     rng = Random(seed)
     events: list[Event] = []
@@ -846,7 +865,7 @@ def sample(
             cond=cond,
             humanize_vel=humanize_vel,
             humanize_micro=humanize_micro,
-            no_bar_cache=no_bar_cache,
+            use_bar_cache=use_bar_cache,
             rng=rng,
         )
         for ev in bar_events:
@@ -871,8 +890,9 @@ def generate_bar(
     cond: dict[str, Any] | None = None,
     humanize_vel: bool = False,
     humanize_micro: bool = False,
-    no_bar_cache: bool = False,
+    use_bar_cache: bool = True,
     rng: Random | None = None,
+    **kwargs: Any,
 ) -> tuple[list[Event], list[State]]:
     """Generate one bar of events.
 
@@ -884,7 +904,7 @@ def generate_bar(
         cond: Optional auxiliary conditioning dictionary.
         humanize_vel: Apply velocity jitter from ``vel_deltas``.
         humanize_micro: Apply micro timing offsets from ``micro_offsets``.
-        no_bar_cache: Disable per-bar distribution cache for debugging.
+        use_bar_cache: Enable per-bar distribution cache.
         rng: Optional random number generator.
 
     Returns:
@@ -893,10 +913,15 @@ def generate_bar(
     """
 
     rand = rng or Random()
+    if "no_bar_cache" in kwargs:
+        use_bar_cache = not bool(kwargs.pop("no_bar_cache"))
+    if kwargs:
+        raise TypeError(f"unexpected keys: {', '.join(kwargs)}")
+
     history = list(prev_history) if prev_history is not None else []
     events: list[Event] = []
     bar_cache: dict[CacheKey, list[tuple[State, float]]] | None
-    bar_cache = None if no_bar_cache else {}
+    bar_cache = {} if use_bar_cache else None
     vel_bounds = {
         k: min(float(np.percentile(np.abs(list(c.elements())), 95)), 45)
         if list(c.elements())
@@ -923,7 +948,8 @@ def generate_bar(
         )
         step, lbl = state
         if step < 0 or step >= RESOLUTION:
-            warnings.warn(f"invalid step {step}, dropped", RuntimeWarning)
+            if __debug__:
+                logger.debug("invalid step %s, dropped", step)
             continue
         if step < next_bin:
             step = next_bin
@@ -1064,7 +1090,11 @@ def train_cmd(
     is_flag=True,
     help="List known aux tuples and exit",
 )
-@click.option("--no-bar-cache", is_flag=True, help="Disable per-bar cache")
+@click.option(
+    "--use-bar-cache/--no-bar-cache",
+    default=True,
+    help="Enable per-bar cache",
+)
 @click.option("-l", "--length", default=4, type=int)
 @click.option("--temperature", default=1.0, type=float)
 @click.option("--seed", default=42, type=int)
@@ -1087,7 +1117,7 @@ def sample_cmd(
     seed: int,
     cond: str | None,
     list_aux: bool,
-    no_bar_cache: bool,
+    use_bar_cache: bool,
     progress: bool,
     humanize: str,
     play: bool,
@@ -1101,7 +1131,7 @@ def sample_cmd(
         seed: Random seed for deterministic output.
         cond: JSON mapping of auxiliary conditions.
         list_aux: List available aux tuples instead of generating.
-        no_bar_cache: Disable per-bar cache for debugging or benchmarking.
+        use_bar_cache: Enable per-bar cache; disable for benchmarking.
         progress: Display a progress bar when ``length`` is large.
         humanize: Comma separated options ``"vel"`` and/or ``"micro"``.
 
@@ -1148,7 +1178,7 @@ def sample_cmd(
         progress=progress,
         humanize_vel="vel" in h_opts,
         humanize_micro="micro" in h_opts,
-        no_bar_cache=no_bar_cache,
+        use_bar_cache=use_bar_cache,
     )
     pm = events_to_midi(ev)
     buf = io.BytesIO()

@@ -19,10 +19,8 @@ or equivalently
 ```bash
 pip install -r requirements.txt
 pip install -r requirements-optional.txt  # optional WAV support
-pip install -e ".[essentia]"  # to enable Essentia backend for consonant peaks
+pip install -e .[audio,gui,rnn,essentia]  # optional extras
 pip install click  # required for the groove sampler CLI
-pip install -e .[audio]  # optional, enables WAV groove extraction
-pip install -e .[groove]  # required for MIDI/WAV ingestion
 pip install modular-composer[audio]  # quick install via PyPI
 ```
 
@@ -267,6 +265,19 @@ modcompose groove train data/loops --ext midi --out model.pkl
 modcompose groove sample model.pkl -l 4 --temperature 0.8 --seed 42 > groove.mid
 ```
 
+An RNN baseline is available for comparison:
+
+```bash
+modcompose rnn train loops.json --epochs 1 --out rnn.pt
+modcompose rnn sample rnn.pt -l 4 > rnn.mid
+```
+Stream a trained model in real time:
+```bash
+modcompose realtime rnn.pt --bpm 100 --duration 16
+```
+Real-time audio requires the `sounddevice` backend and currently works on
+Linux and macOS only.
+
 #### Quick preview
 Deterministic sampling lets you audition a groove without randomness:
 
@@ -297,8 +308,8 @@ grooved backing.
 Prepare a loop cache for faster experiments:
 
 ```bash
-modcompose loops scan data/loops --ext midi,wav --out loops.pkl --auto-aux
-modcompose loops info loops.pkl
+modcompose loops scan data/loops --ext midi,wav --out loops.json --auto-aux
+modcompose loops info loops.json
 ```
 
 The ``--auto-aux`` option infers ``intensity`` and ``heat_bin`` from each loop.
@@ -419,6 +430,19 @@ python -m utilities.groove_sampler_v2 train data/loops -o model.pkl \
     --auto-res --jobs 8 --memmap-dir mmaps
 python -m utilities.groove_sampler_v2 sample model.pkl -l 4 \
     --temperature 0.8 --cond-velocity hard --seed 42
+```
+
+### Latency Benchmarks
+
+| Model | Avg Latency per bar |
+|-------|--------------------|
+| n-gram | < 5 ms |
+| RNN    | < 10 ms |
+
+Launch the Streamlit GUI to compare:
+
+```bash
+streamlit run streamlit_app/visualise_groove.py
 ```
 
 ## Vocal Sync

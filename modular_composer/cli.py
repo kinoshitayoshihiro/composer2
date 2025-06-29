@@ -4,6 +4,7 @@ import argparse
 import glob
 import importlib.metadata as _md
 import json
+import random
 import tempfile
 from pathlib import Path
 from typing import cast
@@ -12,9 +13,18 @@ import click
 import pretty_midi
 
 import utilities.loop_ingest as loop_ingest
-from utilities import groove_sampler_ngram, synth
+from utilities import (
+    groove_sampler_ngram,
+    streaming_sampler,
+    synth,
+)
+
+try:  # optional dependency
+    from utilities import groove_sampler_rnn
+except Exception:  # pragma: no cover - torch not installed
+    groove_sampler_rnn = None  # type: ignore
 from utilities.golden import compare_midi, update_golden
-from utilities.groove_sampler_ngram import Event
+from utilities.groove_sampler_ngram import Event, State, generate_bar
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
 from utilities.peak_synchroniser import PeakSynchroniser
 from utilities.tempo_utils import beat_to_seconds
@@ -34,6 +44,16 @@ def groove() -> None:
 groove.add_command(groove_sampler_ngram.train_cmd, name="train")
 groove.add_command(groove_sampler_ngram.sample_cmd, name="sample")
 groove.add_command(groove_sampler_ngram.info_cmd, name="info")
+
+
+if groove_sampler_rnn is not None:
+    @cli.group()
+    def rnn() -> None:
+        """RNN groove sampler commands."""
+
+
+    rnn.add_command(groove_sampler_rnn.train_cmd, name="train")
+    rnn.add_command(groove_sampler_rnn.sample_cmd, name="sample")
 
 
 @cli.group()
@@ -174,6 +194,49 @@ def _cmd_render(args: list[str]) -> None:
         print(f"Rendered {wav}")
 
 
+def _cmd_realtime(args: list[str]) -> None:
+    ap = argparse.ArgumentParser(
+        prog="modcompose realtime",
+        description=(
+            "Stream a trained groove model in real time. "
+            "Example: modcompose realtime rnn.pt --bpm 100 --duration 16"
+        ),
+    )
+    ap.add_argument("model", type=Path)
+    ap.add_argument("--bpm", type=float, default=100.0)
+    ap.add_argument("--duration", type=int, default=16)
+    ns = ap.parse_args(args)
+
+    if ns.model.suffix == ".pt":
+        if groove_sampler_rnn is None:
+            raise SystemExit("PyTorch not installed")
+        model, meta = groove_sampler_rnn.load(ns.model)
+        class _WrapR:
+            def __init__(self) -> None:
+                self.history: list[State] = []
+            def feed_history(self, events: list[State]) -> None:
+                self.history.extend(events)
+            def next_step(self, *, cond: dict[str, object] | None, rng: random.Random) -> Event:
+                return groove_sampler_rnn.sample(model, meta, bars=1, temperature=1.0, rng=rng)[0]
+        sampler: streaming_sampler.BaseSampler = _WrapR()
+    else:
+        m = groove_sampler_ngram.load(ns.model)
+        class _WrapN:
+            def __init__(self) -> None:
+                self.hist: list[State] = []
+                self.buf: list[Event] = []
+            def feed_history(self, events: list[State]) -> None:
+                self.hist.extend(events)
+            def next_step(self, *, cond: dict[str, object] | None, rng: random.Random) -> Event:
+                if not self.buf:
+                    self.buf, self.hist = generate_bar(self.hist, m, rng=rng)
+                return self.buf.pop(0)
+        sampler = _WrapN()
+
+    player = streaming_sampler.RealtimePlayer(sampler, bpm=ns.bpm)
+    player.play(bars=ns.duration // 4)
+
+
 def _cmd_gm_test(args: list[str]) -> None:
     ap = argparse.ArgumentParser(prog="modcompose gm-test")
     ap.add_argument("midi", nargs="+")
@@ -223,6 +286,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_peaks(argv[1:])
     elif cmd == "render":
         _cmd_render(argv[1:])
+    elif cmd == "realtime":
+        _cmd_realtime(argv[1:])
     elif cmd == "gm-test":
         _cmd_gm_test(argv[1:])
     else:

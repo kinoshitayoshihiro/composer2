@@ -5,33 +5,30 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import math
 import pickle
 import re
-import logging
-import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
 import warnings
-import webbrowser
 import weakref
 from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from random import Random
 from typing import Any, TypedDict
-from typing_extensions import Required
 
 import click
 import numpy as np
 import pretty_midi
+from typing_extensions import Required
 
+from utilities import cli_playback
 from utilities.loop_ingest import scan_loops
 from utilities.types import AuxTuple
-from utilities import cli_playback
 
 from .drum_map_registry import GM_DRUM_MAP
 
@@ -125,7 +122,7 @@ class _CacheList:
         self.val = val
 
 
-_lin_prob: weakref.WeakValueDictionary[CacheKey, _CacheList] = weakref.WeakValueDictionary()
+_lin_prob: OrderedDict[CacheKey, _CacheList] = OrderedDict()
 MAX_CACHE = 2048
 
 
@@ -786,8 +783,11 @@ def _sample_next(
             linear_list = [(k, float(math.exp(v))) for k, v in linear_list]
             wrapper = _CacheList(linear_list)
             _lin_prob[key] = wrapper
+            if len(_lin_prob) > MAX_CACHE:
+                _lin_prob.popitem(last=False)
         else:
             linear_list = wrapper.val
+            _lin_prob.move_to_end(key)
         _dist_cache[key] = linear_list
         if len(_dist_cache) > MAX_CACHE:
             _dist_cache.popitem(last=False)
@@ -948,6 +948,7 @@ def generate_bar(
         )
         step, lbl = state
         if step < 0 or step >= RESOLUTION:
+            warnings.warn("step out of range; dropped", RuntimeWarning)
             if __debug__:
                 logger.debug("invalid step %s, dropped", step)
             continue

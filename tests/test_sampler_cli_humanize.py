@@ -1,7 +1,8 @@
-from pathlib import Path
-from click.testing import CliRunner
 import io
+from pathlib import Path
+
 import pretty_midi
+from click.testing import CliRunner
 
 from utilities import groove_sampler_ngram as gs
 
@@ -36,5 +37,5 @@ def test_cli_humanize(tmp_path: Path) -> None:
         ticks = round(start_beats * gs.PPQ)
         step = round(start_beats * 4)
         micro = ticks - step * step_ticks
-        assert -45 <= micro <= 45
+        assert -30 <= micro <= 30
 

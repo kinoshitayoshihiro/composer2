@@ -14,11 +14,15 @@ with tempfile.TemporaryDirectory() as d:
         inst.notes.append(pretty_midi.Note(velocity=100, pitch=36, start=0.0, end=0.1))
         pm.instruments.append(inst)
         pm.write(f"{d}/{i}.mid")
-    t0 = time.time()
     model = gs.train(Path(d), order=1)
+    t0 = time.time()
+    gs.sample(model, bars=8, seed=0, no_bar_cache=True)
+    uncached = time.time() - t0
+    t0 = time.time()
     gs.sample(model, bars=8, seed=0)
-    elapsed = time.time() - t0
-    print(f"elapsed {elapsed:.2f}s")
-    if elapsed > 60:
-        raise SystemExit("runtime >60s")
+    cached = time.time() - t0
+    ratio = uncached / cached if cached else 1.0
+    print(f"uncached {uncached:.2f}s cached {cached:.2f}s ratio {ratio:.2f}")
+    if ratio < 1.25:
+        raise SystemExit("bar-cache speed-up <25%")
 PY

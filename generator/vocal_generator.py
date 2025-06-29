@@ -36,7 +36,7 @@ try:
         "VocalGen(Humanizer): NumPy found. Fractional noise generation is enabled."
     )
 except ImportError:
-    np = None  # type: ignore
+    np = None
     NUMPY_AVAILABLE = False
     logging.warning(
         "VocalGen(Humanizer): NumPy not found. Fractional noise will use Gaussian fallback."

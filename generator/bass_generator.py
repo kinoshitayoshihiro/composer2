@@ -99,7 +99,7 @@ except ImportError as e:
 
     bass_utils = DummyBassUtils()
 
-    class PartOverride:  # type: ignore
+    class PartOverride:
         model_config = {}
         model_fields = {}
         velocity_shift: int | None = None

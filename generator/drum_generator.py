@@ -1245,7 +1245,7 @@ class DrumGenerator(BasePartGenerator):
                 velocity_scale = 1.2 if max_bin_val > self.heatmap_threshold else 1.0
                 self._apply_pattern(
                     part,
-                    cast(list[GrooveEvent], pattern_to_use_for_iteration),
+                    list(pattern_to_use_for_iteration),
                     bar_start_abs_offset,
                     current_pattern_iteration_ql,
                     base_vel,
@@ -2185,7 +2185,7 @@ class DrumGenerator(BasePartGenerator):
         self.current_bpm = self._current_bpm(0.0)
         self.kick_offsets.clear()
         events = [
-            cast(GrooveEvent, {"instrument": "kick", "offset": float(b)})
+            {"instrument": "kick", "offset": float(b)}
             for b in range(int(length_beats))
         ]
         self._apply_pattern(

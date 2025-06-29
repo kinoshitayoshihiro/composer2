@@ -3,11 +3,12 @@
 import pytest
 
 from tools.peak_synchroniser import PeakSynchroniser
+from tests.helpers.events import make_event
 
 
 def test_sync_moves_event_to_peak():
     peaks = [0.50]  # one peak at 0.5s
-    events = [{"instrument": "kick", "offset": 0.0, "duration": 1.0}]
+    events = [make_event(instrument="kick", offset=0.0, duration=1.0)]
     synced = PeakSynchroniser.sync_events(
         peaks,
         events,

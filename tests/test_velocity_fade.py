@@ -1,6 +1,7 @@
 import json
 from music21 import stream, note, volume
 from generator.drum_generator import DrumGenerator, RESOLUTION
+from tests.helpers.events import make_event
 
 
 class FadeDrum(DrumGenerator):
@@ -35,11 +36,11 @@ def test_velocity_fade_into_fill(tmp_path):
     hp = _basic_heatmap(tmp_path)
     pattern_lib = {
         "main": {
-            "pattern": [{"instrument": "kick", "offset": i} for i in range(4)],
+            "pattern": [make_event(instrument="kick", offset=i) for i in range(4)],
             "length_beats": 4.0,
             "fill_patterns": ["f"],
         },
-        "f": {"pattern": [{"instrument": "snare", "offset": 0.0}], "length_beats": 4.0},
+        "f": {"pattern": [make_event(instrument="snare", offset=0.0)], "length_beats": 4.0},
     }
     cfg = {
         "vocal_midi_path_for_drums": "",
@@ -66,12 +67,12 @@ def test_velocity_fade_custom_width(tmp_path):
     hp = _basic_heatmap(tmp_path)
     pattern_lib = {
         "main": {
-            "pattern": [{"instrument": "kick", "offset": i} for i in range(4)],
+            "pattern": [make_event(instrument="kick", offset=i) for i in range(4)],
             "length_beats": 4.0,
             "fill_patterns": ["f"],
             "options": {"fade_beats": 3.0},
         },
-        "f": {"pattern": [{"instrument": "snare", "offset": 0.0}], "length_beats": 4.0},
+        "f": {"pattern": [make_event(instrument="snare", offset=0.0)], "length_beats": 4.0},
     }
     cfg = {
         "vocal_midi_path_for_drums": "",

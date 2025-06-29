@@ -4,6 +4,7 @@ from music21 import stream
 from generator.drum_generator import DrumGenerator, RESOLUTION
 from utilities.groove_sampler_ngram import Event
 from typing import cast
+from tests.helpers.events import make_event
 
 
 def make_gen(tmp_path: Path):
@@ -14,9 +15,9 @@ def make_gen(tmp_path: Path):
     pattern = {
         "main": {
             "pattern": [
-                {"instrument": "kick", "offset": 0.0, "velocity_layer": 0},
-                {"instrument": "snare", "offset": 1.0, "velocity_layer": 1},
-                {"instrument": "kick", "offset": 2.0, "velocity_layer": 2},
+                make_event(instrument="kick", offset=0.0, velocity_layer=0),
+                make_event(instrument="snare", offset=1.0, velocity_layer=1),
+                make_event(instrument="kick", offset=2.0, velocity_layer=2),
             ],
             "length_beats": 4.0,
             "velocity_base": 100,
@@ -36,7 +37,7 @@ def test_velocity_curve_scaling(tmp_path: Path):
     part = stream.Part(id="drums")
     gen._apply_pattern(
         part,
-        cast(list[Event], gen.part_parameters["main"]["pattern"]),
+        gen.part_parameters["main"]["pattern"],
         0.0,
         4.0,
         100,

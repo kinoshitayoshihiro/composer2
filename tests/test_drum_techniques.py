@@ -1,6 +1,7 @@
 import json
 from music21 import note
 from generator.drum_generator import DrumGenerator, GM_DRUM_MAP
+from tests.helpers.events import make_event
 
 
 class SimpleDrum(DrumGenerator):
@@ -23,23 +24,23 @@ def _make_cfg(tmp_path):
 
 pattern_lib = {
     "flam_test": {
-        "pattern": [{"instrument": "snare", "offset": 0.5, "type": "flam"}],
+        "pattern": [make_event(instrument="snare", offset=0.5, type="flam")],
         "length_beats": 1.0,
     },
     "ghost_pat": {
-        "pattern": [{"instrument": "snare", "offset": 0.0, "type": "ghost"}],
+        "pattern": [make_event(instrument="snare", offset=0.0, type="ghost")],
         "length_beats": 1.0,
     },
     "legato_fill": {
         "pattern": [
-            {"instrument": "snare", "offset": 3.0},
-            {"instrument": "snare", "offset": 3.5},
+            make_event(instrument="snare", offset=3.0),
+            make_event(instrument="snare", offset=3.5),
         ],
         "length_beats": 4.0,
         "legato": True,
     },
     "main": {
-        "pattern": [{"instrument": "kick", "offset": 0.0}],
+        "pattern": [make_event(instrument="kick", offset=0.0)],
         "length_beats": 4.0,
         "fill_patterns": ["legato_fill"],
         "preferred_fill_positions": [1],

@@ -5,6 +5,7 @@ from utilities.velocity_smoother import EMASmoother
 from generator.drum_generator import DrumGenerator, RESOLUTION, INTENSITY_FACTOR
 from utilities.groove_sampler_ngram import Event
 from typing import cast
+from tests.helpers.events import make_event
 from music21 import stream
 
 def test_velocity_random_walk_per_bar():
@@ -78,7 +79,7 @@ def test_intensity_step_scaling(tmp_path):
         "paths": {"drum_pattern_files": []},
         "rng_seed": 0,
     }
-    pattern = {"main": {"pattern": [{"instrument": "snare", "offset": 0.0}], "length_beats": 4.0, "velocity_base": 80}}
+    pattern = {"main": {"pattern": [make_event(instrument="snare", offset=0.0)], "length_beats": 4.0, "velocity_base": 80}}
     gen = DrumGenerator(
         main_cfg=cfg,
         part_name="drums",
@@ -140,7 +141,7 @@ def test_random_walk_cc_export(tmp_path):
         "paths": {"drum_pattern_files": []},
         "rng_seed": 0,
     }
-    pattern = {"main": {"pattern": [{"instrument": "snare", "offset": 0.0}], "length_beats": 4.0, "velocity_base": 80}}
+    pattern = {"main": {"pattern": [make_event(instrument="snare", offset=0.0)], "length_beats": 4.0, "velocity_base": 80}}
     gen = DrumGenerator(
         main_cfg=cfg,
         part_name="drums",
@@ -180,7 +181,7 @@ def test_begin_bar_once_per_bar(tmp_path):
         "paths": {"drum_pattern_files": []},
         "rng_seed": 0,
     }
-    pattern = {"main": {"pattern": [{"instrument": "snare", "offset": 0.0}], "length_beats": 4.0, "velocity_base": 80}}
+    pattern = {"main": {"pattern": [make_event(instrument="snare", offset=0.0)], "length_beats": 4.0, "velocity_base": 80}}
     gen = DrumGenerator(
         main_cfg=cfg,
         part_name="drums",

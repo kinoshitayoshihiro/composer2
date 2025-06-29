@@ -4,6 +4,7 @@ from music21 import stream
 from generator.drum_generator import DrumGenerator, GM_DRUM_MAP, RESOLUTION
 from utilities.groove_sampler_ngram import Event
 from typing import cast
+from tests.helpers.events import make_event
 
 
 def make_gen(tmp_path: Path) -> DrumGenerator:
@@ -23,12 +24,12 @@ def test_edge_and_pedal_hits(tmp_path: Path):
     gen = make_gen(tmp_path)
     part = stream.Part(id="drums")
     events = [
-        cast(Event, {"instrument": "chh", "offset": 0.0, "velocity": 40}),
-        cast(Event, {"instrument": "hh", "offset": 1.0, "velocity": 60, "pedal": True}),
+        make_event(instrument="chh", offset=0.0, velocity=40),
+        make_event(instrument="hh", offset=1.0, velocity=60, pedal=True),
     ]
     gen._apply_pattern(
         part,
-        cast(list[Event], events),
+        events,
         0.0,
         4.0,
         100,

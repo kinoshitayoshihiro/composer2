@@ -9,10 +9,13 @@ import math
 import pickle
 import re
 import shutil
+import subprocess
+import webbrowser
 import sys
 import tempfile
 import time
 import warnings
+import os
 from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Sequence
 from pathlib import Path
@@ -48,6 +51,32 @@ class Event(TypedDict):
     offset: float
     duration: float
     velocity: int
+
+
+def init_history_from_events(events: Sequence[Event], order: int = 3) -> list[State]:
+    """Return ``order-1`` recent ``(step,label)`` tuples from ``events``.
+
+    Parameters
+    ----------
+    events : Sequence[Event]
+        Input events sorted or unsorted by offset.
+    order : int, optional
+        N-gram order. ``order-1`` items will be returned.
+
+    Returns
+    -------
+    list[State]
+        Truncated history suitable for the next bar.
+    """
+
+    states: list[State] = []
+    for ev in sorted(events, key=lambda e: e["offset"]):
+        step = int(round(ev["offset"] * (RESOLUTION / 4)))
+        if 0 <= step < RESOLUTION:
+            states.append((step, ev["instrument"]))
+    if order - 1 <= 0:
+        return []
+    return states[-(order - 1) :]
 
 
 
@@ -1032,6 +1061,7 @@ def train_cmd(
     default="",
     help="Comma separated options: 'vel', 'micro'",
 )
+@click.option("--play", is_flag=True, help="Preview MIDI via timidity if installed")
 def sample_cmd(
     model_path: Path,
     length: int,
@@ -1041,6 +1071,7 @@ def sample_cmd(
     list_aux: bool,
     progress: bool,
     humanize: str,
+    play: bool,
 ) -> None:
     """Generate MIDI from a trained model.
 
@@ -1063,11 +1094,7 @@ def sample_cmd(
     model = load(model_path)
     combos = sorted(model.get("aux_cache", {}).values())
     if list_aux or length == 0:
-        if length == 0:
-            click.echo(json.dumps(combos))
-        else:
-            for tup in combos:
-                click.echo("|".join(tup))
+        click.echo(json.dumps(combos))
         return
     cond_map = json.loads(cond) if cond else None
     if cond_map:
@@ -1089,7 +1116,60 @@ def sample_cmd(
     pm = events_to_midi(ev)
     buf = io.BytesIO()
     pm.write(buf)
-    sys.stdout.buffer.write(buf.getvalue())
+    if play:
+        data = buf.getvalue()
+        player_args: list[str] | None = None
+        cleanup: str | None = None
+        if sys.platform == "darwin":
+            player = shutil.which("afplay")
+            if player:
+                with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
+                    tmp.write(data)
+                    tmp.flush()
+                    path = tmp.name
+                player_args = [player, path]
+                cleanup = path
+        elif sys.platform.startswith("win"):
+            player = shutil.which("wmplayer")
+            if player:
+                with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
+                    tmp.write(data)
+                    tmp.flush()
+                    path = tmp.name
+                player_args = [player, path]
+                cleanup = path
+            else:
+                player = shutil.which("start")
+                if player:
+                    with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
+                        tmp.write(data)
+                        tmp.flush()
+                        path = tmp.name
+                    player_args = [player, path]
+                    cleanup = path
+        else:
+            player = shutil.which("timidity") or shutil.which("fluidsynth")
+            if player:
+                player_args = [player, "-"]
+        if player_args:
+            if player_args[-1] == "-":
+                subprocess.run(player_args, input=data)
+            else:
+                subprocess.run(player_args, shell=player_args[0].lower() == "start")
+            if cleanup:
+                try:
+                    os.unlink(cleanup)
+                except OSError:
+                    pass
+        else:
+            with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
+                tmp.write(data)
+                tmp.flush()
+                path = tmp.name
+            webbrowser.open(path)
+            warnings.warn("no MIDI player found; opened browser", RuntimeWarning)
+    else:
+        sys.stdout.buffer.write(buf.getvalue())
 
 
 @cli.command()

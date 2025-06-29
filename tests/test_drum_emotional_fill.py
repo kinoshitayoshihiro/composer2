@@ -1,6 +1,7 @@
 import json
 from music21 import stream
 from generator.drum_generator import DrumGenerator, RESOLUTION
+from tests.helpers.events import make_event
 
 
 class EmotionalFillDrum(DrumGenerator):
@@ -61,15 +62,15 @@ def test_emotional_peak_fill(tmp_path):
 
     pattern_lib = {
         "main": {
-            "pattern": [{"instrument": "kick", "offset": 0.0}],
+            "pattern": [make_event(instrument="kick", offset=0.0)],
             "length_beats": 4.0,
             "fill_patterns": ["f1", "f2"],
         },
         "f1": {
-            "pattern": [{"instrument": "snare", "offset": 0.0}],
+            "pattern": [make_event(instrument="snare", offset=0.0)],
             "length_beats": 4.0,
         },
-        "f2": {"pattern": [{"instrument": "tom1", "offset": 0.0}], "length_beats": 4.0},
+        "f2": {"pattern": [make_event(instrument="tom1", offset=0.0)], "length_beats": 4.0},
     }
 
     cfg = {
@@ -104,7 +105,7 @@ def test_preferred_fill_position_clamped_low(tmp_path):
 
     pattern_lib = {
         "main": {
-            "pattern": [{"instrument": "kick", "offset": 0.0}],
+            "pattern": [make_event(instrument="kick", offset=0.0)],
             "length_beats": 4.0,
         },
     }
@@ -141,7 +142,7 @@ def test_preferred_fill_position_clamped_high(tmp_path):
 
     pattern_lib = {
         "main": {
-            "pattern": [{"instrument": "kick", "offset": 0.0}],
+            "pattern": [make_event(instrument="kick", offset=0.0)],
             "length_beats": 4.0,
         },
     }

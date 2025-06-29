@@ -1,4 +1,5 @@
 from utilities.peak_synchroniser import PeakSynchroniser
+from tests.helpers.events import make_event
 
 
 def test_basic_alignment() -> None:
@@ -31,7 +32,7 @@ def test_clip_at_zero() -> None:
 
 
 def test_priority_replacement() -> None:
-    base = [{"instrument": "snare", "offset": 0.0}]
+    base = [make_event(instrument="snare", offset=0.0)]
     events = PeakSynchroniser.sync_events([0.0], base, tempo_bpm=120.0)
     kicks = [e for e in events if e["instrument"] == "kick"]
     assert len(kicks) == 1

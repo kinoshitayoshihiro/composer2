@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
 
-from music21 import note, stream
+from generator.drum_generator import RESOLUTION, DrumGenerator
+from tests.helpers.events import make_event
 
-from generator.drum_generator import DrumGenerator, RESOLUTION
 
 class GrooveTestDrum(DrumGenerator):
     def _resolve_style_key(self, musical_intent, overrides, section_data=None):
@@ -31,8 +31,8 @@ def test_groove_offsets(tmp_path: Path, rhythm_library):
     pattern_lib = rhythm_library.drum_patterns or {}
     pattern_lib["simple"] = {
         "pattern": [
-            {"offset": 0.0, "duration": 0.25, "instrument": "snare"},
-            {"offset": 0.25, "duration": 0.25, "instrument": "snare"},
+            make_event(instrument="snare", offset=0.0, duration=0.25),
+            make_event(instrument="snare", offset=0.25, duration=0.25),
         ],
         "length_beats": 4.0,
     }

@@ -1204,10 +1204,27 @@ class DrumGenerator(BasePartGenerator):
                             if chosen_fill_pattern_list is not None:
                                 pattern_to_use_for_iteration = chosen_fill_pattern_list
                                 fill_legato = bool(fill_def.get("legato"))
-                                fill_applied_this_iter = True
-                            logger.debug(
-                                f"{log_render_prefix}: Applied scheduled fill '{chosen_fill_key}' for style '{style_key}'."
-                            )
+                        fill_applied_this_iter = True
+                        logger.debug(
+                            f"{log_render_prefix}: Applied scheduled fill '{chosen_fill_key}' for style '{style_key}'."
+                        )
+                if not pattern_to_use_for_iteration and self.groove_model:
+                    tk = self.global_settings.get("groove_top_k")
+                    tk_val = (
+                        int(tk)
+                        if isinstance(tk, (int, str)) and str(tk).isdigit()
+                        else None
+                    )
+                    pattern_to_use_for_iteration, self._groove_history = groove_sampler_ngram.generate_bar(
+                        self._groove_history,
+                        self.groove_model,
+                        cond=section_data.get("musical_intent", {}),
+                        temperature=float(self.global_settings.get("groove_temperature", 1.0)),
+                        top_k=tk_val,
+                        rng=self.rng,
+                        humanize_vel=bool(self.global_settings.get("humanize_profile")),
+                        humanize_micro=self.groove_strength > 0,
+                    )
                 start_bin = int(
                     (offset_in_score + current_pos_within_block)
                     * self.heatmap_resolution
@@ -1704,7 +1721,12 @@ class DrumGenerator(BasePartGenerator):
                 drum_hit_note.editorial, "mapped_name", inst_name
             )
             step_idx = int(round(rel_offset_in_pattern * RESOLUTION / current_bar_actual_len_ql))
-            step_idx = max(0, min(RESOLUTION - 1, step_idx))
+            if step_idx >= RESOLUTION or step_idx < 0:
+                logger.warning(
+                    "%s: step %s >= RESOLUTION; skipping", log_apply_prefix, step_idx
+                )
+                continue
+            step_idx = max(0, step_idx)
             self._groove_history.append((step_idx, mapped_name_for_history))
 
         n_hist = int(self.groove_model.get("n", 3)) if self.groove_model else 0
@@ -2162,10 +2184,13 @@ class DrumGenerator(BasePartGenerator):
         part.insert(0, self.default_instrument)
         self.current_bpm = self._current_bpm(0.0)
         self.kick_offsets.clear()
-        events = [{"instrument": "kick", "offset": float(b)} for b in range(int(length_beats))]
+        events = [
+            cast(GrooveEvent, {"instrument": "kick", "offset": float(b)})
+            for b in range(int(length_beats))
+        ]
         self._apply_pattern(
             part,
-            cast(list[GrooveEvent], events),
+            events,
             0.0,
             length_beats,
             90,

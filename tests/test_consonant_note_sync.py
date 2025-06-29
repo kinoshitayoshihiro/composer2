@@ -4,6 +4,7 @@ from music21 import stream, meter
 from generator.drum_generator import DrumGenerator, RESOLUTION
 from utilities.groove_sampler_ngram import Event
 from typing import cast
+from tests.helpers.events import make_event
 from utilities.timing_utils import align_to_consonant
 
 
@@ -28,10 +29,10 @@ def _cfg(tmp_path, radius_ms: float) -> dict:
 
 def _apply(drum: DrumGenerator, off_ql: float) -> tuple[float, int]:
     part = stream.Part(id="drums")
-    events = [cast(Event, {"instrument": "kick", "offset": off_ql})]
+    events = [make_event(instrument="kick", offset=off_ql)]
     drum._apply_pattern(
         part,
-        cast(list[Event], events),
+        events,
         0.0,
         1.0,
         100,

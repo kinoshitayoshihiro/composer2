@@ -2,6 +2,7 @@ import json
 import pretty_midi
 from pathlib import Path
 from generator.drum_generator import DrumGenerator, GM_DRUM_MAP
+from tests.helpers.events import make_event
 from music21 import note
 
 class SimpleDrum(DrumGenerator):
@@ -25,8 +26,8 @@ def _cfg(tmp_path: Path, midi_path: str = "", extra_global=None):
 pattern_flam = {
     "main": {
         "pattern": [
-            {"instrument": "snare", "offset": 0.5, "type": "flam"},
-            {"instrument": "snare", "offset": 1.5, "type": "flam"},
+            make_event(instrument="snare", offset=0.5, type="flam"),
+            make_event(instrument="snare", offset=1.5, type="flam"),
         ],
         "length_beats": 2.0,
     }
@@ -43,7 +44,7 @@ def test_flam_grace_count(tmp_path: Path):
 pattern_beat = {
     "main": {
         "pattern": [
-            {"instrument": "kick", "offset": 1.0},
+            make_event(instrument="kick", offset=1.0),
         ],
         "length_beats": 2.0,
     }
@@ -72,7 +73,7 @@ def test_push_pull_sign(tmp_path: Path):
 
 pattern_hat = {
     "main": {
-        "pattern": [{"instrument": "chh", "offset": i} for i in range(4)],
+        "pattern": [make_event(instrument="chh", offset=i) for i in range(4)],
         "length_beats": 4.0,
     }
 }

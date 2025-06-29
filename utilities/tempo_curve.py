@@ -6,7 +6,7 @@ import json
 import math
 from typing import Iterable, List
 
-import yaml  # type: ignore
+import yaml
 from music21 import meter
 
 @dataclass

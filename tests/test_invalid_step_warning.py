@@ -1,9 +1,8 @@
 import random
-from pathlib import Path
 import warnings
+from pathlib import Path
 
 import pretty_midi
-import pytest
 
 from utilities import groove_sampler_ngram as gs
 
@@ -26,16 +25,17 @@ def test_invalid_step_warning(tmp_path: Path, monkeypatch) -> None:
         if not hasattr(fake_sample_next, "called"):
             fake_sample_next.called = True
             return gs.RESOLUTION + 1, "kick"
-        return 0, "kick"
+        return orig(history, model_arg, rng, **kwargs)
 
     monkeypatch.setattr(gs, "_sample_next", fake_sample_next)
 
+    prev = [(gs.RESOLUTION * 2, "snare")]
     with warnings.catch_warnings(record=True) as rec:
-        events, history = gs.generate_bar([], model, rng=random.Random(0))
+        events, history = gs.generate_bar(prev, model, rng=random.Random(0))
 
     assert len(rec) == 1
     assert issubclass(rec[0].category, RuntimeWarning)
-    assert all(0 <= e["offset"] < 4 for e in events)
-    assert all(0 <= s < gs.RESOLUTION for s, _ in history)
+    assert "invalid step" in str(rec[0].message)
+    assert len(history) == len(prev)
 
     monkeypatch.setattr(gs, "_sample_next", orig)

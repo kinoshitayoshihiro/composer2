@@ -468,6 +468,8 @@ Train a simple recurrent model and stream it live:
 modcompose rnn train loops/ -o rnn.pt
 modcompose live rnn.pt --backend rnn --bpm 110
 ```
+Pass `--sync external` to follow an external MIDI clock. This requires an
+available MIDI-IN port provided by `mido`.
 
 ## Vocal Sync
 
@@ -578,6 +580,19 @@ part = gen.render_part(section)
 The first beat snaps to the nearest kick within the opening eighth note, then
 the bass mirrors the lead melody around the chord root.
 TODO: add GIF demo
+
+### ii–V Build-up
+
+When the upcoming bar resolves back to the song's tonic, `render_part()` will
+walk up the last two beats to lead into that cadence. Beats one and two still
+use Kick‑Lock → Mirror‑Melody while beats three and four outline the ii or V
+approach.
+
+```python
+next_sec = {"chord": "Cmaj7"}
+part = gen.render_part({"chord": "G7", "groove_kicks": [0], "melody": []},
+                       next_section_data=next_sec)
+```
 
 ## Hi-Fi RNN Backend
 

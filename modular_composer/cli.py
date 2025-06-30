@@ -291,6 +291,39 @@ def _cmd_gui(args: list[str]) -> None:
     subprocess.run(["streamlit", "run", str(script), *args], check=True)
 
 
+def _cmd_tag(args: list[str]) -> None:
+    ap = argparse.ArgumentParser(prog="modcompose tag")
+    ap.add_argument("loops", type=Path)
+    ap.add_argument("--out", type=Path, default=Path("meta.json"))
+    ns = ap.parse_args(args)
+    from data_ops.auto_tag import auto_tag
+
+    meta = auto_tag(ns.loops)
+    ns.out.write_text(json.dumps(meta))
+    print(f"wrote {ns.out}")
+
+
+def _cmd_augment(args: list[str]) -> None:
+    ap = argparse.ArgumentParser(prog="modcompose augment")
+    ap.add_argument("midi", type=Path)
+    ap.add_argument("--swing", type=float, default=0.0)
+    ap.add_argument("--transpose", type=int, default=0)
+    ap.add_argument("--shuffle", action="store_true")
+    ap.add_argument("-o", "--out", type=Path, required=True)
+    ns = ap.parse_args(args)
+    from data_ops import augment
+
+    pm = pretty_midi.PrettyMIDI(str(ns.midi))
+    if ns.swing:
+        pm = augment.swing(pm, ns.swing)
+    if ns.shuffle:
+        pm = augment.shuffle(pm)
+    if ns.transpose:
+        pm = augment.transpose(pm, ns.transpose)
+    pm.write(str(ns.out))
+    print(f"wrote {ns.out}")
+
+
 def main(argv: list[str] | None = None) -> None:
     import sys
 
@@ -313,6 +346,10 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_gm_test(argv[1:])
     elif cmd == "gui":
         _cmd_gui(argv[1:])
+    elif cmd == "tag":
+        _cmd_tag(argv[1:])
+    elif cmd == "augment":
+        _cmd_augment(argv[1:])
     else:
         cli.main(args=argv, standalone_mode=False)
 

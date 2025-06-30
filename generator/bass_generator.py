@@ -10,17 +10,15 @@ from typing import Any
 import music21
 from music21 import (
     duration as m21duration,
-)
-from music21 import (
     harmony,
     interval,
+
+    key,
     meter,
     note,
     pitch,
     scale,
     stream,
-)
-from music21 import (
     volume as m21volume,
 )
 
@@ -1939,6 +1937,64 @@ class BassGenerator(BasePartGenerator):
                 velocity=AccentMapper.map_layer("low", rng=self._rng)
             )
             notes_data.append((grid_off, bn))
+
+        # --------------------------------------------------------------
+        # ii-V build-up detection and generation (beats >= 3 only)
+        # --------------------------------------------------------------
+        key_tonic = (
+            self.global_key_signature_tonic or self.global_key_tonic or "C"
+        )
+        key_mode = (
+            self.global_key_signature_mode or self.global_key_mode or "major"
+        )
+        try:
+            key_obj = key.Key(key_tonic, key_mode)
+        except Exception:
+            key_obj = key.Key(key_tonic)
+
+        build_up = False
+        next_label = None
+        if next_section_data:
+            next_label = next_section_data.get("chord") or next_section_data.get(
+                "chord_symbol_for_voicing"
+            )
+        if next_label:
+            try:
+                next_root = harmony.ChordSymbol(next_label).root()
+            except Exception:
+                next_root = None
+            if next_root and key_obj.getScaleDegreeFromPitch(next_root) == 1:
+                build_up = True
+
+        if build_up:
+            deg_now = key_obj.getScaleDegreeFromPitch(root_pitch)
+            pattern_ints: list[int]
+            pattern_root = root_pitch
+            if deg_now == 2:
+                pattern_ints = [0, 3, 7, 9]
+            elif deg_now == 5:
+                pattern_ints = [0, 4, 7, 8]
+            else:
+                pattern_root = key_obj.pitchFromDegree(5)
+                pattern_root.octave = root_pitch.octave
+                pattern_ints = [0, 2, 4, 5]
+            pattern_pitches = [pattern_root.transpose(i) for i in pattern_ints]
+
+            build_offsets = [2.0, 3.0]
+            for b_off, p_obj in zip(build_offsets, pattern_pitches[2:]):
+                midi_val = p_obj.midi
+                while midi_val < self.bass_range_lo:
+                    midi_val += 12
+                while midi_val > self.bass_range_hi:
+                    midi_val -= 12
+                p_obj.midi = midi_val
+                notes_data = [d for d in notes_data if not (b_off <= d[0] < b_off + 1.0)]
+                n_bu = note.Note(p_obj)
+                n_bu.duration = m21duration.Duration(1.0)
+                n_bu.volume = m21volume.Volume(
+                    velocity=AccentMapper.map_layer("mid", rng=self._rng)
+                )
+                notes_data.append((b_off, n_bu))
 
         notes_data.sort(key=lambda x: x[0])
         merged: list[tuple[float, note.Note]] = []

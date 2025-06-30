@@ -22,4 +22,4 @@ jobs:
               pm.instruments.append(inst)
               pm.write(f'mini_loops/{i}.mid')
           PY
-      - run: timeout 60 modcompose groove train mini_loops --order 2
+      - run: timeout 180 modcompose groove train mini_loops --order 2

@@ -28,6 +28,14 @@ pip install -r requirements.txt      # core + music21
 pip install -e .[gui]                # optional GUI
 ```
 
+### フル機能を使うには
+
+追加機能（RNN 学習や GUI、外部 MIDI 同期）を利用する場合は
+
+```bash
+pip install -r requirements-extra.txt    # or: pip install 'modular_composer[rnn,gui,live]'
+```
+
 Without these packages `pytest` and the composer modules will fail to import.
 
 ## Required Libraries

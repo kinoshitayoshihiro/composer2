@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pretty_midi
+import pytest
 
 from data_ops.augment import swing
 
@@ -15,11 +16,12 @@ def _make_midi(path: Path) -> pretty_midi.PrettyMIDI:
     return pm
 
 
+@pytest.mark.data_ops
 def test_swing(tmp_path: Path) -> None:
     midi = tmp_path / "a.mid"
     pm = _make_midi(midi)
-    swung = swing(pm, 50)
+    swung = swing(pm, 60)
     beat = 60.0 / 120
     tick = beat / 480
-    expected = 0.25 + 0.125
+    expected = 0.25 + (60 - 50) / 100 * beat / 6
     assert abs(swung.instruments[0].notes[1].start - expected) < 2 * tick

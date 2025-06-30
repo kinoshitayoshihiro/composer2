@@ -6,10 +6,13 @@ from pathlib import Path
 from typing import Any
 
 import click
-import pytorch_lightning as pl
-import torch
-from torch import nn
-from torch.utils.data import DataLoader, Dataset
+try:
+    import pytorch_lightning as pl
+    import torch
+    from torch import nn
+    from torch.utils.data import DataLoader, Dataset
+except ImportError as exc:  # pragma: no cover - optional dependency
+    raise RuntimeError("Install extras: rnn") from exc
 
 from .groove_sampler_ngram import RESOLUTION, Event
 

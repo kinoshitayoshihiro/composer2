@@ -80,7 +80,7 @@ def live_cmd(model: Path, backend: str | None, sync: str, bpm: float, buffer: in
     engine = RealtimeEngine(
         model, backend=backend, bpm=bpm, sync=sync, buffer_bars=buffer
     )
-    live_player.play_live(engine, bpm=bpm)
+    live_player.play_live(engine, bpm=bpm)  # type: ignore[arg-type]
 
 
 def _cmd_demo(args: list[str]) -> None:
@@ -170,7 +170,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml  # type: ignore
+        import yaml  # type: ignore[import-untyped]
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}

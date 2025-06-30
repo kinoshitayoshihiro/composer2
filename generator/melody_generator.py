@@ -18,6 +18,8 @@ from .base_part_generator import BasePartGenerator
 import random
 import logging
 import copy
+import os
+from pathlib import Path
 
 # music21 のサブモジュールを正しい形式でインポート
 import music21.stream as stream
@@ -353,6 +355,25 @@ class MelodyGenerator(BasePartGenerator):
 
     def _render_part(self, *args, **kwargs):
         raise NotImplementedError("_render_part is not implemented in MelodyGenerator.")
+
+    def write(
+        self,
+        part: stream.Part,
+        project_root: str | Path,
+        section: str,
+        filename: str | None = None,
+    ) -> Path:
+        """Write ``part`` under ``project_root/section`` as MIDI.
+
+        The directory is created if needed.
+        """
+        project_root = Path(project_root)
+        section_path = project_root / section
+        os.makedirs(section_path, exist_ok=True)
+        fname = filename or f"{self.part_name or 'melody'}.mid"
+        out_path = section_path / fname
+        part.write("midi", fp=str(out_path))
+        return out_path
 
 
 class PianoGenerator(BasePartGenerator):

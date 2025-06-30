@@ -1841,6 +1841,13 @@ class BassGenerator(BasePartGenerator):
         groove_kicks = list(section_data.get("groove_kicks", []))
         melody = list(section_data.get("melody", []))
 
+        def _clamp_pitch_octaves(p_obj: pitch.Pitch) -> pitch.Pitch:
+            while p_obj.midi < self.bass_range_lo:
+                p_obj = p_obj.transpose(12)
+            while p_obj.midi > self.bass_range_hi:
+                p_obj = p_obj.transpose(-12)
+            return p_obj
+
         def _degree_to_pitch(base: pitch.Pitch, token: str | int) -> pitch.Pitch:
             semis = {1: 0, 2: 2, 3: 4, 4: 5, 5: 7, 6: 9, 7: 11}
             shift = 0
@@ -1860,11 +1867,7 @@ class BassGenerator(BasePartGenerator):
                 deg = int(token)
             interval_semi = semis.get(deg, 0) + shift
             p_new = base.transpose(interval_semi)
-            while p_new.midi < self.bass_range_lo:
-                p_new = p_new.transpose(12)
-            while p_new.midi > self.bass_range_hi:
-                p_new = p_new.transpose(-12)
-            return p_new
+            return _clamp_pitch_octaves(p_new)
 
         part = stream.Part(id=self.part_name)
         part.insert(0, copy.deepcopy(self.default_instrument))
@@ -1875,12 +1878,7 @@ class BassGenerator(BasePartGenerator):
         except Exception:
             root_pitch = pitch.Pitch(key_signature)
 
-        root_midi = root_pitch.midi
-        while root_midi < self.bass_range_lo:
-            root_midi += 12
-        while root_midi > self.bass_range_hi:
-            root_midi -= 12
-        root_pitch.midi = root_midi
+        root_pitch = _clamp_pitch_octaves(root_pitch)
 
         tick = 1 / 480
         first_kick = None
@@ -1895,10 +1893,10 @@ class BassGenerator(BasePartGenerator):
         pattern_defs = emotion_data.get("bass_patterns", [])
         pat = pattern_defs[0] if pattern_defs else {}
         riff = pat.get("riff", [1, 5, 1, 5])
-        velocity_layer = pat.get("velocity", "mid")
+        velocity_tier = pat.get("velocity", "mid")
         swing_val = pat.get("swing", "off")
         swing_flag = bool(swing_val) if isinstance(swing_val, bool) else str(swing_val).lower() == "on"
-        base_velocity = AccentMapper.map_layer(velocity_layer, rng=self._rng)
+        base_velocity = AccentMapper.map_layer(velocity_tier, rng=self._rng)
 
         first_note = note.Note(root_pitch)
         first_note.duration = m21duration.Duration(1.0)
@@ -1912,7 +1910,9 @@ class BassGenerator(BasePartGenerator):
             p_obj = _degree_to_pitch(root_pitch, deg)
             n_obj = note.Note(p_obj)
             n_obj.duration = m21duration.Duration(1.0)
-            n_obj.volume = m21volume.Volume(velocity=base_velocity)
+            n_obj.volume = m21volume.Volume(
+                velocity=AccentMapper.map_layer(velocity_tier, rng=self._rng)
+            )
             notes_data.append((off, n_obj))
 
         for off, pitch_midi, dur in melody:
@@ -1930,12 +1930,7 @@ class BassGenerator(BasePartGenerator):
                 interval.Interval(root_pitch, m_pitch).chromatic.mod12
             )
             mirrored = root_pitch.transpose(-interval_semitones)
-            m_midi = mirrored.midi
-            while m_midi < self.bass_range_lo:
-                m_midi += 12
-            while m_midi > self.bass_range_hi:
-                m_midi -= 12
-            mirrored.midi = m_midi
+            mirrored = _clamp_pitch_octaves(mirrored)
             bn = note.Note(mirrored)
             bn.duration = m21duration.Duration(float(dur))
             bn.volume = m21volume.Volume(
@@ -2005,21 +2000,49 @@ class BassGenerator(BasePartGenerator):
         merged: list[tuple[float, note.Note]] = []
         for off, n in notes_data:
             if merged and off - merged[-1][0] < 0.25:
-                prev_n = merged[-1][1]
+                prev_off, prev_n = merged[-1]
                 prev_n.duration.quarterLength = max(
                     prev_n.duration.quarterLength, n.duration.quarterLength
                 )
             else:
+                if merged:
+                    prev_off, prev_n = merged[-1]
+                    if off < prev_off + prev_n.duration.quarterLength:
+                        prev_n.duration.quarterLength = max(
+                            MIN_NOTE_DURATION_QL, off - prev_off
+                        )
                 merged.append((off, n))
+        if merged:
+            last_off, last_n = merged[-1]
+            last_n.duration.quarterLength = min(
+                last_n.duration.quarterLength,
+                max(MIN_NOTE_DURATION_QL, self.measure_duration - last_off),
+            )
 
         humanize_opts = {
             opt.strip() for opt in str(section_data.get("humanize", "")).split(",") if opt
         }
+        swung: list[tuple[float, note.Note]] = []
         for idx, (off, n) in enumerate(merged):
             insert_off = off
             if swing_amt and idx % 2 == 1:
                 insert_off += swing_amt
-            part.insert(insert_off, n)
+                prev_off, prev_n = swung[-1]
+                prev_n.duration.quarterLength = max(
+                    MIN_NOTE_DURATION_QL, insert_off - prev_off
+                )
+            swung.append((insert_off, n))
+
+        for i, (off, n) in enumerate(swung):
+            if i < len(swung) - 1:
+                next_off = swung[i + 1][0]
+                n.duration.quarterLength = min(n.duration.quarterLength, next_off - off)
+            else:
+                n.duration.quarterLength = min(
+                    n.duration.quarterLength,
+                    max(MIN_NOTE_DURATION_QL, self.measure_duration - off),
+                )
+            part.insert(off, n)
             custom: dict[str, float] = {}
             if "vel" not in humanize_opts:
                 custom["velocity_variation"] = 0.0

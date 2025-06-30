@@ -275,9 +275,9 @@ An RNN baseline is available for comparison:
 modcompose rnn train loops.json --epochs 1 --out rnn.pt
 modcompose rnn sample rnn.pt -l 4 > rnn.mid
 ```
-Stream a trained model in real time:
+Stream a trained model live:
 ```bash
-modcompose realtime rnn.pt --bpm 100 --duration 16
+modcompose live rnn.pt --backend rnn --bpm 100
 ```
 Real-time audio requires the `sounddevice` backend and currently works on
 Linux and macOS only.

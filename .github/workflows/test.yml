@@ -14,7 +14,7 @@ jobs:
       - run: bash scripts/ci_groove.sh
       - run: pytest -q
 
-  rnn:
+  stretch-smoke:
     if: startsWith(github.ref, 'refs/heads/stretch/')
     runs-on: ubuntu-latest
     steps:
@@ -22,4 +22,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+      - run: pip install -e .[dev,groove,gui,rnn]
       - run: bash scripts/ci_groove_rnn.sh

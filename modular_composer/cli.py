@@ -156,7 +156,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml  # type: ignore
+        import yaml
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}
@@ -272,6 +272,13 @@ def _cmd_gm_test(args: list[str]) -> None:
     print("All golden MIDI match.")
 
 
+def _cmd_gui(args: list[str]) -> None:
+    """Launch the Streamlit GUI."""
+    import subprocess
+    script = Path(__file__).resolve().parent.parent / "tools" / "streamlit_gui.py"
+    subprocess.run(["streamlit", "run", str(script), *args], check=True)
+
+
 def main(argv: list[str] | None = None) -> None:
     import sys
 
@@ -292,6 +299,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_realtime(argv[1:])
     elif cmd == "gm-test":
         _cmd_gm_test(argv[1:])
+    elif cmd == "gui":
+        _cmd_gui(argv[1:])
     else:
         cli.main(args=argv, standalone_mode=False)
 

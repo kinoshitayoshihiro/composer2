@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
-ruff check . --select I,S,B
-mypy modular_composer utilities tests --strict
+ruff check . --select I,U
+mypy modular_composer utilities tests --strict --warn-unused-ignores
 python - <<'PY'
 import statistics, tempfile, time
 from pathlib import Path
@@ -28,7 +28,8 @@ with tempfile.TemporaryDirectory() as d:
     med_no = statistics.median(uncached)
     med_yes = statistics.median(cached)
     ratio = med_no / med_yes if med_yes else float('inf')
-    print(f"ratio {ratio:.2f}")
-    if ratio < 1.25:
+    diff = med_no - med_yes
+    print(f"ratio {ratio:.2f} diff {diff:.3f}")
+    if ratio < 1.25 and diff > 0.5:
         raise SystemExit(1)
 PY

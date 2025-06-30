@@ -911,6 +911,7 @@ def _generate_bar(
     humanize_micro: bool = False,
     use_bar_cache: bool = True,
     rng: Random | None = None,
+    bar_cache: dict[CacheKey, list[tuple[State, float]]] | None = None,
     **kwargs: Any,
 ) -> tuple[list[Event], list[State]]:
     """Generate one bar of events.
@@ -939,8 +940,8 @@ def _generate_bar(
 
     history = list(prev_history) if prev_history is not None else []
     events: list[Event] = []
-    bar_cache: dict[CacheKey, list[tuple[State, float]]] | None
-    bar_cache = {} if use_bar_cache else None
+    if bar_cache is None:
+        bar_cache = {} if use_bar_cache else None
     vel_bounds = {
         k: min(float(np.percentile(np.abs(list(c.elements())), 95)), 45)
         if list(c.elements())
@@ -1020,22 +1021,25 @@ def generate_bar(
     humanize_micro: bool = False,
     use_bar_cache: bool = True,
 ) -> list[Event]:
-    """Return a single bar of events using ``sample``.
+    """Return a single bar of events."""
 
-    ``history`` will be updated in-place when provided.
-    """
-
-    return sample(
+    hist = list(history) if history is not None else None
+    bar_cache: dict[CacheKey, list[tuple[State, float]]] | None
+    bar_cache = {} if use_bar_cache else None
+    events, hist_out = _generate_bar(
+        hist,
         model,
-        bars=1,
         temperature=temperature,
         top_k=top_k,
         cond=cond,
         humanize_vel=humanize_vel,
         humanize_micro=humanize_micro,
         use_bar_cache=use_bar_cache,
-        history=history,
+        bar_cache=bar_cache,
     )
+    if history is not None:
+        history[:] = hist_out
+    return events
 
 
 def generate_bar_legacy(

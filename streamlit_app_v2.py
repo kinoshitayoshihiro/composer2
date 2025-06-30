@@ -48,7 +48,7 @@ def main() -> None:
     backend = sidebar.radio("Backend", ["ngram", "rnn"], index=0)
     bars = sidebar.slider("Bars", 1, 32, 4)
     temp = sidebar.slider("Temperature", 0.0, 1.5, 1.0)
-    sections = ["verse", "pre-chorus", "chorus", "bridge"]
+    sections = ["intro", "verse", "chorus", "bridge"]
     intensities = ["low", "mid", "high"]
     if file is not None:
         path = Path(file.name)

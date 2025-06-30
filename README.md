@@ -175,7 +175,9 @@ though the notes are correct. You can switch mappings programmatically via
 ## Humanize – intensity envelope / swing override
 
 Velocity scaling now follows each section’s `musical_intent.intensity`.
-Overrides may specify `swing_ratio` to shift off-beats with a custom feel.
+Bass patterns map a velocity tier (`low`, `mid`, `high`) to concrete MIDI ranges.
+When `swing_ratio` is set, even eighth-notes are delayed by that amount and the
+preceding note trimmed so the bar length remains intact.
 
 ## Demo MIDI Generation
 

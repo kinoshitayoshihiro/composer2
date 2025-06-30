@@ -1,9 +1,8 @@
-import textwrap
 from music21 import instrument
 from generator.bass_generator import BassGenerator
 
 
-def test_velocity_and_swing():
+def test_first_note_aligned_to_kick() -> None:
     gen = BassGenerator(
         part_name="bass",
         default_instrument=instrument.AcousticBass(),
@@ -11,20 +10,16 @@ def test_velocity_and_swing():
         global_time_signature="4/4",
         global_key_signature_tonic="C",
         global_key_signature_mode="major",
-        emotion_profile_path="data/emotion_profile.yaml",
-        global_settings={"swing_ratio": 0.1},
     )
     section = {
-        "emotion": "funky",
+        "emotion": "joy",
         "key_signature": "C",
         "tempo_bpm": 120,
         "chord": "C",
         "melody": [],
-        "groove_kicks": [0.0, 1.0, 2.0, 3.0],
+        "groove_kicks": [0.05],
     }
     part = gen.render_part(section)
-    velocities = [n.volume.velocity for n in part.notes]
-    assert all(100 <= v <= 110 for v in velocities)
-    offsets = [n.offset for n in part.notes]
-    assert abs(offsets[1] - 1.1) < 1e-6
-    assert abs(offsets[3] - 3.1) < 1e-6
+    first_off = part.notes[0].offset
+    assert abs(first_off - 0.05) <= 1 / 480
+

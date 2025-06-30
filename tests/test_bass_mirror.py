@@ -1,9 +1,8 @@
-import copy
-from music21 import note, instrument
+from music21 import instrument
 from generator.bass_generator import BassGenerator
 
 
-def make_gen():
+def make_gen() -> BassGenerator:
     return BassGenerator(
         part_name="bass",
         default_instrument=instrument.AcousticBass(),
@@ -11,27 +10,21 @@ def make_gen():
         global_time_signature="4/4",
         global_key_signature_tonic="C",
         global_key_signature_mode="major",
-        mirror_melody=True,
-        main_cfg={"global_settings": {"key_tonic": "C", "key_mode": "major"}},
     )
 
 
-def test_mirror_melody_simple():
+def test_mirror_interval_inversion() -> None:
     gen = make_gen()
-    vocal = [note.Note("C4", quarterLength=1.0), note.Note("D4", quarterLength=1.0), note.Note("E4", quarterLength=1.0)]
-    for i, n in enumerate(vocal):
-        n.offset = i
+    melody = [(1.0, 62, 0.5), (2.0, 64, 0.5)]
     section = {
-        "section_name": "Bridge",
-        "absolute_offset": 0.0,
-        "q_length": 3.0,
-        "chord_symbol_for_voicing": "C",
-        "vocal_notes": vocal,
-        "part_params": {},
-        "musical_intent": {},
-        "tonic_of_section": "C",
-        "mode": "major",
+        "emotion": "joy",
+        "key_signature": "C",
+        "tempo_bpm": 120,
+        "chord": "C",
+        "melody": melody,
+        "groove_kicks": [0.0],
     }
-    part = gen.compose(section_data=section)
-    notes = part.flatten().notes
-    assert [n.pitch.nameWithOctave for n in notes[:3]] == ["C2", "B1", "A1"]
+    part = gen.render_part(section)
+    pcs = [n.pitch.midi % 12 for n in part.notes[1:3]]
+    assert pcs == [10, 8]
+

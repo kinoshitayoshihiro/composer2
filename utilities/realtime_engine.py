@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import torch
+try:
+    import torch
+except ImportError as exc:  # pragma: no cover - optional dependency
+    raise RuntimeError("Install extras: rnn") from exc
 
 from .groove_rnn_v2 import GrooveRNN, sample_rnn_v2
 from .groove_sampler_ngram import load as load_ngram
@@ -25,6 +29,15 @@ class RealtimeEngine:
         self.backend = backend
         self.bpm = bpm
         self.sync = sync
+        self._mido = None
+        if self.sync == "external":
+            try:
+                import mido  # type: ignore
+            except Exception as exc:  # pragma: no cover - optional dependency
+                logging.warning("mido not installed; falling back to internal sync")
+                self.sync = "internal"
+            else:
+                self._mido = mido
         self.buffer_bars = buffer_bars
         self._pool = ThreadPoolExecutor(max_workers=1)
         self._next = []

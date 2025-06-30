@@ -20,7 +20,7 @@ def test_generate_bar_aux_fallback(tmp_path: Path) -> None:
     aux_map = {"verse.mid": {"section": "verse", "heat_bin": 0, "intensity": "mid"}}
     model = gs.train(tmp_path, aux_map=aux_map, order=1)
     with warnings.catch_warnings(record=True) as rec:
-        ev, _ = gs.generate_bar(None, model, cond={"section": "bridge"})
+        ev = gs.generate_bar(None, model=model, cond={"section": "bridge"})
     assert ev
     assert any("unknown aux" in str(w.message).lower() for w in rec)
 
@@ -29,9 +29,10 @@ def test_topk_temp_zero_equivalent(tmp_path: Path) -> None:
     for i in range(2):
         _make_loop(tmp_path / f"{i}.mid", pitch=36 + i)
     model = gs.train(tmp_path, order=2)
-    hist: list[gs.State] = []
-    ev_a, _ = gs.generate_bar(hist, model, temperature=0.0, top_k=1, rng=random.Random(0))
-    ev_b, _ = gs.generate_bar(hist, model, temperature=0.0, rng=random.Random(0))
+    hist_a: list[gs.State] = []
+    ev_a = gs.generate_bar(hist_a, model=model, temperature=0.0, top_k=1)
+    hist_b: list[gs.State] = []
+    ev_b = gs.generate_bar(hist_b, model=model, temperature=0.0)
     a_first = (round(ev_a[0]["offset"] * 4), ev_a[0]["instrument"])
     b_first = (round(ev_b[0]["offset"] * 4), ev_b[0]["instrument"])
     assert a_first == b_first

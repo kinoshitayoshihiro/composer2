@@ -9,6 +9,16 @@ def _make_loop(path: Path) -> None:
     for i in range(64):
         lbl = "kick" if i % 2 == 0 else "snare"
         tokens.append((i % 16, lbl, 100, 0))
+import pytest
+
+pytest.importorskip("torch", reason="torch not installed")
+
+from utilities import groove_rnn_v2
+
+
+@pytest.mark.hi_fi
+def test_rnn_quality(tmp_path: Path) -> None:
+    cache = tmp_path / "loops.json"
     data = {
         "ppq": 480,
         "resolution": 16,

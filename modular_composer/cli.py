@@ -14,6 +14,7 @@ import pretty_midi
 
 import utilities.loop_ingest as loop_ingest
 from utilities import (
+    groove_rnn_v2,
     groove_sampler_ngram,
     groove_sampler_rnn,
     live_player,
@@ -24,6 +25,7 @@ from utilities.golden import compare_midi, update_golden
 from utilities.groove_sampler_ngram import Event, State
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
 from utilities.peak_synchroniser import PeakSynchroniser
+from utilities.realtime_engine import RealtimeEngine
 from utilities.tempo_utils import beat_to_seconds
 from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple
 
@@ -48,8 +50,8 @@ def rnn() -> None:
     """RNN groove sampler commands."""
 
 
-rnn.add_command(groove_sampler_rnn.train_cmd, name="train")
-rnn.add_command(groove_sampler_rnn.sample_cmd, name="sample")
+rnn.add_command(groove_rnn_v2.train_cmd, name="train")
+rnn.add_command(groove_rnn_v2.sample_cmd, name="sample")
 
 
 @cli.group()
@@ -68,55 +70,17 @@ except _md.PackageNotFoundError:
 @cli.command("live")
 @click.argument("model", type=Path)
 @click.option("--backend", type=click.Choice(["ngram", "rnn"]), default=None)
+@click.option("--sync", type=click.Choice(["internal", "external"]), default="internal")
 @click.option("--bpm", type=float, default=120.0, show_default=True)
-def live_cmd(model: Path, backend: str | None, bpm: float) -> None:
+@click.option("--buffer", type=int, default=1, show_default=True)
+def live_cmd(model: Path, backend: str | None, sync: str, bpm: float, buffer: int) -> None:
     """Stream a trained groove model live."""
     if backend is None:
         backend = "rnn" if model.suffix == ".pt" else "ngram"
-
-    if backend == "rnn":
-        if groove_sampler_rnn is None:
-            raise click.ClickException("PyTorch not installed")
-        rnn_model, meta = groove_sampler_rnn.load(model)
-
-        class _WrapR:
-            def __init__(self) -> None:
-                self.history: list[State] = []
-
-            def feed_history(self, events: list[State]) -> None:
-                self.history.extend(events)
-
-            def next_step(
-                self, *, cond: dict[str, object] | None, rng: random.Random
-            ) -> Event:
-                return groove_sampler_rnn.sample(
-                    rnn_model, meta, bars=1, temperature=1.0, rng=rng
-                )[0]
-
-        sampler: streaming_sampler.BaseSampler = _WrapR()
-    else:
-        n_model = groove_sampler_ngram.load(model)
-
-        class _WrapN:
-            def __init__(self) -> None:
-                self.hist: list[State] = []
-                self.buf: list[Event] = []
-
-            def feed_history(self, events: list[State]) -> None:
-                self.hist.extend(events)
-
-            def next_step(
-                self, *, cond: dict[str, object] | None, rng: random.Random
-            ) -> Event:
-                if not self.buf:
-                    self.buf, self.hist = groove_sampler_ngram._generate_bar(
-                        self.hist, n_model, rng=rng
-                    )
-                return self.buf.pop(0)
-
-        sampler = _WrapN()
-
-    live_player.play_live(sampler, bpm=bpm)
+    engine = RealtimeEngine(
+        model, backend=backend, bpm=bpm, sync=sync, buffer_bars=buffer
+    )
+    live_player.play_live(engine, bpm=bpm)  # type: ignore[arg-type]
 
 
 def _cmd_demo(args: list[str]) -> None:
@@ -206,7 +170,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml
+        import yaml  # type: ignore[import-untyped]
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}

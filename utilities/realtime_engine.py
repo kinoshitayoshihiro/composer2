@@ -105,3 +105,48 @@ class RealtimeEngine:
         self._stop.set()
         if self._clock_thread is not None:
             self._clock_thread.join(timeout=0.1)
+        self.model_path = model_path
+        self.backend = backend
+        self.bpm = bpm
+        self.sync = sync
+        self._mido = None
+        if self.sync == "external":
+            try:
+                import mido  # type: ignore
+            except Exception as exc:  # pragma: no cover - optional dependency
+                logging.warning("mido not installed; falling back to internal sync")
+                self.sync = "internal"
+            else:
+                self._mido = mido
+        self.buffer_bars = buffer_bars
+        self._pool = ThreadPoolExecutor(max_workers=1)
+        self._next = []
+        self._load_model()
+
+    def _load_model(self) -> None:
+        if self.backend == "rnn":
+            obj = torch.load(self.model_path, map_location="cpu")
+            model = GrooveRNN(len(obj["meta"]["vocab"]))
+            model.load_state_dict(obj["state_dict"])
+            self.model = (model, obj["meta"])
+        else:
+            self.model = load_ngram(self.model_path)
+
+    def _gen_bar(self) -> list[dict]:
+        if self.backend == "rnn":
+            return sample_rnn_v2(self.model, bars=1)
+        return list(sample_ngram(self.model, bars=1))
+
+    def run(self, bars: int, sink: Callable[[dict], None]) -> None:
+        self._next = self._gen_bar()
+        for _ in range(bars):
+            fut = self._pool.submit(self._gen_bar)
+            start = time.time()
+            for ev in self._next:
+                t = start + ev.get("offset", 0.0) * 60.0 / self.bpm
+                delay = t - time.time()
+                if delay > 0:
+                    time.sleep(delay)
+                sink(ev)
+            self._next = fut.result()
+

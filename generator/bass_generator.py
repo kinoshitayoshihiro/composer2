@@ -12,6 +12,8 @@ from music21 import (
     duration as m21duration,
     harmony,
     interval,
+
+    key,
     meter,
     note,
     pitch,
@@ -1823,140 +1825,209 @@ class BassGenerator(BasePartGenerator):
         return list(self._root_offsets)
 
     # ------------------------------------------------------------------
-    # Simplified emotion-aware rendering for phase 5.2 testing
+    # Kick-Lock → Mirror-Melody simplified rendering
     # ------------------------------------------------------------------
     def render_part(
         self,
+        section_data: dict[str, Any],
         *,
-        emotion: str,
-        key_signature: str,
-        tempo_bpm: int,
-        groove_history: Sequence[float] | None = None,
         next_section_data: dict[str, Any] | None = None,
     ) -> stream.Part:
-        """Render a short bass riff based on emotion profile."""
+        """Render a short bass riff following Kick-Lock then Mirror-Melody."""
 
-        profile = self.emotion_profile.get(emotion)
-        if not profile:
-            self.logger.warning("No bass pattern for emotion '%s'", emotion)
-        patterns = profile.get("bass_patterns") if profile else None
-        if not patterns:
-            # Fallback to a neutral four note riff if nothing is defined
+        emotion = section_data.get("emotion", "default")
+        key_signature = section_data.get("key_signature", "C")
+        chord_label = section_data.get("chord", key_signature)
+        groove_kicks = list(section_data.get("groove_kicks", []))
+        melody = list(section_data.get("melody", []))
 
-            profile = {
-                "bass_patterns": [
-                    {"riff": [1, 5, 1, 5], "velocity": "mid", "swing": "off"}
-                ],
-                "octave_pref": "mid",
-                "length_beats": 4,
-            }
-
-        patterns = profile.get("bass_patterns") or []
-        if not patterns:
-            patterns = [
-                {"riff": [1, 5, 1, 5], "velocity": "mid", "swing": "off"}
-            ]
-
-           
-        pat = patterns[0]
-        degrees = pat.get("riff", []) or [1, 5, 1, 5]
-
-        octave_pref = profile.get("octave_pref", "mid")
-        length_beats = float(profile.get("length_beats", len(degrees)))
-
-        swing_val = pat.get("swing", "off")
-        swing_flag = str(swing_val).lower() in {"on", "true", "1"}
-
-        # Determine base velocity from the configured layer
-        velocity_layer = pat.get("velocity", "mid")
-        base_vel = AccentMapper.map_layer(velocity_layer, rng=self._rng)
-
-
-        key_obj = music21.key.Key(key_signature)
-        scale_obj = key_obj.getScale()
-
-        base_oct = {"low": 2, "mid": 3, "high": 4}.get(octave_pref, 3)
-
-        def pitch_from_degree(d: str | int) -> pitch.Pitch:
-            if isinstance(d, int):
-                deg = d
-                shift = 0
-            else:
-                s = str(d)
-                shift = 0
-                if s.startswith("b") or s.startswith("♭"):
+        def _degree_to_pitch(base: pitch.Pitch, token: str | int) -> pitch.Pitch:
+            semis = {1: 0, 2: 2, 3: 4, 4: 5, 5: 7, 6: 9, 7: 11}
+            shift = 0
+            if isinstance(token, str):
+                s = token
+                if s.startswith("b"):
                     shift = -1
-                    s = s.lstrip("b♭")
+                    s = s[1:]
                 elif s.startswith("#"):
                     shift = 1
-                    s = s.lstrip("#")
-                deg = int(s)
-            p_obj = scale_obj.pitchFromDegree(deg)
-            p_obj = p_obj.transpose(shift)
-            p_obj.octave = base_oct
-
-            while p_obj.midi < self.bass_range_lo:
-                p_obj.octave += 1
-            while p_obj.midi > self.bass_range_hi:
-                p_obj.octave -= 1
-
-            return p_obj
+                    s = s[1:]
+                try:
+                    deg = int(s)
+                except Exception:
+                    deg = 1
+            else:
+                deg = int(token)
+            interval_semi = semis.get(deg, 0) + shift
+            p_new = base.transpose(interval_semi)
+            while p_new.midi < self.bass_range_lo:
+                p_new = p_new.transpose(12)
+            while p_new.midi > self.bass_range_hi:
+                p_new = p_new.transpose(-12)
+            return p_new
 
         part = stream.Part(id=self.part_name)
         part.insert(0, copy.deepcopy(self.default_instrument))
-        dur = length_beats / len(degrees)
 
-        offsets: list[float] = []
-        notes: list[note.Note] = []
-        for i, deg in enumerate(degrees):
-            p_obj = pitch_from_degree(deg)
-            n = note.Note(p_obj)
-            n.duration.quarterLength = dur
-            n.volume = m21volume.Volume(velocity=base_vel)
-            off = i * dur
-            offsets.append(off)
-            notes.append(n)
-            part.insert(off, n)
+        try:
+            cs = harmony.ChordSymbol(chord_label)
+            root_pitch = cs.root() or pitch.Pitch(key_signature)
+        except Exception:
+            root_pitch = pitch.Pitch(key_signature)
 
-        if groove_history:
-            tol = 0.25
-            new_offsets: list[float] = []
-            for n, off in zip(notes, offsets):
-                nearest = min(groove_history, key=lambda x: abs(x - off))
-                if abs(nearest - off) <= tol:
-                    n.offset = nearest
-                    new_offsets.append(nearest)
-                else:
-                    new_offsets.append(off)
-            offsets = new_offsets
+        root_midi = root_pitch.midi
+        while root_midi < self.bass_range_lo:
+            root_midi += 12
+        while root_midi > self.bass_range_hi:
+            root_midi -= 12
+        root_pitch.midi = root_midi
 
-        if swing_flag:
-            delay = self.swing_ratio
-            for idx, n in enumerate(notes):
-                if idx % 2 == 1:
-                    n.offset += delay
-                    if idx > 0:
-                        prev = notes[idx - 1]
-                        prev.duration.quarterLength = max(
-                            MIN_NOTE_DURATION_QL,
-                            n.offset - prev.offset,
-                        )
-            offsets = [n.offset for n in notes]
+        tick = 1 / 480
+        first_kick = None
+        for k in groove_kicks:
+            if 0 <= float(k) < 0.5:
+                first_kick = float(k)
+                break
+        first_offset = float(first_kick) if first_kick is not None else 0.0
+        first_offset += self._rng.uniform(-tick, tick)
 
-        # Recalculate durations based on final offsets
-        sorted_pairs = sorted(zip(offsets, notes), key=lambda x: x[0])
-        for idx, (off, n) in enumerate(sorted_pairs):
-            if idx < len(sorted_pairs) - 1:
-                next_off = sorted_pairs[idx + 1][0]
+        emotion_data = self.emotion_profile.get(emotion, {})
+        pattern_defs = emotion_data.get("bass_patterns", [])
+        pat = pattern_defs[0] if pattern_defs else {}
+        riff = pat.get("riff", [1, 5, 1, 5])
+        velocity_layer = pat.get("velocity", "mid")
+        swing_val = pat.get("swing", "off")
+        swing_flag = bool(swing_val) if isinstance(swing_val, bool) else str(swing_val).lower() == "on"
+        base_velocity = AccentMapper.map_layer(velocity_layer, rng=self._rng)
+
+        first_note = note.Note(root_pitch)
+        first_note.duration = m21duration.Duration(1.0)
+        first_note.volume = m21volume.Volume(velocity=base_velocity)
+
+        notes_data: list[tuple[float, note.Note]] = [(first_offset, first_note)]
+        offsets = [0.0, 1.0, 2.0, 3.0]
+        swing_amt = self.swing_ratio if swing_flag else 0.0
+        for idx, deg in enumerate(riff[1:], start=1):
+            off = offsets[idx % len(offsets)]
+            p_obj = _degree_to_pitch(root_pitch, deg)
+            n_obj = note.Note(p_obj)
+            n_obj.duration = m21duration.Duration(1.0)
+            n_obj.volume = m21volume.Volume(velocity=base_velocity)
+            notes_data.append((off, n_obj))
+
+        for off, pitch_midi, dur in melody:
+            if float(off) <= 1.0:
+                continue
+            grid_off = round(float(off) / 0.5) * 0.5
+            if grid_off >= self.measure_duration:
+                continue
+            try:
+                m_pitch = pitch.Pitch()
+                m_pitch.midi = int(pitch_midi)
+            except Exception:
+                continue
+            interval_semitones = (
+                interval.Interval(root_pitch, m_pitch).chromatic.mod12
+            )
+            mirrored = root_pitch.transpose(-interval_semitones)
+            m_midi = mirrored.midi
+            while m_midi < self.bass_range_lo:
+                m_midi += 12
+            while m_midi > self.bass_range_hi:
+                m_midi -= 12
+            mirrored.midi = m_midi
+            bn = note.Note(mirrored)
+            bn.duration = m21duration.Duration(float(dur))
+            bn.volume = m21volume.Volume(
+                velocity=AccentMapper.map_layer("low", rng=self._rng)
+            )
+            notes_data.append((grid_off, bn))
+
+        # --------------------------------------------------------------
+        # ii-V build-up detection and generation (beats >= 3 only)
+        # --------------------------------------------------------------
+        key_tonic = (
+            self.global_key_signature_tonic or self.global_key_tonic or "C"
+        )
+        key_mode = (
+            self.global_key_signature_mode or self.global_key_mode or "major"
+        )
+        try:
+            key_obj = key.Key(key_tonic, key_mode)
+        except Exception:
+            key_obj = key.Key(key_tonic)
+
+        build_up = False
+        next_label = None
+        if next_section_data:
+            next_label = next_section_data.get("chord") or next_section_data.get(
+                "chord_symbol_for_voicing"
+            )
+        if next_label:
+            try:
+                next_root = harmony.ChordSymbol(next_label).root()
+            except Exception:
+                next_root = None
+            if next_root and key_obj.getScaleDegreeFromPitch(next_root) == 1:
+                build_up = True
+
+        if build_up:
+            deg_now = key_obj.getScaleDegreeFromPitch(root_pitch)
+            pattern_ints: list[int]
+            pattern_root = root_pitch
+            if deg_now == 2:
+                pattern_ints = [0, 3, 7, 9]
+            elif deg_now == 5:
+                pattern_ints = [0, 4, 7, 8]
             else:
-                next_off = length_beats
-            n.duration.quarterLength = max(MIN_NOTE_DURATION_QL, next_off - n.offset)
+                pattern_root = key_obj.pitchFromDegree(5)
+                pattern_root.octave = root_pitch.octave
+                pattern_ints = [0, 2, 4, 5]
+            pattern_pitches = [pattern_root.transpose(i) for i in pattern_ints]
+
+            build_offsets = [2.0, 3.0]
+            for b_off, p_obj in zip(build_offsets, pattern_pitches[2:]):
+                midi_val = p_obj.midi
+                while midi_val < self.bass_range_lo:
+                    midi_val += 12
+                while midi_val > self.bass_range_hi:
+                    midi_val -= 12
+                p_obj.midi = midi_val
+                notes_data = [d for d in notes_data if not (b_off <= d[0] < b_off + 1.0)]
+                n_bu = note.Note(p_obj)
+                n_bu.duration = m21duration.Duration(1.0)
+                n_bu.volume = m21volume.Volume(
+                    velocity=AccentMapper.map_layer("mid", rng=self._rng)
+                )
+                notes_data.append((b_off, n_bu))
+
+        notes_data.sort(key=lambda x: x[0])
+        merged: list[tuple[float, note.Note]] = []
+        for off, n in notes_data:
+            if merged and off - merged[-1][0] < 0.25:
+                prev_n = merged[-1][1]
+                prev_n.duration.quarterLength = max(
+                    prev_n.duration.quarterLength, n.duration.quarterLength
+                )
+            else:
+                merged.append((off, n))
+
+        humanize_opts = {
+            opt.strip() for opt in str(section_data.get("humanize", "")).split(",") if opt
+        }
+        for idx, (off, n) in enumerate(merged):
+            insert_off = off
+            if swing_amt and idx % 2 == 1:
+                insert_off += swing_amt
+            part.insert(insert_off, n)
+            custom: dict[str, float] = {}
+            if "vel" not in humanize_opts:
+                custom["velocity_variation"] = 0.0
+            if "micro" not in humanize_opts:
+                custom["time_variation"] = 0.0
+            humanizer.apply_humanization_to_element(n, custom_params=custom)
 
         part.coreElementsChanged()
-
-        for n in notes:
-            humanizer.apply_humanization_to_element(n)
-
         return part
 
 

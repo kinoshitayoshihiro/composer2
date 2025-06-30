@@ -23,3 +23,7 @@ ruamel.yaml>=0.17  # [yaml]
 scipy>=1.10  # [tests]
 tqdm>=4.64  # [cli]
 types-PyYAML>=6.0  # [typing]
+music21>=7.3
+numpy>=1.26
+click>=8.1
+pretty_midi>=0.2

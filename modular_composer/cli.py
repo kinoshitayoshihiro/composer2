@@ -151,7 +151,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml  # type: ignore
+        import yaml
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}

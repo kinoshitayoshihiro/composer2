@@ -450,6 +450,15 @@ Launch the Streamlit GUI to compare:
 modcompose gui
 ```
 
+### RNN Backend and Live Playback
+
+Train a simple recurrent model and stream it live:
+
+```bash
+modcompose rnn train loops/ -o rnn.pt
+modcompose live rnn.pt --backend rnn --bpm 110
+```
+
 ## Vocal Sync
 
 

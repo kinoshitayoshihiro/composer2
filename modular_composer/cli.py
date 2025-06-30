@@ -15,14 +15,10 @@ import pretty_midi
 import utilities.loop_ingest as loop_ingest
 from utilities import (
     groove_sampler_ngram,
+    groove_sampler_rnn,
     streaming_sampler,
     synth,
 )
-
-try:  # optional dependency
-    from utilities import groove_sampler_rnn
-except Exception:  # pragma: no cover - torch not installed
-    groove_sampler_rnn = None  # type: ignore
 from utilities.golden import compare_midi, update_golden
 from utilities.groove_sampler_ngram import Event, State
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
@@ -46,14 +42,13 @@ groove.add_command(groove_sampler_ngram.sample_cmd, name="sample")
 groove.add_command(groove_sampler_ngram.info_cmd, name="info")
 
 
-if groove_sampler_rnn is not None:
-    @cli.group()
-    def rnn() -> None:
-        """RNN groove sampler commands."""
+@cli.group()
+def rnn() -> None:
+    """RNN groove sampler commands."""
 
 
-    rnn.add_command(groove_sampler_rnn.train_cmd, name="train")
-    rnn.add_command(groove_sampler_rnn.sample_cmd, name="sample")
+rnn.add_command(groove_sampler_rnn.train_cmd, name="train")
+rnn.add_command(groove_sampler_rnn.sample_cmd, name="sample")
 
 
 @cli.group()
@@ -156,7 +151,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml
+        import yaml  # type: ignore
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}
@@ -208,8 +203,6 @@ def _cmd_realtime(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.model.suffix == ".pt":
-        if groove_sampler_rnn is None:
-            raise SystemExit("PyTorch not installed")
         model, meta = groove_sampler_rnn.load(ns.model)
         class _WrapR:
             def __init__(self) -> None:
@@ -275,7 +268,7 @@ def _cmd_gm_test(args: list[str]) -> None:
 def _cmd_gui(args: list[str]) -> None:
     """Launch the Streamlit GUI."""
     import subprocess
-    script = Path(__file__).resolve().parent.parent / "tools" / "streamlit_gui.py"
+    script = Path(__file__).resolve().parent.parent / "streamlit_app" / "gui.py"
     subprocess.run(["streamlit", "run", str(script), *args], check=True)
 
 

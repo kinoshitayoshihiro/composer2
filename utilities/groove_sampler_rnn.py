@@ -53,9 +53,8 @@ def _load_loops(path: Path) -> list[LoopEntry]:
 @dataclass
 class TrainConfig:
     epochs: int = 6
-    lr: float = 2e-3
+    embed: int = 64
     hidden: int = 128
-    layers: int = 2
 
 
 if torch is not None:
@@ -118,13 +117,17 @@ if torch is not None:
             return self.log_softmax(self.fc(out))
 
     def train(
-        path: Path, *, epochs: int = 6, lr: float = 2e-3, hidden: int = 128, layers: int = 2
+        path: Path,
+        *,
+        epochs: int = 6,
+        embed: int = 64,
+        hidden: int = 128,
     ) -> tuple[GRUModel, dict]:
         data = _load_loops(path)
         ds = TokenDataset(data)
         dl = DataLoader(ds, batch_size=32, shuffle=True)
-        model = GRUModel(ds.vocab_size, hidden, layers)
-        opt = torch.optim.Adam(model.parameters(), lr=lr)
+        model = GRUModel(ds.vocab_size, hidden, 1)
+        opt = torch.optim.Adam(model.parameters(), lr=2e-3)
         model.train()
         for _ in range(epochs):
             for idx, vel, micro in dl:
@@ -206,24 +209,79 @@ if torch is not None:
             )
         return events
 else:
+    import json
+    from dataclasses import dataclass
+    import numpy as np
 
-    class TokenDataset:  # type: ignore[unused-type]
-        pass
+    @dataclass
+    class GRUModel:
+        """Minimal fallback model using bigram probabilities."""
 
-    class GRUModel:  # type: ignore[unused-type]
-        pass
+        matrix: np.ndarray
 
-    def train(*args: object, **kwargs: object) -> tuple[GRUModel, dict]:
-        raise RuntimeError("PyTorch not installed")
+    class TokenDataset:
+        def __init__(self, data: list[LoopEntry]) -> None:
+            self.tokens: list[tuple[int, str]] = []
+            self.vocab: dict[tuple[int, str], int] = {}
+            for entry in data:
+                for step, lbl, _v, _m in entry["tokens"]:
+                    token = (step, lbl)
+                    idx = self.vocab.setdefault(token, len(self.vocab))
+                    self.tokens.append(idx)
 
-    def save(*args: object, **kwargs: object) -> None:
-        raise RuntimeError("PyTorch not installed")
+        @property
+        def vocab_size(self) -> int:
+            return len(self.vocab)
 
-    def load(*args: object, **kwargs: object) -> tuple[GRUModel, dict]:
-        raise RuntimeError("PyTorch not installed")
+    def train(path: Path, *, epochs: int = 1, **_: object) -> tuple[GRUModel, dict]:
+        data = _load_loops(path)
+        ds = TokenDataset(data)
+        mat = np.ones((ds.vocab_size, ds.vocab_size), dtype=float)
+        for a, b in zip(ds.tokens[:-1], ds.tokens[1:]):
+            mat[a, b] += 1.0
+        mat /= mat.sum(axis=1, keepdims=True)
+        model = GRUModel(mat)
+        meta = {"vocab": ds.vocab}
+        return model, meta
 
-    def sample(*args: object, **kwargs: object) -> list[Event]:
-        raise RuntimeError("PyTorch not installed")
+    def save(model: GRUModel, meta: dict, path: Path) -> None:
+        data = {"matrix": model.matrix.tolist(), "meta": meta}
+        path.write_text(json.dumps(data))
+
+    def load(path: Path) -> tuple[GRUModel, dict]:
+        obj = json.loads(path.read_text())
+        mat = np.array(obj["matrix"], dtype=float)
+        model = GRUModel(mat)
+        return model, obj["meta"]
+
+    def sample(
+        model: GRUModel,
+        meta: dict,
+        *,
+        bars: int = 4,
+        temperature: float = 1.0,
+        humanize: bool = False,
+        rng: Random | None = None,
+    ) -> list[Event]:
+        rng = rng or Random()
+        inv_vocab = {v: k for k, v in meta["vocab"].items()}
+        idx = rng.randrange(len(inv_vocab))
+        events: list[Event] = []
+        for i in range(bars * RESOLUTION):
+            step, lbl = inv_vocab[idx]
+            offset = i / (RESOLUTION / 4)
+            vel = 100
+            if humanize:
+                vel = max(1, min(127, int(rng.gauss(100.0, 6.0))))
+            events.append({"instrument": lbl, "offset": offset, "duration": 0.25, "velocity": vel})
+            probs = model.matrix[idx]
+            if temperature <= 0:
+                idx = int(np.argmax(probs))
+            else:
+                probs = np.exp(np.log(probs) / temperature)
+                probs /= probs.sum()
+                idx = int(rng.choices(range(len(probs)), weights=probs, k=1)[0])
+        return events
 
 
 @click.group()
@@ -234,14 +292,13 @@ def cli() -> None:
 @cli.command()
 @click.argument("loops", type=Path)
 @click.option("--epochs", default=6, type=int)
-@click.option("--lr", default=2e-3, type=float)
-@click.option("--hidden", default=128, type=int)
-@click.option("--layers", default=2, type=int)
+@click.option("--embed", default=8, type=int)
+@click.option("--hidden", default=16, type=int)
 @click.option("--out", "out_path", type=Path, required=True)
 def train_cmd(
-    loops: Path, epochs: int, lr: float, hidden: int, layers: int, out_path: Path
+    loops: Path, epochs: int, embed: int, hidden: int, out_path: Path
 ) -> None:
-    model, meta = train(loops, epochs=epochs, lr=lr, hidden=hidden, layers=layers)
+    model, meta = train(loops, epochs=epochs, embed=embed, hidden=hidden)
     save(model, meta, out_path)
     click.echo(f"saved model to {out_path}")
 

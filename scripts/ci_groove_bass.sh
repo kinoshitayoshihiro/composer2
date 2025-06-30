@@ -27,8 +27,10 @@ with tempfile.TemporaryDirectory() as d:
     assert len(part.notes) == 4
 PY
 end=$(date +%s)
-elapsed=$((end - start))
-if [ "$elapsed" -gt 60 ]; then
-  echo "ci_groove_bass.sh took ${elapsed}s" >&2
+
+runtime=$((end - start))
+echo "Bass CI runtime: ${runtime}s"
+if [ "$runtime" -gt 60 ]; then
+  echo "Runtime exceeded 60 seconds" >&2
   exit 1
 fi

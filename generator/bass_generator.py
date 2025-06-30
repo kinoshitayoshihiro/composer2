@@ -24,6 +24,7 @@ from music21 import (
 )
 
 from utilities import humanizer
+from utilities.accent_mapper import AccentMapper
 from utilities.emotion_profile_loader import load_emotion_profile
 from utilities.velocity_curve import resolve_velocity_curve
 
@@ -1838,11 +1839,20 @@ class BassGenerator(BasePartGenerator):
     ) -> stream.Part:
         """Render a short bass riff based on emotion profile."""
 
-        profile = self.emotion_profile.get(emotion, {})
-        patterns = profile.get("bass_patterns") or []
-        if not patterns:
+        profile = self.emotion_profile.get(emotion)
+        if not profile:
             self.logger.warning("No bass pattern for emotion '%s'", emotion)
-            return stream.Part(id=self.part_name)
+        patterns = profile.get("bass_patterns") if profile else None
+        if not patterns:
+            # Fallback to a neutral four note riff if nothing is defined
+            profile = {
+                "bass_patterns": [
+                    {"riff": [1, 5, 1, 5], "velocity": "mid", "swing": "off"}
+                ],
+                "octave_pref": "mid",
+                "length_beats": 4,
+            }
+            patterns = profile["bass_patterns"]
 
         pat = patterns[0]
         degrees = pat.get("riff", [])
@@ -1851,6 +1861,12 @@ class BassGenerator(BasePartGenerator):
 
         octave_pref = profile.get("octave_pref", "mid")
         length_beats = float(profile.get("length_beats", len(degrees)))
+        velocity_layer = str(pat.get("velocity", "mid"))
+        swing_val = pat.get("swing", "off")
+        if isinstance(swing_val, bool):
+            swing_on = swing_val
+        else:
+            swing_on = str(swing_val).lower() == "on"
 
         key_obj = music21.key.Key(key_signature)
         scale_obj = key_obj.getScale()
@@ -1874,29 +1890,52 @@ class BassGenerator(BasePartGenerator):
             p_obj = scale_obj.pitchFromDegree(deg)
             p_obj = p_obj.transpose(shift)
             p_obj.octave = base_oct
+            if p_obj.pitchClass is None:
+                return p_obj
+            if p_obj.midi < self.bass_range_lo:
+                p_obj = p_obj.transpose(12)
+            elif p_obj.midi > self.bass_range_hi:
+                p_obj = p_obj.transpose(-12)
             return p_obj
 
         part = stream.Part(id=self.part_name)
         part.insert(0, copy.deepcopy(self.default_instrument))
         dur = length_beats / len(degrees)
+        base_vel = AccentMapper.map_layer(velocity_layer, rng=self._rng)
 
         offsets: list[float] = []
+        notes: list[note.Note] = []
         for i, deg in enumerate(degrees):
             p_obj = pitch_from_degree(deg)
             n = note.Note(p_obj)
             n.duration.quarterLength = dur
+            n.volume = m21volume.Volume(velocity=base_vel)
             off = i * dur
             offsets.append(off)
-            part.insert(off, n)
+            notes.append(n)
+
+        if swing_on and dur > 0:
+            swing_shift = self.swing_ratio * dur
+            for idx in range(1, len(notes), 2):
+                new_off = offsets[idx] + swing_shift
+                if new_off >= length_beats:
+                    new_off = length_beats - MIN_NOTE_DURATION_QL
+                notes[idx].offset = new_off
+                offsets[idx] = new_off
+                prev_idx = idx - 1
+                new_dur = max(MIN_NOTE_DURATION_QL, dur - swing_shift)
+                notes[prev_idx].duration.quarterLength = new_dur
 
         if groove_history:
             tol = 0.25
-            for n, off in zip(part.notes, offsets):
+            for i, (n, off) in enumerate(zip(notes, offsets)):
                 nearest = min(groove_history, key=lambda x: abs(x - off))
                 if abs(nearest - off) <= tol:
                     n.offset = nearest
+                    offsets[i] = nearest
 
-        for n in part.notes:
+        for off, n in zip(offsets, notes):
+            part.insert(off, n)
             humanizer.apply_humanization_to_element(n)
 
         return part

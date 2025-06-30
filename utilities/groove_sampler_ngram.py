@@ -114,6 +114,8 @@ class Model(TypedDict):
     mean_velocity: dict[str, float]
     vel_deltas: dict[str, Counter[int]]
     micro_offsets: dict[str, Counter[int]]
+    vel_bigrams: dict[tuple[State, State], Counter[int]]
+    micro_bigrams: dict[tuple[State, State], Counter[int]]
     aux_cache: dict[int, AuxTuple]
     use_sha1: bool
     num_tokens: int
@@ -193,6 +195,8 @@ def _load_events(loop_dir: Path, exts: Sequence[str], progress: bool = False) ->
     dict[str, float],
     dict[str, Counter[int]],
     dict[str, Counter[int]],
+    dict[tuple[State, State], Counter[int]],
+    dict[tuple[State, State], Counter[int]],
 ]:
     """Return token sequences and velocity statistics.
 
@@ -206,15 +210,20 @@ def _load_events(loop_dir: Path, exts: Sequence[str], progress: bool = False) ->
     events: list[tuple[list[State], str]] = []
     vel_map: dict[str, list[int]] = defaultdict(list)
     micro_map: dict[str, list[int]] = defaultdict(list)
+    bigram_tokens: list[list[tuple[int, str, int, int]]] = []
 
     for entry in entries:
         seq: list[State] = []
+        tok_list: list[tuple[int, str, int, int]] = []
         for step, label, vel, micro in entry["tokens"]:
-            seq.append((step % RESOLUTION, label))
+            step_mod = step % RESOLUTION
+            seq.append((step_mod, label))
+            tok_list.append((step_mod, label, vel, micro))
             vel_map[label].append(vel)
             micro_map[label].append(micro)
         if seq:
             events.append((sorted(seq, key=lambda x: x[0]), entry["file"]))
+            bigram_tokens.append(sorted(tok_list, key=lambda x: x[0]))
 
     mean_velocity = {k: sum(v) / len(v) for k, v in vel_map.items() if v}
     vel_deltas = {
@@ -222,7 +231,25 @@ def _load_events(loop_dir: Path, exts: Sequence[str], progress: bool = False) ->
         for k, vals in vel_map.items()
     }
     micro_offsets = {k: Counter(vals) for k, vals in micro_map.items()}
-    return events, mean_velocity, vel_deltas, micro_offsets
+    vel_bigrams: dict[tuple[State, State], Counter[int]] = defaultdict(Counter)
+    micro_bigrams: dict[tuple[State, State], Counter[int]] = defaultdict(Counter)
+
+    for tokens in bigram_tokens:
+        for i in range(1, len(tokens)):
+            prev = (tokens[i - 1][0], tokens[i - 1][1])
+            cur = (tokens[i][0], tokens[i][1])
+            delta = int(tokens[i][2] - mean_velocity.get(cur[1], tokens[i][2]))
+            vel_bigrams[(prev, cur)][delta] += 1
+            micro_bigrams[(prev, cur)][int(tokens[i][3])] += 1
+
+    return (
+        events,
+        mean_velocity,
+        vel_deltas,
+        micro_offsets,
+        vel_bigrams,
+        micro_bigrams,
+    )
 
 
 def load_aux_map(aux_path: Path) -> dict[str, dict[str, Any]]:
@@ -592,7 +619,14 @@ def train(
     _lin_prob.clear()
 
     exts = [e.strip().lower() for e in ext.split(",") if e]
-    seqs, mean_vel, vel_deltas, micro_offsets = _load_events(loop_dir, exts, progress=progress)
+    (
+        seqs,
+        mean_vel,
+        vel_deltas,
+        micro_offsets,
+        vel_bigrams,
+        micro_bigrams,
+    ) = _load_events(loop_dir, exts, progress=progress)
     if not seqs:
         raise ValueError("no events found")
 
@@ -647,6 +681,8 @@ def train(
         mean_velocity=mean_vel,
         vel_deltas=vel_deltas,
         micro_offsets=micro_offsets,
+        vel_bigrams=vel_bigrams,
+        micro_bigrams=micro_bigrams,
         aux_cache=dict(_AUX_HASH_CACHE),
         use_sha1=_AUX_USE_SHA1,
         num_tokens=num_tokens,
@@ -676,6 +712,8 @@ def load(path: Path) -> Model:
     data.setdefault("num_tokens", 0)
     data.setdefault("train_perplexity", float("inf"))
     data.setdefault("train_seconds", 0.0)
+    data.setdefault("vel_bigrams", {})
+    data.setdefault("micro_bigrams", {})
     model = Model(**data)
     _AUX_HASH_CACHE.clear()
     _AUX_HASH_CACHE.update(model.get("aux_cache", {}))
@@ -831,6 +869,8 @@ def sample(
     progress: bool = False,
     humanize_vel: bool = False,
     humanize_micro: bool = False,
+    micro_max: int = 30,
+    vel_max: int = 45,
     use_bar_cache: bool = True,
     history: list[State] | None = None,
     **kwargs: Any,
@@ -847,6 +887,8 @@ def sample(
         progress: Display a progress bar when ``bars`` is large.
         humanize_vel: Apply velocity deltas from the training data.
         humanize_micro: Apply micro timing offsets from the training data.
+        micro_max: Maximum absolute micro timing in ticks.
+        vel_max: Maximum absolute velocity delta in MIDI units.
         use_bar_cache: Enable per-bar cache for benchmarking.
         history: Mutable list updated with the final history context.
 
@@ -884,6 +926,8 @@ def sample(
             cond=cond,
             humanize_vel=humanize_vel,
             humanize_micro=humanize_micro,
+            micro_max=micro_max,
+            vel_max=vel_max,
             use_bar_cache=use_bar_cache,
             rng=rng,
         )
@@ -909,6 +953,8 @@ def _generate_bar(
     cond: dict[str, Any] | None = None,
     humanize_vel: bool = False,
     humanize_micro: bool = False,
+    micro_max: int = 30,
+    vel_max: int = 45,
     use_bar_cache: bool = True,
     rng: Random | None = None,
     bar_cache: dict[CacheKey, list[tuple[State, float]]] | None = None,
@@ -924,6 +970,8 @@ def _generate_bar(
         cond: Optional auxiliary conditioning dictionary.
         humanize_vel: Apply velocity jitter from ``vel_deltas``.
         humanize_micro: Apply micro timing offsets from ``micro_offsets``.
+        micro_max: Maximum absolute micro timing in ticks.
+        vel_max: Maximum absolute velocity delta in MIDI units.
         use_bar_cache: Enable per-bar distribution cache.
         rng: Optional random number generator.
 
@@ -943,13 +991,13 @@ def _generate_bar(
     if bar_cache is None:
         bar_cache = {} if use_bar_cache else None
     vel_bounds = {
-        k: min(float(np.percentile(np.abs(list(c.elements())), 95)), 45)
+        k: min(float(np.percentile(np.abs(list(c.elements())), 95)), vel_max)
         if list(c.elements())
         else 0.0
         for k, c in model.get("vel_deltas", {}).items()
     }
     micro_bounds = {
-        k: min(float(np.percentile(np.abs(list(c.elements())), 95)), 30)
+        k: min(float(np.percentile(np.abs(list(c.elements())), 95)), micro_max)
         if list(c.elements())
         else 0.0
         for k, c in model.get("micro_offsets", {}).items()
@@ -977,20 +1025,28 @@ def _generate_bar(
         offset_beats = step / (RESOLUTION / 4)
         micro = 0
         if humanize_micro:
-            choices = list(model["micro_offsets"].get(lbl, Counter()).elements())
+            choices: list[int] = []
+            if history:
+                bigram_key = (history[-1], (step, lbl))
+                choices = list(model.get("micro_bigrams", {}).get(bigram_key, Counter()).elements())
+            if not choices:
+                choices = list(model["micro_offsets"].get(lbl, Counter()).elements())
             if choices:
                 micro = int(rand.choice(choices))
-                limit = micro_bounds.get(lbl, 30)
+                limit = micro_bounds.get(lbl, micro_max)
                 micro = max(-limit, min(limit, micro))
-            else:
-                micro = 0
         vel_mean = int(model["mean_velocity"].get(lbl, 100))
         vel = vel_mean
         if humanize_vel:
-            choices = list(model["vel_deltas"].get(lbl, {}).elements())
+            choices = []
+            if history:
+                bigram_key = (history[-1], (step, lbl))
+                choices = list(model.get("vel_bigrams", {}).get(bigram_key, Counter()).elements())
+            if not choices:
+                choices = list(model["vel_deltas"].get(lbl, {}).elements())
             if choices:
                 delta = int(rand.choice(choices))
-                limit = vel_bounds.get(lbl, 45)
+                limit = vel_bounds.get(lbl, vel_max)
                 delta = max(-limit, min(limit, delta))
                 vel += delta
         vel = max(1, min(127, vel))
@@ -1019,9 +1075,18 @@ def generate_bar(
     cond: dict[str, Any] | None = None,
     humanize_vel: bool = False,
     humanize_micro: bool = False,
+    micro_max: int = 30,
+    vel_max: int = 45,
     use_bar_cache: bool = True,
 ) -> list[Event]:
-    """Return a single bar of events."""
+    """Return a single bar of events.
+
+    Args:
+        history: Mutable history context updated in-place when provided.
+        model: Trained n-gram model to sample from.
+        micro_max: Maximum absolute micro timing in ticks.
+        vel_max: Maximum absolute velocity delta in MIDI units.
+    """
 
     hist = list(history) if history is not None else None
     bar_cache: dict[CacheKey, list[tuple[State, float]]] | None
@@ -1034,6 +1099,8 @@ def generate_bar(
         cond=cond,
         humanize_vel=humanize_vel,
         humanize_micro=humanize_micro,
+        micro_max=micro_max,
+        vel_max=vel_max,
         use_bar_cache=use_bar_cache,
         bar_cache=bar_cache,
     )
@@ -1177,6 +1244,18 @@ def train_cmd(
     help="Comma separated options: 'vel', 'micro'",
 )
 @click.option(
+    "--micro-max",
+    default=30,
+    type=int,
+    help="Clip micro timing to ±N ticks (default 30)",
+)
+@click.option(
+    "--vel-max",
+    default=45,
+    type=int,
+    help="Clip velocity delta to ±N (default 45)",
+)
+@click.option(
     "--play",
     is_flag=True,
     help="Preview MIDI via timidity/fluidsynth, afplay or wmplayer",
@@ -1191,6 +1270,8 @@ def sample_cmd(
     use_bar_cache: bool,
     progress: bool,
     humanize: str,
+    micro_max: int,
+    vel_max: int,
     play: bool,
 ) -> None:
     """Generate MIDI from a trained model.
@@ -1205,6 +1286,8 @@ def sample_cmd(
         use_bar_cache: Enable per-bar cache; disable for benchmarking.
         progress: Display a progress bar when ``length`` is large.
         humanize: Comma separated options ``"vel"`` and/or ``"micro"``.
+        micro_max: Maximum micro timing deviation in ticks.
+        vel_max: Maximum velocity delta to apply.
 
     Notes:
         When ``--list-aux`` or ``length`` equals ``0`` the function prints
@@ -1249,6 +1332,8 @@ def sample_cmd(
         progress=progress,
         humanize_vel="vel" in h_opts,
         humanize_micro="micro" in h_opts,
+        micro_max=micro_max,
+        vel_max=vel_max,
         use_bar_cache=use_bar_cache,
     )
     pm = events_to_midi(ev)

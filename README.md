@@ -373,7 +373,8 @@ modcompose groove train loops/ --ext wav,midi --order auto \
 Add subtle velocity and timing variation using the trained histograms:
 
 ```bash
-modcompose groove sample model.pkl -l 8 --humanize vel,micro > groove.mid
+modcompose groove sample model.pkl -l 8 \
+    --humanize vel,micro --micro-max 24 --vel-max 45 > groove.mid
 ```
 
 ### Sampling API
@@ -416,7 +417,7 @@ micro‑timing variation.
 
 Import the resulting ``groove.mid`` into your DAW (Ableton, Logic, etc.).
 Velocity humanisation stays within MIDI 1–127 while micro timing
-deviations are clipped to ±45 ticks so alignment remains manageable.
+deviations are clipped to ±30 ticks by default so alignment remains manageable.
 
 ### Groove Sampler v2
 

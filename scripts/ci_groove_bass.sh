@@ -27,6 +27,7 @@ with tempfile.TemporaryDirectory() as d:
     assert len(part.notes) == 4
 PY
 end=$(date +%s)
+
 runtime=$((end - start))
 echo "Bass CI runtime: ${runtime}s"
 if [ "$runtime" -gt 60 ]; then

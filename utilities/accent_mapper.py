@@ -7,7 +7,46 @@ from .velocity_smoother import EMASmoother
 
 
 class AccentMapper:
-    """Map accent intensity and ghost-hat density using a vocal heatmap."""
+    """Map accent intensity and ghost-hat density using a vocal heatmap.
+
+    The class also provides a helper :func:`map_layer` for converting simple
+    velocity tiers such as ``"low"`` or ``"mid"`` into concrete MIDI velocity
+    values.  This mirrors the behaviour used in a few tests where configuration
+    files specify only an approximate dynamic range.
+    """
+
+    #: Mapping of tier name to inclusive MIDI velocity range
+    VELOCITY_LAYERS = {
+        "low": (40, 55),
+        "mid": (70, 85),
+        "high": (100, 110),
+    }
+
+    @staticmethod
+    def map_layer(layer: str, *, rng: random.Random | None = None) -> int:
+        """Return a MIDI velocity value for ``layer``.
+
+        Parameters
+        ----------
+        layer:
+            Name of the velocity tier (``"low"``, ``"mid"`` or ``"high"``).
+        rng:
+            Optional random generator used when picking a value from the tier
+            range.
+
+        Returns
+        -------
+        int
+            Velocity value clamped to ``1..127``. Unknown tiers default to
+            ``"mid"``.
+        """
+
+        rng = rng or random.Random()
+        bounds = AccentMapper.VELOCITY_LAYERS.get(layer.lower(), AccentMapper.VELOCITY_LAYERS["mid"])
+        lo, hi = bounds
+        if lo > hi:
+            lo, hi = hi, lo
+        return max(1, min(127, rng.randint(int(lo), int(hi))))
 
     def __init__(
         self,

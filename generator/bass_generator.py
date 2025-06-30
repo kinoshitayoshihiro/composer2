@@ -26,6 +26,7 @@ from music21 import (
 from utilities import humanizer
 from utilities.accent_mapper import AccentMapper
 from utilities import MIN_NOTE_DURATION_QL
+
 from utilities.emotion_profile_loader import load_emotion_profile
 from utilities.velocity_curve import resolve_velocity_curve
 
@@ -1842,6 +1843,11 @@ class BassGenerator(BasePartGenerator):
 
         profile = self.emotion_profile.get(emotion)
         if not profile:
+            self.logger.warning("No bass pattern for emotion '%s'", emotion)
+        patterns = profile.get("bass_patterns") if profile else None
+        if not patterns:
+            # Fallback to a neutral four note riff if nothing is defined
+
             profile = {
                 "bass_patterns": [
                     {"riff": [1, 5, 1, 5], "velocity": "mid", "swing": "off"}
@@ -1849,20 +1855,24 @@ class BassGenerator(BasePartGenerator):
                 "octave_pref": "mid",
                 "length_beats": 4,
             }
+
         patterns = profile.get("bass_patterns") or []
         if not patterns:
             patterns = [
                 {"riff": [1, 5, 1, 5], "velocity": "mid", "swing": "off"}
             ]
 
+           
         pat = patterns[0]
         degrees = pat.get("riff", []) or [1, 5, 1, 5]
 
         octave_pref = profile.get("octave_pref", "mid")
         length_beats = float(profile.get("length_beats", len(degrees)))
+
         swing_val = pat.get("swing", "off")
         swing_flag = str(swing_val).lower() in {"on", "true", "1"}
         base_velocity = AccentMapper.map_layer(pat.get("velocity", "mid"), rng=self._rng)
+
 
         key_obj = music21.key.Key(key_signature)
         scale_obj = key_obj.getScale()
@@ -1886,15 +1896,18 @@ class BassGenerator(BasePartGenerator):
             p_obj = scale_obj.pitchFromDegree(deg)
             p_obj = p_obj.transpose(shift)
             p_obj.octave = base_oct
+
             while p_obj.midi < self.bass_range_lo:
                 p_obj.octave += 1
             while p_obj.midi > self.bass_range_hi:
                 p_obj.octave -= 1
+
             return p_obj
 
         part = stream.Part(id=self.part_name)
         part.insert(0, copy.deepcopy(self.default_instrument))
         dur = length_beats / len(degrees)
+        base_vel = AccentMapper.map_layer(velocity_layer, rng=self._rng)
 
         offsets: list[float] = []
         notes: list[note.Note] = []

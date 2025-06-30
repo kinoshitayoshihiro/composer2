@@ -281,13 +281,13 @@ Deterministic sampling lets you audition a groove without randomness:
 ```bash
 modcompose groove sample model.pkl -l 4 --temperature 0 --top-k 1 > beat.mid
 ```
-Add ``--play`` for an instant listen. On Linux it tries ``timidity``, ``fluidsynth`` or ``aplaymidi``; on macOS ``afplay`` is used and on Windows ``wmplayer`` or ``powershell``:
+Add ``--play`` for an instant listen. On Linux it tries ``timidity`` or ``fluidsynth``; on macOS ``afplay`` is used and on Windows ``wmplayer`` or ``start``:
 ```bash
 modcompose groove sample model.pkl -l 1 --play
 ```
 List auxiliary tuples without generating MIDI:
 ```bash
-modcompose groove sample model.pkl --list-aux  # alias: --aux-list
+modcompose groove sample model.pkl --list-aux  # alias: -L or --aux-list
 # with filtering
 modcompose groove sample model.pkl --list-aux --cond '{"section":"chorus"}'
 # toggle per-bar caching for profiling

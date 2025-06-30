@@ -10,23 +10,18 @@ from typing import Any
 import music21
 from music21 import (
     duration as m21duration,
-)
-from music21 import (
     harmony,
+    interval,
     meter,
     note,
     pitch,
     scale,
     stream,
-)
-from music21 import (
     volume as m21volume,
 )
 
-from utilities import humanizer
+from utilities import MIN_NOTE_DURATION_QL, humanizer
 from utilities.accent_mapper import AccentMapper
-from utilities import MIN_NOTE_DURATION_QL
-
 from utilities.emotion_profile_loader import load_emotion_profile
 from utilities.velocity_curve import resolve_velocity_curve
 

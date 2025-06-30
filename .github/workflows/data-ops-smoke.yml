@@ -1,0 +1,17 @@
+name: Data-Ops Smoke
+on: [push, pull_request]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -e .[dev,gui]
+      - run: ruff check data_ops streamlit_app_v2.py tests/test_auto_tag.py tests/test_augment.py tests/test_gui_import.py
+      - run: mypy data_ops streamlit_app_v2.py tests/test_auto_tag.py tests/test_augment.py tests/test_gui_import.py --strict
+      - run: pytest tests/test_auto_tag.py tests/test_augment.py tests/test_gui_import.py -q
+        timeout-minutes: 2

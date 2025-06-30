@@ -1,6 +1,7 @@
 import pytest
 
 from utilities.streaming_sampler import RESOLUTION, RealtimePlayer
+from tests.helpers.events import make_event
 
 
 class _FakeTime:
@@ -25,7 +26,7 @@ class DummySampler:
     def next_step(self, *, cond, rng):
         off = self.step / (RESOLUTION / 4)
         self.step += 1
-        return {"instrument": "kick", "offset": off, "duration": 0.25, "velocity": 100}
+        return make_event(instrument="kick", offset=off)
 
 def test_latency() -> None:
     sampler = DummySampler()

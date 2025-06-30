@@ -37,13 +37,13 @@ def test_bar_cache_reduces_lin_prob(tmp_path: Path, monkeypatch) -> None:
         return orig(history, model_arg, rng, **kwargs)
 
     monkeypatch.setattr(gs, "_sample_next", no_cache)
-    gs.generate_bar([], model, rng=random.Random(0))
+    gs.generate_bar([], model=model)
     no_cache_calls = cd.calls
 
     cd2 = CountingCache()
     monkeypatch.setattr(gs, "_lin_prob", cd2, raising=False)
     monkeypatch.setattr(gs, "_sample_next", orig)
-    gs.generate_bar([], model, rng=random.Random(0))
+    gs.generate_bar([], model=model)
     with_cache_calls = cd2.calls
 
     assert with_cache_calls < no_cache_calls

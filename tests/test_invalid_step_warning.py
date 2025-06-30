@@ -31,9 +31,9 @@ def test_invalid_step_warning(tmp_path: Path, monkeypatch, caplog) -> None:
 
     prev = [(gs.RESOLUTION * 2, "snare")]
     with caplog.at_level(logging.DEBUG):
-        events, history = gs.generate_bar(prev, model, rng=random.Random(0))
+        events = gs.generate_bar(prev, model=model)
 
     assert "invalid step" in caplog.text
-    assert len(history) == len(prev)
+    assert len(prev) == 1
 
     monkeypatch.setattr(gs, "_sample_next", orig)

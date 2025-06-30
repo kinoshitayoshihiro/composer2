@@ -520,6 +520,35 @@ You can override this on the command line:
 python modular_composer.py --main-cfg config/main_cfg.yml --consonant-sync-mode note
 ```
 
+## Auto-Tag & Augmentation
+
+Automatically infer section and intensity labels for your loop library:
+
+```bash
+modcompose tag loops/ --out meta.json --k-intensity 3 --csv summary.csv
+```
+
+This writes per-bar metadata to `meta.json` and a flat CSV summary. Use the augmentation
+tool to apply swing, shuffle and transposition before training:
+
+```bash
+modcompose augment in.mid --swing 54 --transpose 2 -o out.mid
+```
+
+Combine both with the training commands via `--auto-tag`.
+
+## GUI v2 Walkthrough
+
+Launch the updated Streamlit interface:
+
+```bash
+modcompose gui
+```
+
+Upload a model in the sidebar, choose backend and bars to generate, then select the
+desired section and intensity from the dropdowns populated by the model metadata. Click
+"Generate" to view a pianoroll heatmap and audition the groove directly in the browser.
+
 Passing `--lag` values below zero will pre-hit the drums. If this causes
 negative beat offsets, set `clip_at_zero=true` in your configuration or pass the
 parameter when using the synchroniser programmatically.

@@ -55,6 +55,26 @@ class Event(TypedDict, total=False):
     velocity: Required[int]
 
 
+def make_event(
+    *,
+    instrument: str,
+    offset: float,
+    duration: float = 0.25,
+    velocity: int = 100,
+    **extra: Any,
+) -> Event:
+    """Return an ``Event`` with defaults applied."""
+
+    ev: Event = {
+        "instrument": instrument,
+        "offset": float(offset),
+        "duration": float(duration),
+        "velocity": int(velocity),
+    }
+    ev.update(extra)
+    return ev
+
+
 def init_history_from_events(events: Sequence[Event], order: int = 3) -> list[State]:
     """Return ``order-1`` recent ``(step,label)`` tuples from ``events``.
 
@@ -1127,6 +1147,7 @@ def train_cmd(
 @click.argument("model_path", type=Path)
 @click.option(
     "--list-aux",
+    "-L",
     "--aux-list",
     "list_aux",
     is_flag=True,
@@ -1151,7 +1172,11 @@ def train_cmd(
     default="",
     help="Comma separated options: 'vel', 'micro'",
 )
-@click.option("--play", is_flag=True, help="Preview MIDI via timidity if installed")
+@click.option(
+    "--play",
+    is_flag=True,
+    help="Preview MIDI via timidity/fluidsynth, afplay or wmplayer",
+)
 def sample_cmd(
     model_path: Path,
     length: int,

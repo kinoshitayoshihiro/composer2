@@ -1215,13 +1215,12 @@ class DrumGenerator(BasePartGenerator):
                         if isinstance(tk, (int, str)) and str(tk).isdigit()
                         else None
                     )
-                    pattern_to_use_for_iteration, self._groove_history = groove_sampler_ngram.generate_bar(
+                    pattern_to_use_for_iteration = groove_sampler_ngram.generate_bar(
                         self._groove_history,
-                        self.groove_model,
+                        model=self.groove_model,
                         cond=section_data.get("musical_intent", {}),
                         temperature=float(self.global_settings.get("groove_temperature", 1.0)),
                         top_k=tk_val,
-                        rng=self.rng,
                         humanize_vel=bool(self.global_settings.get("humanize_profile")),
                         humanize_micro=self.groove_strength > 0,
                     )
@@ -1349,15 +1348,14 @@ class DrumGenerator(BasePartGenerator):
             tk = self.global_settings.get("groove_top_k")
             tk_val = int(tk) if isinstance(tk, (int, str)) and str(tk).isdigit() else None
 
-            events, self._groove_history = groove_sampler_ngram.generate_bar(
+            events = groove_sampler_ngram.generate_bar(
                 self._groove_history,
-                model_obj,
+                model=model_obj,
                 temperature=float(self.global_settings.get("groove_temperature", 1.0)),
                 top_k=tk_val,
                 cond=cond,
                 humanize_vel=bool(self.global_settings.get("humanize_profile")),
                 humanize_micro=self.groove_strength > 0,
-                rng=self.rng,
             )
 
         if (

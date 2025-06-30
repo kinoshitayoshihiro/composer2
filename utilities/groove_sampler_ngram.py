@@ -856,7 +856,7 @@ def sample(
             pass
 
     for bar in iterable:
-        bar_events, history = generate_bar(
+        bar_events, history = _generate_bar(
             history,
             model,
             temperature=temperature,
@@ -880,7 +880,7 @@ def sample(
     return events
 
 
-def generate_bar(
+def _generate_bar(
     prev_history: list[State] | None,
     model: Model,
     *,
@@ -987,6 +987,35 @@ def generate_bar(
 
     events.sort(key=lambda x: x["offset"])
     return events, history
+
+
+def generate_bar(
+    history: list[State] | None = None,
+    *,
+    model: Model,
+    temperature: float = 1.0,
+    top_k: int | None = None,
+    cond: dict[str, Any] | None = None,
+    humanize_vel: bool = False,
+    humanize_micro: bool = False,
+    use_bar_cache: bool = True,
+) -> list[Event]:
+    """Return a single bar of events using ``sample``.
+
+    ``history`` will be updated in-place when provided.
+    """
+
+    return sample(
+        model,
+        bars=1,
+        temperature=temperature,
+        top_k=top_k,
+        cond=cond,
+        humanize_vel=humanize_vel,
+        humanize_micro=humanize_micro,
+        use_bar_cache=use_bar_cache,
+        history=history,
+    )
 
 
 def events_to_midi(events: Sequence[Event]) -> pretty_midi.PrettyMIDI:

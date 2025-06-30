@@ -24,7 +24,7 @@ try:  # optional dependency
 except Exception:  # pragma: no cover - torch not installed
     groove_sampler_rnn = None  # type: ignore
 from utilities.golden import compare_midi, update_golden
-from utilities.groove_sampler_ngram import Event, State, generate_bar
+from utilities.groove_sampler_ngram import Event, State
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
 from utilities.peak_synchroniser import PeakSynchroniser
 from utilities.tempo_utils import beat_to_seconds
@@ -156,7 +156,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml
+        import yaml  # type: ignore
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}
@@ -229,7 +229,9 @@ def _cmd_realtime(args: list[str]) -> None:
                 self.hist.extend(events)
             def next_step(self, *, cond: dict[str, object] | None, rng: random.Random) -> Event:
                 if not self.buf:
-                    self.buf, self.hist = generate_bar(self.hist, m, rng=rng)
+                    self.buf, self.hist = groove_sampler_ngram._generate_bar(
+                        self.hist, m, rng=rng
+                    )
                 return self.buf.pop(0)
         sampler = _WrapN()
 

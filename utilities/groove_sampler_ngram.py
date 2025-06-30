@@ -1018,6 +1018,20 @@ def generate_bar(
     )
 
 
+def generate_bar_legacy(
+    history: list[State] | None,
+    model: Model,
+    **kw: Any,
+) -> tuple[list[Event], list[State]]:
+    """Return events, history (legacy API)."""
+    warnings.warn(
+        "generate_bar_legacy is deprecated; use generate_bar",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    events = generate_bar(history, model=model, **kw)
+    return events, history if history is not None else []
+
 def events_to_midi(events: Sequence[Event]) -> pretty_midi.PrettyMIDI:
     pm = pretty_midi.PrettyMIDI(initial_tempo=120)
     inst = pretty_midi.Instrument(program=0, is_drum=True)
@@ -1326,6 +1340,7 @@ __all__ = [
     "save",
     "load",
     "sample",
+    "generate_bar_legacy",
     "events_to_midi",
     "profile_train_sample",
     "cli",

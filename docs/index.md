@@ -12,6 +12,7 @@ Install optional extras for the GUI and RNN baseline:
 `pip install -e .[audio,gui,rnn,essentia]`.
 
 For a live comparison of the n-gram and RNN models check out the
-Streamlit GUI:
+Streamlit GUI (run with `modcompose gui`):
+
 
 Real-time playback is available via `modcompose realtime`.

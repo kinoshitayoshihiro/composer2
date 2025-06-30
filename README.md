@@ -442,7 +442,7 @@ python -m utilities.groove_sampler_v2 sample model.pkl -l 4 \
 Launch the Streamlit GUI to compare:
 
 ```bash
-streamlit run streamlit_app/visualise_groove.py
+modcompose gui
 ```
 
 ## Vocal Sync

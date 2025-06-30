@@ -1872,6 +1872,7 @@ class BassGenerator(BasePartGenerator):
         swing_val = pat.get("swing", "off")
         swing_flag = str(swing_val).lower() in {"on", "true", "1"}
 
+        # Determine base velocity from the configured layer
         velocity_layer = pat.get("velocity", "mid")
         base_vel = AccentMapper.map_layer(velocity_layer, rng=self._rng)
 

@@ -15,6 +15,7 @@ import pretty_midi
 import utilities.loop_ingest as loop_ingest
 from utilities import (
     groove_sampler_ngram,
+    groove_sampler_rnn,
     live_player,
 
     streaming_sampler,

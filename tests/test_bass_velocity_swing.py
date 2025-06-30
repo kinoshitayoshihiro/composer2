@@ -1,3 +1,4 @@
+import textwrap
 from music21 import instrument
 from generator.bass_generator import BassGenerator
 

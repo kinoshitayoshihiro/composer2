@@ -40,17 +40,17 @@ _PITCH_TO_LABEL = {val[1]: key for key, val in GM_DRUM_MAP.items()}
 def _quantize(
     beat: float, bar_beats: int, resolution: int, ppq: int
 ) -> tuple[int, int]:
-    raw_step = round(beat * resolution / bar_beats)
-    step = int(raw_step)
-    q_pos = step * bar_beats / resolution
-    micro = int(round((beat - q_pos) * ppq))
-    if step < 0 or step >= resolution:
-        clamped = max(0, min(resolution - 1, step))
+    raw_step = beat * resolution / bar_beats
+    step = int(round(raw_step))
+    clamped = max(0, min(resolution - 1, step))
+    if step != clamped and not (step == resolution and beat >= bar_beats):
         warnings.warn(
             f"quantised step {step} outside 0..{resolution - 1}; clamped",
             RuntimeWarning,
         )
-        step = clamped
+    step = clamped
+    q_pos = step * bar_beats / resolution
+    micro = int(round((beat - q_pos) * ppq))
     return step, micro
 
 
@@ -83,7 +83,11 @@ def _scan_wav(path: Path, resolution: int, ppq: int) -> LoopEntry:
     assert librosa is not None
     y, sr = librosa.load(path, sr=None, mono=True)
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    bpm = float(tempo) if tempo else 120.0
+    if hasattr(tempo, "size"):
+        tempo_val = float(tempo[0]) if getattr(tempo, "size", 0) else 0.0
+    else:
+        tempo_val = float(tempo)
+    bpm = tempo_val or 120.0
     sec_per_beat = 60.0 / bpm
     bar_beats = max(1, int(round(len(y) / sr / sec_per_beat)))
     onsets = librosa.onset.onset_detect(y=y, sr=sr, units="time")

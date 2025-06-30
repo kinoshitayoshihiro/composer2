@@ -1,25 +1,27 @@
 # generator/piano_generator.py (v2.3 最終修正版)
 
 from __future__ import annotations
-import logging
+
 import copy
-from typing import Dict, Any, Optional, List, Tuple
-from utilities.velocity_curve import resolve_velocity_curve
+import logging
+from typing import Any
 
 from music21 import (
-    stream,
-    note,
     chord as m21chord,
-    harmony,
-    meter,
-    tempo,
-    instrument,
-    articulations,
-    expressions,
-    interval,
-    volume as m21volume,
-    pitch,
 )
+from music21 import (
+    expressions,
+    harmony,
+    interval,
+    note,
+    pitch,
+    stream,
+)
+from music21 import (
+    volume as m21volume,
+)
+
+from utilities.velocity_curve import resolve_velocity_curve
 
 # Pedalクラスはexpressionsから個別にインポート
 try:
@@ -28,14 +30,14 @@ except Exception:  # pragma: no cover - compatibility
     from music21.expressions import TextExpression as PedalMark
 
 
-from .base_part_generator import BasePartGenerator
 from utilities import humanizer
+
+from .base_part_generator import BasePartGenerator
 
 try:
     from utilities.core_music_utils import (
-        get_time_signature_object,
-        sanitize_chord_label,
         MIN_NOTE_DURATION_QL,
+        get_time_signature_object,
     )
     from utilities.override_loader import PartOverride
     from utilities.scale_registry import ScaleRegistry
@@ -121,7 +123,7 @@ class PianoGenerator(BasePartGenerator):
         self._current_cycle_section = None
         # ...他の初期化処理...
 
-    def _find_pattern_by_tags(self, tags: List[str], hand: str) -> Optional[str]:
+    def _find_pattern_by_tags(self, tags: list[str], hand: str) -> str | None:
         for key, data in self.part_parameters.items():
             pat_tags = data.get("tags") or []
             if hand.lower() in pat_tags and all(t in pat_tags for t in tags):
@@ -129,8 +131,8 @@ class PianoGenerator(BasePartGenerator):
         return None
 
     def _get_pattern_keys(
-        self, musical_intent: Dict[str, Any], overrides: Optional[PartOverride]
-    ) -> Tuple[str, str]:
+        self, musical_intent: dict[str, Any], overrides: PartOverride | None
+    ) -> tuple[str, str]:
         emotion = musical_intent.get("emotion", "default")
         intensity = musical_intent.get("intensity", "medium")
         bucket = EMO_TO_BUCKET_PIANO.get(emotion, "default")
@@ -148,17 +150,18 @@ class PianoGenerator(BasePartGenerator):
         cs: harmony.ChordSymbol,
         duration_ql: float,
         rhythm_key: str,
-        params: Dict[str, Any],
-        voicing_style: Optional[str] = None,
-        mode: Optional[str] = None,
-        velocity_shift: Optional[int] = None,
+        params: dict[str, Any],
+        voicing_style: str | None = None,
+        mode: str | None = None,
+        velocity_shift: int | None = None,
     ) -> stream.Part:
         part = stream.Part(id=f"Piano_{hand}")
         pattern_data = self.part_parameters.get(rhythm_key) or {}
         pattern_events = pattern_data.get("pattern") or []
         if not pattern_events:
             logger.warning(
-                f"PianoGen: pattern '{rhythm_key}' not found or empty. Using single root note fallback."
+                f"PianoGen: pattern '{rhythm_key}' not found or empty. Using "
+                f"single root note fallback."
             )
             pattern_events = [
                 {
@@ -249,7 +252,7 @@ class PianoGenerator(BasePartGenerator):
                 part.insert(offset, element_to_add)
         return part
 
-    def _get_voiced_pitches(self, cs, num_voices, octave, style) -> List[pitch.Pitch]:
+    def _get_voiced_pitches(self, cs, num_voices, octave, style) -> list[pitch.Pitch]:
         if self.chord_voicer:
             try:
                 return self.chord_voicer.voice_chord(
@@ -288,7 +291,7 @@ class PianoGenerator(BasePartGenerator):
         num_voices: int,
         octave: int,
         style: str,
-    ) -> List[pitch.Pitch]:
+    ) -> list[pitch.Pitch]:
         base_voicing = self._get_voiced_pitches(cs, num_voices, octave, style)
         if not base_voicing:
             return []
@@ -297,7 +300,7 @@ class PianoGenerator(BasePartGenerator):
             self._prev_voicings[hand] = base_voicing
             return base_voicing
 
-        candidates: List[List[pitch.Pitch]] = []
+        candidates: list[list[pitch.Pitch]] = []
         n = len(base_voicing)
         # generate inversions
         for inv in range(n):
@@ -307,7 +310,7 @@ class PianoGenerator(BasePartGenerator):
             for shift in (-12, 0, 12):
                 candidates.append([pp.transpose(shift) for pp in inv_pitches])
 
-        def distance(cand: List[pitch.Pitch]) -> float:
+        def distance(cand: list[pitch.Pitch]) -> float:
             cand_sorted = sorted(cand, key=lambda p: p.ps)
             prev_sorted = sorted(prev, key=lambda p: p.ps)
             m = min(len(cand_sorted), len(prev_sorted))
@@ -320,11 +323,11 @@ class PianoGenerator(BasePartGenerator):
     def _create_music_element(
         self,
         event_type: str,
-        pitches: List[pitch.Pitch],
+        pitches: list[pitch.Pitch],
         duration_ql: float,
         hand: str,
-        scale_pitches: Optional[Dict[str, pitch.Pitch]] = None,
-    ) -> Optional[stream.GeneralNote]:
+        scale_pitches: dict[str, pitch.Pitch] | None = None,
+    ) -> stream.GeneralNote | None:
         if not pitches:
             return None
 
@@ -384,7 +387,7 @@ class PianoGenerator(BasePartGenerator):
         self._prev_last_pitch[hand] = chosen
         return elem
 
-    def _insert_pedal(self, part: stream.Part, section_data: Dict[str, Any]):
+    def _insert_pedal(self, part: stream.Part, section_data: dict[str, Any]):
         intensity = section_data.get("musical_intent", {}).get("intensity", "medium")
         end_offset = section_data.get("q_length", 4.0)
         if not part.flatten().notes:
@@ -396,8 +399,10 @@ class PianoGenerator(BasePartGenerator):
         t = 0.0
         while t < end_offset:
             ped = PedalMark()
-            ped.pedalType = expressions.PedalType.Sustain
-            ped.pedalForm = expressions.PedalForm.Line
+            if hasattr(ped, "pedalType") and hasattr(expressions, "PedalType"):
+                ped.pedalType = expressions.PedalType.Sustain
+            if hasattr(ped, "pedalForm") and hasattr(expressions, "PedalForm"):
+                ped.pedalForm = expressions.PedalForm.Line
             part.insert(t, ped)
             cc_events.append({"time": t, "number": 64, "value": pedal_value})
             cc_events.append(
@@ -508,7 +513,7 @@ class PianoGenerator(BasePartGenerator):
         sec_to_ql = self.global_tempo / 60.0
         shift_amt = amplitude_sec * sec_to_ql
         mlen = self.measure_duration or 4.0
-        shifts: Dict[int, float] = {}
+        shifts: dict[int, float] = {}
         for n in part.recurse().notes:
             idx = int(n.offset // mlen)
             if idx not in shifts:
@@ -521,9 +526,9 @@ class PianoGenerator(BasePartGenerator):
 
     def _render_part(
         self,
-        section_data: Dict[str, Any],
-        next_section_data: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, stream.Part]:
+        section_data: dict[str, Any],
+        next_section_data: dict[str, Any] | None = None,
+    ) -> dict[str, stream.Part]:
         rh_part = stream.Part(id=f"Piano_RH_{section_data.get('absolute_offset')}")
         lh_part = stream.Part(id=f"Piano_LH_{section_data.get('absolute_offset')}")
         chord_label = section_data.get("chord_symbol_for_voicing", "Rest")

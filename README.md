@@ -17,11 +17,8 @@ bash setup.sh
 or equivalently
 
 ```bash
-pip install -r requirements.txt
-pip install -r requirements-optional.txt  # optional WAV support
-pip install -e .[audio,gui,rnn,essentia]  # optional extras
-pip install click  # required for the groove sampler CLI
-pip install modular-composer[audio]  # quick install via PyPI
+pip install -r requirements.txt      # core + music21
+pip install -e .[gui]                # optional GUI
 ```
 
 Without these packages `pytest` and the composer modules will fail to import.

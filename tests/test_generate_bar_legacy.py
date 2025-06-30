@@ -1,7 +1,9 @@
 from pathlib import Path
 
-import pretty_midi
 import pytest
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
+
+import pretty_midi
 
 from utilities import groove_sampler_ngram as gs
 

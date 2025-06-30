@@ -12,7 +12,7 @@ authors = [
   { name="Your Name", email="you@example.com" },
 ]
 dependencies = [
-  "music21>=9.6.0",
+  "music21~=8.2",
   "numpy>=1.26.4,<2.0.0",
   "PyYAML>=6.0",
   "click>=8",
@@ -45,7 +45,11 @@ groove = [
   "pretty_midi>=0.2.10",
   "librosa>=0.10",
 ]
-gui = ["streamlit>=1.30", "plotly>=5.18", "sounddevice>=0.4"]
+gui = [
+  "streamlit",
+  "altair",
+  "pandas",
+]
 rnn = ["torch>=2.1"]
 
 [project.scripts]

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -e
+start=$(date +%s)
 bash scripts/ci_groove.sh
 python - <<'PY'
 import tempfile
@@ -25,3 +26,9 @@ with tempfile.TemporaryDirectory() as d:
     part = bass.render_part(emotion="joy", key_signature="C", tempo_bpm=120, groove_history=kicks)
     assert len(part.notes) == 4
 PY
+end=$(date +%s)
+elapsed=$((end - start))
+if [ "$elapsed" -gt 60 ]; then
+  echo "ci_groove_bass.sh took ${elapsed}s" >&2
+  exit 1
+fi

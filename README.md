@@ -552,13 +552,22 @@ gen = BassGenerator(
     global_key_signature_mode="major",
     emotion_profile_path="data/emotion_profile.yaml",
 )
-part = gen.render_part(
-    emotion="joy",
-    key_signature="C",
-    tempo_bpm=120,
-    groove_history=[0, 1, 2, 3],
-)
+section = {
+    "emotion": "joy",
+    "key_signature": "C",
+    "tempo_bpm": 120,
+    "chord": "C",
+    "melody": [],
+    "groove_kicks": [0, 1, 2, 3],
+}
+part = gen.render_part(section)
 ```
+
+### Kick-Lock → Mirror-Melody
+
+The first beat snaps to the nearest kick within the opening eighth note, then
+the bass mirrors the lead melody around the chord root.
+TODO: add GIF demo
 
 ## Hi-Fi RNN Backend
 

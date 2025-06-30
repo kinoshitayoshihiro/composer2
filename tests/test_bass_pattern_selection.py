@@ -12,6 +12,14 @@ def test_emotion_pattern_selection():
         global_key_signature_mode="major",
         emotion_profile_path="data/emotion_profile.yaml",
     )
-    part = gen.render_part(emotion="joy", key_signature="C", tempo_bpm=120)
+    section = {
+        "emotion": "joy",
+        "key_signature": "C",
+        "tempo_bpm": 120,
+        "chord": "C",
+        "melody": [],
+        "groove_kicks": [0.0, 1.0, 2.0, 3.0],
+    }
+    part = gen.render_part(section)
     pitches = [n.pitch.midi for n in part.notes]
     assert pitches == [48, 51, 55, 57]

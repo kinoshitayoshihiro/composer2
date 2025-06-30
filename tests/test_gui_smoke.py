@@ -1,6 +1,11 @@
 import importlib
 from pathlib import Path
 
+import pytest
+pytest.importorskip("streamlit", reason="GUI deps not installed in CI")
+pytest.importorskip("altair", reason="GUI deps not installed in CI")
+pytest.importorskip("pandas", reason="GUI deps not installed in CI")
+
 import pretty_midi
 
 from utilities import groove_sampler_ngram

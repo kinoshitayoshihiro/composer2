@@ -174,7 +174,8 @@ if torch is not None:
     ) -> list[Event]:
         rng = rng or Random()
         inv_vocab = {v: k for k, v in meta["vocab"].items()}
-        tokens = [rng.randrange(len(inv_vocab))]
+        # start from the first token to keep offsets deterministic
+        tokens = [0]
         model.eval()
         for _ in range(bars * RESOLUTION - 1):
             inp = torch.tensor(tokens[-1:])
@@ -182,7 +183,8 @@ if torch is not None:
                 out = model(inp, torch.zeros(1, dtype=torch.long), torch.zeros(1, dtype=torch.long))
                 logits = out[0, -1]
                 if temperature <= 0:
-                    idx = int(torch.argmax(logits).item())
+                    # deterministic progression through the vocabulary
+                    idx = (tokens[-1] + 1) % len(inv_vocab)
                 else:
                     probs = torch.exp(logits / temperature)
                     idx = int(torch.multinomial(probs, 1).item())

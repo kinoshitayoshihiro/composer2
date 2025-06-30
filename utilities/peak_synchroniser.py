@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-from .groove_sampler_ngram import Event
 from typing import cast
+
+from .groove_sampler_ngram import Event, make_event
 
 
 @dataclass
@@ -36,13 +36,16 @@ class PeakSynchroniser:
             ev_off = PeakSynchroniser._quantize(float(ev.get("offset", 0.0)))
             if abs(ev_off - q_off) <= 1e-6:
                 if priority.get(instrument, 0) > priority.get(ev.get("instrument", ""), 0):
-                    events[idx] = {
-                        "instrument": instrument,
-                        "offset": q_off,
-                        "duration": ev.get("duration", 0.25),
-                    }
+                    events[idx] = cast(
+                        Event,
+                        make_event(
+                            instrument=instrument,
+                            offset=q_off,
+                            duration=float(ev.get("duration", 0.25)),
+                        ),
+                    )
                 return
-        events.append({"instrument": instrument, "offset": q_off, "duration": 0.25})
+        events.append(make_event(instrument=instrument, offset=q_off, duration=0.25))
 
     @staticmethod
     def sync_events(

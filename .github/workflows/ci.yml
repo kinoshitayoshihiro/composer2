@@ -20,7 +20,7 @@ jobs:
           cache: 'pip'
       - name: Install dependencies
         run: |
-          pip install -e ".[dev,groove]"
+          pip install -r requirements.txt
       - name: Restore Essentia wheel cache
         if: runner.os == 'Linux'
         uses: actions/cache@v3
@@ -158,7 +158,7 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install -e .[rnn]
+      - run: pip install -r requirements.txt -r requirements-extra.txt --extra-index-url https://download.pytorch.org/whl/cpu
       - run: |
           python - <<'EOF'
           import json, tempfile
@@ -182,5 +182,15 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install -e .
-      - run: pytest tests/test_latency.py -q
+      - run: pip install -r requirements.txt
+      - run: |
+          python - <<'EOF'
+          import mido, sys
+          sys.exit(0 if mido.get_output_names() else 1)
+          EOF
+          STATUS=$?
+          if [ "$STATUS" = "0" ]; then
+            pytest -m low_lat
+          else
+            pytest -m low_lat -k "not external_sync"
+          fi

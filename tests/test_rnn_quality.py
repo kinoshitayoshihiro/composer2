@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("torch", reason="torch not installed")
+
 from utilities import groove_rnn_v2
 
 

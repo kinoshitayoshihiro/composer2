@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from statistics import median
@@ -14,7 +15,7 @@ except Exception:  # pragma: no cover - optional dependency
     GaussianHMM = None
 
 
-def _extract_features(pm: pretty_midi.PrettyMIDI) -> tuple[list[int], list[int]]:
+def _extract_features(pm: pretty_midi.PrettyMIDI) -> tuple[list[int], list[int], list[int]]:
     tempo = pm.get_tempo_changes()[1]
     bpm = float(tempo[0]) if getattr(tempo, "size", 0) else 120.0
     beat = 60.0 / bpm
@@ -22,6 +23,7 @@ def _extract_features(pm: pretty_midi.PrettyMIDI) -> tuple[list[int], list[int]]
     n_bars = max(1, int(round(pm.get_end_time() / bar_len)))
     density: list[int] = []
     velocity: list[int] = []
+    energy: list[int] = []
     for i in range(n_bars):
         start = i * bar_len
         end = start + bar_len
@@ -29,45 +31,82 @@ def _extract_features(pm: pretty_midi.PrettyMIDI) -> tuple[list[int], list[int]]
         density.append(len(notes))
         if notes:
             velocity.append(int(median(n.velocity for n in notes)))
+            energy.append(int(sum(n.velocity for n in notes)))
         else:
             velocity.append(0)
-    return density, velocity
+            energy.append(0)
+    return density, velocity, energy
 
 
-def auto_tag(loop_dir: Path) -> dict[str, dict[str, str]]:
-    """Return metadata inferred from loops in ``loop_dir``."""
+def auto_tag(
+    loop_dir: Path,
+    *,
+    k_intensity: int = 3,
+    csv_path: Path | None = None,
+) -> dict[str, dict[int, dict[str, str]]]:
+    """Return per-bar section and intensity labels for ``loop_dir``."""
+
     densities: list[int] = []
     velocities: list[int] = []
-    per_file: list[tuple[str, list[int], list[int]]] = []
+    energies: list[int] = []
+    per_file: list[tuple[str, list[int], list[int], list[int]]] = []
     for p in sorted(loop_dir.glob("*.mid")):
         pm = pretty_midi.PrettyMIDI(str(p))
-        dens, vels = _extract_features(pm)
+        dens, vels, eng = _extract_features(pm)
         densities.extend(dens)
         velocities.extend(vels)
-        per_file.append((p.name, dens, vels))
+        energies.extend(eng)
+        per_file.append((p.name, dens, vels, eng))
     if not densities:
         return {}
-    if len(velocities) < 3:
-        return {name: {"intensity": "mid", "section": "verse"} for name, _, _ in per_file}
-    kmeans = KMeans(n_clusters=3, random_state=0)
-    vel_lbl = kmeans.fit_predict(np.array(velocities).reshape(-1, 1))
-    order = sorted((c, idx) for idx, c in enumerate(kmeans.cluster_centers_.flatten()))
-    lab_map = {idx: label for label, (_, idx) in zip(["low", "mid", "high"], order)}
-    if GaussianHMM is not None:
-        hmm = GaussianHMM(n_components=4, random_state=0, n_iter=10)
-        hmm.fit(np.array(densities).reshape(-1, 1))
-        sec_idx = hmm.predict(np.array(densities).reshape(-1, 1))
+
+    feats = np.column_stack([densities, velocities, energies])
+    if len(feats) < k_intensity:
+        k_intensity = max(1, len(feats))
+    kmeans = KMeans(n_clusters=k_intensity, random_state=0)
+    labels = kmeans.fit_predict(feats)
+    order = sorted((c.sum(), idx) for idx, c in enumerate(kmeans.cluster_centers_))
+    int_map: dict[int, str] = {}
+    names = ["low", "mid", "high"]
+    for label, (_, idx) in zip(names, order):
+        int_map[idx] = label
+
+    if GaussianHMM is not None and len(densities) >= 4:
+        try:
+            hmm = GaussianHMM(n_components=4, random_state=0, n_iter=10)
+            hmm.fit(np.array(densities).reshape(-1, 1))
+            sec_idx = hmm.predict(np.array(densities).reshape(-1, 1))
+        except Exception:
+            sec_idx = [i % 4 for i in range(len(densities))]
     else:
         sec_idx = [i % 4 for i in range(len(densities))]
-    secs = ["verse", "pre-chorus", "chorus", "bridge"]
-    meta: dict[str, dict[str, str]] = {}
+
+    secs = ["intro", "verse", "chorus", "bridge"]
+    meta: dict[str, dict[int, dict[str, str]]] = {}
+    i = 0
     j = 0
-    for name, dens, vels in per_file:
+    for name, dens, vels, eng in per_file:
+        bar_map: dict[int, dict[str, str]] = {}
         length = len(dens)
-        sub_idx = sec_idx[j : j + length]
+        sec_sub = sec_idx[i : i + length]
+        int_sub = labels[j : j + length]
+        for b in range(length):
+            bar_map[b] = {
+                "section": secs[sec_sub[b] % 4],
+                "intensity": int_map.get(int_sub[b], "mid"),
+            }
+        meta[name] = bar_map
+        i += length
         j += length
-        intensity = lab_map[vel_lbl.pop(0)] if vel_lbl.size else "mid"
-        meta[name] = {"intensity": intensity, "section": secs[sub_idx[0] % 4]}
+
+    if csv_path is not None:
+        with csv_path.open("w", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["file", "bar", "section", "intensity"])
+            for fn, bars in meta.items():
+                for b, d in bars.items():
+                    writer.writerow([fn, b, d["section"], d["intensity"]])
+
     return meta
 
 
@@ -77,8 +116,10 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - CLI entry
     ap = argparse.ArgumentParser(prog="modcompose tag")
     ap.add_argument("loop_dir", type=Path)
     ap.add_argument("--out", type=Path, default=Path("meta.json"))
+    ap.add_argument("--k-intensity", type=int, default=3)
+    ap.add_argument("--csv", type=Path, default=None)
     ns = ap.parse_args(argv)
-    meta = auto_tag(ns.loop_dir)
+    meta = auto_tag(ns.loop_dir, k_intensity=ns.k_intensity, csv_path=ns.csv)
     ns.out.write_text(json.dumps(meta))
     print(f"wrote {ns.out}")
 

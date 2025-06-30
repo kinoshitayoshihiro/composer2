@@ -78,7 +78,7 @@ def live_cmd(model: Path, backend: str | None, sync: str, bpm: float, buffer: in
     if backend is None:
         backend = "rnn" if model.suffix == ".pt" else "ngram"
     engine = RealtimeEngine(
-        model, backend=backend, bpm=bpm, sync=sync, buffer_bars=buffer
+        str(model), backend=backend, bpm=bpm, sync=sync, buffer_bars=buffer
     )
     live_player.play_live(engine, bpm=bpm)  # type: ignore[arg-type]
 
@@ -170,7 +170,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml  # type: ignore[import-untyped]
+        import yaml
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}
@@ -295,10 +295,12 @@ def _cmd_tag(args: list[str]) -> None:
     ap = argparse.ArgumentParser(prog="modcompose tag")
     ap.add_argument("loops", type=Path)
     ap.add_argument("--out", type=Path, default=Path("meta.json"))
+    ap.add_argument("--k-intensity", type=int, default=3)
+    ap.add_argument("--csv", type=Path, default=None)
     ns = ap.parse_args(args)
     from data_ops.auto_tag import auto_tag
 
-    meta = auto_tag(ns.loops)
+    meta = auto_tag(ns.loops, k_intensity=ns.k_intensity, csv_path=ns.csv)
     ns.out.write_text(json.dumps(meta))
     print(f"wrote {ns.out}")
 
@@ -308,18 +310,18 @@ def _cmd_augment(args: list[str]) -> None:
     ap.add_argument("midi", type=Path)
     ap.add_argument("--swing", type=float, default=0.0)
     ap.add_argument("--transpose", type=int, default=0)
-    ap.add_argument("--shuffle", action="store_true")
+    ap.add_argument("--shuffle", type=float, default=0.0)
     ap.add_argument("-o", "--out", type=Path, required=True)
     ns = ap.parse_args(args)
     from data_ops import augment
 
     pm = pretty_midi.PrettyMIDI(str(ns.midi))
-    if ns.swing:
-        pm = augment.swing(pm, ns.swing)
-    if ns.shuffle:
-        pm = augment.shuffle(pm)
-    if ns.transpose:
-        pm = augment.transpose(pm, ns.transpose)
+    pm = augment.apply_pipeline(
+        pm,
+        swing_ratio=ns.swing if ns.swing else None,
+        shuffle_prob=ns.shuffle if ns.shuffle else None,
+        transpose_amt=ns.transpose,
+    )
     pm.write(str(ns.out))
     print(f"wrote {ns.out}")
 

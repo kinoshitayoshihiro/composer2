@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+
 try:
     import pytorch_lightning as pl
     import torch
@@ -115,6 +116,7 @@ def train_rnn_v2(
     batch: int = 32,
     progress: bool = True,
     optuna_trials: int = 0,
+    auto_tag: bool = False,
 ) -> tuple[GrooveRNN, dict]:
     loops = _load_loops(loop_dir)
     ds = TokenDataset(loops)
@@ -128,6 +130,10 @@ def train_rnn_v2(
     )
     trainer.fit(model, dl)
     meta = {"vocab": ds.vocab}
+    if auto_tag:
+        from data_ops.auto_tag import auto_tag as _auto_tag
+
+        meta["tags"] = _auto_tag(loop_dir)
     return model, meta
 
 
@@ -181,8 +187,13 @@ def cli() -> None:
 @click.option("--lr", type=float, default=1e-3)
 @click.option("--batch", type=int, default=32)
 @click.option("--out", "out_path", type=Path, required=True)
-def train_cmd(loops: Path, epochs: int, lr: float, batch: int, out_path: Path) -> None:
-    model, meta = train_rnn_v2(loops, epochs=epochs, lr=lr, batch=batch)
+@click.option("--auto-tag/--no-auto-tag", default=False, help="Infer aux metadata")
+def train_cmd(
+    loops: Path, epochs: int, lr: float, batch: int, out_path: Path, auto_tag: bool
+) -> None:
+    model, meta = train_rnn_v2(
+        loops, epochs=epochs, lr=lr, batch=batch, auto_tag=auto_tag
+    )
     torch.save({"state_dict": model.state_dict(), "meta": meta}, out_path)
     click.echo(f"saved {out_path}")
 

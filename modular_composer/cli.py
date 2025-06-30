@@ -15,6 +15,7 @@ import pretty_midi
 import utilities.loop_ingest as loop_ingest
 from utilities import (
     groove_sampler_ngram,
+    live_player,
     streaming_sampler,
     synth,
 )
@@ -67,6 +68,60 @@ try:
     __version__ = _md.version("modular_composer")
 except _md.PackageNotFoundError:
     __version__ = "0.0.0"
+
+
+@cli.command("live")
+@click.argument("model", type=Path)
+@click.option("--backend", type=click.Choice(["ngram", "rnn"]), default=None)
+@click.option("--bpm", type=float, default=120.0, show_default=True)
+def live_cmd(model: Path, backend: str | None, bpm: float) -> None:
+    """Stream a trained groove model live."""
+    if backend is None:
+        backend = "rnn" if model.suffix == ".pt" else "ngram"
+
+    if backend == "rnn":
+        if groove_sampler_rnn is None:
+            raise click.ClickException("PyTorch not installed")
+        rnn_model, meta = groove_sampler_rnn.load(model)
+
+        class _WrapR:
+            def __init__(self) -> None:
+                self.history: list[State] = []
+
+            def feed_history(self, events: list[State]) -> None:
+                self.history.extend(events)
+
+            def next_step(
+                self, *, cond: dict[str, object] | None, rng: random.Random
+            ) -> Event:
+                return groove_sampler_rnn.sample(
+                    rnn_model, meta, bars=1, temperature=1.0, rng=rng
+                )[0]
+
+        sampler: streaming_sampler.BaseSampler = _WrapR()
+    else:
+        n_model = groove_sampler_ngram.load(model)
+
+        class _WrapN:
+            def __init__(self) -> None:
+                self.hist: list[State] = []
+                self.buf: list[Event] = []
+
+            def feed_history(self, events: list[State]) -> None:
+                self.hist.extend(events)
+
+            def next_step(
+                self, *, cond: dict[str, object] | None, rng: random.Random
+            ) -> Event:
+                if not self.buf:
+                    self.buf, self.hist = groove_sampler_ngram._generate_bar(
+                        self.hist, n_model, rng=rng
+                    )
+                return self.buf.pop(0)
+
+        sampler = _WrapN()
+
+    live_player.play_live(sampler, bpm=bpm)
 
 
 def _cmd_demo(args: list[str]) -> None:

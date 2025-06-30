@@ -39,3 +39,24 @@ def test_kick_lock_velocity():
     part = gen.compose(section_data=section, shared_tracks={"kick_offsets": [0, 1, 2, 3]})
     velocities = [n.volume.velocity for n in part.flatten().notes]
     assert velocities == [75, 75, 75, 75]
+
+
+def test_render_part_kick_alignment():
+    gen = BassGenerator(
+        part_name="bass",
+        default_instrument=instrument.AcousticBass(),
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+        emotion_profile_path="data/emotion_profile.yaml",
+    )
+    part = gen.render_part(
+        emotion="joy",
+        key_signature="C",
+        tempo_bpm=120,
+        groove_history=[0.0, 1.0, 2.0, 3.0],
+    )
+    offsets = [n.offset for n in part.notes]
+    for expected, actual in zip([0.0, 1.0, 2.0, 3.0], offsets):
+        assert abs(expected - actual) <= 1 / 480

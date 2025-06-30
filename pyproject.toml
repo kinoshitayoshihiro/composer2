@@ -46,11 +46,11 @@ groove = [
   "librosa>=0.10",
 ]
 gui = [
-  "streamlit",
+  "streamlit>=1.32",
   "altair",
   "pandas",
 ]
-rnn = ["torch>=2.1"]
+rnn = ["torch>=2.3.0"]
 
 [project.scripts]
 modcompose = "modular_composer.cli:main"
@@ -102,4 +102,5 @@ include = ["modular_composer*", "utilities*"]
 [tool.pytest.ini_options]
 markers = [
     "ci_perf: performance gate"
+    , "stretch: stretch smoke tests"
 ]

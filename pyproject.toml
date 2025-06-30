@@ -50,7 +50,7 @@ gui = [
   "altair",
   "pandas",
 ]
-rnn = ["torch>=2.3.0"]
+rnn = ["torch>=2.3.0", "pytorch-lightning>=2.2", "optuna>=3.6"]
 
 [project.scripts]
 modcompose = "modular_composer.cli:main"

@@ -25,6 +25,8 @@ from music21 import (
 
 from utilities import humanizer
 from utilities.accent_mapper import AccentMapper
+from utilities import MIN_NOTE_DURATION_QL
+
 from utilities.emotion_profile_loader import load_emotion_profile
 from utilities.velocity_curve import resolve_velocity_curve
 
@@ -1845,6 +1847,7 @@ class BassGenerator(BasePartGenerator):
         patterns = profile.get("bass_patterns") if profile else None
         if not patterns:
             # Fallback to a neutral four note riff if nothing is defined
+
             profile = {
                 "bass_patterns": [
                     {"riff": [1, 5, 1, 5], "velocity": "mid", "swing": "off"}
@@ -1852,21 +1855,24 @@ class BassGenerator(BasePartGenerator):
                 "octave_pref": "mid",
                 "length_beats": 4,
             }
-            patterns = profile["bass_patterns"]
 
+        patterns = profile.get("bass_patterns") or []
+        if not patterns:
+            patterns = [
+                {"riff": [1, 5, 1, 5], "velocity": "mid", "swing": "off"}
+            ]
+
+           
         pat = patterns[0]
-        degrees = pat.get("riff", [])
-        if not degrees:
-            return stream.Part(id=self.part_name)
+        degrees = pat.get("riff", []) or [1, 5, 1, 5]
 
         octave_pref = profile.get("octave_pref", "mid")
         length_beats = float(profile.get("length_beats", len(degrees)))
-        velocity_layer = str(pat.get("velocity", "mid"))
+
         swing_val = pat.get("swing", "off")
-        if isinstance(swing_val, bool):
-            swing_on = swing_val
-        else:
-            swing_on = str(swing_val).lower() == "on"
+        swing_flag = str(swing_val).lower() in {"on", "true", "1"}
+        base_velocity = AccentMapper.map_layer(pat.get("velocity", "mid"), rng=self._rng)
+
 
         key_obj = music21.key.Key(key_signature)
         scale_obj = key_obj.getScale()
@@ -1890,12 +1896,12 @@ class BassGenerator(BasePartGenerator):
             p_obj = scale_obj.pitchFromDegree(deg)
             p_obj = p_obj.transpose(shift)
             p_obj.octave = base_oct
-            if p_obj.pitchClass is None:
-                return p_obj
-            if p_obj.midi < self.bass_range_lo:
-                p_obj = p_obj.transpose(12)
-            elif p_obj.midi > self.bass_range_hi:
-                p_obj = p_obj.transpose(-12)
+
+            while p_obj.midi < self.bass_range_lo:
+                p_obj.octave += 1
+            while p_obj.midi > self.bass_range_hi:
+                p_obj.octave -= 1
+
             return p_obj
 
         part = stream.Part(id=self.part_name)
@@ -1909,33 +1915,49 @@ class BassGenerator(BasePartGenerator):
             p_obj = pitch_from_degree(deg)
             n = note.Note(p_obj)
             n.duration.quarterLength = dur
-            n.volume = m21volume.Volume(velocity=base_vel)
+            n.volume = m21volume.Volume(velocity=base_velocity)
             off = i * dur
             offsets.append(off)
             notes.append(n)
-
-        if swing_on and dur > 0:
-            swing_shift = self.swing_ratio * dur
-            for idx in range(1, len(notes), 2):
-                new_off = offsets[idx] + swing_shift
-                if new_off >= length_beats:
-                    new_off = length_beats - MIN_NOTE_DURATION_QL
-                notes[idx].offset = new_off
-                offsets[idx] = new_off
-                prev_idx = idx - 1
-                new_dur = max(MIN_NOTE_DURATION_QL, dur - swing_shift)
-                notes[prev_idx].duration.quarterLength = new_dur
+            part.insert(off, n)
 
         if groove_history:
             tol = 0.25
-            for i, (n, off) in enumerate(zip(notes, offsets)):
+            new_offsets: list[float] = []
+            for n, off in zip(notes, offsets):
                 nearest = min(groove_history, key=lambda x: abs(x - off))
                 if abs(nearest - off) <= tol:
                     n.offset = nearest
-                    offsets[i] = nearest
+                    new_offsets.append(nearest)
+                else:
+                    new_offsets.append(off)
+            offsets = new_offsets
 
-        for off, n in zip(offsets, notes):
-            part.insert(off, n)
+        if swing_flag:
+            delay = self.swing_ratio
+            for idx, n in enumerate(notes):
+                if idx % 2 == 1:
+                    n.offset += delay
+                    if idx > 0:
+                        prev = notes[idx - 1]
+                        prev.duration.quarterLength = max(
+                            MIN_NOTE_DURATION_QL,
+                            n.offset - prev.offset,
+                        )
+            offsets = [n.offset for n in notes]
+
+        # Recalculate durations based on final offsets
+        sorted_pairs = sorted(zip(offsets, notes), key=lambda x: x[0])
+        for idx, (off, n) in enumerate(sorted_pairs):
+            if idx < len(sorted_pairs) - 1:
+                next_off = sorted_pairs[idx + 1][0]
+            else:
+                next_off = length_beats
+            n.duration.quarterLength = max(MIN_NOTE_DURATION_QL, next_off - n.offset)
+
+        part.coreElementsChanged()
+
+        for n in notes:
             humanizer.apply_humanization_to_element(n)
 
         return part

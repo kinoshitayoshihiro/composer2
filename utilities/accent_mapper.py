@@ -126,3 +126,29 @@ class AccentMapper:
         rnd = self.rng.random()
         target = self.rng.uniform(self.ghost_density_min, self.ghost_density_max)
         return rnd < target
+
+    @staticmethod
+    def map_layer(layer: str | int, *, rng: random.Random | None = None) -> int:
+        """Return a MIDI velocity for ``layer``.
+
+        Parameters
+        ----------
+        layer : str | int
+            Either ``"low"``, ``"mid"``, ``"high"`` or a numeric velocity.
+        rng : random.Random | None
+            Optional RNG for the random range selection.
+        """
+        r = rng or random.Random()
+        if isinstance(layer, int):
+            return max(1, min(127, layer))
+        s = str(layer).strip().lower()
+        if s == "low":
+            return r.randint(40, 55)
+        if s in {"mid", "middle"}:
+            return r.randint(70, 85)
+        if s == "high":
+            return r.randint(100, 110)
+        try:
+            return max(1, min(127, int(float(s))))
+        except Exception:
+            return r.randint(70, 85)

@@ -108,12 +108,17 @@ __all__ = [
     "extract_to_json",
     "load_emotion_profile",
     "groove_sampler_ngram",
+    "groove_sampler_rnn",
 ]
 
 
 def __getattr__(name: str) -> Any:  # pragma: no cover - thin wrapper
     if name == "groove_sampler_ngram":
         module = importlib.import_module("utilities.groove_sampler_ngram")
+        globals()[name] = module
+        return module
+    if name == "groove_sampler_rnn":
+        module = importlib.import_module("utilities.groove_sampler_rnn")
         globals()[name] = module
         return module
     raise AttributeError(name)

@@ -115,3 +115,36 @@ jobs:
         run: pip install -e ".[dev,groove]"
       - name: Perf Gate
         run: pytest -m ci_perf --quiet
+
+  stretch-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install deps
+        run: pip install -e .[gui]
+      - name: Install PyTorch
+        run: pip install torch==2.3.0+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html
+        continue-on-error: true
+      - name: Stretch Tests
+        run: |
+          python - <<'EOF'
+          import importlib
+          ok = True
+          try:
+              importlib.import_module('torch')
+          except Exception:
+              ok = False
+          if ok:
+              exit(0)
+          EOF
+          STATUS=$?
+          if [ "$STATUS" = "0" ]; then
+            pytest -m stretch
+          else
+            pytest -m stretch -k "not rnn_smoke"
+          fi

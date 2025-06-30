@@ -18,7 +18,7 @@ PlayFunc = Callable[[bytes], None]
 
 def _linux_player() -> Optional[PlayFunc]:
     """Return player function for Linux."""
-    for cmd in ("timidity", "fluidsynth", "aplaymidi"):
+    for cmd in ("timidity", "fluidsynth"):
         path = shutil.which(cmd)
         if not path:
             continue
@@ -107,22 +107,6 @@ def _windows_player() -> Optional[PlayFunc]:
                     except OSError:
                         pass
             return play
-    pwsh = shutil.which("powershell")
-    if pwsh:
-        def play(data: bytes, pwsh=pwsh) -> None:
-            with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
-                tmp.write(data)
-                tmp.flush()
-                fname = tmp.name
-            try:
-                cmd = [pwsh, "-c", f'(New-Object Media.SoundPlayer \"{fname}\").PlaySync()']
-                subprocess.run(cmd, check=False)
-            finally:
-                try:
-                    os.unlink(fname)
-                except OSError:
-                    pass
-        return play
     return None
 
 

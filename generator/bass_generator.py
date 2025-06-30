@@ -13,6 +13,7 @@ from music21 import (
 )
 from music21 import (
     harmony,
+    interval,
     key,
     meter,
     note,
@@ -1843,6 +1844,31 @@ class BassGenerator(BasePartGenerator):
         groove_kicks = list(section_data.get("groove_kicks", []))
         melody = list(section_data.get("melody", []))
 
+        def _degree_to_pitch(base: pitch.Pitch, token: str | int) -> pitch.Pitch:
+            semis = {1: 0, 2: 2, 3: 4, 4: 5, 5: 7, 6: 9, 7: 11}
+            shift = 0
+            if isinstance(token, str):
+                s = token
+                if s.startswith("b"):
+                    shift = -1
+                    s = s[1:]
+                elif s.startswith("#"):
+                    shift = 1
+                    s = s[1:]
+                try:
+                    deg = int(s)
+                except Exception:
+                    deg = 1
+            else:
+                deg = int(token)
+            interval_semi = semis.get(deg, 0) + shift
+            p_new = base.transpose(interval_semi)
+            while p_new.midi < self.bass_range_lo:
+                p_new = p_new.transpose(12)
+            while p_new.midi > self.bass_range_hi:
+                p_new = p_new.transpose(-12)
+            return p_new
+
         part = stream.Part(id=self.part_name)
         part.insert(0, copy.deepcopy(self.default_instrument))
 
@@ -1868,13 +1894,29 @@ class BassGenerator(BasePartGenerator):
         first_offset = float(first_kick) if first_kick is not None else 0.0
         first_offset += self._rng.uniform(-tick, tick)
 
+        emotion_data = self.emotion_profile.get(emotion, {})
+        pattern_defs = emotion_data.get("bass_patterns", [])
+        pat = pattern_defs[0] if pattern_defs else {}
+        riff = pat.get("riff", [1, 5, 1, 5])
+        velocity_layer = pat.get("velocity", "mid")
+        swing_val = pat.get("swing", "off")
+        swing_flag = bool(swing_val) if isinstance(swing_val, bool) else str(swing_val).lower() == "on"
+        base_velocity = AccentMapper.map_layer(velocity_layer, rng=self._rng)
+
         first_note = note.Note(root_pitch)
         first_note.duration = m21duration.Duration(1.0)
-        first_note.volume = m21volume.Volume(
-            velocity=AccentMapper.map_layer("mid", rng=self._rng)
-        )
+        first_note.volume = m21volume.Volume(velocity=base_velocity)
 
         notes_data: list[tuple[float, note.Note]] = [(first_offset, first_note)]
+        offsets = [0.0, 1.0, 2.0, 3.0]
+        swing_amt = self.swing_ratio if swing_flag else 0.0
+        for idx, deg in enumerate(riff[1:], start=1):
+            off = offsets[idx % len(offsets)]
+            p_obj = _degree_to_pitch(root_pitch, deg)
+            n_obj = note.Note(p_obj)
+            n_obj.duration = m21duration.Duration(1.0)
+            n_obj.volume = m21volume.Volume(velocity=base_velocity)
+            notes_data.append((off, n_obj))
 
         for off, pitch_midi, dur in melody:
             if float(off) <= 1.0:
@@ -1976,8 +2018,11 @@ class BassGenerator(BasePartGenerator):
         humanize_opts = {
             opt.strip() for opt in str(section_data.get("humanize", "")).split(",") if opt
         }
-        for off, n in merged:
-            part.insert(off, n)
+        for idx, (off, n) in enumerate(merged):
+            insert_off = off
+            if swing_amt and idx % 2 == 1:
+                insert_off += swing_amt
+            part.insert(insert_off, n)
             custom: dict[str, float] = {}
             if "vel" not in humanize_opts:
                 custom["velocity_variation"] = 0.0

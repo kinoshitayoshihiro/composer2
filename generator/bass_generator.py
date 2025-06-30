@@ -1871,7 +1871,9 @@ class BassGenerator(BasePartGenerator):
 
         swing_val = pat.get("swing", "off")
         swing_flag = str(swing_val).lower() in {"on", "true", "1"}
-        base_velocity = AccentMapper.map_layer(pat.get("velocity", "mid"), rng=self._rng)
+
+        velocity_layer = pat.get("velocity", "mid")
+        base_vel = AccentMapper.map_layer(velocity_layer, rng=self._rng)
 
 
         key_obj = music21.key.Key(key_signature)
@@ -1907,7 +1909,6 @@ class BassGenerator(BasePartGenerator):
         part = stream.Part(id=self.part_name)
         part.insert(0, copy.deepcopy(self.default_instrument))
         dur = length_beats / len(degrees)
-        base_vel = AccentMapper.map_layer(velocity_layer, rng=self._rng)
 
         offsets: list[float] = []
         notes: list[note.Note] = []
@@ -1915,7 +1916,7 @@ class BassGenerator(BasePartGenerator):
             p_obj = pitch_from_degree(deg)
             n = note.Note(p_obj)
             n.duration.quarterLength = dur
-            n.volume = m21volume.Volume(velocity=base_velocity)
+            n.volume = m21volume.Volume(velocity=base_vel)
             off = i * dur
             offsets.append(off)
             notes.append(n)

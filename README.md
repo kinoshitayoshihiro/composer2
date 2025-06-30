@@ -458,6 +458,8 @@ Train a simple recurrent model and stream it live:
 modcompose rnn train loops/ -o rnn.pt
 modcompose live rnn.pt --backend rnn --bpm 110
 ```
+Pass `--sync external` to follow an external MIDI clock. This requires an
+available MIDI-IN port provided by `mido`.
 
 ## Vocal Sync
 

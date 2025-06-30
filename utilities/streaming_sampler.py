@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 try:
     import sounddevice as _sd
@@ -18,7 +19,7 @@ def _null_sink(_: Event) -> None:
     """Dummy sink when no audio backend is available."""
     return
 
-from .groove_sampler_ngram import Event, State, RESOLUTION
+from .groove_sampler_ngram import RESOLUTION, Event, State
 
 
 class BaseSampler(Protocol):
@@ -40,6 +41,7 @@ class RealtimePlayer:
     sink: callable = _default_sink
     clock: Callable[[], float] = time.time
     sleep: Callable[[float], None] = time.sleep
+    buffer_bars: int = 1
 
     def play(self, bars: int = 4) -> None:
         if sd is None and self.sink is _default_sink:
@@ -58,7 +60,10 @@ class RealtimePlayer:
                 self.sink(ev)
                 step = int(round(ev["offset"] * (RESOLUTION / 4)))
                 history.append((step, ev["instrument"]))
+            if (bar + 1) % self.buffer_bars == 0:
+                self.sampler.feed_history(history)
+                history.clear()
+        if history:
             self.sampler.feed_history(history)
-            history.clear()
         return
 

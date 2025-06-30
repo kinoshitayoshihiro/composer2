@@ -23,6 +23,7 @@ dependencies = [
   "tomli>=2.0",
   "soundfile>=0.12",
   "audioread>=2.1.9"
+  , "hmmlearn>=0.3"
 ]
 
 [project.optional-dependencies]

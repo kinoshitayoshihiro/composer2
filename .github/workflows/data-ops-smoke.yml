@@ -10,8 +10,8 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install -e .[gui,rnn]
+      - run: pip install -e .[gui,rnn,data_ops]
       - run: ruff check data_ops streamlit_app_v2.py tests/test_auto_tag.py tests/test_augment.py tests/test_gui_import.py
       - run: mypy data_ops streamlit_app_v2.py tests/test_auto_tag.py tests/test_augment.py tests/test_gui_import.py --strict
       - run: pytest -m "data_ops or gui" -q
-        timeout-minutes: 2
+        timeout-minutes: 5

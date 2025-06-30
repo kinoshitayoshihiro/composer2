@@ -1,0 +1,7 @@
+joy:
+  bass_patterns:
+    - riff: [1, b3, 5, 6]
+      velocity: mid
+      swing: off
+  octave_pref: mid
+  length_beats: 4

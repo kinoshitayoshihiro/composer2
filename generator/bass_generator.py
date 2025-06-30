@@ -1,9 +1,10 @@
-# --- START OF FILE generator/bass_generator.py (S-1 Sprint適用・エラー修正・アルゴリズム拡充・型ヒント修正版) ---
+# --- START OF FILE generator/bass_generator.py (simplified) ---
 import copy
 import logging
 import math
 import random  # 追加
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import music21
@@ -23,6 +24,7 @@ from music21 import (
 )
 
 from utilities import humanizer
+from utilities.emotion_profile_loader import load_emotion_profile
 from utilities.velocity_curve import resolve_velocity_curve
 
 from .base_part_generator import BasePartGenerator
@@ -168,6 +170,7 @@ class BassGenerator(BasePartGenerator):
         global_key_signature_mode=None,
         mirror_melody: bool = False,
         main_cfg=None,
+        emotion_profile_path: str | Path | None = None,
         **kwargs,
     ):
         """Create a bass part generator.
@@ -197,7 +200,7 @@ class BassGenerator(BasePartGenerator):
         self.logger = logging.getLogger("modular_composer.bass_generator")
         self.part_parameters = kwargs.get("part_parameters", {})
         self.vel_shift_on_kick = self.part_parameters.get("velocity_shift_on_kick", 10)
-        self.main_cfg = main_cfg
+        self.main_cfg = main_cfg or {"global_settings": {}}
         # Whether to mirror the main melody when generating the bass line
         self.mirror_melody = mirror_melody
         # ここで global_ts_str をセット
@@ -232,6 +235,15 @@ class BassGenerator(BasePartGenerator):
 
         self.kick_offsets: list[float] = []
         self.base_velocity = 70
+
+        if emotion_profile_path:
+            try:
+                self.emotion_profile = load_emotion_profile(emotion_profile_path)
+            except Exception as exc:
+                self.logger.error(f"Failed to load emotion profile: {exc}")
+                self.emotion_profile = {}
+        else:
+            self.emotion_profile = {}
 
     def compose(
         self,
@@ -1811,6 +1823,83 @@ class BassGenerator(BasePartGenerator):
     def get_root_offsets(self) -> list[float]:
         """Return offsets of notes generated in the last compose call."""
         return list(self._root_offsets)
+
+    # ------------------------------------------------------------------
+    # Simplified emotion-aware rendering for phase 5.2 testing
+    # ------------------------------------------------------------------
+    def render_part(
+        self,
+        *,
+        emotion: str,
+        key_signature: str,
+        tempo_bpm: int,
+        groove_history: Sequence[float] | None = None,
+        next_section_data: dict[str, Any] | None = None,
+    ) -> stream.Part:
+        """Render a short bass riff based on emotion profile."""
+
+        profile = self.emotion_profile.get(emotion, {})
+        patterns = profile.get("bass_patterns") or []
+        if not patterns:
+            self.logger.warning("No bass pattern for emotion '%s'", emotion)
+            return stream.Part(id=self.part_name)
+
+        pat = patterns[0]
+        degrees = pat.get("riff", [])
+        if not degrees:
+            return stream.Part(id=self.part_name)
+
+        octave_pref = profile.get("octave_pref", "mid")
+        length_beats = float(profile.get("length_beats", len(degrees)))
+
+        key_obj = music21.key.Key(key_signature)
+        scale_obj = key_obj.getScale()
+
+        base_oct = {"low": 2, "mid": 3, "high": 4}.get(octave_pref, 3)
+
+        def pitch_from_degree(d: str | int) -> pitch.Pitch:
+            if isinstance(d, int):
+                deg = d
+                shift = 0
+            else:
+                s = str(d)
+                shift = 0
+                if s.startswith("b") or s.startswith("♭"):
+                    shift = -1
+                    s = s.lstrip("b♭")
+                elif s.startswith("#"):
+                    shift = 1
+                    s = s.lstrip("#")
+                deg = int(s)
+            p_obj = scale_obj.pitchFromDegree(deg)
+            p_obj = p_obj.transpose(shift)
+            p_obj.octave = base_oct
+            return p_obj
+
+        part = stream.Part(id=self.part_name)
+        part.insert(0, copy.deepcopy(self.default_instrument))
+        dur = length_beats / len(degrees)
+
+        offsets: list[float] = []
+        for i, deg in enumerate(degrees):
+            p_obj = pitch_from_degree(deg)
+            n = note.Note(p_obj)
+            n.duration.quarterLength = dur
+            off = i * dur
+            offsets.append(off)
+            part.insert(off, n)
+
+        if groove_history:
+            tol = 0.25
+            for n, off in zip(part.notes, offsets):
+                nearest = min(groove_history, key=lambda x: abs(x - off))
+                if abs(nearest - off) <= tol:
+                    n.offset = nearest
+
+        for n in part.notes:
+            humanizer.apply_humanization_to_element(n)
+
+        return part
 
 
 # --- END OF FILE generator/bass_generator.py ---

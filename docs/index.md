@@ -7,6 +7,8 @@ Browse the API reference to learn how to integrate the generators into your work
 See [Groove Sampler](groove_sampler.md) for training drum models.
 Auxiliary conditioning and deterministic sampling are covered in
 [Aux Features](aux_features.md).
+For an example of emotion-driven bass parts see the *Bass Generator Usage*
+section in the project README.
 
 Install optional extras for the GUI:
 `pip install -e .[gui]`.

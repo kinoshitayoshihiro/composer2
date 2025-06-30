@@ -6,6 +6,13 @@ This project blends poetic Japanese narration with emotive musical arrangements.
 
 It automatically generates chords, melodies and instrumental parts for each chapter of a text, allowing verse, chorus and bridge sections to be arranged with human‑like expressiveness.
 
+## Table of Contents
+- [Setup](#setup)
+- [Configuration Files](#configuration-files)
+- [Generating MIDI](#generating-midi)
+- [Demo MIDI Generation](#demo-midi-generation)
+- [Notebook Demo](#notebook-demo)
+
 
 ## Setup
 Before running any tests or generation scripts you must install the project dependencies.  Execute
@@ -90,7 +97,7 @@ sections_to_generate:
 
 Edit these values to point to your chordmap and rhythm library, and list the section labels you wish to render.
 
-`data/tempo_curve.json` defines BPM over time. Each segment may specify
+[`data/tempo_curve.json`](data/tempo_curve.json) defines BPM over time. Each segment may specify
 `"curve": "linear"` or `"step"` to control interpolation:
 
 ```json
@@ -192,7 +199,7 @@ drum_patterns の duration 欠損が解消されました
 
 ## 標準パターン拡充
 
-`data/drum_patterns.yml` に `tom_dsl_fill` タイプのフィルを追加しました。以下のように簡潔な DSL でタム回しを記述できます。
+[`data/drum_patterns.yml`](data/drum_patterns.yml) に `tom_dsl_fill` タイプのフィルを追加しました。以下のように簡潔な DSL でタム回しを記述できます。
 
 ```yaml
 tom_run_short:
@@ -217,7 +224,7 @@ pytest -q
 
 Running the tests confirms that chord generation and instrument mappings behave as expected.
 
-Golden MIDI regression files are stored as base64 text under `data/golden/`.
+Golden MIDI regression files are stored as base64 text under [`data/golden/`](data/golden/).
 Update them with:
 
 ```bash
@@ -250,7 +257,7 @@ Run it locally after generating snapshots in the `tmp/` directory with the audio
 export SF2_PATH=sf2/TimGM6mb.sf2
 pytest tests/test_audio_spectrum.py
 ```
-Baseline snapshots are expected under `data/golden/wav/`. If they are
+Baseline snapshots are expected under [`data/golden/wav/`](data/golden/wav/). If they are
 absent, the spectrum test will be skipped.
 
 ### Groove Sampler Usage
@@ -417,7 +424,7 @@ micro‑timing variation.
 
 Import the resulting ``groove.mid`` into your DAW (Ableton, Logic, etc.).
 Velocity humanisation stays within MIDI 1–127 while micro timing
-deviations are clipped to ±30 ticks by default so alignment remains manageable.
+deviations are clipped to ± ``micro_max`` ticks (default 30) so alignment remains manageable.
 
 ### Groove Sampler v2
 
@@ -475,7 +482,7 @@ modcompose sample model.pkl --peaks peaks.json --lag 10
 `consonant_sync_mode` to control how strictly events follow detected consonants.
 In **`bar`** mode the whole bar shifts toward the nearest consonant cluster,
 whereas **`note`** mode aligns kick and snare hits individually. The default is
-`bar` as shown in [`config/main_cfg.yml`](config/main_cfg.yml):
+`bar` as shown in [config/main_cfg.yml](config/main_cfg.yml):
 
 ```yaml
 global_settings:
@@ -520,7 +527,7 @@ This JSON can then be fed to later synchronization tools.
 ## Bass Generator Usage
 
 Bass lines can be generated directly from an emotion profile. The YAML file
-`data/emotion_profile.yaml` defines riffs per emotion. Render a bass part
+[`data/emotion_profile.yaml`](data/emotion_profile.yaml) defines riffs per emotion. Render a bass part
 locked to kick drums:
 
 ```python
@@ -543,6 +550,10 @@ part = gen.render_part(
     groove_history=[0, 1, 2, 3],
 )
 ```
+
+## Notebook Demo
+
+See [`notebooks/quick_start.ipynb`](notebooks/quick_start.ipynb) for a minimal walkthrough that trains a model and plays a short preview.
 
 ## License
 This project is licensed under the [MIT License](LICENSE).

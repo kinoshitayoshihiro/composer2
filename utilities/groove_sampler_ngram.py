@@ -1168,6 +1168,7 @@ def cli() -> None:
     help="JSON map of loop names to aux data, e.g. '{\"foo.mid\": {\"section\": \"chorus\"}}'",
 )
 @click.option("--progress/--no-progress", default=True, help="Show progress bar")
+@click.option("--auto-tag/--no-auto-tag", default=False, help="Infer aux metadata automatically")
 def train_cmd(
     loop_dir: Path,
     ext: str,
@@ -1178,6 +1179,7 @@ def train_cmd(
     out_path: Path,
     aux_path: Path | None,
     progress: bool,
+    auto_tag: bool,
 ) -> None:
     """Train a groove model from loops.
 
@@ -1200,6 +1202,11 @@ def train_cmd(
             validate_aux_map(aux_map)
         except ValueError as exc:
             raise click.BadParameter(str(exc)) from exc
+    if auto_tag:
+        from data_ops.auto_tag import auto_tag as _auto_tag
+
+        auto = _auto_tag(loop_dir)
+        aux_map = {**(aux_map or {}), **auto}
     model = train(
         loop_dir,
         ext=ext,

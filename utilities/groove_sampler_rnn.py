@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from random import Random
-from typing import Any, TypedDict
+from typing import TypedDict
 
 import click
 
@@ -20,7 +21,7 @@ except Exception:  # pragma: no cover - optional dependency missing
     Dataset = object  # type: ignore
     DataLoader = object  # type: ignore
 
-from .groove_sampler_ngram import DEFAULT_AUX, Event, RESOLUTION, PPQ, _hash_aux
+from .groove_sampler_ngram import DEFAULT_AUX, PPQ, RESOLUTION, Event, _hash_aux
 
 
 class LoopEntry(TypedDict):
@@ -102,18 +103,23 @@ if torch is not None:
             return self._tokens[idx]
 
     class GRUModel(nn.Module):
-        def __init__(self, vocab: int, hidden: int, layers: int) -> None:
+        """Simple GRU based language model with attention."""
+
+        def __init__(self, vocab: int, embed: int, hidden: int, layers: int) -> None:
             super().__init__()
-            self.embed = nn.Embedding(vocab, 64)
+            self.embed = nn.Embedding(vocab, embed)
             self.vel_emb = nn.Embedding(_VEL_BINS, 8)
             self.micro_emb = nn.Embedding(_MICRO_BINS, 8)
-            self.gru = nn.GRU(80, hidden, num_layers=layers, bidirectional=True, batch_first=True)
-            self.fc = nn.Linear(hidden * 2, vocab)
+            self.gru = nn.GRU(embed + 16, hidden, num_layers=layers, batch_first=True)
+            self.attn = nn.MultiheadAttention(hidden, num_heads=4, batch_first=True)
+            self.fc = nn.Linear(hidden, vocab)
             self.log_softmax = nn.LogSoftmax(dim=-1)
 
         def forward(self, tok: torch.Tensor, vel: torch.Tensor, micro: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
             emb = torch.cat([self.embed(tok), self.vel_emb(vel), self.micro_emb(micro)], dim=-1)
             out, _ = self.gru(emb.unsqueeze(1))
+            ctx, _ = self.attn(out, out, out)
+            out = out + ctx
             return self.log_softmax(self.fc(out))
 
     def train(
@@ -126,19 +132,31 @@ if torch is not None:
         data = _load_loops(path)
         ds = TokenDataset(data)
         dl = DataLoader(ds, batch_size=32, shuffle=True)
-        model = GRUModel(ds.vocab_size, hidden, 1)
+        model = GRUModel(ds.vocab_size, embed, hidden, 1)
         opt = torch.optim.Adam(model.parameters(), lr=2e-3)
         model.train()
-        for _ in range(epochs):
+        teacher_force_start = 1.0
+        teacher_force_end = 0.1
+        prev = None
+        for epoch in range(epochs):
+            p_tf = max(
+                teacher_force_end,
+                teacher_force_start
+                - (epoch / max(epochs - 1, 1)) * (teacher_force_start - teacher_force_end),
+            )
             for idx, vel, micro in dl:
                 idx = idx.long()
                 vel = vel.long()
                 micro = micro.long()
+                inp = idx
+                if prev is not None and random.random() >= p_tf:
+                    inp = prev.squeeze(1)
                 opt.zero_grad()
-                out = model(idx, vel, micro)
+                out = model(inp, vel, micro)
                 loss = nn.functional.nll_loss(out.squeeze(1), idx)
                 loss.backward()
                 opt.step()
+                prev = out.argmax(dim=-1).detach()
         aux_map: dict[int, int] = {}
         for entry in data:
             for step, lbl, _v, _m in entry["tokens"]:
@@ -158,7 +176,7 @@ if torch is not None:
     def load(path: Path) -> tuple[GRUModel, dict]:
         obj = torch.load(path, map_location="cpu")
         meta = obj["meta"]
-        model = GRUModel(len(meta["vocab"]), 128, 2)
+        model = GRUModel(len(meta["vocab"]), 64, 128, 2)
         model.load_state_dict(obj["state"])
         model.eval()
         return model, meta
@@ -210,9 +228,44 @@ if torch is not None:
                 }
             )
         return events
+
+    def tune_rnn_hpo(loop_path: Path, n_trials: int) -> dict[str, int]:
+        """Return best hyper-parameters via Optuna."""
+        import optuna
+
+        data = _load_loops(loop_path)
+        ds = TokenDataset(data)
+        dl = DataLoader(ds, batch_size=32, shuffle=True)
+
+        def objective(trial: optuna.Trial) -> float:
+            hidden = trial.suggest_int("hidden", 64, 256)
+            embed = trial.suggest_int("embed", 32, 128)
+            model = GRUModel(ds.vocab_size, embed, hidden, 1)
+            opt = torch.optim.Adam(model.parameters(), lr=2e-3)
+            model.train()
+            for idx, vel, micro in dl:
+                idx = idx.long()
+                vel = vel.long()
+                micro = micro.long()
+                opt.zero_grad()
+                out = model(idx, vel, micro)
+                loss = nn.functional.nll_loss(out.squeeze(1), idx)
+                loss.backward()
+                opt.step()
+            loss_val = 0.0
+            with torch.no_grad():
+                for idx, vel, micro in dl:
+                    out = model(idx.long(), vel.long(), micro.long())
+                    loss_val += nn.functional.nll_loss(out.squeeze(1), idx.long()).item()
+            return loss_val / len(dl)
+
+        study = optuna.create_study(direction="minimize")
+        study.optimize(objective, n_trials=n_trials)
+        return study.best_params  # type: ignore[return-value]
 else:
     import json
     from dataclasses import dataclass
+
     import numpy as np
 
     @dataclass
@@ -297,10 +350,26 @@ def cli() -> None:
 @click.option("--embed", default=8, type=int)
 @click.option("--hidden", default=16, type=int)
 @click.option("--out", "out_path", type=Path, required=True)
+@click.option("--auto-tag/--no-auto-tag", default=False, help="Infer aux metadata automatically")
 def train_cmd(
-    loops: Path, epochs: int, embed: int, hidden: int, out_path: Path
+    loops: Path, epochs: int, embed: int, hidden: int, out_path: Path, auto_tag: bool
 ) -> None:
-    model, meta = train(loops, epochs=epochs, embed=embed, hidden=hidden)
+    loops_arg = loops
+    if auto_tag:
+        from data_ops.auto_tag import auto_tag as _auto_tag
+
+        with loops.open("r", encoding="utf-8") as fh:
+            obj = json.load(fh)
+        loop_dir = loops.parent
+        meta_map = _auto_tag(loop_dir)
+        for entry in obj.get("data", []):
+            info = meta_map.get(entry.get("file", ""))
+            if info:
+                entry.update(info)
+        tmp = loops.parent / "loops_auto.json"
+        tmp.write_text(json.dumps(obj))
+        loops_arg = tmp
+    model, meta = train(loops_arg, epochs=epochs, embed=embed, hidden=hidden)
     save(model, meta, out_path)
     click.echo(f"saved model to {out_path}")
 

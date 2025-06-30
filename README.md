@@ -560,6 +560,30 @@ part = gen.render_part(
 )
 ```
 
+## Hi-Fi RNN Backend
+
+Groove generation can now leverage a Lightning-based RNN with attention. Train a
+model using:
+
+```bash
+modcompose rnn train loops.json --epochs 10 --out model.pt
+```
+
+Sample with:
+
+```bash
+modcompose rnn sample model.pt -l 4 > pattern.json
+```
+
+## Realtime Low-Latency
+
+Live playback uses a double-buffered engine. Synchronise with external MIDI
+clock using:
+
+```bash
+modcompose live model.pt --backend rnn --sync external --bpm 120 --buffer 2
+```
+
 ## Notebook Demo
 
 See [`notebooks/quick_start.ipynb`](notebooks/quick_start.ipynb) for a minimal walkthrough that trains a model and plays a short preview.

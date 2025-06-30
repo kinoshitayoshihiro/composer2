@@ -71,6 +71,7 @@ from .tempo_utils import (
 )
 from .velocity_curve import PREDEFINED_CURVES, resolve_velocity_curve
 from .velocity_smoother import EMASmoother, VelocitySmoother
+from .emotion_profile_loader import load_emotion_profile
 
 __all__ = [
     "MIN_NOTE_DURATION_QL",
@@ -105,6 +106,7 @@ __all__ = [
     "EssentiaUnavailable",
     "detect_consonant_peaks",
     "extract_to_json",
+    "load_emotion_profile",
     "groove_sampler_ngram",
 ]
 

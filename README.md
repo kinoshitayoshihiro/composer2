@@ -381,33 +381,33 @@ modcompose groove sample model.pkl -l 8 --humanize vel,micro > groove.mid
 
 ### Sampling API
 
-The helper ``generate_bar`` yields one bar at a time and also returns the
-updated n‑gram history:
+The helper ``generate_bar`` yields one bar at a time and updates the history
+list in-place:
 
 ```python
 from utilities import groove_sampler_ngram as gs
 model = gs.load(Path("model.pkl"))
-events, history = gs.generate_bar(None, model, temperature=0.0, top_k=1, rng=random.Random(0))
+hist: list[gs.State] = []
+events = gs.generate_bar(hist, model=model, temperature=0.0, top_k=1)
 ```
 
 Deterministic generation can be achieved by setting ``temperature`` to ``0``
 and ``top_k`` to ``1``:
 
 ```python
-events, _ = gs.generate_bar(history, model, temperature=0, top_k=1, rng=random.Random(1))
+events = gs.generate_bar(hist, model=model, temperature=0, top_k=1)
 ```
 
 You may constrain choices to the top ``k`` states and condition on auxiliary
 labels such as section or intensity:
 
 ```python
-events, history = gs.generate_bar(
-    history,
-    model,
+events = gs.generate_bar(
+    hist,
+    model=model,
     temperature=0.8,
     top_k=3,
     cond={"section": "chorus", "intensity": "high"},
-    rng=random.Random(42),
 )
 ```
 

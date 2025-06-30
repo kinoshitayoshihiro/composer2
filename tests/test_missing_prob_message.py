@@ -19,7 +19,7 @@ def test_error_message_contains_context(tmp_path: Path) -> None:
     model = gs.train(tmp_path, order=1)
     model["prob"][0] = {}
     with pytest.raises(RuntimeError) as exc:
-        gs.generate_bar(None, model, rng=random.Random(0))
+        gs.generate_bar(None, model=model)
     msg = str(exc.value)
     assert "context" in msg and "aux" in msg
 

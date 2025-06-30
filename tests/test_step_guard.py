@@ -31,7 +31,7 @@ def test_step_out_of_range_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     orig_res = gs.RESOLUTION
     monkeypatch.setattr(gs, "RESOLUTION", 1)
     with pytest.warns(RuntimeWarning):
-        events, hist = gs.generate_bar(None, model, rng=random.Random(0))
+        events = gs.generate_bar(None, model=model)
     monkeypatch.setattr(gs, "RESOLUTION", orig_res)
     assert len(events) == 1
     assert round(events[0]["offset"] * 4) == 0

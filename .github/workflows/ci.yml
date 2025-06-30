@@ -148,3 +148,39 @@ jobs:
           else
             pytest -m stretch -k "not rnn_smoke"
           fi
+
+  hi-fi-train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -e .[rnn]
+      - run: |
+          python - <<'EOF'
+          import json, tempfile
+          from pathlib import Path
+          from utilities import groove_rnn_v2
+
+          td = Path(tempfile.mkdtemp())
+          cache = td / 'loops.json'
+          data = {"ppq":480,"resolution":16,"data":[{"file":"a.mid","tokens":[(0,'kick',100,0)],"tempo_bpm":120.0,"bar_beats":4}]}
+          cache.write_text(json.dumps(data))
+          groove_rnn_v2.train_rnn_v2(cache, epochs=1, progress=False)
+          EOF
+        timeout-minutes: 1
+
+  low-lat-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -e .
+      - run: pytest tests/test_latency.py -q

@@ -24,6 +24,8 @@ from music21 import (
 )
 
 from utilities import humanizer
+from utilities.accent_mapper import AccentMapper
+from utilities import MIN_NOTE_DURATION_QL
 from utilities.emotion_profile_loader import load_emotion_profile
 from utilities.velocity_curve import resolve_velocity_curve
 
@@ -1838,19 +1840,29 @@ class BassGenerator(BasePartGenerator):
     ) -> stream.Part:
         """Render a short bass riff based on emotion profile."""
 
-        profile = self.emotion_profile.get(emotion, {})
+        profile = self.emotion_profile.get(emotion)
+        if not profile:
+            profile = {
+                "bass_patterns": [
+                    {"riff": [1, 5, 1, 5], "velocity": "mid", "swing": "off"}
+                ],
+                "octave_pref": "mid",
+                "length_beats": 4,
+            }
         patterns = profile.get("bass_patterns") or []
         if not patterns:
-            self.logger.warning("No bass pattern for emotion '%s'", emotion)
-            return stream.Part(id=self.part_name)
+            patterns = [
+                {"riff": [1, 5, 1, 5], "velocity": "mid", "swing": "off"}
+            ]
 
         pat = patterns[0]
-        degrees = pat.get("riff", [])
-        if not degrees:
-            return stream.Part(id=self.part_name)
+        degrees = pat.get("riff", []) or [1, 5, 1, 5]
 
         octave_pref = profile.get("octave_pref", "mid")
         length_beats = float(profile.get("length_beats", len(degrees)))
+        swing_val = pat.get("swing", "off")
+        swing_flag = str(swing_val).lower() in {"on", "true", "1"}
+        base_velocity = AccentMapper.map_layer(pat.get("velocity", "mid"), rng=self._rng)
 
         key_obj = music21.key.Key(key_signature)
         scale_obj = key_obj.getScale()
@@ -1874,6 +1886,10 @@ class BassGenerator(BasePartGenerator):
             p_obj = scale_obj.pitchFromDegree(deg)
             p_obj = p_obj.transpose(shift)
             p_obj.octave = base_oct
+            while p_obj.midi < self.bass_range_lo:
+                p_obj.octave += 1
+            while p_obj.midi > self.bass_range_hi:
+                p_obj.octave -= 1
             return p_obj
 
         part = stream.Part(id=self.part_name)
@@ -1881,22 +1897,54 @@ class BassGenerator(BasePartGenerator):
         dur = length_beats / len(degrees)
 
         offsets: list[float] = []
+        notes: list[note.Note] = []
         for i, deg in enumerate(degrees):
             p_obj = pitch_from_degree(deg)
             n = note.Note(p_obj)
             n.duration.quarterLength = dur
+            n.volume = m21volume.Volume(velocity=base_velocity)
             off = i * dur
             offsets.append(off)
+            notes.append(n)
             part.insert(off, n)
 
         if groove_history:
             tol = 0.25
-            for n, off in zip(part.notes, offsets):
+            new_offsets: list[float] = []
+            for n, off in zip(notes, offsets):
                 nearest = min(groove_history, key=lambda x: abs(x - off))
                 if abs(nearest - off) <= tol:
                     n.offset = nearest
+                    new_offsets.append(nearest)
+                else:
+                    new_offsets.append(off)
+            offsets = new_offsets
 
-        for n in part.notes:
+        if swing_flag:
+            delay = self.swing_ratio
+            for idx, n in enumerate(notes):
+                if idx % 2 == 1:
+                    n.offset += delay
+                    if idx > 0:
+                        prev = notes[idx - 1]
+                        prev.duration.quarterLength = max(
+                            MIN_NOTE_DURATION_QL,
+                            n.offset - prev.offset,
+                        )
+            offsets = [n.offset for n in notes]
+
+        # Recalculate durations based on final offsets
+        sorted_pairs = sorted(zip(offsets, notes), key=lambda x: x[0])
+        for idx, (off, n) in enumerate(sorted_pairs):
+            if idx < len(sorted_pairs) - 1:
+                next_off = sorted_pairs[idx + 1][0]
+            else:
+                next_off = length_beats
+            n.duration.quarterLength = max(MIN_NOTE_DURATION_QL, next_off - n.offset)
+
+        part.coreElementsChanged()
+
+        for n in notes:
             humanizer.apply_humanization_to_element(n)
 
         return part

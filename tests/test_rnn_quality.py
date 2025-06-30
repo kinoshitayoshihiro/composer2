@@ -1,6 +1,14 @@
 import json
 from pathlib import Path
 
+from utilities import groove_sampler_rnn
+
+
+def _make_loop(path: Path) -> None:
+    tokens = []
+    for i in range(64):
+        lbl = "kick" if i % 2 == 0 else "snare"
+        tokens.append((i % 16, lbl, 100, 0))
 import pytest
 
 pytest.importorskip("torch", reason="torch not installed")
@@ -17,7 +25,7 @@ def test_rnn_quality(tmp_path: Path) -> None:
         "data": [
             {
                 "file": "a.mid",
-                "tokens": [(0, "kick", 100, 0), (4, "snare", 100, 0)],
+                "tokens": tokens,
                 "tempo_bpm": 120.0,
                 "bar_beats": 4,
                 "section": "verse",
@@ -26,11 +34,15 @@ def test_rnn_quality(tmp_path: Path) -> None:
             }
         ],
     }
-    cache.write_text(json.dumps(data))
-    model, meta = groove_rnn_v2.train_rnn_v2(cache, epochs=1, progress=False)
-    events = groove_rnn_v2.sample_rnn_v2((model, meta), bars=1, temperature=0.0)  # noqa: F841
-    tokens = [(0, "kick"), (4, "snare")]
-    sample_tokens = tokens
-    mism = sum(1 for a, b in zip(tokens, sample_tokens) if a != b)
-    blec = mism / len(tokens)
-    assert blec < 0.15
+    path.write_text(json.dumps(data))
+
+
+def test_rnn_quality(tmp_path: Path) -> None:
+    cache = tmp_path / "loops.json"
+    _make_loop(cache)
+    model, meta = groove_sampler_rnn.train(cache, epochs=3)
+    events = groove_sampler_rnn.sample(model, meta, bars=4, temperature=0.0)
+    expected = ["kick" if i % 2 == 0 else "snare" for i in range(64)]
+    actual = [ev["instrument"] for ev in events[:64]]
+    mism = sum(e != a for e, a in zip(expected, actual)) / 64
+    assert mism < 0.15

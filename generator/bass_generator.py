@@ -10,18 +10,15 @@ from typing import Any
 import music21
 from music21 import (
     duration as m21duration,
-)
-from music21 import (
     harmony,
     interval,
+
     key,
     meter,
     note,
     pitch,
     scale,
     stream,
-)
-from music21 import (
     volume as m21volume,
 )
 

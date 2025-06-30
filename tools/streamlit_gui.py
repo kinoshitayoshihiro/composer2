@@ -10,13 +10,12 @@ except Exception:  # pragma: no cover - optional dependency
     st = None
 
 try:
-    import altair as alt
-    import pandas as pd
-except Exception:  # pragma: no cover - altair/pandas optional
-    alt = None
-    pd = None  # type: ignore
-
-from utilities import groove_sampler_ngram as gs
+    from utilities import groove_sampler_ngram as gs
+except Exception as e:  # pragma: no cover - optional dependency
+    gs = None  # type: ignore
+    _GS_ERROR = e
+else:
+    _GS_ERROR = None
 
 
 def _hit_density(events: Iterable[gs.Event]) -> list[dict[str, object]]:
@@ -42,6 +41,10 @@ def generate_midi(
     humanize_micro: bool = False,
 ) -> Path:
     """Return path to a temporary MIDI preview."""
+    if gs is None:
+        raise ImportError(
+            "pretty_midi is required for MIDI generation"
+        ) from _GS_ERROR
     history: list[gs.State] = []
     events: list[gs.Event] = []
     for bar in range(bars):
@@ -63,6 +66,13 @@ def generate_midi(
 
 
 if st is not None:
+
+    try:
+        import altair as alt
+        import pandas as pd
+    except Exception:  # pragma: no cover - altair/pandas optional
+        alt = None
+        pd = None  # type: ignore
 
     def _main() -> None:  # pragma: no cover - UI
         st.sidebar.title("Groove Visualiser")

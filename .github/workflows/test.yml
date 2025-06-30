@@ -2,7 +2,7 @@ name: Lint and Test
 on: [push, pull_request]
 
 jobs:
-  build:
+  lint-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -10,6 +10,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
+      - run: pip install music21
       - run: bash scripts/ci_groove.sh
       - run: pytest -q
 

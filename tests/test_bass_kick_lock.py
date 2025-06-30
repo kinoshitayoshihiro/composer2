@@ -51,12 +51,15 @@ def test_render_part_kick_alignment():
         global_key_signature_mode="major",
         emotion_profile_path="data/emotion_profile.yaml",
     )
-    part = gen.render_part(
-        emotion="joy",
-        key_signature="C",
-        tempo_bpm=120,
-        groove_history=[0.0, 1.0, 2.0, 3.0],
-    )
+    section = {
+        "emotion": "joy",
+        "key_signature": "C",
+        "tempo_bpm": 120,
+        "chord": "C",
+        "melody": [],
+        "groove_kicks": [0.0, 1.0, 2.0, 3.0],
+    }
+    part = gen.render_part(section)
     offsets = [n.offset for n in part.notes]
     for expected, actual in zip([0.0, 1.0, 2.0, 3.0], offsets):
         assert abs(expected - actual) <= 1 / 480

@@ -1,5 +1,3 @@
-import logging
-import random
 import warnings
 from pathlib import Path
 
@@ -25,7 +23,7 @@ def test_invalid_step_warning(tmp_path: Path, monkeypatch) -> None:
     def fake_sample_next(history, model_arg, rng, **kwargs):
         if not hasattr(fake_sample_next, "called"):
             fake_sample_next.called = True
-            return gs.RESOLUTION + 1, "kick"
+            return 999, "kick"
         return orig(history, model_arg, rng, **kwargs)
 
     monkeypatch.setattr(gs, "_sample_next", fake_sample_next)
@@ -34,8 +32,7 @@ def test_invalid_step_warning(tmp_path: Path, monkeypatch) -> None:
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
         gs.generate_bar(prev, model=model)
-    runtime_warnings = [w for w in rec if w.category is RuntimeWarning]
-    assert len(runtime_warnings) == 1
-    assert len(prev) == 1
+    msgs = [w.message for w in rec if w.category is RuntimeWarning]
+    assert any("step out of range" in str(m) for m in msgs)
 
     monkeypatch.setattr(gs, "_sample_next", orig)

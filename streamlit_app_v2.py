@@ -9,7 +9,10 @@ try:
     import plotly.graph_objects as go
 except Exception:  # pragma: no cover - optional dependency
     go = None  # type: ignore[assignment]
-import streamlit as st
+try:
+    import streamlit as st
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    st = None  # type: ignore[assignment]
 
 from utilities import groove_sampler_ngram, groove_sampler_rnn
 from utilities.groove_sampler_ngram import Event

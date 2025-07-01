@@ -16,4 +16,4 @@ def test_cli_no_rnn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runner = CliRunner()
     res = runner.invoke(cli.cli, ["rnn", "train", str(loops)])
     assert res.exit_code == 1
-    assert "RNN extras not installed" in res.output
+    assert "Install extras: rnn" in res.output

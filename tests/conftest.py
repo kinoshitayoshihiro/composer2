@@ -2,6 +2,9 @@ import importlib.util
 import warnings
 from pathlib import Path
 
+# Ensure sitecustomize stubs are loaded for environments missing optional tools
+import sitecustomize
+
 import pytest
 
 from utilities.rhythm_library_loader import load_rhythm_library

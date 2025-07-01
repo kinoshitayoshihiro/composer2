@@ -21,6 +21,12 @@ from utilities import (
     streaming_sampler,
     synth,
 )
+
+try:
+    import importlib
+    groove_rnn_v2 = importlib.import_module("utilities.groove_rnn_v2")
+except Exception:
+    groove_rnn_v2 = None
 from utilities.golden import compare_midi, update_golden
 from utilities.groove_sampler_ngram import Event, State
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
@@ -33,12 +39,14 @@ from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple
 def _lazy_import_groove_rnn() -> ModuleType | None:
     try:
         import importlib
+
         mod = importlib.import_module("utilities.groove_rnn_v2")
     except Exception:
         return None
     if getattr(mod, "pl", None) is None or getattr(mod, "torch", None) is None:
         return None
     return mod
+
 
 
 @click.group()
@@ -89,6 +97,91 @@ def loops() -> None:
 
 loops.add_command(loop_ingest.scan)
 loops.add_command(loop_ingest.info)
+
+
+@cli.group()
+def eval() -> None:
+    """Evaluation commands."""
+
+
+@eval.command("metrics")
+@click.argument("midi", type=Path)
+@click.option("--ref", "ref_midi", type=Path, default=None)
+def eval_metrics(midi: Path, ref_midi: Path | None) -> None:
+    """Print basic metrics for ``midi``.
+
+    When ``--ref`` is supplied, also compute ``blec`` between the files.
+    """
+    import pretty_midi
+    
+    from eval import metrics
+
+    pm = pretty_midi.PrettyMIDI(str(midi))
+    tempo = pm.get_tempo_changes()[1]
+    bpm = float(tempo[0]) if getattr(tempo, "size", 0) else 120.0
+    beat = 60.0 / bpm
+    events = [
+        {"offset": n.start / beat, "velocity": n.velocity}
+        for inst in pm.instruments
+        for n in inst.notes
+    ]
+    swing = metrics.swing_score(events)
+    density = metrics.note_density(events)
+    var = metrics.velocity_var(events)
+    res = {
+        "swing_score": round(swing, 4),
+        "note_density": round(density, 4),
+        "velocity_var": round(var, 4),
+    }
+    if ref_midi:
+        pm_ref = pretty_midi.PrettyMIDI(str(ref_midi))
+        events_ref = [
+            {"offset": n.start / beat, "velocity": n.velocity}
+            for inst in pm_ref.instruments
+            for n in inst.notes
+        ]
+        res["blec"] = round(metrics.blec_score(events_ref, events), 4)
+    click.echo(json.dumps(res))
+
+
+@eval.command("latency")
+@click.argument("model", type=Path)
+@click.option("--backend", default="ngram")
+def eval_latency(model: Path, backend: str) -> None:
+    from eval import latency
+
+    res = latency.evaluate_model(str(model), backend=backend)
+    click.echo(str(res))
+
+
+@eval.command("abx")
+@click.argument("human", type=Path)
+@click.argument("ai", type=Path)
+@click.option("--trials", type=int, default=12, show_default=True)
+def eval_abx(human: Path, ai: Path, trials: int) -> None:
+    from eval import abx_gui
+
+    abx_gui.run_gui(human, ai, trials=trials)
+
+
+@cli.group()
+def plugin() -> None:
+    """Plugin utilities."""
+
+
+@plugin.command("build")
+@click.option("--format", type=click.Choice(["vst3", "clap"]), default="vst3")
+@click.option("--out", type=Path, default=Path("build"))
+def plugin_build(format: str, out: Path) -> None:
+    """Build the JUCE plugin."""
+    import subprocess
+
+    out.mkdir(exist_ok=True)
+    cfg = ["cmake", "-B", str(out), "-DMODC_BUILD_PLUGIN=ON"]
+    if format == "clap":
+        cfg.append("-DMODC_CLAP=ON")
+    subprocess.check_call(cfg)
+    subprocess.check_call(["cmake", "--build", str(out), "--config", "Release"])
 try:
     __version__ = _md.version("modular_composer")
 except _md.PackageNotFoundError:
@@ -198,7 +291,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml
+        import yaml  # type: ignore
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}

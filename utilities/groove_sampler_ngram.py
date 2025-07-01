@@ -1206,7 +1206,17 @@ def train_cmd(
         from data_ops.auto_tag import auto_tag as _auto_tag
 
         auto = _auto_tag(loop_dir)
-        aux_map = {**(aux_map or {}), **auto}
+        collapsed: dict[str, dict[str, Any]] = {}
+        for name, bars in auto.items():
+            if not bars:
+                continue
+            first = next(iter(bars.values()))
+            collapsed[name] = {
+                "section": first.get("section", "verse"),
+                "intensity": first.get("intensity", "mid"),
+                "heat_bin": 0,
+            }
+        aux_map = {**(aux_map or {}), **collapsed}
     model = train(
         loop_dir,
         ext=ext,

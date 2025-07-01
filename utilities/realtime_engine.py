@@ -7,7 +7,12 @@ import warnings
 from collections.abc import Callable
 from pathlib import Path
 
+from concurrent.futures import ThreadPoolExecutor
+
+import torch
 from . import groove_sampler_rnn
+from .groove_rnn_v2 import GrooveRNN, sample_rnn_v2
+from .groove_sampler_ngram import load as load_ngram, sample as sample_ngram
 from .streaming_sampler import BaseSampler, RealtimePlayer
 
 try:  # optional dependency
@@ -34,6 +39,18 @@ class _RnnSampler:
         return groove_sampler_rnn.sample(self.model, self.meta, bars=1, temperature=1.0, rng=rng)[0]
 
 
+class _NgramSampler:
+    def __init__(self, model) -> None:
+        self.model = model
+        self.history: list[tuple[int, str]] = []
+
+    def feed_history(self, events: list[tuple[int, str]]) -> None:
+        self.history.extend(events)
+
+    def next_step(self, *, cond: dict | None, rng: random.Random) -> Event:
+        return sample_ngram(self.model, bars=1, cond=cond, rng=rng)[0]
+
+
 class RealtimeEngine:
     def __init__(
         self,
@@ -44,10 +61,16 @@ class RealtimeEngine:
         sync: str = "internal",
         buffer_bars: int = 1,
     ) -> None:
-        if backend != "rnn":
-            raise ValueError("Only rnn backend supported")
-        model, meta = groove_sampler_rnn.load(Path(model_path))
-        self.sampler: BaseSampler = _RnnSampler(model, meta)
+        if backend not in {"rnn", "ngram"}:
+            raise ValueError("backend must be 'rnn' or 'ngram'")
+        self.model_path = str(model_path)
+        self.backend = backend
+        if backend == "rnn":
+            model, meta = groove_sampler_rnn.load(Path(self.model_path))
+            self.sampler: BaseSampler = _RnnSampler(model, meta)
+        else:
+            model = load_ngram(Path(self.model_path))
+            self.sampler = _NgramSampler(model)
         self.bpm = bpm
         self.sync = sync
         self.buffer_bars = buffer_bars
@@ -56,6 +79,9 @@ class RealtimeEngine:
         self._stop = threading.Event()
         if sync == "external":
             self._start_midi_clock()
+        self._pool = ThreadPoolExecutor(max_workers=1)
+        self._next: list[Event] = []
+        self._load_model()
 
     def _start_midi_clock(self) -> None:
         if mido is None:
@@ -95,34 +121,6 @@ class RealtimeEngine:
         self._clock_thread = threading.Thread(target=_run, daemon=True)
         self._clock_thread.start()
 
-    def run(self, bars: int, sink: Callable[[Event], None]) -> None:
-        player = RealtimePlayer(
-            self.sampler, bpm=self.bpm, sink=sink, buffer_bars=self.buffer_bars
-        )
-        for _ in range(bars):
-            player.bpm = self.bpm
-            player.play(bars=1)
-        self._stop.set()
-        if self._clock_thread is not None:
-            self._clock_thread.join(timeout=0.1)
-        self.model_path = model_path
-        self.backend = backend
-        self.bpm = bpm
-        self.sync = sync
-        self._mido = None
-        if self.sync == "external":
-            try:
-                import mido  # type: ignore
-            except Exception as exc:  # pragma: no cover - optional dependency
-                logging.warning("mido not installed; falling back to internal sync")
-                self.sync = "internal"
-            else:
-                self._mido = mido
-        self.buffer_bars = buffer_bars
-        self._pool = ThreadPoolExecutor(max_workers=1)
-        self._next = []
-        self._load_model()
-
     def _load_model(self) -> None:
         if self.backend == "rnn":
             obj = torch.load(self.model_path, map_location="cpu")
@@ -137,7 +135,7 @@ class RealtimeEngine:
             return sample_rnn_v2(self.model, bars=1)
         return list(sample_ngram(self.model, bars=1))
 
-    def run(self, bars: int, sink: Callable[[dict], None]) -> None:
+    def run(self, bars: int, sink: Callable[[Event], None]) -> None:
         self._next = self._gen_bar()
         for _ in range(bars):
             fut = self._pool.submit(self._gen_bar)

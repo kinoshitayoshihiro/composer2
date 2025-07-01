@@ -24,7 +24,7 @@ from utilities import (
 
 try:
     import importlib
-    groove_rnn_v2 = importlib.import_module("utilities.groove_rnn_v2")
+    groove_rnn_v2: ModuleType | None = importlib.import_module("utilities.groove_rnn_v2")
 except Exception:
     groove_rnn_v2 = None
 from utilities.golden import compare_midi, update_golden
@@ -75,8 +75,7 @@ def rnn() -> None:
 def rnn_train(args: tuple[str, ...]) -> None:
     mod = _lazy_import_groove_rnn()
     if mod is None:
-        click.echo("RNN extras not installed")
-        raise SystemExit(1)
+        raise click.ClickException("Install extras: rnn")
     mod.train_cmd.main(list(args), standalone_mode=False)
 
 
@@ -85,8 +84,7 @@ def rnn_train(args: tuple[str, ...]) -> None:
 def rnn_sample(args: tuple[str, ...]) -> None:
     mod = _lazy_import_groove_rnn()
     if mod is None:
-        click.echo("RNN extras not installed")
-        raise SystemExit(1)
+        raise click.ClickException("Install extras: rnn")
     mod.sample_cmd.main(list(args), standalone_mode=False)
 
 
@@ -190,14 +188,14 @@ except _md.PackageNotFoundError:
 
 @cli.command("live")
 @click.argument("model", type=Path)
-@click.option("--backend", type=click.Choice(["ngram", "rnn"]), default=None)
+@click.option("--backend", type=click.Choice(["ngram", "rnn"]), default="ngram")
 @click.option("--sync", type=click.Choice(["internal", "external"]), default="internal")
 @click.option("--bpm", type=float, default=120.0, show_default=True)
 @click.option("--buffer", type=int, default=1, show_default=True)
-def live_cmd(model: Path, backend: str | None, sync: str, bpm: float, buffer: int) -> None:
+def live_cmd(model: Path, backend: str, sync: str, bpm: float, buffer: int) -> None:
     """Stream a trained groove model live."""
-    if backend is None:
-        backend = "rnn" if model.suffix == ".pt" else "ngram"
+    if backend == "rnn" and _lazy_import_groove_rnn() is None:
+        raise click.ClickException("Install extras: rnn")
     engine = RealtimeEngine(
         str(model), backend=backend, bpm=bpm, sync=sync, buffer_bars=buffer
     )

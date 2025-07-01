@@ -10,15 +10,18 @@ from typing import Any
 import music21
 from music21 import (
     duration as m21duration,
+)
+from music21 import (
     harmony,
     interval,
-
     key,
     meter,
     note,
     pitch,
     scale,
     stream,
+)
+from music21 import (
     volume as m21volume,
 )
 
@@ -184,7 +187,7 @@ class BassGenerator(BasePartGenerator):
         """
         self.kick_lock_cfg = (global_settings or {}).get("kick_lock", {})
         seed = self.kick_lock_cfg.get("random_seed")
-        self._rng = random.Random(seed or None)
+        self._rng = random.Random(0 if seed is None else seed)
 
         super().__init__(
             global_settings=global_settings,
@@ -1908,6 +1911,7 @@ class BassGenerator(BasePartGenerator):
 
         notes_data: list[tuple[float, note.Note]] = [(first_offset, first_note)]
 
+
         for off, pitch_midi, dur in melody:
             if float(off) < 1.0:
                 continue
@@ -1919,10 +1923,10 @@ class BassGenerator(BasePartGenerator):
                 m_pitch.midi = int(pitch_midi)
             except Exception:
                 continue
-            interval_semitones = (
-                interval.Interval(root_pitch, m_pitch).chromatic.mod12
-            )
-            mirrored = root_pitch.transpose(-interval_semitones)
+            intv = interval.Interval(root_pitch, m_pitch).chromatic.mod12
+            mirrored = root_pitch.transpose(-intv)
+            if mirrored.pitchClass == root_pitch.pitchClass:
+                mirrored = root_pitch
             mirrored = _clamp_pitch_octaves(mirrored)
             bn = note.Note(mirrored)
             bn.duration = m21duration.Duration(float(dur))

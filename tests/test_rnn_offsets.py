@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("torch")
+pytest.importorskip("pytorch_lightning")
 
 from utilities import groove_sampler_rnn
 

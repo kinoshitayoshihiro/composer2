@@ -5,8 +5,48 @@ import tempfile
 from pathlib import Path
 from typing import Any, cast
 
-import plotly.graph_objects as go
-import streamlit as st
+try:
+    import plotly.graph_objects as go
+except Exception:  # pragma: no cover - optional dependency
+    go = None  # type: ignore[assignment]
+try:
+    import streamlit as st
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    # ------------------------------------------------------------------
+    # Fallback stub so the module can still be imported when streamlit
+    # is not available (e.g. CI environments, headless servers).
+    # Only the APIs actually referenced in this file are stubbed.
+    # ------------------------------------------------------------------
+    from functools import lru_cache
+
+    class _StreamlitStub:  # pylint: disable=too-few-public-methods
+        """Minimal stub that exposes dummy decorators / functions."""
+
+        @staticmethod
+        def cache_data(func=None, **_kwargs):  # type: ignore[no-self-use]
+            """Fallback for @st.cache_data.
+
+            - 使い方①: @st.cache_data        ← func が渡ってくる
+            - 使い方②: @st.cache_data(ttl=1) ← func は None、kwargs あり
+            """
+
+            def _wrap(f):
+                return lru_cache(maxsize=None)(f)  # 超簡易メモ化
+
+            # デコレータに引数がある場合は二段階構造に
+            return _wrap(func) if callable(func) else _wrap
+
+        # 任意に呼ばれる可能性のある関数を no-op で生やしておく
+        def __getattr__(self, _name):  # noqa: D401
+            def _dummy(*_a, **_kw):  # pylint: disable=unused-argument
+                raise RuntimeError(
+                    "streamlit is not installed – "
+                    "run `pip install streamlit` to enable GUI mode."
+                )
+
+            return _dummy
+
+    st = _StreamlitStub()  # type: ignore[assignment]
 
 from utilities import groove_sampler_ngram, groove_sampler_rnn
 from utilities.groove_sampler_ngram import Event

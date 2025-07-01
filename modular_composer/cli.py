@@ -40,9 +40,14 @@ from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple  #
 def _lazy_import_groove_rnn() -> ModuleType | None:
     try:
         import importlib
-        return importlib.import_module("utilities.groove_rnn_v2")
+
+        mod = importlib.import_module("utilities.groove_rnn_v2")
     except Exception:
         return None
+    if getattr(mod, "pl", None) is None or getattr(mod, "torch", None) is None:
+        return None
+    return mod
+
 
 
 @click.group()
@@ -71,26 +76,16 @@ def rnn() -> None:
 def rnn_train(args: tuple[str, ...]) -> None:
     mod = _lazy_import_groove_rnn()
     if mod is None:
-        click.echo("RNN extras not installed")
-        raise SystemExit(1)
+        raise click.ClickException("Install extras: rnn")
     mod.train_cmd.main(list(args), standalone_mode=False)
 
-if groove_rnn_v2 is not None:
-    rnn.add_command(groove_rnn_v2.train_cmd, name="train")
-    rnn.add_command(groove_rnn_v2.sample_cmd, name="sample")
-else:
-    @rnn.command("train")
-    def _rnn_missing_train() -> None:
-        click.echo("RNN extras not installed")
-        raise SystemExit(1)
 
 @rnn.command("sample", context_settings={"ignore_unknown_options": True})
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def rnn_sample(args: tuple[str, ...]) -> None:
     mod = _lazy_import_groove_rnn()
     if mod is None:
-        click.echo("RNN extras not installed")
-        raise SystemExit(1)
+        raise click.ClickException("Install extras: rnn")
     mod.sample_cmd.main(list(args), standalone_mode=False)
 
 
@@ -194,14 +189,16 @@ except _md.PackageNotFoundError:
 
 @cli.command("live")
 @click.argument("model", type=Path)
-@click.option("--backend", type=click.Choice(["ngram", "rnn"]), default=None)
+@click.option("--backend", type=click.Choice(["ngram", "rnn"]), default="ngram")
 @click.option("--sync", type=click.Choice(["internal", "external"]), default="internal")
 @click.option("--bpm", type=float, default=120.0, show_default=True)
 @click.option("--buffer", type=int, default=1, show_default=True)
-def live_cmd(model: Path, backend: str | None, sync: str, bpm: float, buffer: int) -> None:
+def live_cmd(model: Path, backend: str, sync: str, bpm: float, buffer: int) -> None:
     """Stream a trained groove model live."""
-    if backend is None:
-        backend = "rnn" if model.suffix == ".pt" else "ngram"
+    if RealtimeEngine is None:
+        raise click.ClickException("Realtime engine unavailable")
+    if backend == "rnn" and _lazy_import_groove_rnn() is None:
+        raise click.ClickException("Install extras: rnn")
     engine = RealtimeEngine(
         str(model), backend=backend, bpm=bpm, sync=sync, buffer_bars=buffer
     )

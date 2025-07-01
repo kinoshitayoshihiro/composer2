@@ -1,5 +1,6 @@
 # OtoKotoba Composer
 ![CI](https://github.com/OpenAI/modular_composer/actions/workflows/ci.yml/badge.svg)
+![Nightly](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml/badge.svg)
 
 
 This project blends poetic Japanese narration with emotive musical arrangements.
@@ -650,6 +651,41 @@ modcompose live model.pt --backend rnn --sync external --bpm 120 --buffer 2
 ## Notebook Demo
 
 See [`notebooks/quick_start.ipynb`](notebooks/quick_start.ipynb) for a minimal walkthrough that trains a model and plays a short preview.
+
+## Evaluation Metrics
+
+Use the ``eval`` CLI to analyse MIDI files and model latency:
+
+```bash
+modcompose eval metrics in.mid
+modcompose eval latency model.pkl --backend ngram
+```
+
+Metrics include swing accuracy, note density and velocity variance.
+``BLEC`` (Binned Log-likelihood Error per Class) is computed as
+``mean( KL(p_true || p_pred) / log(N) )`` where ``N`` is the number of bins.
+
+## ABX Test
+
+Launch a simple browser-based ABX comparison:
+
+```bash
+modcompose eval abx loops_human/ loops_ai/ --trials 12
+```
+
+The page relies on Tone.js for MIDI playback and records your score interactively.
+
+## DAW Plugin Prototype
+
+An experimental JUCE plugin bridges the Python engine via ``pybind11``.
+Build it with:
+
+```bash
+modcompose plugin build --format vst3 --out build/
+```
+
+The plugin forwards host tempo to Python and streams the generated bar via a ring buffer.
+CI builds the plugin on Linux and macOS; Windows builds are optional.
 
 ## License
 This project is licensed under the [MIT License](LICENSE).

@@ -1904,9 +1904,16 @@ class BassGenerator(BasePartGenerator):
 
         notes_data: list[tuple[float, note.Note]] = [(first_offset, first_note)]
         offsets = [0.0, 1.0, 2.0, 3.0]
+        melody_offsets = {
+            round(float(o) / 0.5) * 0.5
+            for o, _, _ in melody
+            if float(o) > 1.0 and round(float(o) / 0.5) * 0.5 < self.measure_duration
+        }
         swing_amt = self.swing_ratio if swing_flag else 0.0
         for idx, deg in enumerate(riff[1:], start=1):
             off = offsets[idx % len(offsets)]
+            if off in melody_offsets:
+                continue
             p_obj = _degree_to_pitch(root_pitch, deg)
             n_obj = note.Note(p_obj)
             n_obj.duration = m21duration.Duration(1.0)

@@ -26,6 +26,9 @@ import math
 from .base_part_generator import BasePartGenerator
 from utilities import humanizer
 
+# Minimum note duration for generated notes (quarterLength)
+MIN_NOTE_DURATION_QL = 0.0125  # minimum quarterLength for strum notes
+
 try:
     from utilities.safe_get import safe_get
 except ImportError:
@@ -44,12 +47,10 @@ except ImportError:
 
 try:
     from utilities.core_music_utils import (
-        MIN_NOTE_DURATION_QL,
         get_time_signature_object,
         sanitize_chord_label,
     )
 except ImportError:
-    MIN_NOTE_DURATION_QL = 0.125
 
     def get_time_signature_object(ts_str: Optional[str]) -> meter.TimeSignature:
         if not ts_str:
@@ -76,7 +77,6 @@ logger = logging.getLogger("modular_composer.guitar_generator")
 
 DEFAULT_GUITAR_OCTAVE_RANGE: Tuple[int, int] = (2, 5)
 GUITAR_STRUM_DELAY_QL: float = 0.02
-MIN_STRUM_NOTE_DURATION_QL: float = 0.05
 STANDARD_TUNING_OFFSETS = [0, 0, 0, 0, 0, 0]
 
 EXEC_STYLE_BLOCK_CHORD = "block_chord"
@@ -164,10 +164,18 @@ class GuitarStyleSelector:
 
 
 class GuitarGenerator(BasePartGenerator):
-    def __init__(self, *args, tuning: Optional[List[int]] = None, timing_variation: float = 0.0, **kwargs):
+    def __init__(
+        self,
+        *args,
+        tuning: Optional[List[int]] = None,
+        timing_variation: float = 0.0,
+        gate_length_variation: float = 0.0,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.tuning = tuning if tuning is not None else STANDARD_TUNING_OFFSETS
         self.timing_variation = timing_variation
+        self.gate_length_variation = gate_length_variation
         from utilities.core_music_utils import get_time_signature_object
 
         ts_obj = get_time_signature_object(self.global_time_signature)
@@ -317,9 +325,11 @@ class GuitarGenerator(BasePartGenerator):
                 ):
                     power_chord_pitches.append(root_oct_up)
 
+            base_dur = event_duration_ql * (0.7 if is_palm_muted else 0.95)
+            base_dur *= 1 + self.rng.uniform(-self.gate_length_variation, self.gate_length_variation)
             ch = m21chord.Chord(
                 power_chord_pitches[:num_strings],
-                quarterLength=event_duration_ql * (0.7 if is_palm_muted else 0.95),
+                quarterLength=max(MIN_NOTE_DURATION_QL, base_dur),
             )
             for n_in_ch_note in ch.notes:
                 n_in_ch_note.volume.velocity = event_final_velocity
@@ -329,9 +339,11 @@ class GuitarGenerator(BasePartGenerator):
             notes_for_event.append(ch)
 
         elif execution_style == EXEC_STYLE_BLOCK_CHORD:
+            base_dur = event_duration_ql * (0.7 if is_palm_muted else 0.9)
+            base_dur *= 1 + self.rng.uniform(-self.gate_length_variation, self.gate_length_variation)
             ch = m21chord.Chord(
                 chord_pitches,
-                quarterLength=event_duration_ql * (0.7 if is_palm_muted else 0.9),
+                quarterLength=max(MIN_NOTE_DURATION_QL, base_dur),
             )
             for n_in_ch_note in ch.notes:
                 n_in_ch_note.volume.velocity = event_final_velocity
@@ -358,13 +370,10 @@ class GuitarGenerator(BasePartGenerator):
 
             for i, p_obj_strum in enumerate(play_order):
                 n_strum = note.Note(p_obj_strum)
-                n_strum.duration = (
-                    music21_duration.Duration(  # music21.duration -> music21_duration
-                        quarterLength=max(
-                            MIN_STRUM_NOTE_DURATION_QL,
-                            event_duration_ql * (0.6 if is_palm_muted else 0.9),
-                        )
-                    )
+                base_dur = event_duration_ql * (0.6 if is_palm_muted else 0.9)
+                base_dur *= 1 + self.rng.uniform(-self.gate_length_variation, self.gate_length_variation)
+                n_strum.duration = music21_duration.Duration(
+                    quarterLength=max(MIN_NOTE_DURATION_QL, base_dur)
                 )
                 n_strum.offset = self._jitter(i * strum_delay)
                 vel_adj_range = 10
@@ -416,9 +425,11 @@ class GuitarGenerator(BasePartGenerator):
                 )
                 if actual_arp_dur < MIN_NOTE_DURATION_QL / 4.0:
                     break
+                base_dur = actual_arp_dur * (0.8 if is_palm_muted else 0.95)
+                base_dur *= 1 + self.rng.uniform(-self.gate_length_variation, self.gate_length_variation)
                 n_arp = note.Note(
                     p_play_arp,
-                    quarterLength=actual_arp_dur * (0.8 if is_palm_muted else 0.95),
+                    quarterLength=max(MIN_NOTE_DURATION_QL, base_dur),
                 )
                 n_arp.volume = m21volume.Volume(velocity=event_final_velocity)
                 n_arp.offset = self._jitter(current_offset_in_event)
@@ -445,9 +456,9 @@ class GuitarGenerator(BasePartGenerator):
                     break
                 n_mute = note.Note(mute_base_pitch)
                 n_mute.articulations = [articulations.Staccatissimo()]
-                n_mute.duration.quarterLength = (
-                    actual_mute_dur  # music21.duration -> duration
-                )
+                base_dur = actual_mute_dur
+                base_dur *= 1 + self.rng.uniform(-self.gate_length_variation, self.gate_length_variation)
+                n_mute.duration.quarterLength = max(MIN_NOTE_DURATION_QL, base_dur)
                 n_mute.volume = m21volume.Volume(
                     velocity=int(event_final_velocity * 0.6) + random.randint(-5, 5)
                 )
@@ -760,6 +771,22 @@ class GuitarGenerator(BasePartGenerator):
         score = stream.Score()
         score.insert(0, self._last_part)
         score.write("musicxml", fp=path)
+
+    def export_tab(self, path: str) -> None:
+        """Export the last generated guitar part as tablature."""
+        if not hasattr(self, "_last_part") or self._last_part is None:
+            raise RuntimeError("No part generated yet")
+        try:
+            self._last_part.write("lilypond", fp=path)
+        except Exception:
+            # Fallback: simple ASCII tab (pitch or chord pitches and duration)
+            with open(path, "w", encoding="utf-8") as f:
+                for el in self._last_part.flatten().notes:
+                    if hasattr(el, "pitch"):
+                        name = el.pitch.nameWithOctave
+                    else:
+                        name = "+".join(p.nameWithOctave for p in el.pitches)
+                    f.write(f"{name}\t{el.duration.quarterLength}\n")
 
     def _load_external_strum_patterns(self) -> None:
         root = Path(__file__).resolve().parents[1]

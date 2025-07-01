@@ -305,6 +305,14 @@ Omit `--port` to list available ports. Low latency is easiest to achieve with
 the `python-rtmidi` backend. Set `MCY_USE_CYTHON=0` during installation if the
 Cython build environment is unavailable.
 
+Adjust scheduling jitter with ``--latency-buffer`` (milliseconds). Measure
+actual latency after playback using ``--measure-latency``:
+
+```bash
+modular-composer live score.mid --backend realtime --port "IAC Driver Bus 1" \
+  --latency-buffer 5 --measure-latency
+```
+
 #### Quick preview
 Deterministic sampling lets you audition a groove without randomness:
 
@@ -661,6 +669,8 @@ clock using:
 ```bash
 modcompose live model.pt --backend rnn --sync external --bpm 120 --buffer 2
 ```
+You can inspect real-time jitter by passing ``--measure-latency`` when using the
+``realtime`` backend.
 
 ## Notebook Demo
 

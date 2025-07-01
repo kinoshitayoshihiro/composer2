@@ -5,16 +5,14 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy.stats import entropy
 
 Event = Mapping[str, float | int | str]
 
 
-ArrayF64 = np.ndarray[Any, np.dtype[np.float64]]
-
-
-def _hist(events: Iterable[Event], resolution: int) -> dict[str, ArrayF64]:
-    bins: dict[str, ArrayF64] = defaultdict(
+def _hist(events: Iterable[Event], resolution: int) -> dict[str, NDArray[np.float64]]:
+    bins: dict[str, NDArray[np.float64]] = defaultdict(
         lambda: np.zeros(resolution, dtype=np.float64)
     )
     for ev in events:

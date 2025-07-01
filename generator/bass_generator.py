@@ -239,6 +239,10 @@ class BassGenerator(BasePartGenerator):
         self.kick_offsets: list[float] = []
         self.base_velocity = 70
 
+        if emotion_profile_path is None:
+            default_prof = Path("data/emotion_profile.yaml")
+            if default_prof.exists():
+                emotion_profile_path = default_prof
         if emotion_profile_path:
             try:
                 self.emotion_profile = load_emotion_profile(emotion_profile_path)
@@ -1896,37 +1900,20 @@ class BassGenerator(BasePartGenerator):
         pattern_defs = emotion_data.get("bass_patterns", [])
         pat = pattern_defs[0] if pattern_defs else {}
         riff = pat.get("riff", [1, 5, 1, 5])
-        velocity_tier = pat.get("velocity", "mid")
+        velocity_layer = pat.get("velocity", "mid") or "mid"
         swing_val = pat.get("swing", "off")
         swing_flag = bool(swing_val) if isinstance(swing_val, bool) else str(swing_val).lower() == "on"
-        base_velocity = AccentMapper.map_layer(velocity_tier, rng=self._rng)
+        base_velocity = AccentMapper.map_layer(velocity_layer, rng=self._rng)
 
         first_note = note.Note(root_pitch)
         first_note.duration = m21duration.Duration(1.0)
         first_note.volume = m21volume.Volume(velocity=base_velocity)
 
         notes_data: list[tuple[float, note.Note]] = [(first_offset, first_note)]
-        offsets = [0.0, 1.0, 2.0, 3.0]
-        melody_offsets = {
-            round(float(o) / 0.5) * 0.5
-            for o, _, _ in melody
-            if float(o) > 1.0 and round(float(o) / 0.5) * 0.5 < self.measure_duration
-        }
-        swing_amt = self.swing_ratio if swing_flag else 0.0
-        for idx, deg in enumerate(riff[1:], start=1):
-            off = offsets[idx % len(offsets)]
-            if off in melody_offsets:
-                continue
-            p_obj = _degree_to_pitch(root_pitch, deg)
-            n_obj = note.Note(p_obj)
-            n_obj.duration = m21duration.Duration(1.0)
-            n_obj.volume = m21volume.Volume(
-                velocity=AccentMapper.map_layer(velocity_tier, rng=self._rng)
-            )
-            notes_data.append((off, n_obj))
+
 
         for off, pitch_midi, dur in melody:
-            if float(off) <= 1.0:
+            if float(off) < 1.0:
                 continue
             grid_off = round(float(off) / 0.5) * 0.5
             if grid_off >= self.measure_duration:
@@ -1947,6 +1934,20 @@ class BassGenerator(BasePartGenerator):
                 velocity=AccentMapper.map_layer("low", rng=self._rng)
             )
             notes_data.append((grid_off, bn))
+
+        offsets = [] if melody else [0.0, 1.0, 2.0, 3.0]
+        ql_eighth = 0.5
+        swing_amt = (self.swing_ratio - 0.5) * ql_eighth if swing_flag else 0.0
+        if not melody:
+            for idx, deg in enumerate(riff[1:], start=1):
+                off = offsets[idx % len(offsets)]
+                p_obj = _degree_to_pitch(root_pitch, deg)
+                n_obj = note.Note(p_obj)
+                n_obj.duration = m21duration.Duration(1.0)
+                n_obj.volume = m21volume.Volume(
+                    velocity=AccentMapper.map_layer(velocity_layer, rng=self._rng)
+                )
+                notes_data.append((off, n_obj))
 
         # --------------------------------------------------------------
         # ii-V build-up detection and generation (beats >= 3 only)
@@ -2006,28 +2007,28 @@ class BassGenerator(BasePartGenerator):
                 )
                 notes_data.append((b_off, n_bu))
 
-        notes_data.sort(key=lambda x: x[0])
-        merged: list[tuple[float, note.Note]] = []
-        for off, n in notes_data:
-            if merged and off - merged[-1][0] < 0.25:
-                prev_off, prev_n = merged[-1]
-                prev_n.duration.quarterLength = max(
-                    prev_n.duration.quarterLength, n.duration.quarterLength
-                )
-            else:
-                if merged:
-                    prev_off, prev_n = merged[-1]
+        def _clamp_note_durations(
+            notes: list[tuple[float, note.Note]],
+        ) -> list[tuple[float, note.Note]]:
+            notes.sort(key=lambda x: x[0])
+            clamped: list[tuple[float, note.Note]] = []
+            for off, n in notes:
+                if clamped:
+                    prev_off, prev_n = clamped[-1]
                     if off < prev_off + prev_n.duration.quarterLength:
                         prev_n.duration.quarterLength = max(
                             MIN_NOTE_DURATION_QL, off - prev_off
                         )
-                merged.append((off, n))
-        if merged:
-            last_off, last_n = merged[-1]
-            last_n.duration.quarterLength = min(
-                last_n.duration.quarterLength,
-                max(MIN_NOTE_DURATION_QL, self.measure_duration - last_off),
-            )
+                clamped.append((off, n))
+            if clamped:
+                last_off, last_n = clamped[-1]
+                last_n.duration.quarterLength = max(
+                    MIN_NOTE_DURATION_QL,
+                    min(last_n.duration.quarterLength, self.measure_duration - last_off),
+                )
+            return clamped
+
+        merged = _clamp_note_durations(notes_data)
 
         humanize_opts = {
             opt.strip() for opt in str(section_data.get("humanize", "")).split(",") if opt

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import importlib
 import importlib.metadata as _md
 import json
 import random
@@ -22,22 +23,18 @@ from utilities import (
     synth,
 )
 
+groove_rnn_v2: ModuleType | None
 try:
-    import importlib
-    groove_rnn_v2: ModuleType | None = importlib.import_module("utilities.groove_rnn_v2")
+    groove_rnn_v2 = importlib.import_module("utilities.groove_rnn_v2")
 except Exception:
     groove_rnn_v2 = None
-from utilities.golden import compare_midi, update_golden
-from utilities.groove_sampler_ngram import Event, State
-from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
-from utilities.peak_synchroniser import PeakSynchroniser
-
-try:
-    from utilities.realtime_engine import RealtimeEngine
-except ImportError:
-    RealtimeEngine = None  # type: ignore[assignment,misc]
-from utilities.tempo_utils import beat_to_seconds
-from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple
+from utilities.golden import compare_midi, update_golden  # noqa: E402
+from utilities.groove_sampler_ngram import Event, State  # noqa: E402
+from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401,E402
+from utilities.peak_synchroniser import PeakSynchroniser  # noqa: E402
+from utilities.realtime_engine import RealtimeEngine  # noqa: E402
+from utilities.tempo_utils import beat_to_seconds  # noqa: E402
+from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple  # noqa: E402
 
 
 def _lazy_import_groove_rnn() -> ModuleType | None:

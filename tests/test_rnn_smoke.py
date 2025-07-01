@@ -3,6 +3,7 @@ import random
 from pathlib import Path
 import pytest
 
+pytest.importorskip("pytorch_lightning")
 pytestmark = pytest.mark.stretch
 
 from utilities import groove_sampler_rnn

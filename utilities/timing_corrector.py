@@ -18,7 +18,7 @@ class TimingCorrector:
         notes = list(new_part.recurse().notes)
         if not notes:
             return new_part
-        ema = 0.0
+        ema = notes[0].offset - round(notes[0].offset)
         for n in notes:
             target = round(n.offset)
             delta = n.offset - target

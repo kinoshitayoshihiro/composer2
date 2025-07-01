@@ -2,6 +2,8 @@
 import music21
 from typing import List, Dict, Optional, Tuple, Any, Sequence, Union, cast
 import copy
+from pathlib import Path
+import yaml
 
 import music21.stream as stream
 import music21.note as note
@@ -75,6 +77,7 @@ logger = logging.getLogger("modular_composer.guitar_generator")
 DEFAULT_GUITAR_OCTAVE_RANGE: Tuple[int, int] = (2, 5)
 GUITAR_STRUM_DELAY_QL: float = 0.02
 MIN_STRUM_NOTE_DURATION_QL: float = 0.05
+STANDARD_TUNING_OFFSETS = [0, 0, 0, 0, 0, 0]
 
 EXEC_STYLE_BLOCK_CHORD = "block_chord"
 EXEC_STYLE_STRUM_BASIC = "strum_basic"
@@ -161,8 +164,10 @@ class GuitarStyleSelector:
 
 
 class GuitarGenerator(BasePartGenerator):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, tuning: Optional[List[int]] = None, timing_variation: float = 0.0, **kwargs):
         super().__init__(*args, **kwargs)
+        self.tuning = tuning if tuning is not None else STANDARD_TUNING_OFFSETS
+        self.timing_variation = timing_variation
         from utilities.core_music_utils import get_time_signature_object
 
         ts_obj = get_time_signature_object(self.global_time_signature)
@@ -190,6 +195,19 @@ class GuitarGenerator(BasePartGenerator):
                 "reference_duration_ql": 1.0,
                 "description": "Failsafe default quarter note strum",
             }
+
+        self._load_external_strum_patterns()
+
+    def compose(self, *args, **kwargs):
+        result = super().compose(*args, **kwargs)
+        if isinstance(result, stream.Part):
+            self._last_part = result
+        elif isinstance(result, dict) and result:
+            # store first part if dict
+            self._last_part = next(iter(result.values()))
+        else:
+            self._last_part = None
+        return result
 
     def _get_guitar_friendly_voicing(
         self,
@@ -233,7 +251,21 @@ class GuitarGenerator(BasePartGenerator):
         final_voiced_pitches = sorted(
             list(selected_dict.values()), key=lambda p_sort: p_sort.ps
         )
-        return final_voiced_pitches[:num_strings]
+        return self._apply_tuning(final_voiced_pitches[:num_strings])
+
+    def _apply_tuning(self, pitches: List[pitch.Pitch]) -> List[pitch.Pitch]:
+        tuned = []
+        for i, p in enumerate(pitches):
+            offset = self.tuning[i % len(self.tuning)]
+            tuned.append(p.transpose(offset))
+        return tuned
+
+    def _jitter(self, offset: float) -> float:
+        if self.timing_variation:
+            offset += self.rng.uniform(-self.timing_variation, self.timing_variation)
+            if offset < 0:
+                offset = 0.0
+        return offset
 
     def _create_notes_from_event(
         self,
@@ -293,7 +325,7 @@ class GuitarGenerator(BasePartGenerator):
                 n_in_ch_note.volume.velocity = event_final_velocity
                 if is_palm_muted:
                     n_in_ch_note.articulations.append(articulations.Staccatissimo())
-            ch.offset = 0.0
+            ch.offset = self._jitter(0.0)
             notes_for_event.append(ch)
 
         elif execution_style == EXEC_STYLE_BLOCK_CHORD:
@@ -305,7 +337,7 @@ class GuitarGenerator(BasePartGenerator):
                 n_in_ch_note.volume.velocity = event_final_velocity
                 if is_palm_muted:
                     n_in_ch_note.articulations.append(articulations.Staccatissimo())
-            ch.offset = 0.0
+            ch.offset = self._jitter(0.0)
             notes_for_event.append(ch)
 
         elif execution_style == EXEC_STYLE_STRUM_BASIC:
@@ -334,7 +366,7 @@ class GuitarGenerator(BasePartGenerator):
                         )
                     )
                 )
-                n_strum.offset = i * strum_delay
+                n_strum.offset = self._jitter(i * strum_delay)
                 vel_adj_range = 10
                 vel_adj = 0
                 if len(play_order) > 1:
@@ -389,7 +421,7 @@ class GuitarGenerator(BasePartGenerator):
                     quarterLength=actual_arp_dur * (0.8 if is_palm_muted else 0.95),
                 )
                 n_arp.volume = m21volume.Volume(velocity=event_final_velocity)
-                n_arp.offset = current_offset_in_event
+                n_arp.offset = self._jitter(current_offset_in_event)
                 if is_palm_muted:
                     n_arp.articulations.append(articulations.Staccatissimo())
                 notes_for_event.append(n_arp)
@@ -419,7 +451,7 @@ class GuitarGenerator(BasePartGenerator):
                 n_mute.volume = m21volume.Volume(
                     velocity=int(event_final_velocity * 0.6) + random.randint(-5, 5)
                 )
-                n_mute.offset = t_mute
+                n_mute.offset = self._jitter(t_mute)
                 notes_for_event.append(n_mute)
                 t_mute += mute_interval
         else:
@@ -721,6 +753,26 @@ class GuitarGenerator(BasePartGenerator):
             humanizer.apply(guitar_part, profile_name)
 
         return guitar_part
+
+    def export_musicxml(self, path: str) -> None:
+        if not hasattr(self, "_last_part") or self._last_part is None:
+            raise ValueError("No generated part available for export")
+        score = stream.Score()
+        score.insert(0, self._last_part)
+        score.write("musicxml", fp=path)
+
+    def _load_external_strum_patterns(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        path = root / "strum_patterns.yml"
+        if not path.exists():
+            return
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            if isinstance(data, dict):
+                self.part_parameters.update(data)
+        except Exception as e:
+            logger.warning(f"Failed to load external strum patterns: {e}")
 
     def _add_internal_default_patterns(self):
         # 旧呼び出しを noop にする互換 stub

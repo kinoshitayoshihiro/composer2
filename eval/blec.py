@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray

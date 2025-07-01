@@ -8,20 +8,14 @@ from typing import Any
 import click
 import sys
 
-try:
+try:  # optional dependency
     import pytorch_lightning as pl
     import torch
     from torch import nn
     from torch.utils.data import DataLoader, Dataset
-except Exception as exc:  # pragma: no cover - optional dependency
-    if "pytest" in sys.modules:
-        pl = None  # type: ignore[assignment]
-        torch = None  # type: ignore[assignment]
-        nn = object  # type: ignore[assignment]
-        DataLoader = object  # type: ignore[assignment]
-        Dataset = object  # type: ignore[assignment]
-    else:
-        raise RuntimeError("Install extras: rnn") from exc
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+    pl = None  # type: ignore[assignment]
+    raise ImportError("Install extras: rnn") from exc
 
 from .groove_sampler_ngram import RESOLUTION, Event
 

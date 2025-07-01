@@ -14,13 +14,18 @@ import pretty_midi
 
 import utilities.loop_ingest as loop_ingest
 from utilities import (
-    groove_rnn_v2,
     groove_sampler_ngram,
     groove_sampler_rnn,
     live_player,
     streaming_sampler,
     synth,
 )
+
+try:
+    import importlib
+    groove_rnn_v2 = importlib.import_module("utilities.groove_rnn_v2")
+except Exception:
+    groove_rnn_v2 = None
 from utilities.golden import compare_midi, update_golden
 from utilities.groove_sampler_ngram import Event, State
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
@@ -49,9 +54,19 @@ groove.add_command(groove_sampler_ngram.info_cmd, name="info")
 def rnn() -> None:
     """RNN groove sampler commands."""
 
+if groove_rnn_v2 is not None:
+    rnn.add_command(groove_rnn_v2.train_cmd, name="train")
+    rnn.add_command(groove_rnn_v2.sample_cmd, name="sample")
+else:
+    @rnn.command("train")
+    def _rnn_missing_train() -> None:
+        click.echo("RNN extras not installed")
+        raise SystemExit(1)
 
-rnn.add_command(groove_rnn_v2.train_cmd, name="train")
-rnn.add_command(groove_rnn_v2.sample_cmd, name="sample")
+    @rnn.command("sample")
+    def _rnn_missing_sample() -> None:
+        click.echo("RNN extras not installed")
+        raise SystemExit(1)
 
 
 @cli.group()

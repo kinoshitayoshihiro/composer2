@@ -11,7 +11,28 @@ from typing import Any, Dict, Final, List, Literal, Optional, Union
 
 import yaml
 import tomli
-from pydantic import BaseModel, Field, ValidationError, field_validator
+try:
+    from pydantic import BaseModel, Field, ValidationError, field_validator
+except Exception:  # pragma: no cover - optional dependency
+    ValidationError = Exception
+
+    class BaseModel:
+        model_config = {}
+
+        def model_dump(self, exclude_unset: bool | None = None):
+            return {}
+
+        @classmethod
+        def model_validate(cls, data):
+            return data
+
+    def Field(default=None, **kwargs):
+        return default
+
+    def field_validator(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
 
 LOGGER = logging.getLogger(__name__)
 

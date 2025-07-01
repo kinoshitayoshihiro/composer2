@@ -1,12 +1,43 @@
-site_name: Composer2 Docs
+site_name: ModCompose
+site_url: https://harusan.github.io/modular-composer
+theme:
+  name: material
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - search.suggest
+    - content.code.annotate
+  language: en
 nav:
   - Home: index.md
+  - Quick Start: quick_start.md
+  - Auto-Tag & Augmentation: auto_tag_aug.md
+  - GUI v2 Walkthrough: gui_v2_walkthrough.md
+  - Evaluation Metrics: evaluation_metrics.md
+  - Plugin Guide: plugin_guide.md
   - API Reference:
-      - DrumGenerator: docs/api/drum_generator.md
-  - Groove Sampler:
-      - docs/groove_sampler.md
-      - docs/aux_features.md
+      - modular_composer: api/modular_composer.md
 plugins:
-  - pdoc:
-      module: generator.drum_generator
-      output_dir: docs/api
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+markdown_extensions:
+  - admonition
+  - codehilite
+  - toc
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/harusan/modular-composer
+  footer: "© 2025 Harusan / ModCompose"

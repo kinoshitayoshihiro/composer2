@@ -13,12 +13,17 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install -r requirements.txt music21
+      - run: pip install -e .[plugin]
+      - name: Install JUCE (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y juce-tools
+      - name: Install JUCE (macOS)
+        if: runner.os == 'macOS'
+        run: brew install juce || true
       - name: Build plugin
         if: env.RUN_LIGHT != '1'
         run: |
           pip install pybind11 cmake ninja
-          sudo apt-get update && sudo apt-get install -y juce-tools || true
           cmake -B build -DMODC_BUILD_PLUGIN=ON
           cmake --build build --config Release
       - name: Tests

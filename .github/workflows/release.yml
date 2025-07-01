@@ -1,0 +1,35 @@
+name: release
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - uses: conda-incubator/setup-miniconda@v3
+      - run: pip install build twine mkdocs mkdocs-material mkdocstrings[python]
+      - run: conda install -y conda-build
+        shell: bash -l {0}
+      - run: python -m build
+        shell: bash -l {0}
+      - run: conda activate base && conda-build recipe/ --output-folder conda-artifacts
+        shell: bash -l {0}
+      - run: twine upload dist/* -u ${{ secrets.TWINE_USERNAME }} -p ${{ secrets.TWINE_PASSWORD }}
+      - run: anaconda -t ${{ secrets.ANACONDA_TOKEN }} upload conda-artifacts/noarch/*.tar.bz2 --user harusan
+      - run: mkdocs gh-deploy --force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin
+          path: build/plugin/*
+      - name: Generate Changelog
+        run: git-chglog --next-tag ${{ github.ref_name }} > CHANGELOG.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body_path: CHANGELOG.md

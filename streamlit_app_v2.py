@@ -12,7 +12,36 @@ except Exception:  # pragma: no cover - optional dependency
 try:
     import streamlit as st
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    st = None  # type: ignore[assignment]
+    # ------------------------------------------------------------------
+    # Fallback stub so the module can still be imported when streamlit
+    # is not available (e.g. CI environments, headless servers).
+    # Only the APIs actually referenced in this file are stubbed.
+    # ------------------------------------------------------------------
+    from functools import lru_cache
+
+    class _StreamlitStub:  # pylint: disable=too-few-public-methods
+        """Minimal stub that exposes dummy decorators / functions."""
+
+        @staticmethod
+        def cache_data(**_kwargs):  # type: ignore[no-self-use]
+            """Fallback for @st.cache_data — no-op decorator."""
+
+            def decorator(func):
+                return lru_cache(maxsize=None)(func)  # simple memoisation
+
+            return decorator
+
+        # 任意に呼ばれる可能性のある関数を no-op で生やしておく
+        def __getattr__(self, _name):  # noqa: D401
+            def _dummy(*_a, **_kw):  # pylint: disable=unused-argument
+                raise RuntimeError(
+                    "streamlit is not installed – "
+                    "run `pip install streamlit` to enable GUI mode."
+                )
+
+            return _dummy
+
+    st = _StreamlitStub()  # type: ignore[assignment]
 
 from utilities import groove_sampler_ngram, groove_sampler_rnn
 from utilities.groove_sampler_ngram import Event

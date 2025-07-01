@@ -418,8 +418,9 @@ Velocity histograms can further refine dynamics:
 
 ```bash
 modcompose render spec.yml --velocity-hist groove_hist.pkl \
-    --humanize-velocity 1.0 --ema-alpha 0.2 --humanize-timing 1.0
+    --humanize-velocity 1.0 --ema-alpha 0.2 --humanize-timing 1.0 --seed 42
 ```
+Specifying ``--seed`` makes velocity sampling reproducible.
 
 ### Sampling API
 

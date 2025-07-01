@@ -4,12 +4,24 @@ on: [push, pull_request]
 jobs:
   train:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        include:
+          - env:
+              PURE_PY: '1'
+          - env:
+              CYTHON: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
       - run: pip install -e .[groove]
+      - run: pip install python-rtmidi
+      - name: build cyext
+        if: matrix.env.CYTHON == '1'
+        run: MCY_USE_CYTHON=1 python setup.py build_ext --inplace
       - name: make loops
         run: |
           python - <<'PY'

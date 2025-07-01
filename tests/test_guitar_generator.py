@@ -2,6 +2,7 @@ import yaml
 from pathlib import Path
 from music21 import instrument, harmony
 from generator.guitar_generator import GuitarGenerator
+from generator.guitar_generator import EXEC_STYLE_BLOCK_CHORD
 
 
 def _basic_section():
@@ -99,3 +100,43 @@ def test_export_musicxml(tmp_path):
     path = tmp_path / "out.xml"
     gen.export_musicxml(str(path))
     assert path.exists() and path.stat().st_size > 0
+
+
+def test_export_tab(tmp_path):
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="guitar",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+    gen.compose(section_data=_basic_section())
+    path = tmp_path / "out.ly"
+    gen.export_tab(str(path))
+    assert path.exists() and path.stat().st_size > 0
+
+
+def test_gate_length_variation_range():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="guitar",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+        gate_length_variation=0.2,
+    )
+    gen.rng.seed(1)
+    notes = gen._create_notes_from_event(
+        harmony.ChordSymbol("C"),
+        {"execution_style": EXEC_STYLE_BLOCK_CHORD},
+        {},
+        1.0,
+        80,
+    )
+    dur = notes[0].quarterLength
+    base = 1.0 * 0.9
+    assert base * 0.8 <= dur <= base * 1.2

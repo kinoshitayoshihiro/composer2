@@ -295,6 +295,16 @@ modcompose live rnn.pt --backend rnn --bpm 100
 Real-time audio requires the `sounddevice` backend and currently works on
 Linux and macOS only.
 
+### Real-time Streaming
+Use the `realtime` backend to send MIDI to an external port in real time:
+
+```bash
+modular-composer live score.mid --backend realtime --port "IAC Driver Bus 1"
+```
+Omit `--port` to list available ports. Low latency is easiest to achieve with
+the `python-rtmidi` backend. Set `MCY_USE_CYTHON=0` during installation if the
+Cython build environment is unavailable.
+
 #### Quick preview
 Deterministic sampling lets you audition a groove without randomness:
 

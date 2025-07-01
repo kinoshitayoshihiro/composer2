@@ -39,9 +39,14 @@ from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple
 def _lazy_import_groove_rnn() -> ModuleType | None:
     try:
         import importlib
-        return importlib.import_module("utilities.groove_rnn_v2")
+
+        mod = importlib.import_module("utilities.groove_rnn_v2")
     except Exception:
         return None
+    if getattr(mod, "pl", None) is None or getattr(mod, "torch", None) is None:
+        return None
+    return mod
+
 
 
 @click.group()
@@ -74,14 +79,6 @@ def rnn_train(args: tuple[str, ...]) -> None:
         raise SystemExit(1)
     mod.train_cmd.main(list(args), standalone_mode=False)
 
-if groove_rnn_v2 is not None:
-    rnn.add_command(groove_rnn_v2.train_cmd, name="train")
-    rnn.add_command(groove_rnn_v2.sample_cmd, name="sample")
-else:
-    @rnn.command("train")
-    def _rnn_missing_train() -> None:
-        click.echo("RNN extras not installed")
-        raise SystemExit(1)
 
 @rnn.command("sample", context_settings={"ignore_unknown_options": True})
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)

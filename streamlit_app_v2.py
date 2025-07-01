@@ -5,7 +5,10 @@ import tempfile
 from pathlib import Path
 from typing import Any, cast
 
-import plotly.graph_objects as go
+try:
+    import plotly.graph_objects as go
+except Exception:  # pragma: no cover - optional dependency
+    go = None  # type: ignore[assignment]
 import streamlit as st
 
 from utilities import groove_sampler_ngram, groove_sampler_rnn

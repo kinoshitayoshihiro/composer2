@@ -255,6 +255,8 @@ def _cmd_demo(args: list[str]) -> None:
     ap.add_argument("-o", "--out", type=Path, default=Path("demo.mid"))
     ap.add_argument("--tempo-curve", type=Path)
     ns = ap.parse_args(args)
+    if ns.seed is not None:
+        random.seed(ns.seed)
 
     curve = []
     if ns.tempo_curve:
@@ -278,7 +280,7 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("model", type=Path)
     ap.add_argument("-l", "--length", type=int, default=4)
     ap.add_argument("--temperature", type=float, default=1.0)
-    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--cond-velocity", choices=["soft", "hard"], default=None)
     ap.add_argument(
         "--cond-kick", choices=["four_on_floor", "sparse"], default=None
@@ -288,6 +290,8 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("--lag", type=float, default=10.0)
     ap.add_argument("--tempo-curve", type=Path)
     ns = ap.parse_args(args)
+    if ns.seed is not None:
+        random.seed(ns.seed)
     model = load(ns.model)
     ev = cast(
         list[Event],
@@ -333,7 +337,7 @@ def _cmd_render(args: list[str]) -> None:
     ap.add_argument("spec", type=Path)
     ap.add_argument("-o", "--out", type=Path, default=Path("out.mid"))
     ap.add_argument("--soundfont", type=Path, default=None)
-    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--velocity-hist", type=Path, default=None)
     ap.add_argument("--ema-alpha", type=float, default=0.1)
     ap.add_argument("--humanize-timing", type=float, default=0.0)

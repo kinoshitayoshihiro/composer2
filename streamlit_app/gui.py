@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 import streamlit as st
+import random
 
 from utilities import groove_sampler_ngram
 from utilities import groove_sampler_rnn
@@ -24,6 +25,9 @@ def main() -> None:
     temp = st.slider("Temperature", 0.0, 1.5, 1.0)
     human_timing = st.slider("Timing Humanization", 0.0, 1.0, 0.0)
     human_velocity = st.slider("Velocity Humanization", 0.0, 1.0, 0.0)
+    seed_input = st.text_input("Random Seed (optional)")
+    if seed_input:
+        random.seed(int(seed_input))
     file = st.file_uploader("Model", type=["pkl", "pt"])
     if st.button("Generate") and file is not None:
         path = Path(file.name)

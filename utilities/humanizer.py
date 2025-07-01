@@ -14,6 +14,12 @@ from typing import (
     Mapping,
 )
 from pathlib import Path
+
+try:
+    from cyext.humanize import apply_swing as cy_apply_swing, humanize_velocities as cy_humanize_velocities
+except Exception:  # pragma: no cover - optional
+    cy_apply_swing = None
+    cy_humanize_velocities = None
 from .ghost_jitter import apply_ghost_jitter  # re-export
 
 __all__ = [
@@ -151,7 +157,7 @@ def _validate_ratio(ratio: float) -> float:
     return ratio
 
 
-def _apply_swing(part_stream: stream.Part, swing_ratio: float, subdiv: int = 8) -> None:
+def _apply_swing_py(part_stream: stream.Part, swing_ratio: float, subdiv: int = 8) -> None:
     """Shift off-beats according to ``swing_ratio`` and grid ``subdiv``.
 
     ``swing_ratio`` represents the relative position of the off-beat note
@@ -172,6 +178,13 @@ def _apply_swing(part_stream: stream.Part, swing_ratio: float, subdiv: int = 8) 
         within = pos - pair_start
         if abs(within - step) < tol:
             n.offset = pair_start + pair * swing_ratio
+
+
+def _apply_swing(part_stream: stream.Part, swing_ratio: float, subdiv: int = 8) -> None:
+    if cy_apply_swing is not None:
+        cy_apply_swing(part_stream, float(swing_ratio), subdiv)
+    else:
+        _apply_swing_py(part_stream, swing_ratio, subdiv)
 
 
 def _apply_variable_swing(
@@ -254,6 +267,22 @@ def apply_envelope(part: stream.Part, start: int, end: int, scale: float) -> Non
     for n in part.recurse().notes:
         if start <= n.offset < end and n.volume and n.volume.velocity is not None:
             n.volume.velocity = int(max(1, min(127, round(n.volume.velocity * scale))))
+
+
+def _humanize_velocities_py(part: stream.Part, amount: int = 4) -> None:
+    for n in part.recurse().notes:
+        if n.volume is None:
+            n.volume = volume.Volume(velocity=64)
+        vel = n.volume.velocity or 64
+        delta = random.randint(-amount, amount)
+        n.volume.velocity = max(1, min(127, vel + delta))
+
+
+def _humanize_velocities(part: stream.Part, amount: int = 4) -> None:
+    if cy_humanize_velocities is not None:
+        cy_humanize_velocities(part, amount)
+    else:
+        _humanize_velocities_py(part, amount)
 
 
 def apply_offset_profile(part: stream.Part, profile_name: str | None) -> None:

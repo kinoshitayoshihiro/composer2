@@ -37,7 +37,11 @@ pip install -e .[gui]                # optional GUI
 pip install -r requirements-extra.txt    # or: pip install 'modular_composer[rnn,gui,live]'
 ```
 
-RNN features require `pip install 'modular_composer[rnn]'`.
+For RNN support only you can run:
+
+```bash
+pip install modular_composer[rnn]
+```
 
 Without these packages `pytest` and the composer modules will fail to import.
 

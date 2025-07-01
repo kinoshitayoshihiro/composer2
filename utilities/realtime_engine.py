@@ -5,9 +5,8 @@ import threading
 import time
 import warnings
 from collections.abc import Callable
-from pathlib import Path
-
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 import click
@@ -19,9 +18,15 @@ except ModuleNotFoundError:  # lightweight install
 else:
     torch: Any | None
 from . import groove_sampler_rnn
-from .groove_rnn_v2 import GrooveRNN, sample_rnn_v2
-from .groove_sampler_ngram import load as load_ngram, sample as sample_ngram
-from .streaming_sampler import BaseSampler, RealtimePlayer
+
+try:
+    from .groove_rnn_v2 import GrooveRNN, sample_rnn_v2
+except ImportError:
+    GrooveRNN = None  # type: ignore[assignment]
+    sample_rnn_v2 = None  # type: ignore[assignment]
+from . import groove_sampler_ngram
+from .groove_sampler_ngram import sample as sample_ngram
+from .streaming_sampler import BaseSampler
 
 try:  # optional dependency
     import mido
@@ -79,7 +84,7 @@ class RealtimeEngine:
             model, meta = groove_sampler_rnn.load(Path(self.model_path))
             self.sampler: BaseSampler = _RnnSampler(model, meta)
         else:
-            model = load_ngram(Path(self.model_path))
+            model = groove_sampler_ngram.load(Path(self.model_path))
             self.sampler = _NgramSampler(model)
         self.bpm = bpm
         self.sync = sync
@@ -133,15 +138,19 @@ class RealtimeEngine:
 
     def _load_model(self) -> None:
         if self.backend == "rnn":
+            if GrooveRNN is None:
+                raise click.ClickException("Install extras: rnn")
             obj = torch.load(self.model_path, map_location="cpu")
             model = GrooveRNN(len(obj["meta"]["vocab"]))
             model.load_state_dict(obj["state_dict"])
             self.model = (model, obj["meta"])
         else:
-            self.model = load_ngram(self.model_path)
+            self.model = groove_sampler_ngram.load(self.model_path)
 
     def _gen_bar(self) -> list[dict]:
         if self.backend == "rnn":
+            if sample_rnn_v2 is None:
+                raise click.ClickException("Install extras: rnn")
             return sample_rnn_v2(self.model, bars=1)
         return list(sample_ngram(self.model, bars=1))
 

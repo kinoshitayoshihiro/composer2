@@ -10,15 +10,18 @@ from typing import Any
 import music21
 from music21 import (
     duration as m21duration,
+)
+from music21 import (
     harmony,
     interval,
-
     key,
     meter,
     note,
     pitch,
     scale,
     stream,
+)
+from music21 import (
     volume as m21volume,
 )
 
@@ -184,7 +187,7 @@ class BassGenerator(BasePartGenerator):
         """
         self.kick_lock_cfg = (global_settings or {}).get("kick_lock", {})
         seed = self.kick_lock_cfg.get("random_seed")
-        self._rng = random.Random(seed or None)
+        self._rng = random.Random(0 if seed is None else seed)
 
         super().__init__(
             global_settings=global_settings,

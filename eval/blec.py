@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 from scipy.stats import entropy
@@ -9,8 +10,11 @@ from scipy.stats import entropy
 Event = Mapping[str, float | int | str]
 
 
-def _hist(events: Iterable[Event], resolution: int) -> dict[str, np.ndarray]:
-    bins: dict[str, np.ndarray] = defaultdict(
+ArrayF64 = np.ndarray[Any, np.dtype[np.float64]]
+
+
+def _hist(events: Iterable[Event], resolution: int) -> dict[str, ArrayF64]:
+    bins: dict[str, ArrayF64] = defaultdict(
         lambda: np.zeros(resolution, dtype=np.float64)
     )
     for ev in events:

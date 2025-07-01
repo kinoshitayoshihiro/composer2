@@ -36,6 +36,8 @@ pip install -e .[gui]                # optional GUI
 pip install -r requirements-extra.txt    # or: pip install 'modular_composer[rnn,gui,live]'
 ```
 
+RNN features require `pip install 'modular_composer[rnn]'`.
+
 Without these packages `pytest` and the composer modules will fail to import.
 
 ## Required Libraries
@@ -627,6 +629,8 @@ part = gen.render_part({"chord": "G7", "groove_kicks": [0], "melody": []},
 
 Groove generation can now leverage a Lightning-based RNN with attention. Train a
 model using:
+
+Install extras via `pip install 'modular_composer[rnn]'` to enable this baseline.
 
 ```bash
 modcompose rnn train loops.json --epochs 10 --out model.pt

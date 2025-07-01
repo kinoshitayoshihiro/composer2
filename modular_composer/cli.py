@@ -7,6 +7,7 @@ import json
 import random
 import tempfile
 from pathlib import Path
+from types import ModuleType
 from typing import cast
 
 import click
@@ -14,7 +15,6 @@ import pretty_midi
 
 import utilities.loop_ingest as loop_ingest
 from utilities import (
-    groove_rnn_v2,
     groove_sampler_ngram,
     groove_sampler_rnn,
     live_player,
@@ -28,6 +28,14 @@ from utilities.peak_synchroniser import PeakSynchroniser
 from utilities.realtime_engine import RealtimeEngine
 from utilities.tempo_utils import beat_to_seconds
 from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple
+
+
+def _lazy_import_groove_rnn() -> ModuleType | None:
+    try:
+        import importlib
+        return importlib.import_module("utilities.groove_rnn_v2")
+    except Exception:
+        return None
 
 
 @click.group()
@@ -48,10 +56,27 @@ groove.add_command(groove_sampler_ngram.info_cmd, name="info")
 @cli.group()
 def rnn() -> None:
     """RNN groove sampler commands."""
+    pass
 
 
-rnn.add_command(groove_rnn_v2.train_cmd, name="train")
-rnn.add_command(groove_rnn_v2.sample_cmd, name="sample")
+@rnn.command("train", context_settings={"ignore_unknown_options": True})
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def rnn_train(args: tuple[str, ...]) -> None:
+    mod = _lazy_import_groove_rnn()
+    if mod is None:
+        click.echo("RNN extras not installed")
+        raise SystemExit(1)
+    mod.train_cmd.main(list(args), standalone_mode=False)
+
+
+@rnn.command("sample", context_settings={"ignore_unknown_options": True})
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def rnn_sample(args: tuple[str, ...]) -> None:
+    mod = _lazy_import_groove_rnn()
+    if mod is None:
+        click.echo("RNN extras not installed")
+        raise SystemExit(1)
+    mod.sample_cmd.main(list(args), standalone_mode=False)
 
 
 @cli.group()
@@ -170,7 +195,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml
+        import yaml  # type: ignore
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}

@@ -27,6 +27,7 @@ from .ghost_jitter import apply_ghost_jitter  # re-export
 
 __all__ = [
     "apply_ghost_jitter",
+    "apply_velocity_histogram",
 ]
 
 # music21 のサブモジュールを正しい形式でインポート
@@ -282,6 +283,36 @@ def _humanize_velocities(part: stream.Part, amount: int = 4) -> None:
         cy_humanize_velocities(part, amount)
     else:
         _humanize_velocities_py(part, amount)
+
+
+def apply_velocity_histogram(
+    part: stream.Part, histogram: dict[int, float]
+) -> stream.Part:
+    """Assign note velocities by sampling from ``histogram``.
+
+    Parameters
+    ----------
+    part:
+        Target part whose note velocities will be replaced.
+    histogram:
+        Mapping of velocity value to weight.
+
+    Returns
+    -------
+    stream.Part
+        The modified part.
+    """
+    if not histogram:
+        return part
+    choices = [int(v) for v in histogram.keys()]
+    weights = [float(w) for w in histogram.values()]
+    for n in part.recurse().notes:
+        vel = random.choices(choices, weights)[0]
+        if n.volume is None:
+            n.volume = volume.Volume(velocity=vel)
+        else:
+            n.volume.velocity = vel
+    return part
 
 
 def apply_offset_profile(part: stream.Part, profile_name: str | None) -> None:

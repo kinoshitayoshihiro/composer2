@@ -7,6 +7,7 @@ import importlib
 import importlib.metadata as _md
 import json
 import random
+import pickle
 import tempfile
 from pathlib import Path
 from types import ModuleType
@@ -333,6 +334,10 @@ def _cmd_render(args: list[str]) -> None:
     ap.add_argument("-o", "--out", type=Path, default=Path("out.mid"))
     ap.add_argument("--soundfont", type=Path, default=None)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--velocity-hist", type=Path, default=None)
+    ap.add_argument("--ema-alpha", type=float, default=0.1)
+    ap.add_argument("--humanize-timing", type=float, default=0.0)
+    ap.add_argument("--humanize-velocity", type=float, default=0.0)
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
@@ -365,6 +370,26 @@ def _cmd_render(args: list[str]) -> None:
         pitch = pitch_map.get(ev.get("instrument", "kick"), 60)
         vel = int(ev.get("velocity", 100))
         inst.notes.append(pretty_midi.Note(start=start, end=end, pitch=pitch, velocity=vel))
+
+    if ns.velocity_hist:
+        with open(ns.velocity_hist, "rb") as fh:
+            hist = pickle.load(fh)
+        choices = [int(v) for v in hist.keys()]
+        weights = [float(w) for w in hist.values()]
+        for n in inst.notes:
+            target = random.choices(choices, weights)[0]
+            n.velocity = int(n.velocity * (1 - ns.humanize_velocity) + target * ns.humanize_velocity)
+
+    if ns.humanize_timing > 0:
+        inst.notes.sort(key=lambda n: n.start)
+        if inst.notes:
+            ema = inst.notes[0].start
+            alpha = float(ns.ema_alpha)
+            for n in inst.notes:
+                ema += alpha * (n.start - ema)
+                shift = (ema - n.start) * ns.humanize_timing
+                n.start += shift
+                n.end += shift
     pm.instruments.append(inst)
     pm.write(str(ns.out))
     print(f"Wrote {ns.out}")

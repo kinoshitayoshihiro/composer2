@@ -22,6 +22,8 @@ def main() -> None:
     backend = st.radio("Backend", ("ngram", "rnn"))
     bars = st.slider("Bars", 1, 16, 4)
     temp = st.slider("Temperature", 0.0, 1.5, 1.0)
+    human_timing = st.slider("Timing Humanization", 0.0, 1.0, 0.0)
+    human_velocity = st.slider("Velocity Humanization", 0.0, 1.0, 0.0)
     file = st.file_uploader("Model", type=["pkl", "pt"])
     if st.button("Generate") and file is not None:
         path = Path(file.name)
@@ -32,6 +34,17 @@ def main() -> None:
         else:
             model = groove_sampler_ngram.load(path)
             events = groove_sampler_ngram.sample(model, bars=bars, temperature=temp)
+        # simple velocity scaling
+        if human_velocity > 0:
+            for ev in events:
+                if "velocity" in ev:
+                    ev["velocity"] = int(ev["velocity"] * (1 - human_velocity) + 100 * human_velocity)
+        if human_timing > 0:
+            offset = 0.0
+            for ev in events:
+                off = ev.get("offset", 0.0)
+                offset += human_timing * (off - offset)
+                ev["offset"] = offset
         st.audio(_to_midi(events), format="audio/midi")
 
 

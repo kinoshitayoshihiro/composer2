@@ -414,6 +414,12 @@ Add subtle velocity and timing variation using the trained histograms:
 modcompose groove sample model.pkl -l 8 \
     --humanize vel,micro --micro-max 24 --vel-max 45 > groove.mid
 ```
+Velocity histograms can further refine dynamics:
+
+```bash
+modcompose render spec.yml --velocity-hist groove_hist.pkl \
+    --humanize-velocity 1.0 --ema-alpha 0.2 --humanize-timing 1.0
+```
 
 ### Sampling API
 

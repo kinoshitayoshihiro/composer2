@@ -197,8 +197,17 @@ except _md.PackageNotFoundError:
 @click.option("--bpm", type=float, default=120.0, show_default=True)
 @click.option("--buffer", type=int, default=1, show_default=True)
 @click.option("--port", type=str, default=None)
+@click.option("--latency-buffer", type=float, default=5.0, show_default=True)
+@click.option("--measure-latency", is_flag=True, default=False)
 def live_cmd(
-    model: Path, backend: str, sync: str, bpm: float, buffer: int, port: str | None
+    model: Path,
+    backend: str,
+    sync: str,
+    bpm: float,
+    buffer: int,
+    port: str | None,
+    latency_buffer: float,
+    measure_latency: bool,
 ) -> None:
     """Stream a trained groove model live."""
     if backend == "realtime":
@@ -214,9 +223,20 @@ def live_cmd(
             for idx, name in enumerate(ports):
                 click.echo(f"{idx}: {name}")
             return
-        streamer = RtMidiStreamer(port, bpm=bpm)
+        streamer = RtMidiStreamer(
+            port,
+            bpm=bpm,
+            buffer_ms=latency_buffer,
+            measure_latency=measure_latency,
+        )
         part = converter.parse(str(model)).parts[0]
         asyncio.run(streamer.play_stream(part))
+        if measure_latency:
+            stats = streamer.latency_stats() or {}
+            click.echo(
+                f"Latency mean {stats.get('mean_ms', 0.0):.1f} ms, "
+                f"jitter {stats.get('stdev_ms', 0.0):.1f} ms"
+            )
         return
 
     if RealtimeEngine is None:

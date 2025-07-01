@@ -8,8 +8,16 @@ from collections.abc import Callable
 from pathlib import Path
 
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
-import torch
+import click
+
+try:  # optional dependency
+    import torch
+except ModuleNotFoundError:  # lightweight install
+    torch: Any | None = None  # type: ignore[assignment]
+else:
+    torch: Any | None
 from . import groove_sampler_rnn
 from .groove_rnn_v2 import GrooveRNN, sample_rnn_v2
 from .groove_sampler_ngram import load as load_ngram, sample as sample_ngram
@@ -63,6 +71,8 @@ class RealtimeEngine:
     ) -> None:
         if backend not in {"rnn", "ngram"}:
             raise ValueError("backend must be 'rnn' or 'ngram'")
+        if backend == "rnn" and torch is None:
+            raise click.ClickException("Install extras: rnn")
         self.model_path = str(model_path)
         self.backend = backend
         if backend == "rnn":
@@ -147,4 +157,7 @@ class RealtimeEngine:
                     time.sleep(delay)
                 sink(ev)
             self._next = fut.result()
+
+
+__all__ = ["RealtimeEngine", "ThreadPoolExecutor"]
 

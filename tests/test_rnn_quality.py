@@ -12,6 +12,7 @@ def _make_loop(path: Path) -> None:
 import pytest
 
 pytest.importorskip("torch", reason="torch not installed")
+pytest.importorskip("pytorch_lightning")
 
 from utilities import groove_rnn_v2
 

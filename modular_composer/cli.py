@@ -31,7 +31,11 @@ from utilities.golden import compare_midi, update_golden
 from utilities.groove_sampler_ngram import Event, State
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
 from utilities.peak_synchroniser import PeakSynchroniser
-from utilities.realtime_engine import RealtimeEngine
+
+try:
+    from utilities.realtime_engine import RealtimeEngine
+except ImportError:
+    RealtimeEngine = None  # type: ignore[assignment,misc]
 from utilities.tempo_utils import beat_to_seconds
 from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple
 
@@ -194,6 +198,8 @@ except _md.PackageNotFoundError:
 @click.option("--buffer", type=int, default=1, show_default=True)
 def live_cmd(model: Path, backend: str, sync: str, bpm: float, buffer: int) -> None:
     """Stream a trained groove model live."""
+    if RealtimeEngine is None:
+        raise click.ClickException("Realtime engine unavailable")
     if backend == "rnn" and _lazy_import_groove_rnn() is None:
         raise click.ClickException("Install extras: rnn")
     engine = RealtimeEngine(
@@ -289,7 +295,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml  # type: ignore
+        import yaml
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}

@@ -23,13 +23,18 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
         """Minimal stub that exposes dummy decorators / functions."""
 
         @staticmethod
-        def cache_data(**_kwargs):  # type: ignore[no-self-use]
-            """Fallback for @st.cache_data — no-op decorator."""
+        def cache_data(func=None, **_kwargs):  # type: ignore[no-self-use]
+            """Fallback for @st.cache_data.
 
-            def decorator(func):
-                return lru_cache(maxsize=None)(func)  # simple memoisation
+            - 使い方①: @st.cache_data        ← func が渡ってくる
+            - 使い方②: @st.cache_data(ttl=1) ← func は None、kwargs あり
+            """
 
-            return decorator
+            def _wrap(f):
+                return lru_cache(maxsize=None)(f)  # 超簡易メモ化
+
+            # デコレータに引数がある場合は二段階構造に
+            return _wrap(func) if callable(func) else _wrap
 
         # 任意に呼ばれる可能性のある関数を no-op で生やしておく
         def __getattr__(self, _name):  # noqa: D401

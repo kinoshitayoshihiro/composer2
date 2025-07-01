@@ -1209,6 +1209,11 @@ def train_cmd(
         collapsed: dict[str, dict[str, Any]] = {}
         for name, bars in auto.items():
             if not bars:
+                collapsed[name] = {
+                    "section": "verse",
+                    "intensity": "mid",
+                    "heat_bin": 0,
+                }
                 continue
             first = next(iter(bars.values()))
             collapsed[name] = {

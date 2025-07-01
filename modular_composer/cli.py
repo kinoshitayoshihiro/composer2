@@ -21,6 +21,12 @@ from utilities import (
     streaming_sampler,
     synth,
 )
+
+try:
+    import importlib
+    groove_rnn_v2 = importlib.import_module("utilities.groove_rnn_v2")
+except Exception:
+    groove_rnn_v2 = None
 from utilities.golden import compare_midi, update_golden
 from utilities.groove_sampler_ngram import Event, State
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401
@@ -68,6 +74,14 @@ def rnn_train(args: tuple[str, ...]) -> None:
         raise SystemExit(1)
     mod.train_cmd.main(list(args), standalone_mode=False)
 
+if groove_rnn_v2 is not None:
+    rnn.add_command(groove_rnn_v2.train_cmd, name="train")
+    rnn.add_command(groove_rnn_v2.sample_cmd, name="sample")
+else:
+    @rnn.command("train")
+    def _rnn_missing_train() -> None:
+        click.echo("RNN extras not installed")
+        raise SystemExit(1)
 
 @rnn.command("sample", context_settings={"ignore_unknown_options": True})
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)

@@ -1,13 +1,9 @@
-from importlib import util
-from importlib.metadata import PackageNotFoundError, version
-from pathlib import Path
-
 __all__ = ["__version__"]
 
-try:
-    __version__ = version("modular_composer")
-except PackageNotFoundError:
-    __version__ = "0.9.0"
+__version__ = "1.0.1"
+
+from importlib import util
+from pathlib import Path
 
 _spec = util.spec_from_file_location(
     "_legacy_modular_composer", Path(__file__).resolve().parent.parent / "modular_composer.py"

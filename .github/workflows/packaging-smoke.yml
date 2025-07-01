@@ -1,0 +1,21 @@
+name: packaging-smoke
+on:
+  pull_request:
+  push:
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install build mkdocs mkdocs-material mkdocstrings[python]
+      - run: pip install -e .[dev]
+      - run: python -m build --wheel
+      - run: mkdocs build --strict
+      - run: pytest tests/test_wheel_import.py tests/test_docs_build.py -q

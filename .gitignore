@@ -17,3 +17,8 @@ heatmap.json
 modular_composer.egg-info/
 .DS_Store
 .hypothesis/
+setup.cfg
+site/
+
+docs/examples/loops/*.mid
+docs/assets/*.mp4

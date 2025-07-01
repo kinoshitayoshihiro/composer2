@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+import logging
+import statistics
 
 from music21 import stream
 
@@ -14,7 +15,14 @@ from .tempo_utils import TempoMap, beat_to_seconds
 
 
 class RtMidiStreamer:
-    def __init__(self, port_name: str | None = None, *, bpm: float = 120.0) -> None:
+    def __init__(
+        self,
+        port_name: str | None = None,
+        *,
+        bpm: float = 120.0,
+        buffer_ms: float = 5.0,
+        measure_latency: bool = False,
+    ) -> None:
         if rtmidi is None:
             raise RuntimeError("python-rtmidi required")
         self._midi = rtmidi.MidiOut()
@@ -29,6 +37,10 @@ class RtMidiStreamer:
             self.port_name = port_name
         self._midi.open_port(ports.index(self.port_name))
         self.tempo = TempoMap([{"beat": 0.0, "bpm": bpm}])
+        self.buffer = max(0.0, float(buffer_ms)) / 1000.0
+        self.measure_latency = measure_latency
+        self.latencies: list[float] = []
+        self.logger = logging.getLogger(__name__)
 
     @staticmethod
     def list_ports() -> list[str]:
@@ -38,10 +50,21 @@ class RtMidiStreamer:
 
     async def _play_note(self, start: float, end: float, pitch: int, velocity: int) -> None:
         loop = asyncio.get_running_loop()
+        await asyncio.sleep(max(0.0, start - self.buffer - loop.time()))
         await asyncio.sleep(max(0.0, start - loop.time()))
-        self._midi.send_message([0x90, pitch, velocity])
+        try:
+            self._midi.send_message([0x90, pitch, velocity])
+        except Exception as exc:  # pragma: no cover - runtime safety
+            self.logger.error("MIDI send failed: %s", exc)
+            return
+        sent = loop.time()
+        if self.measure_latency:
+            self.latencies.append(sent - start)
         await asyncio.sleep(max(0.0, end - loop.time()))
-        self._midi.send_message([0x80, pitch, 0])
+        try:
+            self._midi.send_message([0x80, pitch, 0])
+        except Exception as exc:  # pragma: no cover - runtime safety
+            self.logger.error("MIDI send failed: %s", exc)
 
     async def play_stream(self, part: stream.Part) -> None:
         loop = asyncio.get_running_loop()
@@ -57,3 +80,20 @@ class RtMidiStreamer:
             tasks.append(loop.create_task(self._play_note(start, end, pitch, vel)))
         if tasks:
             await asyncio.gather(*tasks)
+        if self.measure_latency and self.latencies:
+            mean = statistics.mean(self.latencies)
+            std = statistics.pstdev(self.latencies)
+            self.logger.info(
+                "Latency mean %.3f ms, jitter %.3f ms",
+                mean * 1000.0,
+                std * 1000.0,
+            )
+
+    def latency_stats(self) -> dict[str, float] | None:
+        if not self.latencies:
+            return None
+        return {
+            "mean_ms": statistics.mean(self.latencies) * 1000.0,
+            "stdev_ms": statistics.pstdev(self.latencies) * 1000.0,
+            "max_ms": max(self.latencies) * 1000.0,
+        }

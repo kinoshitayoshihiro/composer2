@@ -1,5 +1,5 @@
 import asyncio
-import time
+import logging
 from types import SimpleNamespace
 
 from music21 import note, stream, volume
@@ -7,18 +7,20 @@ from music21 import note, stream, volume
 from utilities import rt_midi_streamer
 
 
-class DummyMidiOut:
+class FlakyMidiOut:
     def __init__(self) -> None:
-        self.events: list[tuple[float, list[int]]] = []
+        self.count = 0
 
     def get_ports(self):
         return ["dummy"]
 
-    def open_port(self, idx: int) -> None:  # noqa: D401
+    def open_port(self, idx: int) -> None:
         pass
 
     def send_message(self, msg):
-        self.events.append((time.perf_counter(), msg))
+        self.count += 1
+        if self.count > 1:
+            raise RuntimeError("disconnected")
 
 
 def make_part():
@@ -32,18 +34,11 @@ def make_part():
     return p
 
 
-def test_rt_streamer_dummy(monkeypatch):
-    midi = DummyMidiOut()
+def test_rt_streamer_disconnect(monkeypatch, caplog):
+    midi = FlakyMidiOut()
     monkeypatch.setattr(rt_midi_streamer, "rtmidi", SimpleNamespace(MidiOut=lambda: midi))
     part = make_part()
-    streamer = rt_midi_streamer.RtMidiStreamer(
-        "dummy",
-        bpm=120.0,
-        buffer_ms=0.0,
-        measure_latency=False,
-    )
-    asyncio.run(streamer.play_stream(part))
-    on_times = [t for t, msg in midi.events if msg[0] == 0x90]
-    assert len(on_times) == 2
-    diff = on_times[1] - on_times[0]
-    assert abs(diff - 0.25) <= 0.02
+    streamer = rt_midi_streamer.RtMidiStreamer("dummy", buffer_ms=0)
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(streamer.play_stream(part))
+    assert any("MIDI send failed" in r.message for r in caplog.records)

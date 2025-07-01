@@ -1,23 +1,26 @@
 # --- START OF FILE utilities/humanizer.py (役割特化版) ---
-import music21  # name 'music21' is not defined エラー対策
-import random, logging
-import math
+# ruff: noqa
 import copy
-from typing import (
-    List,
-    Dict,
-    Any,
-    Union,
-    Optional,
-    cast,
-    Sequence,
-    Mapping,
-)
+import logging
+import math
+import random
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import (
+    Any,
+    cast,
+)
+
+logger = logging.getLogger("otokotoba.humanizer")
 
 try:
-    from cyext.humanize import apply_swing as cy_apply_swing, humanize_velocities as cy_humanize_velocities
-except Exception:  # pragma: no cover - optional
+    from cyext.humanize import apply_swing as cy_apply_swing
+    from cyext.humanize import humanize_velocities as cy_humanize_velocities
+except Exception as exc:  # pragma: no cover - optional
+    logger.info(
+        "Cython extensions not available (%s). Install Cython and reinstall for speed.",
+        exc,
+    )
     cy_apply_swing = None
     cy_humanize_velocities = None
 from .ghost_jitter import apply_ghost_jitter  # re-export
@@ -27,17 +30,15 @@ __all__ = [
 ]
 
 # music21 のサブモジュールを正しい形式でインポート
-import music21.note as note
 import music21.chord as m21chord  # check_imports.py の期待する形式 (スペースに注意)
-import music21.volume as volume
-import music21.duration as duration
-import music21.pitch as pitch
-import music21.stream as stream
-import music21.instrument as instrument
-import music21.tempo as tempo
-import music21.meter as meter
-import music21.key as key
 import music21.expressions as expressions
+import music21.instrument as instrument
+import music21.key as key
+import music21.meter as meter
+import music21.note as note
+import music21.stream as stream
+import music21.tempo as tempo
+import music21.volume as volume
 from music21 import exceptions21
 
 # MIN_NOTE_DURATION_QL は core_music_utils からインポートすることを推奨
@@ -45,8 +46,6 @@ try:
     from .core_music_utils import MIN_NOTE_DURATION_QL
 except ImportError:
     MIN_NOTE_DURATION_QL = 0.125
-
-logger = logging.getLogger("otokotoba.humanizer")
 
 try:
     import quantize  # type: ignore
@@ -71,11 +70,11 @@ quantize = _QuantizeConfig()
 # ------------------------------------------------------------
 # 1) グローバルプロファイル・レジストリ
 # ------------------------------------------------------------
-_PROFILE_REGISTRY: Dict[str, Dict[str, Any]] = {}
+_PROFILE_REGISTRY: dict[str, dict[str, Any]] = {}
 PROFILES = _PROFILE_REGISTRY
 
 
-def load_profiles(dict_like: Dict[str, Any]) -> None:
+def load_profiles(dict_like: dict[str, Any]) -> None:
     """
     YAML から読み取った humanize_profiles セクションを登録する。
     例: cfg['humanize_profiles'] をそのまま渡す。
@@ -85,7 +84,7 @@ def load_profiles(dict_like: Dict[str, Any]) -> None:
     logger.info(f"Loaded {len(_PROFILE_REGISTRY)} humanize profiles")
 
 
-def get_profile(name: str) -> Dict[str, Any]:
+def get_profile(name: str) -> dict[str, Any]:
     if name in _PROFILE_REGISTRY:
         return _PROFILE_REGISTRY[name]
     raise KeyError(f"Humanize profile '{name}' not found.")
@@ -98,7 +97,7 @@ def apply(
     part_stream: stream.Part,
     profile_name: str | None = None,
     *,
-    swing_ratio: Optional[float] = None,
+    swing_ratio: float | None = None,
 ) -> None:
     """music21.stream.Part に in-place でヒューマナイズを適用"""
     prof = get_profile(profile_name) if profile_name else {}
@@ -226,7 +225,7 @@ def _guess_subdiv(part: stream.Part) -> int:
 
 def apply_swing(
     part: stream.Part,
-    ratio: Union[float, Sequence[float], Mapping[int, float]],
+    ratio: float | Sequence[float] | Mapping[int, float],
     subdiv: int | None = 8,
 ) -> None:
     """Public API to apply swing in-place.
@@ -327,7 +326,9 @@ def apply_offset_profile(part: stream.Part, profile_name: str | None) -> None:
 # 3) CLI テスト用メイン（任意）
 # ------------------------------------------------------------
 if __name__ == "__main__":  # python utilities/humanizer.py main_cfg.yml
-    import sys, yaml
+    import sys
+
+    import yaml
 
     cfg_path = Path(sys.argv[1])
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
@@ -335,7 +336,7 @@ if __name__ == "__main__":  # python utilities/humanizer.py main_cfg.yml
     print("Profiles loaded:", list(_PROFILE_REGISTRY))
 
 
-HUMANIZATION_TEMPLATES: Dict[str, Dict[str, Any]] = {
+HUMANIZATION_TEMPLATES: dict[str, dict[str, Any]] = {
     "default_subtle": {
         "time_variation": 0.01,
         "duration_percentage": 0.03,
@@ -417,7 +418,7 @@ except ImportError:
 
 def generate_fractional_noise(
     length: int, hurst: float = 0.7, scale_factor: float = 1.0
-) -> List[float]:
+) -> list[float]:
     if not NUMPY_AVAILABLE:
         logger.debug(
             f"Humanizer (FBM): NumPy not available. Using Gaussian noise for length {length}."
@@ -443,10 +444,10 @@ def generate_fractional_noise(
 
 
 def apply_humanization_to_element(
-    m21_element_obj: Union[note.Note, m21chord.Chord],
-    template_name: Optional[str] = None,
-    custom_params: Optional[Dict[str, Any]] = None,
-) -> Union[note.Note, m21chord.Chord]:
+    m21_element_obj: note.Note | m21chord.Chord,
+    template_name: str | None = None,
+    custom_params: dict[str, Any] | None = None,
+) -> note.Note | m21chord.Chord:
     if not isinstance(m21_element_obj, (note.Note, m21chord.Chord)):
         logger.warning(
             f"Humanizer: apply_humanization_to_element received non-Note/Chord object: {type(m21_element_obj)}"
@@ -530,8 +531,8 @@ def apply_humanization_to_element(
 
 def apply_humanization_to_part(
     part_to_humanize: stream.Part,
-    template_name: Optional[str] = None,
-    custom_params: Optional[Dict[str, Any]] = None,
+    template_name: str | None = None,
+    custom_params: dict[str, Any] | None = None,
 ) -> stream.Part:
     if not isinstance(part_to_humanize, stream.Part):
         logger.error(

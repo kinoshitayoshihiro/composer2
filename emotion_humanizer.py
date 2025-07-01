@@ -4,7 +4,23 @@ import yaml
 import random
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Literal # Literal をインポート
-from pydantic import BaseModel, Field, ValidationError
+try:
+    from pydantic import BaseModel, Field, ValidationError
+except Exception:  # pragma: no cover - optional dependency
+    ValidationError = Exception
+
+    class BaseModel:
+        model_config = {}
+
+        def model_dump(self, exclude_unset: bool | None = None):
+            return {}
+
+        @classmethod
+        def model_validate(cls, data):
+            return data
+
+    def Field(default=None, **kwargs):
+        return default
 from music21 import harmony, pitch
 import re
 import logging

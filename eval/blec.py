@@ -4,13 +4,14 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy.stats import entropy
 
 Event = Mapping[str, float | int | str]
 
 
-def _hist(events: Iterable[Event], resolution: int) -> dict[str, np.ndarray]:
-    bins: dict[str, np.ndarray] = defaultdict(
+def _hist(events: Iterable[Event], resolution: int) -> dict[str, NDArray[np.float64]]:
+    bins: dict[str, NDArray[np.float64]] = defaultdict(
         lambda: np.zeros(resolution, dtype=np.float64)
     )
     for ev in events:

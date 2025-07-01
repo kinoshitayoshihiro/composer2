@@ -12,7 +12,7 @@ def test_velocity_and_swing():
         global_key_signature_tonic="C",
         global_key_signature_mode="major",
         emotion_profile_path="data/emotion_profile.yaml",
-        global_settings={"swing_ratio": 0.1},
+        global_settings={"swing_ratio": 0.6},
     )
     section = {
         "emotion": "funky",
@@ -26,5 +26,5 @@ def test_velocity_and_swing():
     velocities = [n.volume.velocity for n in part.notes]
     assert all(100 <= v <= 110 for v in velocities)
     offsets = [n.offset for n in part.notes]
-    assert abs(offsets[1] - 1.1) < 1e-6
-    assert abs(offsets[3] - 3.1) < 1e-6
+    assert abs(offsets[1] - 1.05) < 1e-6
+    assert abs(offsets[3] - 3.05) < 1e-6

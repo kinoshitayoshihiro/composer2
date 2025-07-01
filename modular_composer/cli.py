@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import glob
 import importlib
 import importlib.metadata as _md
@@ -189,12 +190,35 @@ except _md.PackageNotFoundError:
 
 @cli.command("live")
 @click.argument("model", type=Path)
-@click.option("--backend", type=click.Choice(["ngram", "rnn"]), default="ngram")
+@click.option(
+    "--backend", type=click.Choice(["ngram", "rnn", "realtime"]), default="ngram"
+)
 @click.option("--sync", type=click.Choice(["internal", "external"]), default="internal")
 @click.option("--bpm", type=float, default=120.0, show_default=True)
 @click.option("--buffer", type=int, default=1, show_default=True)
-def live_cmd(model: Path, backend: str, sync: str, bpm: float, buffer: int) -> None:
+@click.option("--port", type=str, default=None)
+def live_cmd(
+    model: Path, backend: str, sync: str, bpm: float, buffer: int, port: str | None
+) -> None:
     """Stream a trained groove model live."""
+    if backend == "realtime":
+        from music21 import converter
+
+        from utilities.rt_midi_streamer import RtMidiStreamer
+
+        ports = RtMidiStreamer.list_ports()
+        if port is None:
+            if not ports:
+                raise click.ClickException("No MIDI output ports")
+            click.echo("Available MIDI ports:")
+            for idx, name in enumerate(ports):
+                click.echo(f"{idx}: {name}")
+            return
+        streamer = RtMidiStreamer(port, bpm=bpm)
+        part = converter.parse(str(model)).parts[0]
+        asyncio.run(streamer.play_stream(part))
+        return
+
     if RealtimeEngine is None:
         raise click.ClickException("Realtime engine unavailable")
     if backend == "rnn" and _lazy_import_groove_rnn() is None:
@@ -292,7 +316,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml
+        import yaml  # type: ignore
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}

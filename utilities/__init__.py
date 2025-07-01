@@ -71,6 +71,8 @@ from .tempo_utils import (
 )
 from .velocity_curve import PREDEFINED_CURVES, resolve_velocity_curve
 from .velocity_smoother import EMASmoother, VelocitySmoother
+from .humanizer import apply_velocity_histogram
+from .timing_corrector import TimingCorrector
 from .emotion_profile_loader import load_emotion_profile
 
 __all__ = [
@@ -91,6 +93,8 @@ __all__ = [
     "load_tempo_curve",
     "VelocitySmoother",
     "EMASmoother",
+    "apply_velocity_histogram",
+    "TimingCorrector",
     "load_tempo_curve_simple",
     "get_tempo_at_beat",
     "get_bpm_at",

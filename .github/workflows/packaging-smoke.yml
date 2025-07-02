@@ -16,6 +16,7 @@ jobs:
           cache: 'pip'
       - run: pip install build mkdocs mkdocs-material mkdocstrings[python]
       - run: pip install -e .[dev]
+      - run: pip install music21
       - run: python -m build --wheel
       - run: mkdocs build --strict
       - run: pytest tests/test_wheel_import.py tests/test_docs_build.py -q

@@ -210,6 +210,9 @@ class GuitarGenerator(BasePartGenerator):
         if self.external_patterns_path:
             self._load_external_strum_patterns()
 
+        self._add_internal_default_patterns()
+
+
     def compose(self, *args, **kwargs):
         result = super().compose(*args, **kwargs)
         if isinstance(result, stream.Part):
@@ -817,8 +820,38 @@ class GuitarGenerator(BasePartGenerator):
             logger.warning(f"Failed to load external strum patterns: {e}")
 
     def _add_internal_default_patterns(self):
-        # 旧呼び出しを noop にする互換 stub
-        return
+        """Populate ``guitar_default_patterns`` with built-in strum patterns."""
+        defaults = {
+            "quarter_down": [
+                {"offset": 0.0},
+                {"offset": 1.0},
+                {"offset": 2.0},
+                {"offset": 3.0},
+            ],
+            "eighth_down_up": [
+                {"offset": 0.0},
+                {"offset": 0.5},
+                {"offset": 1.0},
+                {"offset": 1.5},
+                {"offset": 2.0},
+                {"offset": 2.5},
+                {"offset": 3.0},
+                {"offset": 3.5},
+            ],
+            "alternate_bass": [
+                {"offset": 0.0},
+                {"offset": 2.0},
+            ],
+            "rock_chug": [
+                {"offset": i * 0.25} for i in range(16)
+            ],
+        }
+
+        if "guitar_default_patterns" not in self.part_parameters:
+            self.part_parameters["guitar_default_patterns"] = {}
+
+        for name, pattern in defaults.items():
+            self.part_parameters["guitar_default_patterns"].setdefault(name, pattern)
 
 
 # --- END OF FILE generator/guitar_generator.py ---

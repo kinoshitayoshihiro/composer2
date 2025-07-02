@@ -1,11 +1,13 @@
 import yaml
 from pathlib import Path
-from music21 import instrument, harmony, articulations, chord, pitch
+from music21 import chord
+from music21 import instrument, harmony, articulations, pitch
 from generator.guitar_generator import GuitarGenerator
 from generator.guitar_generator import (
     EXEC_STYLE_BLOCK_CHORD,
     EXEC_STYLE_HAMMER_ON,
     EXEC_STYLE_PULL_OFF,
+    EXEC_STYLE_STRUM_BASIC,
 )
 
 
@@ -176,6 +178,96 @@ def test_gate_length_variation_range():
     assert base * 0.8 <= dur <= base * 1.2
 
 
+def test_stroke_direction_velocity():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="g",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+    cs = harmony.ChordSymbol("C")
+    notes_down = gen._create_notes_from_event(
+        cs,
+        {"execution_style": EXEC_STYLE_BLOCK_CHORD},
+        {"current_event_stroke": "down"},
+        1.0,
+        80,
+    )
+    notes_up = gen._create_notes_from_event(
+        cs,
+        {"execution_style": EXEC_STYLE_BLOCK_CHORD},
+        {"current_event_stroke": "up"},
+        1.0,
+        80,
+    )
+    vel_down = notes_down[0].notes[0].volume.velocity if isinstance(notes_down[0], chord.Chord) else notes_down[0].volume.velocity
+    vel_up = notes_up[0].notes[0].volume.velocity if isinstance(notes_up[0], chord.Chord) else notes_up[0].volume.velocity
+    assert vel_down > vel_up
+
+
+def test_palm_mute_shorter_sustain():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="g",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+    cs = harmony.ChordSymbol("C")
+    notes_norm = gen._create_notes_from_event(
+        cs,
+        {"execution_style": EXEC_STYLE_BLOCK_CHORD},
+        {},
+        1.0,
+        80,
+    )
+    notes_pm = gen._create_notes_from_event(
+        cs,
+        {"execution_style": EXEC_STYLE_BLOCK_CHORD},
+        {"palm_mute": True},
+        1.0,
+        80,
+    )
+    dur_norm = notes_norm[0].quarterLength if isinstance(notes_norm[0], chord.Chord) else notes_norm[0].quarterLength
+    dur_pm = notes_pm[0].quarterLength if isinstance(notes_pm[0], chord.Chord) else notes_pm[0].quarterLength
+    assert dur_pm < dur_norm
+
+
+def test_strum_basic_stroke_velocity():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="g",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+    cs = harmony.ChordSymbol("C")
+    notes_down = gen._create_notes_from_event(
+        cs,
+        {"execution_style": EXEC_STYLE_STRUM_BASIC},
+        {"current_event_stroke": "down"},
+        1.0,
+        80,
+    )
+    notes_up = gen._create_notes_from_event(
+        cs,
+        {"execution_style": EXEC_STYLE_STRUM_BASIC},
+        {"current_event_stroke": "up"},
+        1.0,
+        80,
+    )
+    avg_down = sum(n.volume.velocity for n in notes_down) / len(notes_down)
+    avg_up = sum(n.volume.velocity for n in notes_up) / len(notes_up)
+    assert avg_down > avg_up
+
+
 def test_internal_default_patterns():
     gen = GuitarGenerator(
         global_settings={},
@@ -331,6 +423,10 @@ def _has_fret_indication(note_obj, text):
         isinstance(a, articulations.FretIndication) and getattr(a, "number", None) == text
         for a in note_obj.articulations
     )
+
+
+def _has_articulation(note_obj, art_cls):
+    return any(isinstance(a, art_cls) for a in note_obj.articulations)
 
 
 def test_pattern_articulation_ghost_note():
@@ -581,6 +677,56 @@ def test_event_articulation_slide_in():
         assert len(slides) == 1
 
 
+def test_slide_offset_params():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="guitar",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+
+    notes = gen._create_notes_from_event(
+        harmony.ChordSymbol("C"),
+        {"execution_style": EXEC_STYLE_BLOCK_CHORD},
+        {"slide_in_offset": 0.2, "slide_out_offset": 0.8},
+        1.0,
+        80,
+    )
+
+    assert isinstance(notes[0], chord.Chord)
+    slide = [a for a in notes[0].notes[0].articulations if isinstance(a, articulations.IndeterminateSlide)][0]
+    assert getattr(slide.editorial, "slide_in_offset", None) == 0.2
+    assert getattr(slide.editorial, "slide_out_offset", None) == 0.8
+
+
+def test_bend_params():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="guitar",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+
+    notes = gen._create_notes_from_event(
+        harmony.ChordSymbol("C"),
+        {"execution_style": EXEC_STYLE_BLOCK_CHORD},
+        {"bend_amount": 1.5, "bend_release_offset": 0.7},
+        1.0,
+        80,
+    )
+
+    assert isinstance(notes[0], chord.Chord)
+    bend = [a for a in notes[0].notes[0].articulations if isinstance(a, articulations.FretBend)][0]
+    assert getattr(bend.editorial, "bend_amount", None) == 1.5
+    assert getattr(bend.editorial, "bend_release_offset", None) == 0.7
+
+
 def test_merge_pattern_event_articulations():
     gen = GuitarGenerator(
         global_settings={},
@@ -648,7 +794,7 @@ def test_hammer_on_pull_off_basic():
     note1 = part1.flatten().notes[0]
     if isinstance(note1, chord.Chord):
         note1 = note1.notes[0]
-    assert not _has_fret_indication(note1, "hammer-on")
+    assert not _has_articulation(note1, articulations.HammerOn)
 
     # direct _render_part call should use existing _prev_note_pitch
     gen._prev_note_pitch = pitch.Pitch("C3")
@@ -659,7 +805,7 @@ def test_hammer_on_pull_off_basic():
     note2 = part2.flatten().notes[0]
     if isinstance(note2, chord.Chord):
         note2 = note2.notes[0]
-    assert _has_fret_indication(note2, "hammer-on")
+    assert _has_articulation(note2, articulations.HammerOn)
 
     gen._prev_note_pitch = pitch.Pitch("E3")
     sec3 = _section_with_chord("D")
@@ -668,7 +814,7 @@ def test_hammer_on_pull_off_basic():
     note3 = part3.flatten().notes[0]
     if isinstance(note3, chord.Chord):
         note3 = note3.notes[0]
-    assert _has_fret_indication(note3, "pull-off")
+    assert _has_articulation(note3, articulations.PullOff)
 
 
 def test_hammer_on_pull_off_interval_threshold():
@@ -700,7 +846,7 @@ def test_hammer_on_pull_off_interval_threshold():
     note2 = part2.flatten().notes[0]
     if isinstance(note2, chord.Chord):
         note2 = note2.notes[0]
-    assert not _has_fret_indication(note2, "hammer-on")
+    assert not _has_articulation(note2, articulations.HammerOn)
 
     gen.hammer_on_interval = 2
     gen.part_parameters["hammer_on_interval"] = 2
@@ -713,7 +859,7 @@ def test_hammer_on_pull_off_interval_threshold():
     note3 = part3.flatten().notes[0]
     if isinstance(note3, chord.Chord):
         note3 = note3.notes[0]
-    assert _has_fret_indication(note3, "hammer-on")
+    assert _has_articulation(note3, articulations.HammerOn)
 
 
 def test_hammer_on_pull_off_probability():
@@ -743,7 +889,7 @@ def test_hammer_on_pull_off_probability():
     note2 = part2.flatten().notes[0]
     if isinstance(note2, chord.Chord):
         note2 = note2.notes[0]
-    assert not _has_fret_indication(note2, "hammer-on")
+    assert not _has_articulation(note2, articulations.HammerOn)
 
     gen.hammer_on_probability = 1.0
     gen.part_parameters["hammer_on_probability"] = 1.0
@@ -756,5 +902,5 @@ def test_hammer_on_pull_off_probability():
     note3 = part3.flatten().notes[0]
     if isinstance(note3, chord.Chord):
         note3 = note3.notes[0]
-    assert _has_fret_indication(note3, "hammer-on")
+    assert _has_articulation(note3, articulations.HammerOn)
 

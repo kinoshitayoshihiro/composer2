@@ -73,3 +73,7 @@ def test_part_id_none(monkeypatch, rhythm_library):
     }
     score, _ = compose(main_cfg, chordmap, rhythm_library)
     assert captured['keys'] == {"dummy_0"}
+
+    captured.clear()
+    score2, _ = compose(main_cfg, chordmap, rhythm_library, num_workers=2)
+    assert captured['keys'] == {"dummy_0"}

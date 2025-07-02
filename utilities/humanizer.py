@@ -14,8 +14,12 @@ from typing import (
 logger = logging.getLogger("otokotoba.humanizer")
 
 try:
-    from cyext.humanize import apply_swing as cy_apply_swing
-    from cyext.humanize import humanize_velocities as cy_humanize_velocities
+    from cyext.humanize import (
+        apply_swing as cy_apply_swing,
+        humanize_velocities as cy_humanize_velocities,
+        apply_envelope as cy_apply_envelope,
+        apply_velocity_histogram as cy_apply_velocity_histogram,
+    )
 except Exception as exc:  # pragma: no cover - optional
     logger.info(
         "Cython extensions not available (%s). Install Cython and reinstall for speed.",
@@ -23,11 +27,14 @@ except Exception as exc:  # pragma: no cover - optional
     )
     cy_apply_swing = None
     cy_humanize_velocities = None
+    cy_apply_envelope = None
+    cy_apply_velocity_histogram = None
 from .ghost_jitter import apply_ghost_jitter  # re-export
 
 __all__ = [
     "apply_ghost_jitter",
     "apply_velocity_histogram",
+    "apply_envelope",
 ]
 
 # music21 のサブモジュールを正しい形式でインポート
@@ -262,11 +269,20 @@ def apply_swing(
         _apply_variable_swing(part, ratios, subdiv=subdiv)
 
 
-def apply_envelope(part: stream.Part, start: int, end: int, scale: float) -> None:
-    """Scale note velocities between start and end beats."""
+def _apply_envelope_py(part: stream.Part, start: int, end: int, scale: float) -> None:
     for n in part.recurse().notes:
         if start <= n.offset < end and n.volume and n.volume.velocity is not None:
-            n.volume.velocity = int(max(1, min(127, round(n.volume.velocity * scale))))
+            n.volume.velocity = int(
+                max(1, min(127, round(n.volume.velocity * scale)))
+            )
+
+
+def apply_envelope(part: stream.Part, start: int, end: int, scale: float) -> None:
+    """Scale note velocities between start and end beats."""
+    if cy_apply_envelope is not None:
+        cy_apply_envelope(part, start, end, scale)
+    else:
+        _apply_envelope_py(part, start, end, scale)
 
 
 def _humanize_velocities_py(part: stream.Part, amount: int = 4) -> None:
@@ -285,7 +301,7 @@ def _humanize_velocities(part: stream.Part, amount: int = 4) -> None:
         _humanize_velocities_py(part, amount)
 
 
-def apply_velocity_histogram(
+def _apply_velocity_histogram_py(
     part: stream.Part, histogram: dict[int, float]
 ) -> stream.Part:
     """Assign note velocities by sampling from ``histogram``.
@@ -313,6 +329,14 @@ def apply_velocity_histogram(
         else:
             n.volume.velocity = vel
     return part
+
+
+def apply_velocity_histogram(
+    part: stream.Part, histogram: dict[int, float]
+) -> stream.Part:
+    if cy_apply_velocity_histogram is not None:
+        return cy_apply_velocity_histogram(part, histogram)
+    return _apply_velocity_histogram_py(part, histogram)
 
 
 def apply_offset_profile(part: stream.Part, profile_name: str | None) -> None:

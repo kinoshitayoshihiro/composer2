@@ -6,9 +6,8 @@ import glob
 import importlib
 import importlib.metadata as _md
 import json
-import random
 import pickle
-import yaml
+import random
 import tempfile
 from pathlib import Path
 from types import ModuleType
@@ -16,6 +15,8 @@ from typing import cast
 
 import click
 import pretty_midi
+import yaml
+from music21 import stream as m21stream
 
 import utilities.loop_ingest as loop_ingest
 from utilities import (
@@ -237,6 +238,8 @@ def preset_import(file: Path, name: str | None) -> None:
 @click.option("--sync", type=click.Choice(["internal", "external"]), default="internal")
 @click.option("--bpm", type=float, default=120.0, show_default=True)
 @click.option("--buffer", type=int, default=1, show_default=True)
+@click.option("--buffer-ahead", type=int, default=0, show_default=True)
+@click.option("--parallel-bars", type=int, default=1, show_default=True)
 @click.option("--port", type=str, default=None)
 @click.option("--latency-buffer", type=float, default=5.0, show_default=True)
 @click.option("--measure-latency", is_flag=True, default=False)
@@ -246,6 +249,8 @@ def live_cmd(
     sync: str,
     bpm: float,
     buffer: int,
+    buffer_ahead: int,
+    parallel_bars: int,
     port: str | None,
     latency_buffer: float,
     measure_latency: bool,
@@ -270,8 +275,20 @@ def live_cmd(
             buffer_ms=latency_buffer,
             measure_latency=measure_latency,
         )
-        part = converter.parse(str(model)).parts[0]
-        asyncio.run(streamer.play_stream(part))
+        parsed = converter.parse(str(model))
+        part_stream = parsed.parts[0] if hasattr(parsed, "parts") else parsed
+        part = cast(m21stream.Part, part_stream)
+        if buffer_ahead > 0:
+            async def _run() -> None:
+                await streamer.play_live(
+                    lambda _i: part,
+                    buffer_ahead=buffer_ahead,
+                    parallel_bars=parallel_bars,
+                )
+
+            asyncio.run(_run())
+        else:
+            asyncio.run(streamer.play_stream(part))
         if measure_latency:
             stats = streamer.latency_stats() or {}
             click.echo(
@@ -387,7 +404,7 @@ def _cmd_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
-        import yaml  # type: ignore
+        import yaml
 
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = yaml.safe_load(fh) or {}
@@ -430,7 +447,10 @@ def _cmd_render(args: list[str]) -> None:
         weights = [float(w) for w in hist.values()]
         for n in inst.notes:
             target = random.choices(choices, weights)[0]
-            n.velocity = int(n.velocity * (1 - ns.humanize_velocity) + target * ns.humanize_velocity)
+            n.velocity = int(
+                n.velocity * (1 - ns.humanize_velocity)
+                + target * ns.humanize_velocity
+            )
 
     if ns.humanize_timing > 0:
         inst.notes.sort(key=lambda n: n.start)

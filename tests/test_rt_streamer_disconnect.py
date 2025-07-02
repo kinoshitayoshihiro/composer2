@@ -10,17 +10,20 @@ from utilities import rt_midi_streamer
 class FlakyMidiOut:
     def __init__(self) -> None:
         self.count = 0
+        self.events: list[list[int]] = []
+        self.opened = 0
 
     def get_ports(self):
         return ["dummy"]
 
     def open_port(self, idx: int) -> None:
-        pass
+        self.opened += 1
 
     def send_message(self, msg):
         self.count += 1
-        if self.count > 1:
+        if self.count == 1:
             raise RuntimeError("disconnected")
+        self.events.append(msg)
 
 
 def make_part():
@@ -42,3 +45,5 @@ def test_rt_streamer_disconnect(monkeypatch, caplog):
     with caplog.at_level(logging.ERROR):
         asyncio.run(streamer.play_stream(part))
     assert any("MIDI send failed" in r.message for r in caplog.records)
+    assert midi.opened >= 2
+    assert len(midi.events) >= 2

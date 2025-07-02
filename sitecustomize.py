@@ -20,7 +20,7 @@ _orig_check_call = subprocess.check_call  # keep original
 def _stub_check_call(cmd, *args, **kwargs):  # noqa: D401
     """Intercept mkdocs and build commands for lightweight stubbing."""
     # cmd may be list / tuple / str
-    if isinstance(cmd, (list, tuple)):
+    if isinstance(cmd, list | tuple):
         if cmd and cmd[0] == "mkdocs" and cmd[1:2] == ["build"]:
             return 0
         if (

@@ -321,12 +321,12 @@ class GuitarGenerator(BasePartGenerator):
             art = src.get("articulation") or src.get("event_articulation")
             if isinstance(art, str):
                 base = self._articulation_map.get(art)
-                if base:
+                if base is not None:
                     art_objs.append(copy.deepcopy(base))
             elif isinstance(art, list):
                 for name in art:
                     base = self._articulation_map.get(name)
-                    if base:
+                    if base is not None:
                         art_objs.append(copy.deepcopy(base))
         execution_style = rhythm_pattern_definition.get(
             "execution_style", EXEC_STYLE_BLOCK_CHORD

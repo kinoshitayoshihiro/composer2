@@ -14,25 +14,28 @@ import argparse
 import logging
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict
-from utilities.config_loader import load_chordmap_yaml, load_main_cfg
-from utilities.rhythm_library_loader import load_rhythm_library
+from typing import Any
+
 from music21 import (
-    instrument as m21inst,
-    meter,
-    stream,
-    tempo,
-    key,
+    chord,
     dynamics,
     expressions,
-    chord,
+    key,
+    meter,
     note,
+    stream,
+    tempo,
 )
+from music21 import (
+    instrument as m21inst,
+)
+
+import utilities.humanizer as humanizer  # type: ignore
+from utilities.config_loader import load_chordmap_yaml, load_main_cfg
 
 # --- project utilities ----------------------------------------------------
 from utilities.generator_factory import GenFactory  # type: ignore
-import utilities.humanizer as humanizer  # type: ignore
-import yaml
+from utilities.rhythm_library_loader import load_rhythm_library
 from utilities.tempo_utils import load_tempo_map
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
@@ -63,7 +66,7 @@ def clone_element(elem):
         return deepcopy(elem)
 
 
-def normalise_chords_to_relative(chords: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+def normalise_chords_to_relative(chords: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """chord_event list 内の *_offset_beats をセクション内相対 0.0 起点に変換"""
     if not chords:
         return chords
@@ -81,12 +84,16 @@ def normalise_chords_to_relative(chords: list[Dict[str, Any]]) -> list[Dict[str,
 
 
 def compose(
-    main_cfg: Dict[str, Any],
-    chordmap: Dict[str, Any],
+    main_cfg: dict[str, Any],
+    chordmap: dict[str, Any],
     rhythm_lib,
     overrides_model: Any | None = None,
     tempo_map=None,
-) -> tuple[stream.Score, list[Dict[str, Any]]]:
+    num_workers: int = 1,
+    use_processes: bool = False,
+    buffer_ahead: int = 0,
+    parallel_bars: int = 1,
+) -> tuple[stream.Score, list[dict[str, Any]]]:
     if tempo_map is None:
         part_gens = GenFactory.build_from_config(main_cfg, rhythm_lib)
     else:
@@ -98,8 +105,8 @@ def compose(
     used_ids: set[str] = set()
 
     sections_to_gen: list[str] = main_cfg["sections_to_generate"]
-    raw_sections: dict[str, Dict[str, Any]] = chordmap.get("sections", {})
-    sections: list[Dict[str, Any]] = []
+    raw_sections: dict[str, dict[str, Any]] = chordmap.get("sections", {})
+    sections: list[dict[str, Any]] = []
     for name in sections_to_gen:
         sec = raw_sections.get(name)
         if not sec:
@@ -108,13 +115,24 @@ def compose(
         sec_copy["label"] = name
         sections.append(sec_copy)
 
+    executor = None
+    if num_workers and num_workers > 1:
+        if use_processes:
+            from concurrent.futures import ProcessPoolExecutor
+
+            executor = ProcessPoolExecutor(max_workers=num_workers)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            executor = ThreadPoolExecutor(max_workers=num_workers)
+
     for sec in sections:
         label = sec["label"]
         chords_abs = sec.get("processed_chord_events", [])
         if not chords_abs:
             continue
         section_start_q = chords_abs[0]["absolute_offset_beats"]
-        kick_map: Dict[str, list[float]] = {}
+        kick_map: dict[str, list[float]] = {}
         for idx, ch_ev in enumerate(chords_abs):
             next_ev = chords_abs[idx + 1] if idx + 1 < len(chords_abs) else None
             block_start = ch_ev["absolute_offset_beats"] - section_start_q
@@ -122,7 +140,7 @@ def compose(
                 "humanized_duration_beats", ch_ev.get("original_duration_beats", 4.0)
             )
 
-            base_block: Dict[str, Any] = {
+            base_block: dict[str, Any] = {
                 "section_name": label,
                 "absolute_offset": block_start,
                 "q_length": block_length,
@@ -145,6 +163,7 @@ def compose(
                     ),
                 }
 
+            results: dict[str, Any] = {}
             for part_name, gen in part_gens.items():
                 part_cfg = main_cfg["part_defaults"].get(part_name, {})
                 blk = deepcopy(base_block)
@@ -152,12 +171,25 @@ def compose(
                 blk.setdefault("shared_tracks", {})["kick_offsets"] = [
                     o for lst in kick_map.values() for o in lst
                 ]
-                result = gen.compose(
-                    section_data=blk,
-                    overrides_root=overrides_model,
-                    next_section_data=next_block,
-                    shared_tracks=blk["shared_tracks"],
-                )
+                if executor:
+                    results[part_name] = executor.submit(
+                        gen.compose,
+                        section_data=blk,
+                        overrides_root=overrides_model,
+                        next_section_data=next_block,
+                        shared_tracks=blk["shared_tracks"],
+                    )
+                else:
+                    results[part_name] = gen.compose(
+                        section_data=blk,
+                        overrides_root=overrides_model,
+                        next_section_data=next_block,
+                        shared_tracks=blk["shared_tracks"],
+                    )
+
+            for part_name, res in results.items():
+                gen = part_gens[part_name]
+                result = res.result() if executor else res
                 if hasattr(gen, "get_kick_offsets"):
                     kick_map[part_name] = gen.get_kick_offsets()
 
@@ -247,7 +279,23 @@ def compose(
             o for lst in kick_map.values() for o in lst
         ]
 
+    for name, p_stream in part_streams.items():
+        prof = main_cfg["part_defaults"].get(name, {}).get("humanize_profile")
+        if prof:
+            humanizer.apply(p_stream, prof)
+
     score = stream.Score(list(part_streams.values()))
+    global_prof = main_cfg["global_settings"].get("humanize_profile")
+    if global_prof:
+        humanizer.apply(score, global_prof)
+
+    tempo_map_path = main_cfg["global_settings"].get("tempo_map_path")
+    if tempo_map_path:
+        for off_q, bpm in load_tempo_map(Path(tempo_map_path)):
+            score.insert(off_q, tempo.MetronomeMark(number=bpm))
+
+    if executor:
+        executor.shutdown()
     return score, sections
 
 
@@ -294,6 +342,29 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="MIDI ファイル名 (default: output.mid)",
     )
     p.add_argument("--tempo-curve", help="JSON tempo curve path")
+    p.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help="Number of worker threads for parallel generation",
+    )
+    p.add_argument(
+        "--process-pool",
+        action="store_true",
+        help="Use multiprocessing instead of threads",
+    )
+    p.add_argument(
+        "--buffer-ahead",
+        type=int,
+        default=0,
+        help="Bars to generate ahead for live output",
+    )
+    p.add_argument(
+        "--parallel-bars",
+        type=int,
+        default=1,
+        help="Number of bars to generate in parallel",
+    )
     p.add_argument(
         "--verbose", "-v", action="store_true", help="詳しいログ(INFO)を表示"
     )
@@ -395,8 +466,8 @@ def main_cli() -> None:
             logger.error("Failed to load arrangement overrides: %s", e)
 
     section_names: list[str] = main_cfg["sections_to_generate"]
-    raw_sections: dict[str, Dict[str, Any]] = chordmap["sections"]
-    sections: list[Dict[str, Any]] = []
+    raw_sections: dict[str, dict[str, Any]] = chordmap["sections"]
+    sections: list[dict[str, Any]] = []
     for name in section_names:
         sec = raw_sections.get(name)
         if not sec:
@@ -414,167 +485,17 @@ def main_cli() -> None:
     ts = meter.TimeSignature(main_cfg["global_settings"].get("time_signature", "4/4"))
     beats_per_measure = ts.numerator
 
-    # 2) Generator 初期化 ----------------------------------------------------
-    part_gens = GenFactory.build_from_config(
-        main_cfg, rhythm_lib, tempo_map=tempo_map
+    score, _ = compose(
+        main_cfg,
+        chordmap,
+        rhythm_lib,
+        overrides_model=overrides_model,
+        tempo_map=tempo_map,
+        num_workers=args.threads,
+        use_processes=args.process_pool,
+        buffer_ahead=args.buffer_ahead,
+        parallel_bars=args.parallel_bars,
     )
-
-    phrase_spec_path = paths.get("phrase_spec")
-    phrase_map = {}
-    if phrase_spec_path:
-        try:
-            with open(phrase_spec_path, "r", encoding="utf-8") as f:
-                phrase_map = yaml.safe_load(f) or {}
-        except Exception as e:
-            logger.warning("Failed to load phrase spec: %s", e)
-
-    insert_phrases = main_cfg.get("global_settings", {}).get("insert_phrases", [])
-
-    for gen in part_gens.values():
-        if hasattr(gen, "set_phrase_map"):
-            gen.set_phrase_map(phrase_map.get("bass_phrases", {}))
-        if hasattr(gen, "set_phrase_insertions"):
-            mapping = {}
-            for entry in insert_phrases:
-                if "@" in entry:
-                    name, sec = entry.split("@", 1)
-                    mapping[sec] = name
-            gen.set_phrase_insertions(mapping)
-
-    # 楽器ごとの単一 Part
-    part_streams: dict[str, stream.Part] = {}
-    for part_name in part_gens:
-        p = stream.Part(id=part_name)
-        try:
-            p.insert(0, m21inst.fromString(part_name))
-        except Exception:
-            p.partName = part_name
-        part_streams[part_name] = p
-
-    # 3) セクション毎にフレーズ生成 -----------------------------------------
-    for sec in sections:
-        label = sec["label"]
-        chords_abs: list[Dict[str, Any]] = sec["processed_chord_events"]
-        if not chords_abs:
-            logging.warning(f"Section '{label}' に chord イベントがありません")
-            continue
-
-        section_start_q = chords_abs[0]["absolute_offset_beats"]
-
-        for idx, ch_ev in enumerate(chords_abs):
-            next_ev = chords_abs[idx + 1] if idx + 1 < len(chords_abs) else None
-
-            block_start = ch_ev["absolute_offset_beats"] - section_start_q
-            block_length = ch_ev.get(
-                "humanized_duration_beats", ch_ev.get("original_duration_beats", 4.0)
-            )
-
-            base_block_data: Dict[str, Any] = {
-                "section_name": label,
-                "absolute_offset": block_start,
-                "q_length": block_length,
-                "chord_symbol_for_voicing": ch_ev.get("chord_symbol_for_voicing"),
-                "specified_bass_for_voicing": ch_ev.get("specified_bass_for_voicing"),
-                "original_chord_label": ch_ev.get("original_chord_label"),
-                "mode": sec.get("expression_details", {}).get("section_mode"),
-                "musical_intent": {
-                    "section_name": label,
-                    "chords": [ch_ev],
-                    "emotion": sec["musical_intent"].get("emotion", "neutral"),
-                    "start_q": block_start,
-                    "vocal_notes": [],
-                },
-            }
-
-            next_block_data = None
-            if next_ev:
-                next_block_data = {
-                    "chord_symbol_for_voicing": next_ev.get("chord_symbol_for_voicing"),
-                    "specified_bass_for_voicing": next_ev.get(
-                        "specified_bass_for_voicing"
-                    ),
-                    "original_chord_label": next_ev.get("original_chord_label"),
-                    "q_length": next_ev.get(
-                        "humanized_duration_beats",
-                        next_ev.get("original_duration_beats", 4.0),
-                    ),
-                }
-
-            for part_name, gen in part_gens.items():
-                part_cfg = main_cfg["part_defaults"].get(part_name, {})
-                blk_data = deepcopy(base_block_data)
-                blk_data["part_params"] = part_cfg
-
-                result_stream = gen.compose(
-                    section_data=blk_data,
-                    overrides_root=overrides_model,
-                    next_section_data=next_block_data,
-                )
-
-                # result_stream が dict/list/tuple かを判定して
-                # 全部のパートを確実に挿入する新ロジック
-                if isinstance(result_stream, dict):
-                    items = result_stream.items()
-                elif isinstance(result_stream, (list, tuple)):
-                    items = []
-                    for idx, sub in enumerate(result_stream):
-                        pid = getattr(sub, "id", f"{part_name}_{idx}")
-                        items.append((pid, sub))
-                else:
-                    items = [(getattr(result_stream, "id", part_name), result_stream)]
-
-                # 各パートを初期化＆ノート挿入
-                for pid, sub_stream in items:
-                    if pid not in part_streams:
-                        p = stream.Part(id=pid)
-                        try:
-                            p.insert(0, m21inst.fromString(pid))
-                        except Exception:
-                            p.partName = pid
-                        part_streams[pid] = p
-                    dest = part_streams[pid]
-                    # ---- sub_stream から dest へ要素をコピー ---------------------------------
-                    has_inst = bool(
-                        dest.recurse().getElementsByClass(m21inst.Instrument)
-                    )
-                    inserted_inst = False
-
-                    for elem in sub_stream.recurse():
-                        # Instrument は先頭 0.0 ql に 1 度だけ入れる
-                        if isinstance(elem, m21inst.Instrument):
-                            if not has_inst and not inserted_inst:
-                                dest.insert(0.0, clone_element(elem))
-                                inserted_inst = True
-                            continue
-
-                        # ノート系・テンポ・拍子・ダイナミクスなど必要な要素だけコピー
-                        if isinstance(
-                            elem,
-                            (
-                                note.GeneralNote,
-                                chord.Chord,
-                                note.Rest,
-                                tempo.MetronomeMark,
-                                key.KeySignature,
-                                dynamics.Dynamic,
-                                expressions.Expression,
-                            ),
-                        ):
-                            dest.insert(
-                                section_start_q + block_start + elem.offset,
-                                clone_element(elem),
-                            )
-
-    # 4) Humanizer -----------------------------------------------------------
-    for name, p_stream in part_streams.items():
-        prof = main_cfg["part_defaults"].get(name, {}).get("humanize_profile")
-        if prof:
-            humanizer.apply(p_stream, prof)
-
-    score = stream.Score(list(part_streams.values()))
-    global_prof = main_cfg["global_settings"].get("humanize_profile")
-    if global_prof:
-        humanizer.apply(score, global_prof)
 
     # 5) Tempo マップ & 書き出し -------------------------------------------
     tempo_map_path = main_cfg["global_settings"].get("tempo_map_path")

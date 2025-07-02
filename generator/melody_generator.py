@@ -4,50 +4,55 @@ from __future__ import annotations
 """melody_generator.py – *lightweight rewrite*
 ... (docstringは変更なし) ...
 """
-from typing import (
-    Dict,
-    List,
-    Sequence,
-    Any,
-    Tuple,
-    Optional,
-    Union,
-    cast,
-)  # cast を追加
-from .base_part_generator import BasePartGenerator
-import random
-import logging
 import copy
+import logging
 import os
+import random
 from pathlib import Path
+from typing import (
+    Any,
+)
+
+import music21.harmony as harmony
+import music21.instrument as m21instrument  # 指摘された形式
+import music21.key as key
+import music21.meter as meter
+import music21.note as note
 
 # music21 のサブモジュールを正しい形式でインポート
 import music21.stream as stream
-import music21.note as note
-import music21.harmony as harmony
 import music21.tempo as tempo
-import music21.meter as meter
-import music21.instrument as m21instrument  # 指摘された形式
-import music21.key as key
-import music21.pitch as pitch  # コード内で使用されているため追加
 import music21.volume as m21volume
+
+from .base_part_generator import BasePartGenerator
 
 # melody_utils と humanizer をインポート
 try:
-    from .melody_utils import generate_melodic_pitches
     from utilities.core_music_utils import (
         MIN_NOTE_DURATION_QL,
         get_time_signature_object,
         sanitize_chord_label,
     )
-    from utilities.humanizer import apply_humanization_to_part, HUMANIZATION_TEMPLATES
+    from utilities.humanizer import HUMANIZATION_TEMPLATES, apply_humanization_to_part
+
+    from .melody_utils import generate_melodic_pitches
+    try:
+        from cyext import (
+            insert_melody_notes as cy_insert_melody_notes,
+        )
+        from cyext import (
+            velocity_random_walk as cy_velocity_random_walk,
+        )
+    except Exception:
+        cy_velocity_random_walk = None
+        cy_insert_melody_notes = None
 except ImportError as e:
     logger_fallback = logging.getLogger(__name__ + ".fallback_utils")
     logger_fallback.error(
         f"MelodyGenerator: Failed to import required modules (melody_utils or humanizer or core_music_utils): {e}"
     )
 
-    def generate_melodic_pitches(*args, **kwargs) -> List[note.Note]:
+    def generate_melodic_pitches(*args, **kwargs) -> list[note.Note]:
         return []
 
     def apply_humanization_to_part(
@@ -61,10 +66,10 @@ except ImportError as e:
 
     MIN_NOTE_DURATION_QL = 0.125
 
-    def get_time_signature_object(ts_str: Optional[str]) -> meter.TimeSignature:
+    def get_time_signature_object(ts_str: str | None) -> meter.TimeSignature:
         return meter.TimeSignature("4/4")
 
-    def sanitize_chord_label(label: Optional[str]) -> Optional[str]:
+    def sanitize_chord_label(label: str | None) -> str | None:
         if not label or label.strip().lower() in ["rest", "n.c.", "nc", "none"]:
             return None
         return label.strip()
@@ -83,13 +88,13 @@ class MelodyGenerator(BasePartGenerator):
         role: str = "melody",
         instrument_name: str = "Soprano Sax",
         apply_pedal: bool = False,
-        rhythm_library: Optional[Dict[str, Dict]] = None,
+        rhythm_library: dict[str, dict] | None = None,
         default_instrument=m21instrument.Flute(),
         global_tempo: int = 100,
         global_time_signature: str = "4/4",
         global_key_signature_tonic: str = "C",
         global_key_signature_mode: str = "major",
-        rng: Optional[random.Random] = None,
+        rng: random.Random | None = None,
         **kwargs,
     ):
         from music21.instrument import fromString
@@ -132,7 +137,7 @@ class MelodyGenerator(BasePartGenerator):
                 "MelodyGenerator: Added 'default_melody_rhythm' to rhythm_library."
             )
 
-    def _get_rhythm_details(self, rhythm_key: str) -> Dict[str, Any]:
+    def _get_rhythm_details(self, rhythm_key: str) -> dict[str, Any]:
         default_rhythm = self.rhythm_library.get(
             "default_melody_rhythm",
             {
@@ -200,7 +205,7 @@ class MelodyGenerator(BasePartGenerator):
             chord_label_str = blk_data.get("chord_label", "C")
             block_q_length = blk_data.get("q_length", 4.0)
 
-            cs_m21_obj: Optional[harmony.ChordSymbol] = None  # 初期化
+            cs_m21_obj: harmony.ChordSymbol | None = None  # 初期化
             try:
                 sanitized_label = sanitize_chord_label(chord_label_str)
                 if sanitized_label is None:
@@ -272,38 +277,49 @@ class MelodyGenerator(BasePartGenerator):
             density_for_block = melody_params.get("density", 0.7)
             note_velocity = melody_params.get("velocity", 80)
 
+            offsets: list[float] = []
+            durs: list[float] = []
+            kept: list[note.Note] = []
             for idx, n_obj in enumerate(generated_notes):
-                if self.rng.random() <= density_for_block:
-                    note_start_offset_in_block = final_beat_offsets_for_block[idx]
-
-                    if idx < len(final_beat_offsets_for_block) - 1:
-                        next_note_start_offset_in_block = final_beat_offsets_for_block[
-                            idx + 1
-                        ]
-                        max_dur = (
-                            next_note_start_offset_in_block - note_start_offset_in_block
-                        )
-                    else:
-                        max_dur = block_q_length - note_start_offset_in_block
-
-                    actual_dur = max(
-                        MIN_NOTE_DURATION_QL,
-                        min(
-                            max_dur,
-                            (
-                                base_note_duration_ql * stretch_factor
-                                if "stretch_factor" in locals()
-                                else base_note_duration_ql
-                            ),
+                if self.rng.random() > density_for_block:
+                    continue
+                note_start_offset_in_block = final_beat_offsets_for_block[idx]
+                if idx < len(final_beat_offsets_for_block) - 1:
+                    next_note_start_offset_in_block = final_beat_offsets_for_block[idx + 1]
+                    max_dur = next_note_start_offset_in_block - note_start_offset_in_block
+                else:
+                    max_dur = block_q_length - note_start_offset_in_block
+                actual_dur = max(
+                    MIN_NOTE_DURATION_QL,
+                    min(
+                        max_dur,
+                        (
+                            base_note_duration_ql * stretch_factor
+                            if "stretch_factor" in locals()
+                            else base_note_duration_ql
                         ),
-                    )
-                    n_obj.quarterLength = actual_dur * 0.95
+                    ),
+                ) * 0.95
+                offsets.append(current_total_offset + note_start_offset_in_block)
+                durs.append(actual_dur)
+                kept.append(n_obj)
 
-                    n_obj.volume = m21volume.Volume(velocity=note_velocity)
-
-                    melody_part.insert(
-                        current_total_offset + note_start_offset_in_block, n_obj
+            if kept:
+                if cy_insert_melody_notes is not None:
+                    cy_insert_melody_notes(
+                        melody_part,
+                        kept,
+                        offsets,
+                        durs,
+                        int(note_velocity),
+                        density_for_block,
+                        self.rng,
                     )
+                else:
+                    for n_obj, off, dur in zip(kept, offsets, durs):
+                        n_obj.quarterLength = dur
+                        n_obj.volume = m21volume.Volume(velocity=note_velocity)
+                        melody_part.insert(off, n_obj)
 
             current_total_offset += block_q_length
 

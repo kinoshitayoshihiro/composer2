@@ -5,7 +5,7 @@ import math
 import random
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import yaml
 from music21 import (
@@ -28,7 +28,11 @@ from music21 import (
 
 from tools.peak_synchroniser import PeakSynchroniser
 from utilities import fill_dsl, groove_sampler, groove_sampler_ngram, humanizer
-from utilities.groove_sampler_ngram import Event as GrooveEvent
+
+try:
+    from cyext import apply_velocity_curve as cy_apply_velocity_curve
+except Exception:  # pragma: no cover
+    cy_apply_velocity_curve = None
 from utilities.accent_mapper import AccentMapper
 from utilities.core_music_utils import (
     MIN_NOTE_DURATION_QL,
@@ -40,6 +44,7 @@ from utilities.drum_map_registry import (
     MISSING_DRUM_MAP_FALLBACK,
     get_drum_map,
 )
+from utilities.groove_sampler_ngram import Event as GrooveEvent
 from utilities.humanizer import apply_humanization_to_element
 from utilities.onset_heatmap import RESOLUTION, load_heatmap
 from utilities.safe_get import safe_get
@@ -193,9 +198,12 @@ class FillInserter:
         velocity_curve = fill_def.get("velocity_curve")
         if velocity_curve:
             curve = [float(v) for v in velocity_curve]
-            for i, ev in enumerate(events):
-                scale = curve[min(i, len(curve) - 1)]
-                ev["velocity_factor"] = ev.get("velocity_factor", 1.0) * scale
+            if cy_apply_velocity_curve is not None:
+                cy_apply_velocity_curve(events, curve)
+            else:
+                for i, ev in enumerate(events):
+                    scale = curve[min(i, len(curve) - 1)]
+                    ev["velocity_factor"] = ev.get("velocity_factor", 1.0) * scale
         legato_mode = fill_def.get("mode") == "legato"
         base_vel = int(fill_def.get("base_velocity", self.base_velocity))
         start = (

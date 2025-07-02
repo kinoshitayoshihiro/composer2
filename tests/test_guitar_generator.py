@@ -138,3 +138,38 @@ def test_gate_length_variation_range():
     dur = notes[0].quarterLength
     base = 1.0 * 0.9
     assert base * 0.8 <= dur <= base * 1.2
+
+
+def test_internal_default_patterns():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="guitar",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+    names = gen.part_parameters["guitar_default_patterns"].keys()
+    assert set(names) == {
+        "quarter_down",
+        "eighth_down_up",
+        "alternate_bass",
+        "rock_chug",
+    }
+    assert (
+        gen.part_parameters["guitar_default_patterns"]["quarter_down"][0]["offset"]
+        == 0.0
+    )
+    assert (
+        gen.part_parameters["guitar_default_patterns"]["eighth_down_up"][0]["offset"]
+        == 0.0
+    )
+    assert (
+        gen.part_parameters["guitar_default_patterns"]["alternate_bass"][0]["offset"]
+        == 0.0
+    )
+    assert (
+        gen.part_parameters["guitar_default_patterns"]["rock_chug"][0]["offset"]
+        == 0.0
+    )

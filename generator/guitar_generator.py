@@ -212,6 +212,7 @@ class GuitarGenerator(BasePartGenerator):
 
         self._add_internal_default_patterns()
 
+
     def compose(self, *args, **kwargs):
         result = super().compose(*args, **kwargs)
         if isinstance(result, stream.Part):

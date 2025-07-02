@@ -28,6 +28,7 @@ from music21 import (
 from utilities import MIN_NOTE_DURATION_QL, humanizer
 from utilities.accent_mapper import AccentMapper
 from utilities.emotion_profile_loader import load_emotion_profile
+import yaml
 from utilities.velocity_curve import resolve_velocity_curve
 
 from .base_part_generator import BasePartGenerator
@@ -236,6 +237,11 @@ class BassGenerator(BasePartGenerator):
         self._root_offsets: list[float] = []
         self._vel_walk_state: int = 0
 
+        self.phrase_map: dict[str, dict] = {}
+        self.intensity_scale: float = 0.5
+        self.custom_phrases: dict[str, Any] = {}
+        self.phrase_insertions: dict[str, str] = {}
+
         self.kick_offsets: list[float] = []
         self.base_velocity = 70
 
@@ -320,9 +326,22 @@ class BassGenerator(BasePartGenerator):
         if isinstance(result, dict):
             for p in result.values():
                 apply_shift(p)
+                label = section_data.get("section_name")
+                if label in self.phrase_insertions:
+                    self._insert_custom_phrase(p, self.phrase_insertions[label])
+                intensity = self.phrase_map.get(label, {}).get("intensity")
+                if intensity is not None:
+                    self._apply_phrase_dynamics(p, float(intensity))
             return result
         else:
-            return apply_shift(result)
+            part = apply_shift(result)
+            label = section_data.get("section_name")
+            if label in self.phrase_insertions:
+                self._insert_custom_phrase(part, self.phrase_insertions[label])
+            intensity = self.phrase_map.get(label, {}).get("intensity")
+            if intensity is not None:
+                self._apply_phrase_dynamics(part, float(intensity))
+            return part
 
     def _postprocess_notes_for_kick_lock(
         self, notes: list[note.Note], kick_offsets: Sequence[float], eps: float = 0.03
@@ -1830,6 +1849,46 @@ class BassGenerator(BasePartGenerator):
     def get_root_offsets(self) -> list[float]:
         """Return offsets of notes generated in the last compose call."""
         return list(self._root_offsets)
+
+    # --------------------------- Phrase Utilities ---------------------------
+    def load_phrase_templates(self, path: Path) -> None:
+        """Load custom phrase templates from YAML or JSON."""
+        p = Path(path)
+        with p.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        self.custom_phrases = data.get("phrases", {})
+
+    def set_phrase_insertions(self, mapping: dict[str, str]) -> None:
+        """Map section labels to phrase template names."""
+        self.phrase_insertions = dict(mapping)
+
+    def set_phrase_map(self, mapping: dict[str, dict]) -> None:
+        self.phrase_map = dict(mapping)
+
+    def _apply_phrase_dynamics(self, part: stream.Part, intensity: float) -> None:
+        scale = 1.0 + intensity * self.intensity_scale
+        for n in part.flatten().notes:
+            if n.volume is None:
+                n.volume = m21volume.Volume(velocity=self.base_velocity)
+            n.volume.velocity = max(1, min(127, int(n.volume.velocity * scale)))
+
+    def _insert_custom_phrase(self, part: stream.Part, template_name: str) -> None:
+        tpl = self.custom_phrases.get(template_name)
+        if not tpl:
+            return
+        pattern = tpl.get("pattern", [])
+        velocities = tpl.get("velocities", [])
+        for idx, spec in enumerate(pattern):
+            try:
+                off, midi, dur = spec
+            except Exception:
+                continue
+            vel = int(velocities[idx]) if idx < len(velocities) else self.base_velocity
+            n = note.Note()
+            n.pitch.midi = int(midi)
+            n.duration = m21duration.Duration(float(dur))
+            n.volume = m21volume.Volume(velocity=vel)
+            part.insert(float(off), n)
 
     # ------------------------------------------------------------------
     # Kick-Lock → Mirror-Melody simplified rendering

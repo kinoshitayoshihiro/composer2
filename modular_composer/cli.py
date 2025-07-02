@@ -8,6 +8,7 @@ import importlib.metadata as _md
 import json
 import random
 import pickle
+import yaml
 import tempfile
 from pathlib import Path
 from types import ModuleType
@@ -189,6 +190,45 @@ except _md.PackageNotFoundError:
     __version__ = "0.0.0"
 
 
+@cli.group()
+def preset() -> None:
+    """Preset management commands."""
+
+
+@preset.command("list")
+def preset_list() -> None:
+    from utilities import preset_manager
+
+    for name in preset_manager.list_presets():
+        click.echo(name)
+
+
+@preset.command("export")
+@click.argument("name")
+@click.option("--out", type=Path, required=True)
+def preset_export(name: str, out: Path) -> None:
+    from utilities import preset_manager
+    data = preset_manager.load_preset(name)
+    if out.suffix.lower() in {".yml", ".yaml"}:
+        yaml.safe_dump(data, out.open("w", encoding="utf-8"))
+    else:
+        json.dump(data, out.open("w", encoding="utf-8"))
+
+
+@preset.command("import")
+@click.argument("file", type=Path)
+@click.option("--name", type=str, default=None)
+def preset_import(file: Path, name: str | None) -> None:
+    from utilities import preset_manager
+
+    with file.open("r", encoding="utf-8") as fh:
+        if file.suffix.lower() in {".yml", ".yaml"}:
+            cfg = yaml.safe_load(fh) or {}
+        else:
+            cfg = json.load(fh)
+    preset_manager.save_preset(name or file.stem, cfg)
+
+
 @cli.command("live")
 @click.argument("model", type=Path)
 @click.option(
@@ -254,6 +294,7 @@ def _cmd_demo(args: list[str]) -> None:
     ap = argparse.ArgumentParser(prog="modcompose demo")
     ap.add_argument("-o", "--out", type=Path, default=Path("demo.mid"))
     ap.add_argument("--tempo-curve", type=Path)
+    ap.add_argument("--seed", type=int, default=None)
     ns = ap.parse_args(args)
     if ns.seed is not None:
         random.seed(ns.seed)
@@ -342,6 +383,7 @@ def _cmd_render(args: list[str]) -> None:
     ap.add_argument("--ema-alpha", type=float, default=0.1)
     ap.add_argument("--humanize-timing", type=float, default=0.0)
     ap.add_argument("--humanize-velocity", type=float, default=0.0)
+    ap.add_argument("--preset", type=str, default=None)
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
@@ -352,6 +394,12 @@ def _cmd_render(args: list[str]) -> None:
     else:
         with ns.spec.open("r", encoding="utf-8") as fh:
             spec = json.load(fh)
+
+    if ns.preset:
+        from utilities import preset_manager
+
+        preset_cfg = preset_manager.load_preset(ns.preset)
+        spec.update(preset_cfg)
 
     tempo_curve = spec.get("tempo_curve", [])
     events = spec.get("drum_pattern", [])

@@ -1,7 +1,7 @@
 # --- START OF FILE generator/base_part_generator.py (修正版) ---
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
-from music21 import stream
+from music21 import stream, meter
 import logging
 import random
 from music21 import instrument as m21instrument
@@ -47,6 +47,13 @@ class BasePartGenerator(ABC):
         self.default_instrument = default_instrument
         self.global_tempo = global_tempo
         self.global_time_signature = global_time_signature
+        try:
+            num, denom = map(int, str(global_time_signature).split("/"))
+        except Exception:
+            ts_obj = meter.TimeSignature(global_time_signature or "4/4")
+            num, denom = ts_obj.numerator, ts_obj.denominator
+        self.bar_length = num * (4 / denom)
+        self.swing_subdiv = denom
         self.global_key_signature_tonic = global_key_signature_tonic
         self.global_key_signature_mode = global_key_signature_mode
         self.rng = rng or random.Random()
@@ -159,7 +166,7 @@ class BasePartGenerator(ABC):
             if profile:
                 apply_offset_profile(part, profile)
             if ratio is not None:               # Swing が指定されていれば適用
-                apply_swing(part, ratio, subdiv=8)
+                apply_swing(part, ratio, subdiv=self.swing_subdiv)
             return part
 
         if isinstance(parts, dict):

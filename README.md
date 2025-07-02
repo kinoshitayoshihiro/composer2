@@ -501,6 +501,7 @@ Launch the Streamlit GUI to compare:
 ```bash
 modcompose gui
 ```
+Refer to [docs/gui.md](docs/gui.md) for the new MIDI capture and preset features.
 
 ### RNN Backend and Live Playback
 

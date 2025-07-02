@@ -186,6 +186,15 @@ though the notes are correct. You can switch mappings programmatically via
 | II–V build-up         | `approach_style_on_4th`   | `approach_style_on_4th: subdom_dom`              |
 | Velocity envelope     | `velocity_envelope`       | `velocity_envelope: [[0.0,60],[2.0,90]]`         |
 
+## Advanced Guitar Features
+
+| Feature | Parameter | Effect |
+|---------|-----------|--------|
+| Stroke direction | `stroke_direction` | `"down"` multiplies velocity by 1.1, `"up"` by 0.9 |
+| Palm mute | `palm_mute` | Shortens sustain by 15% and lowers velocity |
+| Slide timing | `slide_in_offset`, `slide_out_offset` | Fractional offsets (0.0–1.0) describing portamento start and end |
+| Fret bend | `bend_amount`, `bend_release_offset` | Bend depth in semitones and release position before note end |
+
 ## Humanize – intensity envelope / swing override
 
 Velocity scaling now follows each section’s `musical_intent.intensity`.

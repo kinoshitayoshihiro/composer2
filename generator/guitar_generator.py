@@ -185,6 +185,8 @@ class GuitarGenerator(BasePartGenerator):
         pull_off_interval: int = 2,
         hammer_on_probability: float = 0.5,
         pull_off_probability: float = 0.5,
+        default_stroke_direction: str | None = None,
+        default_palm_mute: bool = False,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -203,6 +205,10 @@ class GuitarGenerator(BasePartGenerator):
         self.pull_off_interval = pull_off_interval
         self.hammer_on_probability = hammer_on_probability
         self.pull_off_probability = pull_off_probability
+        self.default_stroke_direction = (
+            default_stroke_direction.lower() if isinstance(default_stroke_direction, str) else None
+        )
+        self.default_palm_mute = bool(default_palm_mute)
         self._prev_note_pitch: pitch.Pitch | None = None
         from utilities.core_music_utils import get_time_signature_object
 
@@ -238,6 +244,10 @@ class GuitarGenerator(BasePartGenerator):
         self.part_parameters.setdefault("pull_off_interval", self.pull_off_interval)
         self.part_parameters.setdefault("hammer_on_probability", self.hammer_on_probability)
         self.part_parameters.setdefault("pull_off_probability", self.pull_off_probability)
+        if "stroke_direction" not in self.part_parameters and self.default_stroke_direction is not None:
+            self.part_parameters["stroke_direction"] = self.default_stroke_direction
+        if "palm_mute" not in self.part_parameters:
+            self.part_parameters["palm_mute"] = self.default_palm_mute
 
         self._articulation_map = {
             "palm_mute": articulations.FretIndication("palm mute"),
@@ -344,6 +354,56 @@ class GuitarGenerator(BasePartGenerator):
                     base = self._articulation_map.get(name)
                     if base is not None:
                         art_objs.append(copy.deepcopy(base))
+
+        slide_in_offset = guitar_block_params.get(
+            "slide_in_offset",
+            rhythm_pattern_definition.get("slide_in_offset"),
+        )
+        slide_out_offset = guitar_block_params.get(
+            "slide_out_offset",
+            rhythm_pattern_definition.get("slide_out_offset"),
+        )
+        if slide_in_offset is not None or slide_out_offset is not None:
+            slide_art = articulations.IndeterminateSlide()
+            if slide_in_offset is not None:
+                val = float(slide_in_offset)
+                if hasattr(slide_art.editorial, "slide_in_offset"):
+                    slide_art.editorial.slide_in_offset = val
+                else:
+                    slide_art.editorial.setdefault("slide_in_offset", val)
+            if slide_out_offset is not None:
+                val = float(slide_out_offset)
+                if hasattr(slide_art.editorial, "slide_out_offset"):
+                    slide_art.editorial.slide_out_offset = val
+                else:
+                    slide_art.editorial.setdefault("slide_out_offset", val)
+            art_objs.append(slide_art)
+
+        bend_amount = guitar_block_params.get(
+            "bend_amount",
+            rhythm_pattern_definition.get("bend_amount"),
+        )
+        bend_release_offset = guitar_block_params.get(
+            "bend_release_offset",
+            rhythm_pattern_definition.get("bend_release_offset"),
+        )
+        if bend_amount is not None or bend_release_offset is not None:
+            bend_art = articulations.FretBend()
+            if bend_amount is not None:
+                val = float(bend_amount)
+                if hasattr(bend_art.editorial, "bend_amount"):
+                    bend_art.editorial.bend_amount = val
+                else:
+                    bend_art.editorial.setdefault("bend_amount", val)
+            if bend_release_offset is not None:
+                val = float(bend_release_offset)
+                if hasattr(bend_art.editorial, "bend_release_offset"):
+                    bend_art.editorial.bend_release_offset = val
+                else:
+                    bend_art.editorial.setdefault(
+                        "bend_release_offset", val
+                    )
+            art_objs.append(bend_art)
         execution_style = rhythm_pattern_definition.get(
             "execution_style", EXEC_STYLE_BLOCK_CHORD
         )
@@ -378,6 +438,16 @@ class GuitarGenerator(BasePartGenerator):
             return []
 
         is_palm_muted = guitar_block_params.get("palm_mute", False)
+        stroke_dir = guitar_block_params.get("current_event_stroke") or guitar_block_params.get("stroke_direction")
+        if isinstance(stroke_dir, str):
+            sd = stroke_dir.lower()
+            if sd == "down":
+                event_final_velocity = min(127, int(event_final_velocity * 1.1))
+            elif sd == "up":
+                event_final_velocity = max(1, int(event_final_velocity * 0.9))
+
+        if is_palm_muted:
+            event_final_velocity = max(1, int(event_final_velocity * 0.85))
 
         if execution_style == EXEC_STYLE_POWER_CHORDS and cs.root():
             p_root = pitch.Pitch(cs.root().name)
@@ -396,7 +466,9 @@ class GuitarGenerator(BasePartGenerator):
                 ):
                     power_chord_pitches.append(root_oct_up)
 
-            base_dur = event_duration_ql * (0.7 if is_palm_muted else 0.95)
+            base_dur = event_duration_ql * (
+                0.85 if is_palm_muted else 0.95
+            )
             base_dur *= 1 + self.rng.uniform(-self.gate_length_variation, self.gate_length_variation)
             ch = m21chord.Chord(
                 power_chord_pitches[:num_strings],
@@ -411,7 +483,9 @@ class GuitarGenerator(BasePartGenerator):
             notes_for_event.append(ch)
 
         elif execution_style in (EXEC_STYLE_BLOCK_CHORD, EXEC_STYLE_HAMMER_ON, EXEC_STYLE_PULL_OFF):
-            base_dur = event_duration_ql * (0.7 if is_palm_muted else 0.9)
+            base_dur = event_duration_ql * (
+                0.85 if is_palm_muted else 0.9
+            )
             base_dur *= 1 + self.rng.uniform(-self.gate_length_variation, self.gate_length_variation)
             ch = m21chord.Chord(
                 chord_pitches,
@@ -443,7 +517,9 @@ class GuitarGenerator(BasePartGenerator):
 
             for i, p_obj_strum in enumerate(play_order):
                 n_strum = note.Note(p_obj_strum)
-                base_dur = event_duration_ql * (0.6 if is_palm_muted else 0.9)
+                base_dur = event_duration_ql * (
+                    0.85 if is_palm_muted else 0.9
+                )
                 base_dur *= 1 + self.rng.uniform(-self.gate_length_variation, self.gate_length_variation)
                 n_strum.duration = music21_duration.Duration(
                     quarterLength=max(MIN_NOTE_DURATION_QL, base_dur)
@@ -466,9 +542,16 @@ class GuitarGenerator(BasePartGenerator):
                             ((i / (len(play_order) - 1)) * vel_adj_range)
                             - (vel_adj_range / 2)
                         )
-                n_strum.volume = m21volume.Volume(
-                    velocity=max(1, min(127, event_final_velocity + vel_adj))
+                if is_down:
+                    base_factor = 1.10
+                elif event_stroke_dir.lower() == "up":
+                    base_factor = 0.90
+                else:
+                    base_factor = 1.0
+                final_vel = int(
+                    max(1, min(127, (event_final_velocity + vel_adj) * base_factor))
                 )
+                n_strum.volume = m21volume.Volume(velocity=final_vel)
                 if is_palm_muted:
                     n_strum.articulations.append(articulations.Staccatissimo())
                 _attach_artics(n_strum)
@@ -499,7 +582,9 @@ class GuitarGenerator(BasePartGenerator):
                 )
                 if actual_arp_dur < MIN_NOTE_DURATION_QL / 4.0:
                     break
-                base_dur = actual_arp_dur * (0.8 if is_palm_muted else 0.95)
+                base_dur = actual_arp_dur * (
+                    0.85 if is_palm_muted else 0.95
+                )
                 base_dur *= 1 + self.rng.uniform(-self.gate_length_variation, self.gate_length_variation)
                 n_arp = note.Note(
                     p_play_arp,
@@ -588,6 +673,9 @@ class GuitarGenerator(BasePartGenerator):
             # options 以外のキーで上書き
             final_guitar_params.update(override_dict)
         logger.debug(f"{log_blk_prefix}: FinalParams={final_guitar_params}")
+
+        final_guitar_params.setdefault("stroke_direction", self.default_stroke_direction)
+        final_guitar_params.setdefault("palm_mute", self.default_palm_mute)
 
         # 必要な情報を section_data から取得
         block_duration_ql = safe_get(
@@ -749,6 +837,9 @@ class GuitarGenerator(BasePartGenerator):
                 current_event_guitar_params["current_event_stroke"] = (
                     event_stroke_direction
                 )
+            else:
+                if final_guitar_params.get("stroke_direction"):
+                    current_event_guitar_params["current_event_stroke"] = final_guitar_params.get("stroke_direction")
 
             scale_factor = (
                 block_duration_ql / pattern_ref_duration
@@ -812,6 +903,12 @@ class GuitarGenerator(BasePartGenerator):
             current_event_guitar_params["palm_mute"] = final_guitar_params.get(
                 "palm_mute", rhythm_details.get("palm_mute", False)
             )
+            current_event_guitar_params["palm_mute"] = bool(
+                event_def.get(
+                    "palm_mute",
+                    current_event_guitar_params.get("palm_mute", False),
+                )
+            )
 
             event_articulation = event_def.get("articulation")
             if event_articulation is not None:
@@ -844,21 +941,33 @@ class GuitarGenerator(BasePartGenerator):
                 if pitch_for_check and prev_pitch:
                     semitone_diff = pitch_for_check.ps - prev_pitch.ps
                     if exec_style == EXEC_STYLE_HAMMER_ON and semitone_diff > 0:
-                        if 0 < semitone_diff <= self.part_parameters.get("hammer_on_interval", self.hammer_on_interval):
-                            if self.rng.random() < self.part_parameters.get("hammer_on_probability", self.hammer_on_probability):
-                                art = articulations.FretIndication("hammer-on")
+                        if 0 < semitone_diff <= self.part_parameters.get(
+                            "hammer_on_interval", self.hammer_on_interval
+                        ):
+                            if self.rng.random() < self.part_parameters.get(
+                                "hammer_on_probability", self.hammer_on_probability
+                            ):
+                                art = articulations.HammerOn()
                                 if isinstance(el, m21chord.Chord):
                                     for n_in_ch in el.notes:
-                                        n_in_ch.articulations.append(copy.deepcopy(art))
+                                        n_in_ch.articulations.append(
+                                            copy.deepcopy(art)
+                                        )
                                 else:
                                     el.articulations.append(copy.deepcopy(art))
                     elif exec_style == EXEC_STYLE_PULL_OFF and semitone_diff < 0:
-                        if 0 < abs(semitone_diff) <= self.part_parameters.get("pull_off_interval", self.pull_off_interval):
-                            if self.rng.random() < self.part_parameters.get("pull_off_probability", self.pull_off_probability):
-                                art = articulations.FretIndication("pull-off")
+                        if 0 < abs(semitone_diff) <= self.part_parameters.get(
+                            "pull_off_interval", self.pull_off_interval
+                        ):
+                            if self.rng.random() < self.part_parameters.get(
+                                "pull_off_probability", self.pull_off_probability
+                            ):
+                                art = articulations.PullOff()
                                 if isinstance(el, m21chord.Chord):
                                     for n_in_ch in el.notes:
-                                        n_in_ch.articulations.append(copy.deepcopy(art))
+                                        n_in_ch.articulations.append(
+                                            copy.deepcopy(art)
+                                        )
                                 else:
                                     el.articulations.append(copy.deepcopy(art))
                 if pitch_for_check:

@@ -22,6 +22,7 @@ from music21 import instrument as m21instrument
 
 import random
 import logging
+logger = logging.getLogger(__name__)
 import math
 
 from .base_part_generator import BasePartGenerator
@@ -74,7 +75,6 @@ except ImportError:
         return label.strip()
 
 
-logger = logging.getLogger("modular_composer.guitar_generator")
 
 DEFAULT_GUITAR_OCTAVE_RANGE: Tuple[int, int] = (2, 5)
 GUITAR_STRUM_DELAY_QL: float = 0.02
@@ -207,9 +207,7 @@ class GuitarGenerator(BasePartGenerator):
                 "description": "Failsafe default quarter note strum",
             }
 
-        if self.external_patterns_path:
-            self._load_external_strum_patterns()
-
+        self._load_external_strum_patterns()
         self._add_internal_default_patterns()
 
 
@@ -820,38 +818,69 @@ class GuitarGenerator(BasePartGenerator):
             logger.warning(f"Failed to load external strum patterns: {e}")
 
     def _add_internal_default_patterns(self):
-        """Populate ``guitar_default_patterns`` with built-in strum patterns."""
+        """Add basic fallback strum patterns if they are missing."""
+        quarter_pattern = [
+            {
+                "offset": float(i),
+                "duration": 1.0,
+                "velocity_factor": 0.8,
+                "type": "block",
+            }
+            for i in range(4)
+        ]
+
+        syncopation_pattern = [
+            {"offset": 0.0, "duration": 1.0, "velocity_factor": 0.9, "type": "block"},
+            {"offset": 1.5, "duration": 0.5, "velocity_factor": 0.9, "type": "block"},
+            {"offset": 3.0, "duration": 1.0, "velocity_factor": 0.9, "type": "block"},
+        ]
+
+        shuffle_pattern: List[Dict[str, Union[float, str]]] = []
+        first_len = 2.0 / 3.0
+        second_len = 1.0 / 3.0
+        current = 0.0
+        for _ in range(4):
+            shuffle_pattern.append(
+                {
+                    "offset": round(current, 6),
+                    "duration": first_len,
+                    "velocity_factor": 0.8,
+                    "type": "block",
+                }
+            )
+            current += first_len
+            shuffle_pattern.append(
+                {
+                    "offset": round(current, 6),
+                    "duration": second_len,
+                    "velocity_factor": 0.8,
+                    "type": "block",
+                }
+            )
+            current += second_len
+
         defaults = {
-            "quarter_down": [
-                {"offset": 0.0},
-                {"offset": 1.0},
-                {"offset": 2.0},
-                {"offset": 3.0},
-            ],
-            "eighth_down_up": [
-                {"offset": 0.0},
-                {"offset": 0.5},
-                {"offset": 1.0},
-                {"offset": 1.5},
-                {"offset": 2.0},
-                {"offset": 2.5},
-                {"offset": 3.0},
-                {"offset": 3.5},
-            ],
-            "alternate_bass": [
-                {"offset": 0.0},
-                {"offset": 2.0},
-            ],
-            "rock_chug": [
-                {"offset": i * 0.25} for i in range(16)
-            ],
+            "guitar_rhythm_quarter": {
+                "pattern": quarter_pattern,
+                "reference_duration_ql": 1.0,
+                "description": "Simple quarter-note strum",
+            },
+            "guitar_rhythm_syncopation": {
+                "pattern": syncopation_pattern,
+                "reference_duration_ql": 1.0,
+                "description": "Syncopated strum pattern",
+            },
+            "guitar_rhythm_shuffle": {
+                "pattern": shuffle_pattern,
+                "reference_duration_ql": 1.0,
+                "description": "Shuffle feel eighth-note strum",
+            },
         }
 
-        if "guitar_default_patterns" not in self.part_parameters:
-            self.part_parameters["guitar_default_patterns"] = {}
+        for key, val in defaults.items():
+            if key not in self.part_parameters:
+                self.part_parameters[key] = val
 
-        for name, pattern in defaults.items():
-            self.part_parameters["guitar_default_patterns"].setdefault(name, pattern)
 
 
 # --- END OF FILE generator/guitar_generator.py ---

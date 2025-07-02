@@ -80,6 +80,13 @@ DEFAULT_GUITAR_OCTAVE_RANGE: Tuple[int, int] = (2, 5)
 GUITAR_STRUM_DELAY_QL: float = 0.02
 STANDARD_TUNING_OFFSETS = [0, 0, 0, 0, 0, 0]
 
+# User-friendly tuning presets (semitone offsets per string)
+TUNING_PRESETS: Dict[str, List[int]] = {
+    "standard": STANDARD_TUNING_OFFSETS,
+    "drop_d": [-2, 0, 0, 0, 0, 0],
+    "open_g": [-2, -2, 0, 0, 0, -2],
+}
+
 EXEC_STYLE_BLOCK_CHORD = "block_chord"
 EXEC_STYLE_STRUM_BASIC = "strum_basic"
 EXEC_STYLE_ARPEGGIO_FROM_INDICES = "arpeggio_from_indices"
@@ -168,7 +175,7 @@ class GuitarGenerator(BasePartGenerator):
     def __init__(
         self,
         *args,
-        tuning: Optional[List[int]] = None,
+        tuning: Optional[Union[str, Sequence[int]]] = None,
         timing_variation: float = 0.0,
         gate_length_variation: float = 0.0,
         external_patterns_path: Optional[str] = None,
@@ -176,7 +183,14 @@ class GuitarGenerator(BasePartGenerator):
     ):
         super().__init__(*args, **kwargs)
         self.external_patterns_path = external_patterns_path
-        self.tuning = tuning if tuning is not None else STANDARD_TUNING_OFFSETS
+        if isinstance(tuning, str):
+            self.tuning = TUNING_PRESETS.get(tuning.lower(), STANDARD_TUNING_OFFSETS)
+        elif tuning is None:
+            self.tuning = STANDARD_TUNING_OFFSETS
+        else:
+            if len(tuning) != 6:
+                raise ValueError("tuning must be length 6")
+            self.tuning = [int(x) for x in tuning]
         self.timing_variation = timing_variation
         self.gate_length_variation = gate_length_variation
         from utilities.core_music_utils import get_time_signature_object

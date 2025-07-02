@@ -143,6 +143,17 @@ Use `--strict-drum-map` if unknown drum instrument names should raise an error:
 python modular_composer.py --main-cfg config/main_cfg.yml --strict-drum-map
 ```
 
+You can override the guitar tuning directly from the CLI. Specify one of the
+presets (`standard`, `drop_d`, `open_g`) or provide six comma-separated semitone
+offsets:
+
+```bash
+python modular_composer.py --main-cfg config/main_cfg.yml --tuning drop_d
+python modular_composer.py --main-cfg config/main_cfg.yml --tuning 0,-2,0,0,0,0
+```
+
+This overrides `part_defaults.guitar.tuning` in your configuration.
+
 The same behaviour can be enabled with `global_settings.strict_drum_map: true` in your configuration file.
 
 ベロシティフェードがフィル前の何拍に及ぶかを制御できます:

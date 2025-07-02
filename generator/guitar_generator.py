@@ -779,14 +779,44 @@ class GuitarGenerator(BasePartGenerator):
         score.insert(0, self._last_part)
         score.write("musicxml", fp=path)
 
-    def export_tab(self, path: str) -> None:
-        """Export the last generated guitar part as tablature."""
+    def export_tab(self, path: str, format: str = "xml") -> None:
+        """Export the last generated guitar part as tablature.
+
+        Parameters
+        ----------
+        path:
+            Destination file path.
+        format:
+            Either ``"xml"`` for MusicXML output or ``"ascii"`` for a text
+            representation. Defaults to ``"xml"``.
+        """
+
         if not hasattr(self, "_last_part") or self._last_part is None:
             raise RuntimeError("No part generated yet")
-        try:
-            self._last_part.write("lilypond", fp=path)
-        except Exception:
-            # Fallback: simple ASCII tab (pitch or chord pitches and duration)
+
+        if format == "xml":
+            try:
+                from music21 import tab  # type: ignore
+                TabContainer = getattr(tab, "TabStaff", None) or getattr(tab, "TabStream", None)
+            except Exception:
+                TabContainer = None
+
+            try:
+                if TabContainer is not None:
+                    tab_stream = TabContainer()
+                    tab_stream.append(self._last_part.flat)
+                    score = stream.Score()
+                    score.insert(0, tab_stream)
+                else:
+                    score = stream.Score()
+                    score.insert(0, self._last_part)
+                score.write("musicxml", fp=path)
+                return
+            except Exception:
+                # Fall back to ASCII if XML export fails
+                format = "ascii"
+
+        if format == "ascii":
             with open(path, "w", encoding="utf-8") as f:
                 for el in self._last_part.flatten().notes:
                     if hasattr(el, "pitch"):
@@ -794,6 +824,10 @@ class GuitarGenerator(BasePartGenerator):
                     else:
                         name = "+".join(p.nameWithOctave for p in el.pitches)
                     f.write(f"{name}\t{el.duration.quarterLength}\n")
+            return
+
+        if format not in {"xml", "ascii"}:
+            raise ValueError(f"Unsupported format: {format}")
 
     def _load_external_strum_patterns(self) -> None:
         """Load additional strum patterns from an external YAML or JSON file."""

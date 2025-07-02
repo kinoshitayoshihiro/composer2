@@ -35,6 +35,7 @@ __all__ = [
     "apply_ghost_jitter",
     "apply_velocity_histogram",
     "apply_envelope",
+    "swing_offset",
 ]
 
 USE_EXPR_CC11 = False
@@ -194,6 +195,21 @@ def _apply_swing_py(part_stream: stream.Part, swing_ratio: float, subdiv: int = 
         within = pos - pair_start
         if abs(within - step) < tol:
             n.offset = pair_start + pair * swing_ratio
+
+
+def swing_offset(offset: float, swing_ratio: float, subdiv: int = 8) -> float:
+    """Return swung ``offset`` without modifying an element."""
+    swing_ratio = _validate_ratio(swing_ratio)
+    if subdiv <= 0:
+        return offset
+    step = 4.0 / subdiv
+    pair = step * 2.0
+    tol = step * 0.1
+    pair_start = math.floor(offset / pair) * pair
+    within = offset - pair_start
+    if abs(within - step) < tol:
+        return pair_start + pair * swing_ratio
+    return offset
 
 
 def _apply_swing(part_stream: stream.Part, swing_ratio: float, subdiv: int = 8) -> None:

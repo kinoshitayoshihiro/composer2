@@ -37,6 +37,15 @@ __all__ = [
     "apply_envelope",
 ]
 
+USE_EXPR_CC11 = False
+USE_AFTERTOUCH = False
+
+def set_cc_flags(use_expr_cc11: bool, use_aftertouch: bool) -> None:
+    """Configure global CC mapping flags."""
+    global USE_EXPR_CC11, USE_AFTERTOUCH
+    USE_EXPR_CC11 = bool(use_expr_cc11)
+    USE_AFTERTOUCH = bool(use_aftertouch)
+
 # music21 のサブモジュールを正しい形式でインポート
 import music21.chord as m21chord  # check_imports.py の期待する形式 (スペースに注意)
 import music21.expressions as expressions
@@ -285,20 +294,34 @@ def apply_envelope(part: stream.Part, start: int, end: int, scale: float) -> Non
         _apply_envelope_py(part, start, end, scale)
 
 
-def _humanize_velocities_py(part: stream.Part, amount: int = 4) -> None:
+def _humanize_velocities_py(
+    part: stream.Part,
+    amount: int = 4,
+    use_expr_cc11: bool = False,
+    use_aftertouch: bool = False,
+) -> None:
     for n in part.recurse().notes:
         if n.volume is None:
             n.volume = volume.Volume(velocity=64)
         vel = n.volume.velocity or 64
         delta = random.randint(-amount, amount)
-        n.volume.velocity = max(1, min(127, vel + delta))
+        new_vel = max(1, min(127, vel + delta))
+        n.volume.velocity = new_vel
+        if use_expr_cc11:
+            part.extra_cc = getattr(part, "extra_cc", []) + [
+                {"time": float(n.offset), "number": 11, "value": new_vel}
+            ]
+        if use_aftertouch:
+            part.extra_cc = getattr(part, "extra_cc", []) + [
+                {"time": float(n.offset), "number": 74, "value": new_vel}
+            ]
 
 
 def _humanize_velocities(part: stream.Part, amount: int = 4) -> None:
     if cy_humanize_velocities is not None:
-        cy_humanize_velocities(part, amount)
+        cy_humanize_velocities(part, amount, USE_EXPR_CC11, USE_AFTERTOUCH)
     else:
-        _humanize_velocities_py(part, amount)
+        _humanize_velocities_py(part, amount, USE_EXPR_CC11, USE_AFTERTOUCH)
 
 
 def _apply_velocity_histogram_py(

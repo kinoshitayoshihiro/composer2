@@ -13,6 +13,7 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Generating MIDI](#generating-midi)
 - [Demo MIDI Generation](#demo-midi-generation)
 - [Notebook Demo](#notebook-demo)
+- [Tone and Dynamics](#tone-and-dynamics)
 
 
 ## Setup
@@ -621,7 +622,8 @@ parameter when using the synchroniser programmatically.
 Generate a simple MIDI file from a YAML or JSON description:
 
 ```bash
-modcompose render spec.yml -o out.mid --soundfont path/to/timgm.sf2
+modcompose render spec.yml -o out.mid --soundfont path/to/timgm.sf2 \
+  --normalize-lufs -14
 ```
 
 ### Golden MIDI Regression
@@ -705,15 +707,30 @@ modcompose rnn sample model.pt -l 4 > pattern.json
 
 ## AI Transformer Backend
 
-Install `transformers` to experiment with a language-model driven bass line
+Install `transformers` and `torch` to experiment with a language-model driven bass line
 generator. Pass `--ai-backend transformer` and specify the model name:
 
 ```bash
-modcompose live model.pkl --ai-backend transformer --model-name gpt2-music
+modcompose live model.pkl --ai-backend transformer --model-name gpt2-medium
 ```
 
 Historical generation data can guide future runs when `--use-history` is set.
 See [docs/ai.md](docs/ai.md) for details.
+
+Interactive usage:
+
+```bash
+modcompose interact --backend transformer --model-name gpt2-medium \
+  --midi-in "Device In" --midi-out "Device Out" --bpm 120
+```
+
+## Tone and Dynamics
+
+Use articulation key switches and amp presets to refine playback. Add
+`--articulation-profile` to `compose` commands to load a YAML mapping.
+Audio rendered with `modcompose render` can be loudness normalised via
+`--normalize-lufs`.
+See [docs/tone.md](docs/tone.md) for details.
 
 ## Realtime Low-Latency
 

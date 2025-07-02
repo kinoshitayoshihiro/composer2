@@ -26,6 +26,7 @@ from music21 import (
 )
 
 from utilities import MIN_NOTE_DURATION_QL, humanizer
+from utilities.tone_shaper import ToneShaper
 
 try:
     from cyext import (
@@ -333,9 +334,23 @@ class BassGenerator(BasePartGenerator):
             self._root_offsets = [float(n.offset) for n in part.flatten().notes]
             return part
 
+        tone = ToneShaper()
+        intensity_label = section_data.get("musical_intent", {}).get("intensity", "medium")
+
+        def apply_tone(part: stream.Part) -> stream.Part:
+            notes = list(part.flatten().notes)
+            if not notes:
+                return part
+            avg_vel = sum((n.volume.velocity or self.base_velocity) for n in notes) / len(notes)
+            preset = tone.choose_preset(avg_vel, str(intensity_label))
+            cc_events = tone.to_cc_events(preset, 0.0)
+            part.extra_cc = getattr(part, "extra_cc", []) + cc_events
+            return part
+
         if isinstance(result, dict):
             for p in result.values():
                 apply_shift(p)
+                apply_tone(p)
                 label = section_data.get("section_name")
                 if label in self.phrase_insertions:
                     self._insert_custom_phrase(p, self.phrase_insertions[label])
@@ -345,6 +360,7 @@ class BassGenerator(BasePartGenerator):
             return result
         else:
             part = apply_shift(result)
+            part = apply_tone(part)
             label = section_data.get("section_name")
             if label in self.phrase_insertions:
                 self._insert_custom_phrase(part, self.phrase_insertions[label])

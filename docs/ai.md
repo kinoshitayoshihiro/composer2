@@ -5,25 +5,32 @@ Hugging Face Transformers.
 
 ## Usage
 
-Install the dependency:
+Install the dependencies:
 
 ```bash
-pip install transformers
+pip install transformers torch mido python-rtmidi
 ```
 
 Generate with the new backend:
 
 ```bash
-modcompose live model.pkl --ai-backend transformer --model-name gpt2-music
+modcompose live model.pkl --ai-backend transformer --model-name gpt2-medium
+```
+
+Or produce a short JSON sample:
+
+```bash
+modcompose sample model.pkl --ai-backend transformer --model-name gpt2-medium
 ```
 
 Enable feedback from previous sessions with `--use-history`. Generation
-statistics are stored in `~/.modcompose_history.json` and loaded on start.
+statistics are stored in `~/.otokotoba/history.jsonl` and loaded on start.
 
 For real-time interaction use the interactive mode:
 
 ```bash
-modcompose interact --backend transformer --bpm 120
+modcompose interact --backend transformer --model-name gpt2-medium \
+  --midi-in "Device In" --midi-out "Device Out" --bpm 120
 ```
 
 Incoming MIDI notes trigger the `TransformerBassGenerator` and forward events to

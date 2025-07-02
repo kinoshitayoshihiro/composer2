@@ -11,9 +11,14 @@ YAML 形式の main_cfg を辞書にパースして返す。
 """
 
 from __future__ import annotations
-import yaml, logging
+
+import logging
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Dict, Any, Optional, Mapping
+from typing import Any
+
+import yaml
+
 from utilities import humanizer
 
 # from some_chordmap_loader import load_chordmap  # 既存の関数 (もしあれば)
@@ -47,7 +52,7 @@ def _get_role_dispatch():
 
 
 # ------------------------------------------------------------
-def load_main_cfg(path: str | Path, *, strict: bool = True) -> Dict[str, Any]:
+def load_main_cfg(path: str | Path, *, strict: bool = True) -> dict[str, Any]:
     """
     Load main_cfg.yml and return an expanded dict.
 
@@ -69,7 +74,7 @@ def load_main_cfg(path: str | Path, *, strict: bool = True) -> Dict[str, Any]:
         raise FileNotFoundError(path)
 
     with path.open(encoding="utf-8") as f:
-        cfg: Dict[str, Any] = yaml.safe_load(f) or {}
+        cfg: dict[str, Any] = yaml.safe_load(f) or {}
 
     # 必須キー検証
     try:
@@ -121,6 +126,11 @@ def load_main_cfg(path: str | Path, *, strict: bool = True) -> Dict[str, Any]:
     _validate_roles(cfg)
 
     humanizer.load_profiles(cfg.get("humanize_profiles", {}))  # ★追加
+    gset_flags = cfg.get("global_settings", {})
+    humanizer.set_cc_flags(
+        bool(gset_flags.get("use_expr_cc11", False)),
+        bool(gset_flags.get("use_aftertouch", False)),
+    )
 
     return cfg
 
@@ -152,7 +162,7 @@ def _validate(cfg: Mapping[str, Any]) -> None:
         raise ValueError(f"[paths] missing key(s): {sorted(pp)}")
 
 
-def _validate_roles(cfg: Dict[str, Any]) -> None:
+def _validate_roles(cfg: dict[str, Any]) -> None:
     """part_defaults の role 値が role_dispatch に存在するかチェック"""
     role_dispatch = cfg.get("role_dispatch", {})
     valid_roles = set(role_dispatch.keys())
@@ -179,7 +189,7 @@ def _lazy_import(module_path: str, cls_name: str):
     return _factory
 
 
-def _merge_section_override(cfg: Dict[str, Any], section_name: str) -> Dict[str, Any]:
+def _merge_section_override(cfg: dict[str, Any], section_name: str) -> dict[str, Any]:
     """
     元の cfg から section_overrides を取り出し、対象セクションへの
     上書きをマージした辞書を返す（deep merge は最小限）。
@@ -210,7 +220,7 @@ def load_chordmap_yaml(path: Path | str) -> Any:  # ChordMapの型に合わせ�
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Chordmap file not found: {path}")
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         # ここでは単純にyaml.safe_loadを呼ぶ例。
         # 実際にはChordMapオブジェクトを返すなど、適切な処理が必要。
         data = yaml.safe_load(f)

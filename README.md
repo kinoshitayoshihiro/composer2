@@ -182,6 +182,20 @@ Bass patterns map a velocity tier (`low`, `mid`, `high`) to concrete MIDI ranges
 When `swing_ratio` is set, even eighth-notes are delayed by that amount and the
 preceding note trimmed so the bar length remains intact.
 
+## Phase 9 – Flexible Phrases
+
+Bass generation now supports arbitrary time signatures via `--time-signature`.
+Specify phrases and intensities in YAML and load them with `--phrase-spec`.
+Custom templates can be inserted at sections using `--insert-phrase fill1@bridge`.
+Example:
+
+```bash
+python modular_composer.py --main-cfg config/main_cfg.yml \
+    --time-signature 7/8 --phrase-spec spec.yml \
+    --insert-phrase my_fill@bridge
+```
+
+
 ## Demo MIDI Generation
 
 After fixing drum pattern durations you can generate test MIDIs with the helper
@@ -487,6 +501,7 @@ Launch the Streamlit GUI to compare:
 ```bash
 modcompose gui
 ```
+Refer to [docs/gui.md](docs/gui.md) for the new MIDI capture and preset features.
 
 ### RNN Backend and Live Playback
 

@@ -19,23 +19,21 @@ def _basic_section():
 
 
 def test_load_external_patterns(tmp_path, monkeypatch):
-    root = Path(__file__).resolve().parents[1]
     data = {"extra_pattern": {"pattern": [{"offset": 0.0, "duration": 1.0}]}}
-    file = root / "strum_patterns.yml"
+    file = tmp_path / "patterns.yml"
     file.write_text(yaml.safe_dump(data))
-    try:
-        gen = GuitarGenerator(
-            global_settings={},
-            default_instrument=instrument.Guitar(),
-            part_name="guitar",
-            global_tempo=120,
-            global_time_signature="4/4",
-            global_key_signature_tonic="C",
-            global_key_signature_mode="major",
-        )
-        assert "extra_pattern" in gen.part_parameters
-    finally:
-        file.unlink()
+
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="guitar",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+        external_patterns_path=str(file),
+    )
+    assert "extra_pattern" in gen.part_parameters
 
 
 def test_timing_variation_jitter():
@@ -140,3 +138,38 @@ def test_gate_length_variation_range():
     dur = notes[0].quarterLength
     base = 1.0 * 0.9
     assert base * 0.8 <= dur <= base * 1.2
+
+
+def test_internal_default_patterns():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="guitar",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+    names = gen.part_parameters["guitar_default_patterns"].keys()
+    assert set(names) == {
+        "quarter_down",
+        "eighth_down_up",
+        "alternate_bass",
+        "rock_chug",
+    }
+    assert (
+        gen.part_parameters["guitar_default_patterns"]["quarter_down"][0]["offset"]
+        == 0.0
+    )
+    assert (
+        gen.part_parameters["guitar_default_patterns"]["eighth_down_up"][0]["offset"]
+        == 0.0
+    )
+    assert (
+        gen.part_parameters["guitar_default_patterns"]["alternate_bass"][0]["offset"]
+        == 0.0
+    )
+    assert (
+        gen.part_parameters["guitar_default_patterns"]["rock_chug"][0]["offset"]
+        == 0.0
+    )

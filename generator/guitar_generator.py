@@ -4,6 +4,7 @@ from typing import List, Dict, Optional, Tuple, Any, Sequence, Union, cast
 import copy
 from pathlib import Path
 import yaml
+import json
 
 import music21.stream as stream
 import music21.note as note
@@ -170,9 +171,11 @@ class GuitarGenerator(BasePartGenerator):
         tuning: Optional[List[int]] = None,
         timing_variation: float = 0.0,
         gate_length_variation: float = 0.0,
+        external_patterns_path: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        self.external_patterns_path = external_patterns_path
         self.tuning = tuning if tuning is not None else STANDARD_TUNING_OFFSETS
         self.timing_variation = timing_variation
         self.gate_length_variation = gate_length_variation
@@ -204,7 +207,8 @@ class GuitarGenerator(BasePartGenerator):
                 "description": "Failsafe default quarter note strum",
             }
 
-        self._load_external_strum_patterns()
+        if self.external_patterns_path:
+            self._load_external_strum_patterns()
 
     def compose(self, *args, **kwargs):
         result = super().compose(*args, **kwargs)
@@ -789,13 +793,24 @@ class GuitarGenerator(BasePartGenerator):
                     f.write(f"{name}\t{el.duration.quarterLength}\n")
 
     def _load_external_strum_patterns(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        path = root / "strum_patterns.yml"
+        """Load additional strum patterns from an external YAML or JSON file."""
+        if not self.external_patterns_path:
+            return
+        path = Path(self.external_patterns_path)
         if not path.exists():
             return
         try:
-            with path.open("r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
+            text = path.read_text(encoding="utf-8")
+            data: dict | None = None
+            if path.suffix.lower() in {".yaml", ".yml"}:
+                data = yaml.safe_load(text)
+            elif path.suffix.lower() == ".json":
+                data = json.loads(text)
+            else:
+                try:
+                    data = yaml.safe_load(text)
+                except Exception:
+                    data = json.loads(text)
             if isinstance(data, dict):
                 self.part_parameters.update(data)
         except Exception as e:

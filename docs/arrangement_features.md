@@ -80,3 +80,15 @@ global_settings:
 
 Override the setting from the command line with `--consonant-sync-mode` when
 running `modular_composer.py`.
+
+## Guitar Expression Parameters
+
+The guitar generator supports several parameters for expressive playing:
+
+- `stroke_direction`: set to `"down"` or `"up"` to bias velocity 10% higher or
+  lower respectively.
+- `palm_mute`: when `true` notes shorten by 15% and velocity drops 15%.
+- `slide_in_offset` / `slide_out_offset`: fractional offsets from 0.0‑1.0
+  indicating where portamento begins and ends.
+- `bend_amount`: depth of a fret bend in semitones.
+- `bend_release_offset`: point before the note end when a bend releases.

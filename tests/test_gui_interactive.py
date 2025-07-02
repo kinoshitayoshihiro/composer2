@@ -17,7 +17,8 @@ def test_setup_interactive(monkeypatch):
             self.cbs.append(cb)
 
     monkeypatch.setattr(gui, "InteractiveEngine", DummyEngine)
-    engine = gui.setup_interactive("m", 120.0, lambda msg: logs.append(msg))
+    monkeypatch.setattr("utilities.interactive_engine.InteractiveEngine", DummyEngine)
+    engine = gui.setup_interactive("m", 120.0, "in", "out", lambda msg: logs.append(msg))
     assert isinstance(engine, DummyEngine)
     assert engine.cbs
     engine.cbs[0]({"note": 60})

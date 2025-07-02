@@ -20,4 +20,8 @@ if USE_CYTHON:
 if not ext_modules:
     ext_modules = [Extension(f"cyext.{s.split('/')[-1]}", [f"{s}.c"]) for s in SOURCES]
 
-setup(name="cyext", ext_modules=ext_modules)
+try:
+    setup(name="cyext", ext_modules=ext_modules)
+except Exception as exc:  # pragma: no cover - build may fail
+    logging.warning("C extension build failed, using pure Python fallback: %s", exc)
+    setup(name="cyext", ext_modules=[])

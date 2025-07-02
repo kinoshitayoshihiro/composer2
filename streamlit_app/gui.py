@@ -17,8 +17,8 @@ except ModuleNotFoundError as exc:  # pragma: no cover - optional
 try:
     import mido  # noqa: F401  # optional dependency for interactive mode
 except Exception as exc:  # pragma: no cover - optional
-    mido = None  # type: ignore
-    _MIDO_ERROR = exc
+    mido = None
+    _MIDO_ERROR: Exception | None = exc
 else:  # pragma: no cover - optional
     _MIDO_ERROR = None
 
@@ -36,7 +36,11 @@ def _to_midi(events: list[groove_sampler_ngram.Event]) -> bytes:
 
 
 def setup_interactive(
-    model_name: str, bpm: float, log_func: Callable[[str], None]
+    model_name: str,
+    bpm: float,
+    midi_in: str,
+    midi_out: str,
+    log_func: Callable[[str], None],
 ) -> InteractiveEngine | None:
     """Initialise InteractiveEngine and register ``log_func`` callback."""
     if mido is None:
@@ -67,25 +71,35 @@ def main() -> None:
         if mido is None:
             st.error(f"mido unavailable: {_MIDO_ERROR}")
             return
-        model_name = st.text_input("Model name", "gpt2-music")
+        model_name = st.text_input("Model name", "gpt2-medium")
         bpm = st.slider("BPM", 60, 200, 120)
+        in_names = mido.get_input_names()
+        out_names = mido.get_output_names()
+        midi_in = st.selectbox("MIDI In", in_names)
+        midi_out = st.selectbox("MIDI Out", out_names)
         if "inter_logs" not in st.session_state:
             st.session_state["inter_logs"] = []
         log_box = st.empty()
+        chart = st.line_chart([])
 
         def _log(msg: str) -> None:
             st.session_state["inter_logs"].append(msg)
             log_box.text("\n".join(st.session_state["inter_logs"][-12:]))
 
         if st.button("Start Interact"):
-            engine = setup_interactive(model_name, bpm, _log)
+            engine = setup_interactive(model_name, bpm, midi_in, midi_out, _log)
             if engine is not None:
+                import asyncio
                 import threading
 
-                t = threading.Thread(target=engine.run, daemon=True)
+                def _run() -> None:
+                    asyncio.run(engine.start(midi_in, midi_out))
+
+                t = threading.Thread(target=_run, daemon=True)
                 t.start()
                 st.session_state["inter_thread"] = t
                 st.session_state["inter_engine"] = engine
+                engine.add_callback(lambda ev: chart.add_rows({"y": [ev.get("offset", 0.0)]}))
         return
 
     if "preset_names" not in st.session_state:
@@ -124,7 +138,7 @@ def main() -> None:
             model, meta = groove_sampler_rnn.load(path)
             events = groove_sampler_rnn.sample(model, meta, bars=bars, temperature=temp)
         else:
-            model = groove_sampler_ngram.load(path)
+            model = groove_sampler_ngram.load(path)  # type: ignore[assignment]
             events = groove_sampler_ngram.sample(model, bars=bars, temperature=temp)
         # simple velocity scaling
         if human_velocity > 0:

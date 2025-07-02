@@ -34,6 +34,7 @@ from utilities.generator_factory import GenFactory  # type: ignore
 import utilities.humanizer as humanizer  # type: ignore
 import yaml
 from utilities.tempo_utils import load_tempo_map
+from generator.guitar_generator import TUNING_PRESETS
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -256,6 +257,32 @@ def compose(
 # -------------------------------------------------------------------------
 
 
+def _parse_tuning(value: str) -> list[int] | str:
+    """Parse ``--tuning`` argument.
+
+    Accept a preset name from :data:`TUNING_PRESETS` or six comma-separated
+    integer offsets. Raises ``argparse.ArgumentTypeError`` for invalid input.
+    """
+    if "," in value:
+        try:
+            offsets = [int(x) for x in value.split(",")]
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                "comma-separated offsets must be integers"
+            ) from exc
+        if len(offsets) != 6:
+            raise argparse.ArgumentTypeError(
+                "tuning offset list must contain 6 values"
+            )
+        return offsets
+    preset = value.lower()
+    if preset not in TUNING_PRESETS:
+        raise argparse.ArgumentTypeError(
+            f"Unknown tuning preset '{value}'. Available: {', '.join(TUNING_PRESETS)}"
+        )
+    return preset
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="OtoKotoba Modular Composer")
     # 必須
@@ -322,6 +349,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=["bar", "note"],
         help="Consonant sync granularity override",
     )
+    p.add_argument(
+        "--tuning",
+        type=_parse_tuning,
+        help="Guitar tuning preset name or comma-separated offsets",
+    )
     return p
 
 
@@ -359,6 +391,11 @@ def main_cli() -> None:
         main_cfg.setdefault("global_settings", {})[
             "tempo_curve_path"
         ] = args.tempo_curve
+    if args.tuning:
+        pd = main_cfg.setdefault("part_defaults", {})
+        for name in ("guitar", "rhythm"):
+            if name in pd:
+                pd[name]["tuning"] = args.tuning
     tempo_map = None
     curve_path = (
         args.tempo_curve

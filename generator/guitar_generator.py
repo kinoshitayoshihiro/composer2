@@ -224,6 +224,18 @@ class GuitarGenerator(BasePartGenerator):
         self._load_external_strum_patterns()
         self._add_internal_default_patterns()
 
+        self._articulation_map = {
+            "palm_mute": articulations.FretIndication("palm mute"),
+            "staccato": articulations.Staccato(),
+            "accent": articulations.Accent(),
+            "ghost_note": articulations.FretIndication("ghost note"),
+            "slide": articulations.IndeterminateSlide(),
+            "slide_in": articulations.IndeterminateSlide(),
+            "bend": articulations.FretBend(),
+            "hammer_on": articulations.HammerOn(),
+            "pull_off": articulations.PullOff(),
+        }
+
 
     def compose(self, *args, **kwargs):
         result = super().compose(*args, **kwargs)
@@ -303,9 +315,33 @@ class GuitarGenerator(BasePartGenerator):
         event_final_velocity: int,
     ) -> List[Union[note.Note, m21chord.Chord]]:
         notes_for_event: List[Union[note.Note, m21chord.Chord]] = []
+        # イベントパラメータとパターン定義の両方からアーティキュレーションを収集
+        art_objs: List[articulations.Articulation] = []
+        for src in (guitar_block_params, rhythm_pattern_definition):
+            art = src.get("articulation") or src.get("event_articulation")
+            if isinstance(art, str):
+                base = self._articulation_map.get(art)
+                if base:
+                    art_objs.append(copy.deepcopy(base))
+            elif isinstance(art, list):
+                for name in art:
+                    base = self._articulation_map.get(name)
+                    if base:
+                        art_objs.append(copy.deepcopy(base))
         execution_style = rhythm_pattern_definition.get(
             "execution_style", EXEC_STYLE_BLOCK_CHORD
         )
+
+        def _attach_artics(elem: Union[note.Note, m21chord.Chord]) -> None:
+            if not art_objs:
+                return
+            if isinstance(elem, m21chord.Chord):
+                for n_el in elem.notes:
+                    for art in art_objs:
+                        n_el.articulations.append(copy.deepcopy(art))
+            else:
+                for art in art_objs:
+                    elem.articulations.append(copy.deepcopy(art))
 
         num_strings = guitar_block_params.get(
             "guitar_num_strings",
@@ -355,6 +391,7 @@ class GuitarGenerator(BasePartGenerator):
                 if is_palm_muted:
                     n_in_ch_note.articulations.append(articulations.Staccatissimo())
             ch.offset = self._jitter(0.0)
+            _attach_artics(ch)
             notes_for_event.append(ch)
 
         elif execution_style == EXEC_STYLE_BLOCK_CHORD:
@@ -369,6 +406,7 @@ class GuitarGenerator(BasePartGenerator):
                 if is_palm_muted:
                     n_in_ch_note.articulations.append(articulations.Staccatissimo())
             ch.offset = self._jitter(0.0)
+            _attach_artics(ch)
             notes_for_event.append(ch)
 
         elif execution_style == EXEC_STYLE_STRUM_BASIC:
@@ -417,6 +455,7 @@ class GuitarGenerator(BasePartGenerator):
                 )
                 if is_palm_muted:
                     n_strum.articulations.append(articulations.Staccatissimo())
+                _attach_artics(n_strum)
                 notes_for_event.append(n_strum)
 
         elif execution_style == EXEC_STYLE_ARPEGGIO_FROM_INDICES:
@@ -454,6 +493,7 @@ class GuitarGenerator(BasePartGenerator):
                 n_arp.offset = self._jitter(current_offset_in_event)
                 if is_palm_muted:
                     n_arp.articulations.append(articulations.Staccatissimo())
+                _attach_artics(n_arp)
                 notes_for_event.append(n_arp)
                 current_offset_in_event += arp_note_dur_ql
                 arp_idx += 1
@@ -482,6 +522,7 @@ class GuitarGenerator(BasePartGenerator):
                     velocity=int(event_final_velocity * 0.6) + random.randint(-5, 5)
                 )
                 n_mute.offset = self._jitter(t_mute)
+                _attach_artics(n_mute)
                 notes_for_event.append(n_mute)
                 t_mute += mute_interval
         else:
@@ -756,6 +797,12 @@ class GuitarGenerator(BasePartGenerator):
                 "palm_mute", rhythm_details.get("palm_mute", False)
             )
 
+            event_articulation = event_def.get("articulation")
+            if event_articulation is not None:
+                current_event_guitar_params["articulation"] = event_articulation
+                if event_articulation == "palm_mute":
+                    current_event_guitar_params["palm_mute"] = True
+
             generated_elements = self._create_notes_from_event(
                 cs_object,
                 rhythm_details,  # execution_style などを含むリズム定義
@@ -867,20 +914,39 @@ class GuitarGenerator(BasePartGenerator):
 
     def _add_internal_default_patterns(self):
         """Add basic fallback strum patterns if they are missing."""
-        quarter_pattern = [
-            {
+        quarter_pattern = []
+        for i in range(4):
+            evt = {
                 "offset": float(i),
                 "duration": 1.0,
                 "velocity_factor": 0.8,
                 "type": "block",
             }
-            for i in range(4)
-        ]
+            if i in {1, 3}:
+                evt["articulation"] = "palm_mute"
+            quarter_pattern.append(evt)
 
         syncopation_pattern = [
-            {"offset": 0.0, "duration": 1.0, "velocity_factor": 0.9, "type": "block"},
-            {"offset": 1.5, "duration": 0.5, "velocity_factor": 0.9, "type": "block"},
-            {"offset": 3.0, "duration": 1.0, "velocity_factor": 0.9, "type": "block"},
+            {
+                "offset": 0.0,
+                "duration": 1.0,
+                "velocity_factor": 0.9,
+                "type": "block",
+                "articulation": "accent",
+            },
+            {
+                "offset": 1.5,
+                "duration": 0.5,
+                "velocity_factor": 0.9,
+                "type": "block",
+                "articulation": "staccato",
+            },
+            {
+                "offset": 3.0,
+                "duration": 1.0,
+                "velocity_factor": 0.9,
+                "type": "block",
+            },
         ]
 
         shuffle_pattern: List[Dict[str, Union[float, str]]] = []
@@ -903,6 +969,7 @@ class GuitarGenerator(BasePartGenerator):
                     "duration": second_len,
                     "velocity_factor": 0.8,
                     "type": "block",
+                    "articulation": "staccato",
                 }
             )
             current += second_len

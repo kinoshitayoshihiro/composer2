@@ -92,6 +92,8 @@ EXEC_STYLE_STRUM_BASIC = "strum_basic"
 EXEC_STYLE_ARPEGGIO_FROM_INDICES = "arpeggio_from_indices"
 EXEC_STYLE_POWER_CHORDS = "power_chords"
 EXEC_STYLE_MUTED_RHYTHM = "muted_rhythm"
+EXEC_STYLE_HAMMER_ON = "hammer_on"
+EXEC_STYLE_PULL_OFF = "pull_off"
 
 EMOTION_INTENSITY_MAP: Dict[Tuple[str, str], str] = {
     ("quiet_pain_and_nascent_strength", "low"): "guitar_ballad_arpeggio",
@@ -179,6 +181,10 @@ class GuitarGenerator(BasePartGenerator):
         timing_variation: float = 0.0,
         gate_length_variation: float = 0.0,
         external_patterns_path: Optional[str] = None,
+        hammer_on_interval: int = 2,
+        pull_off_interval: int = 2,
+        hammer_on_probability: float = 0.5,
+        pull_off_probability: float = 0.5,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -193,6 +199,11 @@ class GuitarGenerator(BasePartGenerator):
             self.tuning = [int(x) for x in tuning]
         self.timing_variation = timing_variation
         self.gate_length_variation = gate_length_variation
+        self.hammer_on_interval = hammer_on_interval
+        self.pull_off_interval = pull_off_interval
+        self.hammer_on_probability = hammer_on_probability
+        self.pull_off_probability = pull_off_probability
+        self._prev_note_pitch: pitch.Pitch | None = None
         from utilities.core_music_utils import get_time_signature_object
 
         ts_obj = get_time_signature_object(self.global_time_signature)
@@ -223,6 +234,10 @@ class GuitarGenerator(BasePartGenerator):
 
         self._load_external_strum_patterns()
         self._add_internal_default_patterns()
+        self.part_parameters.setdefault("hammer_on_interval", self.hammer_on_interval)
+        self.part_parameters.setdefault("pull_off_interval", self.pull_off_interval)
+        self.part_parameters.setdefault("hammer_on_probability", self.hammer_on_probability)
+        self.part_parameters.setdefault("pull_off_probability", self.pull_off_probability)
 
         self._articulation_map = {
             "palm_mute": articulations.FretIndication("palm mute"),
@@ -238,6 +253,7 @@ class GuitarGenerator(BasePartGenerator):
 
 
     def compose(self, *args, **kwargs):
+        self._prev_note_pitch = None
         result = super().compose(*args, **kwargs)
         if isinstance(result, stream.Part):
             self._last_part = result
@@ -394,7 +410,7 @@ class GuitarGenerator(BasePartGenerator):
             _attach_artics(ch)
             notes_for_event.append(ch)
 
-        elif execution_style == EXEC_STYLE_BLOCK_CHORD:
+        elif execution_style in (EXEC_STYLE_BLOCK_CHORD, EXEC_STYLE_HAMMER_ON, EXEC_STYLE_PULL_OFF):
             base_dur = event_duration_ql * (0.7 if is_palm_muted else 0.9)
             base_dur *= 1 + self.rng.uniform(-self.gate_length_variation, self.gate_length_variation)
             ch = m21chord.Chord(
@@ -811,10 +827,43 @@ class GuitarGenerator(BasePartGenerator):
                 final_event_velocity,
             )
 
+            exec_style = rhythm_details.get("execution_style", EXEC_STYLE_BLOCK_CHORD)
+
             for el in generated_elements:
                 # el.offset は _create_notes_from_event 内でイベント開始からの相対オフセットになっている
                 # これに、このリズムイベントのブロック内での開始オフセットを加算
                 el.offset += current_event_start_offset_in_block
+
+                pitch_for_check: pitch.Pitch | None = None
+                if isinstance(el, note.Note):
+                    pitch_for_check = el.pitch
+                elif isinstance(el, m21chord.Chord) and el.pitches:
+                    pitch_for_check = el.pitches[0]
+
+                prev_pitch = self._prev_note_pitch
+                if pitch_for_check and prev_pitch:
+                    semitone_diff = pitch_for_check.ps - prev_pitch.ps
+                    if exec_style == EXEC_STYLE_HAMMER_ON and semitone_diff > 0:
+                        if 0 < semitone_diff <= self.part_parameters.get("hammer_on_interval", self.hammer_on_interval):
+                            if self.rng.random() < self.part_parameters.get("hammer_on_probability", self.hammer_on_probability):
+                                art = articulations.FretIndication("hammer-on")
+                                if isinstance(el, m21chord.Chord):
+                                    for n_in_ch in el.notes:
+                                        n_in_ch.articulations.append(copy.deepcopy(art))
+                                else:
+                                    el.articulations.append(copy.deepcopy(art))
+                    elif exec_style == EXEC_STYLE_PULL_OFF and semitone_diff < 0:
+                        if 0 < abs(semitone_diff) <= self.part_parameters.get("pull_off_interval", self.pull_off_interval):
+                            if self.rng.random() < self.part_parameters.get("pull_off_probability", self.pull_off_probability):
+                                art = articulations.FretIndication("pull-off")
+                                if isinstance(el, m21chord.Chord):
+                                    for n_in_ch in el.notes:
+                                        n_in_ch.articulations.append(copy.deepcopy(art))
+                                else:
+                                    el.articulations.append(copy.deepcopy(art))
+                if pitch_for_check:
+                    self._prev_note_pitch = pitch_for_check
+
                 guitar_part.insert(el.offset, el)  # パート内でのオフセットで挿入
 
         logger.info(

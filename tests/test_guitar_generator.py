@@ -1,8 +1,12 @@
 import yaml
 from pathlib import Path
-from music21 import instrument, harmony, articulations, chord
+from music21 import instrument, harmony, articulations, chord, pitch
 from generator.guitar_generator import GuitarGenerator
-from generator.guitar_generator import EXEC_STYLE_BLOCK_CHORD
+from generator.guitar_generator import (
+    EXEC_STYLE_BLOCK_CHORD,
+    EXEC_STYLE_HAMMER_ON,
+    EXEC_STYLE_PULL_OFF,
+)
 
 
 def _basic_section():
@@ -602,4 +606,155 @@ def test_merge_pattern_event_articulations():
         stacs = [a for a in n.articulations if isinstance(a, articulations.Staccato)]
         assert len(accs) == 1
         assert len(stacs) == 1
+
+
+def _section_with_chord(chord_label: str):
+    s = _basic_section()
+    s["original_chord_label"] = chord_label
+    s["chord_symbol_for_voicing"] = chord_label
+    return s
+
+
+def test_hammer_on_pull_off_basic():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="g",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+        hammer_on_probability=1.0,
+        pull_off_probability=1.0,
+    )
+
+    gen.part_parameters["hammer_pattern"] = {
+        "execution_style": EXEC_STYLE_HAMMER_ON,
+        "pattern": [{"offset": 0.0, "duration": 1.0}],
+        "reference_duration_ql": 1.0,
+    }
+    gen.part_parameters["pull_pattern"] = {
+        "execution_style": EXEC_STYLE_PULL_OFF,
+        "pattern": [{"offset": 0.0, "duration": 1.0}],
+        "reference_duration_ql": 1.0,
+    }
+
+    # compose() should reset previous note information
+    gen._prev_note_pitch = pitch.Pitch("C3")
+    gen.overrides = None
+    sec1 = _section_with_chord("D")
+    sec1["part_params"]["g"] = {"guitar_rhythm_key": "hammer_pattern"}
+    part1 = gen.compose(section_data=sec1)
+    note1 = part1.flatten().notes[0]
+    if isinstance(note1, chord.Chord):
+        note1 = note1.notes[0]
+    assert not _has_fret_indication(note1, "hammer-on")
+
+    # direct _render_part call should use existing _prev_note_pitch
+    gen._prev_note_pitch = pitch.Pitch("C3")
+    gen.overrides = None
+    sec2 = _section_with_chord("D")
+    sec2["part_params"]["g"] = {"guitar_rhythm_key": "hammer_pattern"}
+    part2 = gen._render_part(sec2)
+    note2 = part2.flatten().notes[0]
+    if isinstance(note2, chord.Chord):
+        note2 = note2.notes[0]
+    assert _has_fret_indication(note2, "hammer-on")
+
+    gen._prev_note_pitch = pitch.Pitch("E3")
+    sec3 = _section_with_chord("D")
+    sec3["part_params"]["g"] = {"guitar_rhythm_key": "pull_pattern"}
+    part3 = gen._render_part(sec3)
+    note3 = part3.flatten().notes[0]
+    if isinstance(note3, chord.Chord):
+        note3 = note3.notes[0]
+    assert _has_fret_indication(note3, "pull-off")
+
+
+def test_hammer_on_pull_off_interval_threshold():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="g",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+        hammer_on_probability=1.0,
+        pull_off_probability=1.0,
+        hammer_on_interval=1,
+        pull_off_interval=1,
+    )
+
+    gen.part_parameters["hammer_pattern"] = {
+        "execution_style": EXEC_STYLE_HAMMER_ON,
+        "pattern": [{"offset": 0.0, "duration": 1.0}],
+        "reference_duration_ql": 1.0,
+    }
+
+    gen._prev_note_pitch = pitch.Pitch("C3")
+    gen.overrides = None
+    sec2 = _section_with_chord("D")
+    sec2["part_params"]["g"] = {"guitar_rhythm_key": "hammer_pattern"}
+    part2 = gen._render_part(sec2)
+    note2 = part2.flatten().notes[0]
+    if isinstance(note2, chord.Chord):
+        note2 = note2.notes[0]
+    assert not _has_fret_indication(note2, "hammer-on")
+
+    gen.hammer_on_interval = 2
+    gen.part_parameters["hammer_on_interval"] = 2
+
+    gen._prev_note_pitch = pitch.Pitch("C3")
+    gen.overrides = None
+    sec3 = _section_with_chord("D")
+    sec3["part_params"]["g"] = {"guitar_rhythm_key": "hammer_pattern"}
+    part3 = gen._render_part(sec3)
+    note3 = part3.flatten().notes[0]
+    if isinstance(note3, chord.Chord):
+        note3 = note3.notes[0]
+    assert _has_fret_indication(note3, "hammer-on")
+
+
+def test_hammer_on_pull_off_probability():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="g",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+        hammer_on_probability=0.0,
+        pull_off_probability=0.0,
+    )
+
+    gen.part_parameters["hammer_pattern"] = {
+        "execution_style": EXEC_STYLE_HAMMER_ON,
+        "pattern": [{"offset": 0.0, "duration": 1.0}],
+        "reference_duration_ql": 1.0,
+    }
+
+    gen._prev_note_pitch = pitch.Pitch("C3")
+    gen.overrides = None
+    sec2 = _section_with_chord("D")
+    sec2["part_params"]["g"] = {"guitar_rhythm_key": "hammer_pattern"}
+    part2 = gen._render_part(sec2)
+    note2 = part2.flatten().notes[0]
+    if isinstance(note2, chord.Chord):
+        note2 = note2.notes[0]
+    assert not _has_fret_indication(note2, "hammer-on")
+
+    gen.hammer_on_probability = 1.0
+    gen.part_parameters["hammer_on_probability"] = 1.0
+
+    gen._prev_note_pitch = pitch.Pitch("C3")
+    gen.overrides = None
+    sec3 = _section_with_chord("D")
+    sec3["part_params"]["g"] = {"guitar_rhythm_key": "hammer_pattern"}
+    part3 = gen._render_part(sec3)
+    note3 = part3.flatten().notes[0]
+    if isinstance(note3, chord.Chord):
+        note3 = note3.notes[0]
+    assert _has_fret_indication(note3, "hammer-on")
 

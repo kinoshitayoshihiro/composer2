@@ -26,9 +26,21 @@ from music21 import (
 )
 
 from utilities import MIN_NOTE_DURATION_QL, humanizer
+
+try:
+    from cyext import (
+        postprocess_kick_lock as cy_postprocess_kick_lock,
+    )
+    from cyext import (
+        velocity_random_walk as cy_velocity_random_walk,
+    )
+except Exception:  # pragma: no cover - optional
+    cy_postprocess_kick_lock = None
+    cy_velocity_random_walk = None
+import yaml
+
 from utilities.accent_mapper import AccentMapper
 from utilities.emotion_profile_loader import load_emotion_profile
-import yaml
 from utilities.velocity_curve import resolve_velocity_curve
 
 from .base_part_generator import BasePartGenerator
@@ -312,9 +324,7 @@ class BassGenerator(BasePartGenerator):
             self.vel_shift_on_kick = self.overrides.velocity_shift_on_kick
 
         def apply_shift(part: stream.Part):
-            self._postprocess_notes_for_kick_lock(
-                part.flatten().notes, self.kick_offsets
-            )
+            self._postprocess_notes_for_kick_lock(part, self.kick_offsets)
             self._apply_velocity_random_walk(part)
             self._clamp_range(part)
             if self.kick_lock_cfg.get("enabled", False) and shared_tracks is not None:
@@ -344,11 +354,14 @@ class BassGenerator(BasePartGenerator):
             return part
 
     def _postprocess_notes_for_kick_lock(
-        self, notes: list[note.Note], kick_offsets: Sequence[float], eps: float = 0.03
+        self, part: stream.Part, kick_offsets: Sequence[float], eps: float = 0.03
     ) -> None:
+        if cy_postprocess_kick_lock is not None:
+            cy_postprocess_kick_lock(part, kick_offsets, self.vel_shift_on_kick, eps)
+            return
         if not kick_offsets:
             return
-        for n in notes:
+        for n in part.recurse().notes:
             if any(abs(float(n.offset) - k) < eps for k in kick_offsets):
                 if n.volume is None:
                     n.volume = m21volume.Volume()
@@ -359,6 +372,15 @@ class BassGenerator(BasePartGenerator):
     def _apply_velocity_random_walk(self, part: stream.Part) -> None:
         """Apply small bar-by-bar velocity fluctuation."""
         if not part.flatten().notes:
+            return
+        if cy_velocity_random_walk is not None:
+            cy_velocity_random_walk(
+                part,
+                self.measure_duration,
+                self._step_range,
+                self._rng,
+            )
+            self._vel_walk_state = 0
             return
         bar_len = self.measure_duration
         notes = sorted(part.flatten().notes, key=lambda n: n.offset)

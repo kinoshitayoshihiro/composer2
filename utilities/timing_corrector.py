@@ -2,6 +2,12 @@ from __future__ import annotations
 
 import copy
 from music21 import stream
+from typing import Optional
+
+try:
+    from cyext.humanize import timing_correct_part as cy_timing_correct_part
+except Exception:  # pragma: no cover - optional
+    cy_timing_correct_part = None
 
 
 class TimingCorrector:
@@ -14,6 +20,8 @@ class TimingCorrector:
 
     def correct_part(self, part: stream.Part) -> stream.Part:
         """Return a timing-smoothed copy of ``part``."""
+        if cy_timing_correct_part is not None:
+            return cy_timing_correct_part(part, self.alpha)
         new_part = copy.deepcopy(part)
         notes = list(new_part.recurse().notes)
         if not notes:

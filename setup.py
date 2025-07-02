@@ -1,16 +1,23 @@
+import logging
 import os
 
 from setuptools import Extension, setup
 
+SOURCES = ["cyext/humanize", "cyext/generators"]
 USE_CYTHON = os.environ.get("MCY_USE_CYTHON", "1") == "1"
-source = "cyext/humanize" + (".pyx" if USE_CYTHON else ".c")
-ext_modules = [Extension("cyext.humanize", [source])]
 
+ext_modules = []
 if USE_CYTHON:
     try:
         from Cython.Build import cythonize
-        ext_modules = cythonize(ext_modules, language_level="3")
-    except Exception:
-        pass
+    except Exception as exc:  # pragma: no cover - optional
+        logging.warning("Cython unavailable, falling back to C sources: %s", exc)
+    else:
+        ext_modules = cythonize(
+            [Extension(f"cyext.{s.split('/')[-1]}", [f"{s}.pyx"]) for s in SOURCES],
+            language_level="3",
+        )
+if not ext_modules:
+    ext_modules = [Extension(f"cyext.{s.split('/')[-1]}", [f"{s}.c"]) for s in SOURCES]
 
 setup(name="cyext", ext_modules=ext_modules)

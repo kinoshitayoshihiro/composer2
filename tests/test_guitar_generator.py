@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from music21 import instrument, harmony
+from music21 import instrument, harmony, articulations, chord
 from generator.guitar_generator import GuitarGenerator
 from generator.guitar_generator import EXEC_STYLE_BLOCK_CHORD
 
@@ -192,4 +192,132 @@ def test_internal_default_patterns():
     qpat = gen.part_parameters["guitar_rhythm_quarter"]["pattern"]
     assert qpat[0]["offset"] == 0.0
     assert qpat[1]["offset"] == 1.0
+    assert qpat[1]["articulation"] == "palm_mute"
+
+
+def test_event_articulation_staccato():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="guitar",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+
+    notes = gen._create_notes_from_event(
+        harmony.ChordSymbol("C"),
+        {"execution_style": EXEC_STYLE_BLOCK_CHORD},
+        {"articulation": "staccato"},
+        1.0,
+        80,
+    )
+
+    assert isinstance(notes[0], chord.Chord)
+    for n in notes[0].notes:
+        stacs = [a for a in n.articulations if isinstance(a, articulations.Staccato)]
+        assert len(stacs) == 1
+
+
+def test_pattern_level_articulation():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="guitar",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+
+    notes = gen._create_notes_from_event(
+        harmony.ChordSymbol("C"),
+        {"execution_style": EXEC_STYLE_BLOCK_CHORD, "articulation": "staccato"},
+        {},
+        1.0,
+        80,
+    )
+
+    assert isinstance(notes[0], chord.Chord)
+    for n in notes[0].notes:
+        stacs = [a for a in n.articulations if isinstance(a, articulations.Staccato)]
+        assert len(stacs) == 1
+
+
+def test_event_articulation_slide():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="guitar",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+
+    notes = gen._create_notes_from_event(
+        harmony.ChordSymbol("C"),
+        {"execution_style": EXEC_STYLE_BLOCK_CHORD},
+        {"articulation": "slide"},
+        1.0,
+        80,
+    )
+
+    assert isinstance(notes[0], chord.Chord)
+    for n in notes[0].notes:
+        slides = [a for a in n.articulations if isinstance(a, articulations.IndeterminateSlide)]
+        assert len(slides) == 1
+
+
+def test_pattern_level_accent():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="guitar",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+
+    notes = gen._create_notes_from_event(
+        harmony.ChordSymbol("C"),
+        {"execution_style": EXEC_STYLE_BLOCK_CHORD, "articulation": "accent"},
+        {},
+        1.0,
+        80,
+    )
+
+    assert isinstance(notes[0], chord.Chord)
+    for n in notes[0].notes:
+        accs = [a for a in n.articulations if isinstance(a, articulations.Accent)]
+        assert len(accs) == 1
+
+
+def test_multiple_articulations_list():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="guitar",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+    )
+
+    notes = gen._create_notes_from_event(
+        harmony.ChordSymbol("C"),
+        {"execution_style": EXEC_STYLE_BLOCK_CHORD, "articulation": ["accent", "slide"]},
+        {},
+        1.0,
+        80,
+    )
+
+    assert isinstance(notes[0], chord.Chord)
+    for n in notes[0].notes:
+        accs = [a for a in n.articulations if isinstance(a, articulations.Accent)]
+        slides = [a for a in n.articulations if isinstance(a, articulations.IndeterminateSlide)]
+        assert len(accs) == 1
+        assert len(slides) == 1
 

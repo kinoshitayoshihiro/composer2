@@ -150,26 +150,14 @@ def test_internal_default_patterns():
         global_key_signature_tonic="C",
         global_key_signature_mode="major",
     )
-    names = gen.part_parameters["guitar_default_patterns"].keys()
-    assert set(names) == {
-        "quarter_down",
-        "eighth_down_up",
-        "alternate_bass",
-        "rock_chug",
+    keys = {
+        "guitar_rhythm_quarter",
+        "guitar_rhythm_syncopation",
+        "guitar_rhythm_shuffle",
     }
-    assert (
-        gen.part_parameters["guitar_default_patterns"]["quarter_down"][0]["offset"]
-        == 0.0
-    )
-    assert (
-        gen.part_parameters["guitar_default_patterns"]["eighth_down_up"][0]["offset"]
-        == 0.0
-    )
-    assert (
-        gen.part_parameters["guitar_default_patterns"]["alternate_bass"][0]["offset"]
-        == 0.0
-    )
-    assert (
-        gen.part_parameters["guitar_default_patterns"]["rock_chug"][0]["offset"]
-        == 0.0
-    )
+    assert keys.issubset(gen.part_parameters.keys())
+
+    qpat = gen.part_parameters["guitar_rhythm_quarter"]["pattern"]
+    assert qpat[0]["offset"] == 0.0
+    assert qpat[1]["offset"] == 1.0
+

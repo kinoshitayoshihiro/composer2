@@ -84,6 +84,33 @@ def test_custom_tuning_applied():
     assert int(p_drop.ps - p_std.ps) == -2
 
 
+def test_tuning_preset_drop_d():
+    gen = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="g3",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+        tuning="drop_d",
+    )
+    assert gen.tuning == [-2, 0, 0, 0, 0, 0]
+    gen_std = GuitarGenerator(
+        global_settings={},
+        default_instrument=instrument.Guitar(),
+        part_name="g4",
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+        tuning="standard",
+    )
+    p_std = gen_std._get_guitar_friendly_voicing(harmony.ChordSymbol("E"), 1)[0]
+    p_drop = gen._get_guitar_friendly_voicing(harmony.ChordSymbol("E"), 1)[0]
+    assert int(p_drop.ps - p_std.ps) == -2
+
+
 def test_export_musicxml(tmp_path):
     gen = GuitarGenerator(
         global_settings={},

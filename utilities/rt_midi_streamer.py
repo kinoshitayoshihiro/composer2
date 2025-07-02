@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import statistics
+from collections.abc import Callable
 
 from music21 import stream
 
@@ -11,6 +12,7 @@ try:
 except Exception:  # pragma: no cover - optional
     rtmidi = None
 
+from .live_buffer import LiveBuffer
 from .tempo_utils import TempoMap, beat_to_seconds
 
 
@@ -42,6 +44,28 @@ class RtMidiStreamer:
         self.latencies: list[float] = []
         self.logger = logging.getLogger(__name__)
 
+    def _reconnect(self) -> None:
+        try:
+            self._midi.close_port()
+        except Exception:
+            pass
+        self._midi = rtmidi.MidiOut()
+        ports = self._midi.get_ports()
+        if self.port_name not in ports:
+            raise RuntimeError(f"Port '{self.port_name}' not found")
+        self._midi.open_port(ports.index(self.port_name))
+
+    def _send_with_retry(self, msg: list[int]) -> None:
+        try:
+            self._midi.send_message(msg)
+        except Exception as exc:  # pragma: no cover - runtime safety
+            self.logger.error("MIDI send failed: %s", exc)
+            try:
+                self._reconnect()
+                self._midi.send_message(msg)
+            except Exception as exc2:  # pragma: no cover - runtime safety
+                self.logger.error("MIDI resend failed: %s", exc2)
+
     @staticmethod
     def list_ports() -> list[str]:
         if rtmidi is None:
@@ -52,19 +76,12 @@ class RtMidiStreamer:
         loop = asyncio.get_running_loop()
         await asyncio.sleep(max(0.0, start - self.buffer - loop.time()))
         await asyncio.sleep(max(0.0, start - loop.time()))
-        try:
-            self._midi.send_message([0x90, pitch, velocity])
-        except Exception as exc:  # pragma: no cover - runtime safety
-            self.logger.error("MIDI send failed: %s", exc)
-            return
+        self._send_with_retry([0x90, pitch, velocity])
         sent = loop.time()
         if self.measure_latency:
             self.latencies.append(sent - start)
         await asyncio.sleep(max(0.0, end - loop.time()))
-        try:
-            self._midi.send_message([0x80, pitch, 0])
-        except Exception as exc:  # pragma: no cover - runtime safety
-            self.logger.error("MIDI send failed: %s", exc)
+        self._send_with_retry([0x80, pitch, 0])
 
     async def play_stream(self, part: stream.Part) -> None:
         loop = asyncio.get_running_loop()
@@ -88,6 +105,26 @@ class RtMidiStreamer:
                 mean * 1000.0,
                 std * 1000.0,
             )
+
+    async def play_live(
+        self,
+        generator: Callable[[int], stream.Part],
+        *,
+        buffer_ahead: int = 4,
+        parallel_bars: int = 1,
+    ) -> None:
+        """Play parts sequentially using a background generation buffer."""
+        buf = LiveBuffer(generator, buffer_ahead=buffer_ahead, parallel_bars=parallel_bars)
+        idx = 0
+        try:
+            while True:
+                part = buf.get_next()
+                if part is None:
+                    break
+                await self.play_stream(part)
+                idx += 1
+        finally:
+            buf.shutdown()
 
     def latency_stats(self) -> dict[str, float] | None:
         if not self.latencies:

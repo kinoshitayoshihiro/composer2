@@ -1,6 +1,7 @@
 # cython: boundscheck=False, wraparound=False
 import math
 import random
+import copy
 from music21 import volume
 
 def apply_swing(part_stream, double swing_ratio, int subdiv=8):
@@ -28,3 +29,40 @@ def humanize_velocities(part_stream, int amount=4):
         delta = random.randint(-amount, amount)
         new_vel = max(1, min(127, vel + delta))
         n.volume.velocity = new_vel
+
+def apply_envelope(part_stream, int start, int end, double scale):
+    """Cython-accelerated envelope scaling."""
+    for n in part_stream.recurse().notes:
+        pos = float(n.offset)
+        if start <= pos < end:
+            vel = getattr(n.volume, 'velocity', None)
+            if vel is None:
+                continue
+            new_vel = int(max(1, min(127, round(vel * scale))))
+            n.volume.velocity = new_vel
+
+def apply_velocity_histogram(part_stream, histogram):
+    if not histogram:
+        return part_stream
+    choices = [int(v) for v in histogram.keys()]
+    weights = [float(w) for w in histogram.values()]
+    for n in part_stream.recurse().notes:
+        vel = random.choices(choices, weights)[0]
+        if n.volume is None:
+            n.volume = volume.Volume(velocity=vel)
+        else:
+            n.volume.velocity = vel
+    return part_stream
+
+def timing_correct_part(part_stream, double alpha):
+    new_part = copy.deepcopy(part_stream)
+    notes = list(new_part.recurse().notes)
+    if not notes:
+        return new_part
+    ema = float(notes[0].offset) - round(float(notes[0].offset))
+    for n in notes:
+        target = round(float(n.offset))
+        delta = float(n.offset) - target
+        ema += alpha * (delta - ema)
+        n.offset = target + ema
+    return new_part

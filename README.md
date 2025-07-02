@@ -327,6 +327,15 @@ modular-composer live score.mid --backend realtime --port "IAC Driver Bus 1" \
   --latency-buffer 5 --measure-latency
 ```
 
+For seamless streaming you can pre-generate upcoming bars:
+
+```bash
+modcompose live model.pt --backend rnn --buffer-ahead 4 --parallel-bars 2
+```
+Use `--threads N` or `--process-pool` with the `compose` command to enable
+multi-threaded or multi-process generation.
+See [performance tips](docs/performance.md) for more tuning options.
+
 #### Quick preview
 Deterministic sampling lets you audition a groove without randomness:
 

@@ -11,3 +11,8 @@ types-PyYAML
 hypothesis
 pydantic>=2.7
 setuptools
+mido
+python-rtmidi
+transformers==4.*
+torch==2.*
+soundfile

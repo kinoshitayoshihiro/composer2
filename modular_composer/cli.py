@@ -15,7 +15,7 @@ from typing import cast
 
 import click
 import pretty_midi
-import yaml
+import yaml  # type: ignore
 from music21 import stream as m21stream
 
 import utilities.loop_ingest as loop_ingest
@@ -270,9 +270,14 @@ def live_cmd(
     if ai_backend == "transformer":
         from utilities.ai_sampler import TransformerBassGenerator
         from utilities.user_history import load_history, record_generate
+
         gen = TransformerBassGenerator(model_name)
-        history = load_history() if use_history else []
-        events = gen.generate(history, 4)
+        prompt_events: list[dict] = []
+        if use_history:
+            hist = load_history()
+            all_ev = [ev for h in hist for ev in h.get("events", [])]
+            prompt_events = all_ev[-128:]
+        events = gen.generate(prompt_events, 4)
         for ev in events:
             click.echo(json.dumps(ev))
         if use_history:
@@ -359,6 +364,13 @@ def _cmd_sample(args: list[str]) -> None:
     ap = argparse.ArgumentParser(prog="modcompose sample")
     ap.add_argument("model", type=Path)
     ap.add_argument("-l", "--length", type=int, default=4)
+    ap.add_argument(
+        "--ai-backend",
+        choices=["ngram", "rnn", "transformer"],
+        default="ngram",
+    )
+    ap.add_argument("--model-name", type=str, default="gpt2-medium")
+    ap.add_argument("--use-history", action="store_true", default=False)
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--cond-velocity", choices=["soft", "hard"], default=None)
@@ -372,37 +384,54 @@ def _cmd_sample(args: list[str]) -> None:
     ns = ap.parse_args(args)
     if ns.seed is not None:
         random.seed(ns.seed)
-    model = load(ns.model)
-    ev = cast(
-        list[Event],
-        generate_events(
-            model,
-            bars=ns.length,
-            temperature=ns.temperature,
-            seed=ns.seed,
-            cond_velocity=ns.cond_velocity,
-            cond_kick=ns.cond_kick,
-        ),
-    )
+    if ns.ai_backend == "transformer":
+        from utilities.ai_sampler import TransformerBassGenerator
+        from utilities.user_history import load_history, record_generate
+
+        gen = TransformerBassGenerator(ns.model_name)
+        prompt_events: list[dict] = []
+        if ns.use_history:
+            hist = load_history()
+            all_ev = [ev for h in hist for ev in h.get("events", [])]
+            prompt_events = all_ev[-128:]
+        events = gen.generate(prompt_events, ns.length)
+        if ns.use_history:
+            record_generate({"model_name": ns.model_name}, events)
+    else:
+        model = load(ns.model)
+        events = cast(
+            list[dict],
+            generate_events(
+                model,
+                bars=ns.length,
+                temperature=ns.temperature,
+                seed=ns.seed,
+                cond_velocity=ns.cond_velocity,
+                cond_kick=ns.cond_kick,
+            ),
+        )
     if ns.peaks:
         import json
 
         with ns.peaks.open() as fh:
             peaks = json.load(fh)
-        ev = PeakSynchroniser.sync_events(
-            peaks,
-            ev,
-            tempo_bpm=120.0,
-            lag_ms=ns.lag,
+        events = cast(
+            list[dict],
+            PeakSynchroniser.sync_events(
+                peaks,
+                cast(list[Event], events),
+                tempo_bpm=120.0,
+                lag_ms=ns.lag,
+            ),
         )
     import json
     import sys
 
     if ns.out is None:
-        json.dump(ev, sys.stdout)
+        json.dump(events, sys.stdout)
     else:
         with ns.out.open("w") as fh:
-            json.dump(ev, fh)
+            json.dump(events, fh)
 
 
 def _cmd_peaks(args: list[str]) -> None:
@@ -423,6 +452,7 @@ def _cmd_render(args: list[str]) -> None:
     ap.add_argument("--humanize-timing", type=float, default=0.0)
     ap.add_argument("--humanize-velocity", type=float, default=0.0)
     ap.add_argument("--preset", type=str, default=None)
+    ap.add_argument("--normalize-lufs", type=float, default=None)
     ns = ap.parse_args(args)
 
     if ns.spec.suffix.lower() in {".yml", ".yaml"}:
@@ -490,6 +520,10 @@ def _cmd_render(args: list[str]) -> None:
     if ns.soundfont:
         wav = ns.out.with_suffix(".wav")
         synth.render_midi(ns.out, wav, ns.soundfont)
+        if ns.normalize_lufs is not None:
+            from utilities.loudness_normalizer import normalize_wav
+
+            normalize_wav(wav, wav, ns.normalize_lufs)
         print(f"Rendered {wav}")
 
 
@@ -539,14 +573,26 @@ def _cmd_realtime(args: list[str]) -> None:
 def _cmd_interact(args: list[str]) -> None:
     ap = argparse.ArgumentParser(prog="modcompose interact")
     ap.add_argument("--backend", default="transformer")
-    ap.add_argument("--model-name", default="gpt2-music")
+    ap.add_argument("--model-name", default="gpt2-medium")
     ap.add_argument("--bpm", type=float, default=120.0)
+    ap.add_argument("--midi-in", default="")
+    ap.add_argument("--midi-out", default="")
+    ap.add_argument("--buffer-ms", type=int, default=100)
+    ap.add_argument("--lookahead-bars", type=float, default=0.5)
     ns = ap.parse_args(args)
     from utilities.interactive_engine import InteractiveEngine
 
-    engine = InteractiveEngine(model_name=ns.model_name, bpm=ns.bpm)
+    engine = InteractiveEngine(
+        backend=ns.backend,
+        model_name=ns.model_name,
+        bpm=ns.bpm,
+        buffer_ms=ns.buffer_ms,
+        lookahead_bars=ns.lookahead_bars,
+    )
     engine.add_callback(lambda ev: print(json.dumps(ev)))
-    engine.run()
+    import asyncio
+
+    asyncio.run(engine.start(ns.midi_in, ns.midi_out))
 
 
 def _cmd_gm_test(args: list[str]) -> None:

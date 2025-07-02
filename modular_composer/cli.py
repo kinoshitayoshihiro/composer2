@@ -235,6 +235,14 @@ def preset_import(file: Path, name: str | None) -> None:
 @click.option(
     "--backend", type=click.Choice(["ngram", "rnn", "realtime"]), default="ngram"
 )
+@click.option(
+    "--ai-backend",
+    type=click.Choice(["ngram", "rnn", "transformer"]),
+    default="ngram",
+    show_default=True,
+)
+@click.option("--model-name", type=str, default="gpt2-music")
+@click.option("--use-history", is_flag=True, default=False)
 @click.option("--sync", type=click.Choice(["internal", "external"]), default="internal")
 @click.option("--bpm", type=float, default=120.0, show_default=True)
 @click.option("--buffer", type=int, default=1, show_default=True)
@@ -246,6 +254,9 @@ def preset_import(file: Path, name: str | None) -> None:
 def live_cmd(
     model: Path,
     backend: str,
+    ai_backend: str,
+    model_name: str,
+    use_history: bool,
     sync: str,
     bpm: float,
     buffer: int,
@@ -256,6 +267,17 @@ def live_cmd(
     measure_latency: bool,
 ) -> None:
     """Stream a trained groove model live."""
+    if ai_backend == "transformer":
+        from utilities.ai_sampler import TransformerBassGenerator
+        from utilities.user_history import load_history, record_generate
+        gen = TransformerBassGenerator(model_name)
+        history = load_history() if use_history else []
+        events = gen.generate(history, 4)
+        for ev in events:
+            click.echo(json.dumps(ev))
+        if use_history:
+            record_generate({"model_name": model_name}, events)
+        return
     if backend == "realtime":
         from music21 import converter
 
@@ -514,6 +536,19 @@ def _cmd_realtime(args: list[str]) -> None:
     player.play(bars=ns.duration // 4)
 
 
+def _cmd_interact(args: list[str]) -> None:
+    ap = argparse.ArgumentParser(prog="modcompose interact")
+    ap.add_argument("--backend", default="transformer")
+    ap.add_argument("--model-name", default="gpt2-music")
+    ap.add_argument("--bpm", type=float, default=120.0)
+    ns = ap.parse_args(args)
+    from utilities.interactive_engine import InteractiveEngine
+
+    engine = InteractiveEngine(model_name=ns.model_name, bpm=ns.bpm)
+    engine.add_callback(lambda ev: print(json.dumps(ev)))
+    engine.run()
+
+
 def _cmd_gm_test(args: list[str]) -> None:
     ap = argparse.ArgumentParser(prog="modcompose gm-test")
     ap.add_argument("midi", nargs="+")
@@ -607,6 +642,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_render(argv[1:])
     elif cmd == "realtime":
         _cmd_realtime(argv[1:])
+    elif cmd == "interact":
+        _cmd_interact(argv[1:])
     elif cmd == "gm-test":
         _cmd_gm_test(argv[1:])
     elif cmd == "gui":

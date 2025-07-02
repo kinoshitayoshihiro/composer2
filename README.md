@@ -703,6 +703,18 @@ Sample with:
 modcompose rnn sample model.pt -l 4 > pattern.json
 ```
 
+## AI Transformer Backend
+
+Install `transformers` to experiment with a language-model driven bass line
+generator. Pass `--ai-backend transformer` and specify the model name:
+
+```bash
+modcompose live model.pkl --ai-backend transformer --model-name gpt2-music
+```
+
+Historical generation data can guide future runs when `--use-history` is set.
+See [docs/ai.md](docs/ai.md) for details.
+
 ## Realtime Low-Latency
 
 Live playback uses a double-buffered engine. Synchronise with external MIDI

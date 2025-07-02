@@ -1,15 +1,29 @@
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
 import random
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
 
-import streamlit as st
+from utilities.interactive_engine import InteractiveEngine
 
-from utilities import groove_sampler_ngram
-from utilities import groove_sampler_rnn
+try:
+    import streamlit as st
+except ModuleNotFoundError as exc:  # pragma: no cover - optional
+    raise RuntimeError(
+        "streamlit is required for GUI mode – install with `pip install streamlit`."
+    ) from exc
+
+try:
+    import mido  # noqa: F401  # optional dependency for interactive mode
+except Exception as exc:  # pragma: no cover - optional
+    mido = None  # type: ignore
+    _MIDO_ERROR = exc
+else:  # pragma: no cover - optional
+    _MIDO_ERROR = None
+
+from utilities import groove_sampler_ngram, groove_sampler_rnn, preset_manager
 from utilities.midi_capture import MIDIRecorder
-from utilities import preset_manager
 
 
 def _to_midi(events: list[groove_sampler_ngram.Event]) -> bytes:
@@ -21,7 +35,24 @@ def _to_midi(events: list[groove_sampler_ngram.Event]) -> bytes:
     return data
 
 
+def setup_interactive(
+    model_name: str, bpm: float, log_func: Callable[[str], None]
+) -> InteractiveEngine | None:
+    """Initialise InteractiveEngine and register ``log_func`` callback."""
+    if mido is None:
+        log_func(f"mido unavailable: {_MIDO_ERROR}")
+        return None
+    import json
+
+    from utilities.interactive_engine import InteractiveEngine
+
+    engine = InteractiveEngine(model_name=model_name, bpm=bpm)
+    engine.add_callback(lambda ev: log_func(json.dumps(ev)))
+    return engine
+
+
 def main() -> None:
+    mode = st.radio("Mode", ("Generate", "Interact"))
     backend = st.radio("Backend", ("ngram", "rnn"))
     bars = st.slider("Bars", 1, 16, 4)
     temp = st.slider("Temperature", 0.0, 1.5, 1.0)
@@ -31,6 +62,31 @@ def main() -> None:
     if seed_input:
         random.seed(int(seed_input))
     file = st.file_uploader("Model", type=["pkl", "pt"])
+
+    if mode == "Interact":
+        if mido is None:
+            st.error(f"mido unavailable: {_MIDO_ERROR}")
+            return
+        model_name = st.text_input("Model name", "gpt2-music")
+        bpm = st.slider("BPM", 60, 200, 120)
+        if "inter_logs" not in st.session_state:
+            st.session_state["inter_logs"] = []
+        log_box = st.empty()
+
+        def _log(msg: str) -> None:
+            st.session_state["inter_logs"].append(msg)
+            log_box.text("\n".join(st.session_state["inter_logs"][-12:]))
+
+        if st.button("Start Interact"):
+            engine = setup_interactive(model_name, bpm, _log)
+            if engine is not None:
+                import threading
+
+                t = threading.Thread(target=engine.run, daemon=True)
+                t.start()
+                st.session_state["inter_thread"] = t
+                st.session_state["inter_engine"] = engine
+        return
 
     if "preset_names" not in st.session_state:
         st.session_state["preset_names"] = preset_manager.list_presets()
@@ -74,7 +130,8 @@ def main() -> None:
         if human_velocity > 0:
             for ev in events:
                 if "velocity" in ev:
-                    ev["velocity"] = int(ev["velocity"] * (1 - human_velocity) + 100 * human_velocity)
+                    vel = int(ev["velocity"] * (1 - human_velocity) + 100 * human_velocity)
+                    ev["velocity"] = vel
         if human_timing > 0:
             offset = 0.0
             for ev in events:

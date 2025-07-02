@@ -254,6 +254,7 @@ def _cmd_demo(args: list[str]) -> None:
     ap = argparse.ArgumentParser(prog="modcompose demo")
     ap.add_argument("-o", "--out", type=Path, default=Path("demo.mid"))
     ap.add_argument("--tempo-curve", type=Path)
+    ap.add_argument("--seed", type=int, default=None)
     ns = ap.parse_args(args)
     if ns.seed is not None:
         random.seed(ns.seed)

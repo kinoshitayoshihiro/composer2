@@ -32,6 +32,7 @@ from music21 import (
 # --- project utilities ----------------------------------------------------
 from utilities.generator_factory import GenFactory  # type: ignore
 import utilities.humanizer as humanizer  # type: ignore
+import yaml
 from utilities.tempo_utils import load_tempo_map
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
@@ -275,6 +276,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "-r",
         help="YAML: rhythm_library.yml のパス",
     )
+    p.add_argument("--time-signature", help="Global time signature e.g. 7/8")
+    p.add_argument("--phrase-spec", help="YAML: phrase intensity spec")
+    p.add_argument(
+        "--insert-phrase",
+        action="append",
+        help="Phrase insertion like name@section",
+    )
     # 出力先を変更したいとき
     p.add_argument(
         "--output-dir",
@@ -339,6 +347,12 @@ def main_cli() -> None:
     ):
         if v:
             paths[k] = v
+    if args.time_signature:
+        main_cfg.setdefault("global_settings", {})["time_signature"] = args.time_signature
+    if args.phrase_spec:
+        main_cfg.setdefault("paths", {})["phrase_spec"] = args.phrase_spec
+    if args.insert_phrase:
+        main_cfg.setdefault("global_settings", {})["insert_phrases"] = args.insert_phrase
     if args.output_filename:
         paths["output_filename"] = args.output_filename
     if args.tempo_curve:
@@ -404,6 +418,28 @@ def main_cli() -> None:
     part_gens = GenFactory.build_from_config(
         main_cfg, rhythm_lib, tempo_map=tempo_map
     )
+
+    phrase_spec_path = paths.get("phrase_spec")
+    phrase_map = {}
+    if phrase_spec_path:
+        try:
+            with open(phrase_spec_path, "r", encoding="utf-8") as f:
+                phrase_map = yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.warning("Failed to load phrase spec: %s", e)
+
+    insert_phrases = main_cfg.get("global_settings", {}).get("insert_phrases", [])
+
+    for gen in part_gens.values():
+        if hasattr(gen, "set_phrase_map"):
+            gen.set_phrase_map(phrase_map.get("bass_phrases", {}))
+        if hasattr(gen, "set_phrase_insertions"):
+            mapping = {}
+            for entry in insert_phrases:
+                if "@" in entry:
+                    name, sec = entry.split("@", 1)
+                    mapping[sec] = name
+            gen.set_phrase_insertions(mapping)
 
     # 楽器ごとの単一 Part
     part_streams: dict[str, stream.Part] = {}

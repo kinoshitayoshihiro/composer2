@@ -100,7 +100,7 @@ def test_export_musicxml(tmp_path):
     assert path.exists() and path.stat().st_size > 0
 
 
-def test_export_tab(tmp_path):
+def test_export_tab_xml_and_ascii(tmp_path):
     gen = GuitarGenerator(
         global_settings={},
         default_instrument=instrument.Guitar(),
@@ -111,9 +111,14 @@ def test_export_tab(tmp_path):
         global_key_signature_mode="major",
     )
     gen.compose(section_data=_basic_section())
-    path = tmp_path / "out.ly"
-    gen.export_tab(str(path))
-    assert path.exists() and path.stat().st_size > 0
+
+    xml_path = tmp_path / "out.xml"
+    gen.export_tab(str(xml_path), format="xml")
+    assert xml_path.exists() and xml_path.stat().st_size > 0
+
+    ascii_path = tmp_path / "out.txt"
+    gen.export_tab(str(ascii_path), format="ascii")
+    assert ascii_path.exists() and ascii_path.stat().st_size > 0
 
 
 def test_gate_length_variation_range():

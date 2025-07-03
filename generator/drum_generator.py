@@ -1748,8 +1748,8 @@ class DrumGenerator(BasePartGenerator):
                 cc_events.append(
                     {
                         "time": off,
-                        "number": 20,  # CC20 for debug
-                        "value": max(0, min(127, val + 64)),
+                        "cc": 20,  # CC20 for debug
+                        "val": max(0, min(127, val + 64)),
                     }
                 )
             part.extra_cc = cc_events

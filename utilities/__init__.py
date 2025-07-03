@@ -75,6 +75,7 @@ from .humanizer import apply_velocity_histogram
 from .timing_corrector import TimingCorrector
 from .emotion_profile_loader import load_emotion_profile
 from .loudness_meter import RealtimeLoudnessMeter
+from .install_utils import run_with_retry
 
 __all__ = [
     "MIN_NOTE_DURATION_QL",
@@ -113,6 +114,7 @@ __all__ = [
     "extract_to_json",
     "load_emotion_profile",
     "RealtimeLoudnessMeter",
+    "run_with_retry",
     "groove_sampler_ngram",
     "groove_sampler_rnn",
 ]

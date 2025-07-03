@@ -48,8 +48,8 @@ def add_portamento(part: stream.Part, slide_events: list[dict]) -> stream.Part:
         off = float(ev.get("offset", 0.0))
         dur = float(ev.get("duration", 0.5))
         time_val = max(0, min(127, int(dur * 127)))
-        extra.append({"time": off, "number": 5, "value": time_val})
-        extra.append({"time": off, "number": 84, "value": 127})
+        extra.append({"time": off, "cc": 5, "val": time_val})
+        extra.append({"time": off, "cc": 84, "val": 127})
     part.extra_cc = extra
     return part
 

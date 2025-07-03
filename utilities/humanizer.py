@@ -184,8 +184,8 @@ def apply(
     if expr or aft:
         _humanize_velocities(
             part_stream,
-            use_expr_cc11=expr,
-            use_aftertouch=aft,
+            amount=4,
+            global_settings=gs,
         )
 
 
@@ -351,11 +351,11 @@ def _humanize_velocities_py(
         n.volume.velocity = new_vel
         if use_expr_cc11:
             part.extra_cc = getattr(part, "extra_cc", []) + [
-                {"time": float(n.offset), "number": 11, "value": new_vel}
+                {"time": float(n.offset), "cc": 11, "val": new_vel}
             ]
         if use_aftertouch:
             part.extra_cc = getattr(part, "extra_cc", []) + [
-                {"time": float(n.offset), "number": 74, "value": new_vel}
+                {"time": float(n.offset), "cc": 74, "val": new_vel}
             ]
 
 
@@ -363,18 +363,16 @@ def _humanize_velocities(
     part: stream.Part,
     amount: int = 4,
     *,
-    use_expr_cc11: bool | None = None,
-    use_aftertouch: bool | None = None,
+    global_settings: Mapping[str, Any] | None = None,
 ) -> None:
     """Randomise note velocities and optionally emit CC messages."""
-    if use_expr_cc11 is None:
-        use_expr_cc11 = USE_EXPR_CC11
-    if use_aftertouch is None:
-        use_aftertouch = USE_AFTERTOUCH
+    gs = global_settings or {}
+    use_expr = bool(gs.get("use_expr_cc11", False))
+    use_at = bool(gs.get("use_aftertouch", False))
     if cy_humanize_velocities is not None:
-        cy_humanize_velocities(part, amount, use_expr_cc11, use_aftertouch)
+        cy_humanize_velocities(part, amount, use_expr, use_at)
     else:
-        _humanize_velocities_py(part, amount, use_expr_cc11, use_aftertouch)
+        _humanize_velocities_py(part, amount, use_expr, use_at)
 
 
 def _apply_velocity_histogram_py(

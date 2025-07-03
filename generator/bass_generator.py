@@ -135,7 +135,7 @@ except ImportError as e:
 logger = logging.getLogger("modular_composer.bass_generator")
 
 
-def _apply_tone_preset(part: stream.Part, intensity: str) -> None:
+def _apply_tone(part: stream.Part, intensity: str) -> None:
     """Insert CC31 events based on average velocity."""
     notes = list(part.flat.notes)
     if not notes:
@@ -352,7 +352,7 @@ class BassGenerator(BasePartGenerator):
         if isinstance(result, dict):
             for p in result.values():
                 apply_shift(p)
-                _apply_tone_preset(p, str(intensity_label))
+                _apply_tone(p, str(intensity_label))
                 label = section_data.get("section_name")
                 if label in self.phrase_insertions:
                     self._insert_custom_phrase(p, self.phrase_insertions[label])
@@ -362,7 +362,7 @@ class BassGenerator(BasePartGenerator):
             return result
         else:
             part = apply_shift(result)
-            _apply_tone_preset(part, str(intensity_label))
+            _apply_tone(part, str(intensity_label))
             label = section_data.get("section_name")
             if label in self.phrase_insertions:
                 self._insert_custom_phrase(part, self.phrase_insertions[label])

@@ -22,7 +22,7 @@ class ToneShaper:
 
     def to_cc_events(self, preset_name: str, offset: float) -> list[dict]:
         value = self.presets.get(preset_name, self.presets["clean"])
-        return [{"time": float(offset), "number": 31, "value": value}]
+        return [{"time": float(offset), "cc": 31, "val": value}]
 
     def fit(self, preset_samples: dict[str, "np.ndarray"]) -> None:
         """Fit KNN model from preset MFCC samples."""

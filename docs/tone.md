@@ -13,6 +13,19 @@ channel aftertouch (CC74). Enable these with the global settings
 When `use_expr_cc11` is ``True`` a CC11 message mirroring each note's velocity
 is inserted. Setting `use_aftertouch` converts velocities to CC74 for devices
 that interpret channel aftertouch as a timbre control.
+You can enable these either programmatically:
+
+```python
+from utilities import humanizer
+
+humanizer.set_cc_flags(True, True)
+```
+
+or by passing a mapping to ``humanizer.apply``:
+
+```python
+humanizer.apply(part, global_settings={"use_expr_cc11": True, "use_aftertouch": True})
+```
 
 ## Using ``ToneShaper``
 

@@ -16,7 +16,6 @@ from typing import Any, cast
 import click
 import pretty_midi
 import yaml
-import music21
 from music21 import stream as m21stream
 
 import utilities.loop_ingest as loop_ingest
@@ -311,7 +310,7 @@ def live_cmd(
         )
         parsed = converter.parse(str(model))
         part_stream = parsed.parts[0] if hasattr(parsed, "parts") else parsed
-        part = part_stream
+        part = cast(m21stream.Part, part_stream)
         if buffer_ahead > 0:
             async def _run() -> None:
                 await streamer.play_live(

@@ -14,6 +14,8 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Demo MIDI Generation](#demo-midi-generation)
 - [Notebook Demo](#notebook-demo)
 - [Tone and Dynamics](#tone-and-dynamics)
+- [Groove Enhancements](docs/groove.md)
+- [Phrase Diversity](docs/diversity.md)
 
 
 ## Setup
@@ -739,6 +741,12 @@ Use articulation key switches and amp presets to refine playback. Add
 `--articulation-profile` to `compose` commands to load a YAML mapping.
 Audio rendered with `modcompose render` can be loudness normalised via
 `--normalize-lufs`.
+Common CLI options:
+
+- `--late-humanize` shifts note timing a few milliseconds right before playback.
+- `--rhythm-schema` prepends a rhythm style token when sampling transformer bass.
+- `--normalize-lufs` normalises rendered audio to the given loudness target.
+- ToneShaper selects amp presets and emits CC31 at the start of each part.
 See [docs/tone.md](docs/tone.md) for details.
 
 ## Realtime Low-Latency

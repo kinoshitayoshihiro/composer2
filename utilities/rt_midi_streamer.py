@@ -4,6 +4,7 @@ import asyncio
 import logging
 import statistics
 from collections.abc import Callable
+import random
 
 from music21 import stream
 
@@ -12,7 +13,7 @@ try:
 except Exception:  # pragma: no cover - optional
     rtmidi = None
 
-from .live_buffer import LiveBuffer
+from .live_buffer import LiveBuffer, apply_late_humanization
 from .tempo_utils import TempoMap, beat_to_seconds
 
 
@@ -83,9 +84,11 @@ class RtMidiStreamer:
         await asyncio.sleep(max(0.0, end - loop.time()))
         self._send_with_retry([0x80, pitch, 0])
 
-    async def play_stream(self, part: stream.Part) -> None:
+    async def play_stream(self, part: stream.Part, *, late_humanize: bool = False) -> None:
         loop = asyncio.get_running_loop()
         start_time = loop.time()
+        if late_humanize:
+            apply_late_humanization(part.flatten().notes, rng=random.Random(), bpm=self.tempo.events[0]["bpm"] if self.tempo.events else 120.0)
         tasks = []
         for n in part.flatten().notes:
             start = start_time + beat_to_seconds(float(n.offset), self.tempo.events)
@@ -112,6 +115,7 @@ class RtMidiStreamer:
         *,
         buffer_ahead: int = 4,
         parallel_bars: int = 1,
+        late_humanize: bool = False,
     ) -> None:
         """Play parts sequentially using a background generation buffer."""
         buf = LiveBuffer(generator, buffer_ahead=buffer_ahead, parallel_bars=parallel_bars)
@@ -121,7 +125,7 @@ class RtMidiStreamer:
                 part = buf.get_next()
                 if part is None:
                     break
-                await self.play_stream(part)
+                await self.play_stream(part, late_humanize=late_humanize)
                 idx += 1
         finally:
             buf.shutdown()

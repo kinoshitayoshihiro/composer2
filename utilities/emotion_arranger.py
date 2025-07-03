@@ -30,12 +30,13 @@ def generate_bass_arrangement(
     Returns
     -------
     Dict[str, Dict[str, Any]]
-        Mapping of section name to arrangement data. Currently only contains
-        ``"bass_pattern_key"``.
+        Mapping of section name to arrangement data. Each entry contains
+        ``"bass_pattern_key"`` as well as optional ``"octave_pref"`` and
+        ``"length_beats"`` keys derived from the emotion profile.
     """
     chordmap = load_chordmap_yaml(Path(chordmap_path))
     rhythm_lib = load_rhythm_library(str(rhythm_library_path))
-    _ = load_emotion_profile(emotion_profile_path)
+    emotion_profiles = load_emotion_profile(emotion_profile_path)
 
     global_settings = chordmap.get("global_settings", {})
     tempo = int(global_settings.get("tempo", 120))
@@ -60,6 +61,14 @@ def generate_bass_arrangement(
     for name, section in chordmap.get("sections", {}).items():
         intent = section.get("musical_intent", {})
         pattern_key = gen._choose_bass_pattern_key(intent)
-        arrangement[name] = {"bass_pattern_key": pattern_key}
+
+        emotion = intent.get("emotion", "default")
+        emotion_cfg = emotion_profiles.get(emotion, {}) if isinstance(emotion_profiles, dict) else {}
+
+        arrangement[name] = {
+            "bass_pattern_key": pattern_key,
+            "octave_pref": emotion_cfg.get("octave_pref"),
+            "length_beats": emotion_cfg.get("length_beats"),
+        }
 
     return arrangement

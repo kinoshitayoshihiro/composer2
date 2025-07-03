@@ -774,6 +774,12 @@ Common CLI options:
   part.extra_cc.extend(shaper.to_cc_events(preset, 0.0))
   ```
 
+Run with automatic tone shaping:
+
+```bash
+modcompose render spec.yml --tone-auto
+```
+
 See [docs/tone.md](docs/tone.md) for details.
 
 ## Realtime Low-Latency

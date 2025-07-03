@@ -657,14 +657,22 @@ class PianoGenerator(BasePartGenerator):
         )
         for part in (rh_part, lh_part):
             if profile_name:
-                humanizer.apply(part, profile_name)
+                humanizer.apply(
+                    part,
+                    profile_name,
+                    global_settings=self.global_settings,
+                )
 
         global_profile = self.cfg.get(
             "global_humanize_profile"
         ) or self.global_settings.get("global_humanize_profile")
         for part in (rh_part, lh_part):
             if global_profile:
-                humanizer.apply(part, global_profile)
+                humanizer.apply(
+                    part,
+                    global_profile,
+                    global_settings=self.global_settings,
+                )
 
         # 結合して 1 Part を返していたコードを削除
         rh_part.id = "piano_rh"

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import music21
+import numpy as np
 from music21 import (
     duration as m21duration,
 )
@@ -132,6 +133,18 @@ except ImportError as e:
 
 
 logger = logging.getLogger("modular_composer.bass_generator")
+
+
+def _apply_tone_preset(part: stream.Part, intensity: str) -> None:
+    """Insert CC31 events based on average velocity."""
+    notes = list(part.flat.notes)
+    if not notes:
+        return
+    avg_vel = float(np.mean([n.volume.velocity or 0 for n in notes]))
+    shaper = ToneShaper()
+    preset = shaper.choose_preset(avg_vel, intensity)
+    part.extra_cc = getattr(part, "extra_cc", [])
+    part.extra_cc.extend(shaper.to_cc_events(preset, 0.0))
 
 DIRECTION_UP = 1
 DIRECTION_DOWN = -1
@@ -334,23 +347,12 @@ class BassGenerator(BasePartGenerator):
             self._root_offsets = [float(n.offset) for n in part.flatten().notes]
             return part
 
-        tone = ToneShaper()
         intensity_label = section_data.get("musical_intent", {}).get("intensity", "medium")
-
-        def apply_tone(part: stream.Part) -> stream.Part:
-            notes = list(part.flatten().notes)
-            if not notes:
-                return part
-            avg_vel = sum((n.volume.velocity or self.base_velocity) for n in notes) / len(notes)
-            preset = tone.choose_preset(avg_vel, str(intensity_label))
-            cc_events = tone.to_cc_events(preset, 0.0)
-            part.extra_cc = getattr(part, "extra_cc", []) + cc_events
-            return part
 
         if isinstance(result, dict):
             for p in result.values():
                 apply_shift(p)
-                apply_tone(p)
+                _apply_tone_preset(p, str(intensity_label))
                 label = section_data.get("section_name")
                 if label in self.phrase_insertions:
                     self._insert_custom_phrase(p, self.phrase_insertions[label])
@@ -360,7 +362,7 @@ class BassGenerator(BasePartGenerator):
             return result
         else:
             part = apply_shift(result)
-            part = apply_tone(part)
+            _apply_tone_preset(part, str(intensity_label))
             label = section_data.get("section_name")
             if label in self.phrase_insertions:
                 self._insert_custom_phrase(part, self.phrase_insertions[label])
@@ -1880,7 +1882,11 @@ class BassGenerator(BasePartGenerator):
             or self.global_settings.get("humanize_profile")
         )
         if profile_name:
-            humanizer.apply(bass_part, profile_name)
+            humanizer.apply(
+                bass_part,
+                profile_name,
+                global_settings=self.global_settings,
+            )
 
         return bass_part
 

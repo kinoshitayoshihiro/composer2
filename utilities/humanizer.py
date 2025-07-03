@@ -117,6 +117,7 @@ def apply(
     *,
     swing_ratio: float | None = None,
     kick_leak_velocity_jitter: int = 0,
+    global_settings: Mapping[str, Any] | None = None,
 ) -> None:
     """music21.stream.Part に in-place でヒューマナイズを適用"""
     prof = get_profile(profile_name) if profile_name else {}
@@ -176,6 +177,16 @@ def apply(
                 n.offset = beat_start + swing_offset
             elif beat_pos < 0.05 or beat_pos > 0.95:
                 n.offset = beat_start
+
+    gs = global_settings or {}
+    expr = bool(gs.get("use_expr_cc11", USE_EXPR_CC11))
+    aft = bool(gs.get("use_aftertouch", USE_AFTERTOUCH))
+    if expr or aft:
+        _humanize_velocities(
+            part_stream,
+            use_expr_cc11=expr,
+            use_aftertouch=aft,
+        )
 
 
 def _validate_ratio(ratio: float) -> float:

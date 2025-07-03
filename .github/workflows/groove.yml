@@ -21,11 +21,14 @@ jobs:
       - name: Install test dependencies
         run: pip install -e .[test] -r requirements-test.txt
       - name: Install Cython
-        if: matrix.env.CYTHON == '1'
         run: pip install Cython
       - name: build cyext
-        if: matrix.env.CYTHON == '1'
-        run: MCY_USE_CYTHON=1 python setup.py build_ext --inplace
+        run: |
+          if [ "${{ matrix.env.CYTHON }}" = '1' ]; then
+            MCY_USE_CYTHON=1 python setup.py build_ext --inplace
+          else
+            python setup.py build_ext --inplace
+          fi
       - name: make loops
         run: |
           python - <<'PY'

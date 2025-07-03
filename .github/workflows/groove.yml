@@ -20,6 +20,9 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y fluid-soundfont-gm
       - name: Install test dependencies
         run: pip install -e .[test] -r requirements-test.txt
+      - name: Install Cython
+        if: matrix.env.CYTHON == '1'
+        run: pip install Cython
       - name: build cyext
         if: matrix.env.CYTHON == '1'
         run: MCY_USE_CYTHON=1 python setup.py build_ext --inplace

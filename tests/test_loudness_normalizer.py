@@ -7,14 +7,16 @@ from utilities.loudness_normalizer import normalize_wav
 
 
 def test_normalize_wav(tmp_path: Path) -> None:
-    sr = 16000
+    sr = 44100
     t = np.linspace(0, 1.0, sr, endpoint=False)
-    y = 0.5 * np.sin(2 * np.pi * 1000 * t)
+    amp = 10 ** (-3 / 20)
+    y = amp * np.sin(2 * np.pi * 1000 * t)
     inp = tmp_path / "in.wav"
     out = tmp_path / "out.wav"
     sf.write(inp, y, sr)
-    normalize_wav(inp, out, target_lufs=-20.0)
+    target = -14.0
+    normalize_wav(inp, out, target_lufs=target)
     y_norm, _ = sf.read(out)
-    rms = np.sqrt(np.mean(y_norm ** 2))
-    lufs = 20 * np.log10(rms)
-    assert abs(lufs - (-20.0)) < 1.0
+    # Expect amplitude scaled to roughly 0.28 for -14 LUFS
+    max_amp = np.max(np.abs(y_norm))
+    assert abs(max_amp - 0.28) < 0.02

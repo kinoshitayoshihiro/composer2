@@ -765,10 +765,13 @@ Common CLI options:
 - `--late-humanize` shifts note timing a few milliseconds right before playback.
 - `--rhythm-schema` prepends a rhythm style token when sampling transformer bass.
 - `--normalize-lufs` normalises rendered audio to the given loudness target.
+- `normalize_wav` can also infer targets per section using
+  `{'verse': -16, 'chorus': -12}`.
 - `--buffer-ahead` and `--parallel-bars` control the pre-generation buffer for
   live mode. Increase them if generation is slow.
-- ToneShaper selects amp presets and emits CC31 at the start of each part.
-  Use it automatically at the end of `BassGenerator.compose()`:
+- ToneShaper selects amp presets using both intensity and average note
+  velocity, then emits CC31 at the start of each part. Use it automatically at
+  the end of `BassGenerator.compose()`:
 
   ```python
   from utilities.tone_shaper import ToneShaper

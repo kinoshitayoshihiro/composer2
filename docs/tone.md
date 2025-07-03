@@ -10,6 +10,9 @@ Key switch notes for articulations can be inserted with
 Velocity humanisation optionally maps note volumes to expression (CC11) and
 channel aftertouch (CC74). Enable these with the global settings
 `use_expr_cc11` and `use_aftertouch`.
+When `use_expr_cc11` is ``True`` a CC11 message mirroring each note's velocity
+is inserted. Setting `use_aftertouch` converts velocities to CC74 for devices
+that interpret channel aftertouch as a timbre control.
 
 ## Using ``ToneShaper``
 

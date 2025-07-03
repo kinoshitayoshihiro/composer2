@@ -1,4 +1,4 @@
-music21
+music21>=9.0
 numpy
 scipy
 pretty_midi
@@ -8,7 +8,7 @@ librosa>=0.10.0
 pytest-benchmark
 PyYAML
 types-PyYAML
-hypothesis
+hypothesis>=6.0
 pydantic>=2.7
 setuptools
 mido

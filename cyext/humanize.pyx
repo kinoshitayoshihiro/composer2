@@ -17,7 +17,9 @@ def apply_swing(part_stream, double swing_ratio, int subdiv=8):
         if abs(within - step) < tol:
             n.offset = pair_start + pair * swing_ratio
 
-def humanize_velocities(part_stream, int amount=4, bint use_expr_cc11=False, bint use_aftertouch=False):
+cpdef humanize_velocities(part_stream, int amount=4,
+                          bint use_expr_cc11=False,
+                          bint use_aftertouch=False):
     for n in part_stream.recurse().notes:
         vel = getattr(n.volume, 'velocity', None)
         if vel is None:
@@ -32,11 +34,11 @@ def humanize_velocities(part_stream, int amount=4, bint use_expr_cc11=False, bin
         if use_expr_cc11:
             if not hasattr(part_stream, "extra_cc"):
                 part_stream.extra_cc = []
-            part_stream.extra_cc.append({"time": float(n.offset), "number": 11, "value": new_vel})
+            part_stream.extra_cc.append({"time": n.offset, "cc": 11, "val": new_vel})
         if use_aftertouch:
             if not hasattr(part_stream, "extra_cc"):
                 part_stream.extra_cc = []
-            part_stream.extra_cc.append({"time": float(n.offset), "number": 74, "value": new_vel})
+            part_stream.extra_cc.append({"time": n.offset, "cc": 74, "val": new_vel})
 
 def apply_envelope(part_stream, int start, int end, double scale):
     """Cython-accelerated envelope scaling."""

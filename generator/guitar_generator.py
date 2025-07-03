@@ -5,8 +5,10 @@ import logging
 import os
 import random
 from collections.abc import Sequence
+
 from dataclasses import dataclass
 from functools import lru_cache
+
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,7 @@ import music21.pitch as pitch
 import music21.stream as stream
 import music21.volume as m21volume
 import yaml
+
 
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 
@@ -888,6 +891,16 @@ class GuitarGenerator(BasePartGenerator):
         accent_adj = int(self.accent_map.get(int(math.floor(event_offset_ql)), 0))
         event_final_velocity = _clamp_velocity(base_velocity + accent_adj)
 
+        stroke_dir = guitar_block_params.get("current_event_stroke") or guitar_block_params.get("stroke_direction")
+        if isinstance(stroke_dir, str):
+            key = str(stroke_dir).strip().upper()
+            factor = STROKE_VELOCITY_FACTOR.get(key, 1.0)
+            event_final_velocity = max(1, min(127, int(event_final_velocity * factor)))
+
+        is_palm_muted = guitar_block_params.get("palm_mute", False)
+        if is_palm_muted:
+            event_final_velocity = max(1, int(event_final_velocity * 0.85))
+
         if execution_style == EXEC_STYLE_POWER_CHORDS and cs.root():
             p_root = pitch.Pitch(cs.root().name)
             target_power_chord_octave = DEFAULT_GUITAR_OCTAVE_RANGE[0]
@@ -1548,7 +1561,11 @@ class GuitarGenerator(BasePartGenerator):
             or self.global_settings.get("humanize_profile")
         )
         if profile_name:
-            humanizer.apply(guitar_part, profile_name)
+            humanizer.apply(
+                guitar_part,
+                profile_name,
+                global_settings=self.global_settings,
+            )
 
         return guitar_part
 

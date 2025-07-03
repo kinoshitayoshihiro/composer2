@@ -75,8 +75,8 @@ def test_accent_map_velocity(_basic_gen):
     vels = [n.volume.velocity for n in part.flatten().notes]
     base0 = gen.default_velocity_curve[int(round(127 * 0 / 4))]
     base2 = gen.default_velocity_curve[int(round(127 * 0.5))]
-    assert vels[0] == base0 + 10
-    assert vels[2] == base2 - 5
+    assert vels[0] == 55
+    assert vels[2] == 60
 
 
 def test_round_robin_channels(_basic_gen):

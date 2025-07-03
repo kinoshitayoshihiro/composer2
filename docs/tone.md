@@ -3,6 +3,12 @@
 This project can shape bass tone via MIDI control changes. The `ToneShaper`
 selects an amp/cabinet preset depending on playing intensity. The chosen preset
 is sent as a CC#31 value at the start of the part.
+All control change events now use the keys ``cc`` and ``val`` instead of
+``number`` and ``value``:
+
+```python
+{"cc": 11, "val": 100}
+```
 
 Key switch notes for articulations can be inserted with
 `add_key_switches()` from `utilities.articulation_mapper`.
@@ -13,6 +19,19 @@ channel aftertouch (CC74). Enable these with the global settings
 When `use_expr_cc11` is ``True`` a CC11 message mirroring each note's velocity
 is inserted. Setting `use_aftertouch` converts velocities to CC74 for devices
 that interpret channel aftertouch as a timbre control.
+You can enable these either programmatically:
+
+```python
+from utilities import humanizer
+
+humanizer.set_cc_flags(True, True)
+```
+
+or by passing a mapping to ``humanizer.apply``:
+
+```python
+humanizer.apply(part, global_settings={"use_expr_cc11": True, "use_aftertouch": True})
+```
 
 ## Using ``ToneShaper``
 
@@ -27,6 +46,12 @@ from utilities.tone_shaper import ToneShaper
 shaper = ToneShaper()
 preset = shaper.choose_preset(avg_velocity=80.0, intensity="medium")
 part.extra_cc = shaper.to_cc_events(preset, offset=0.0)
+```
+
+A simplified decision flow:
+
+```
+mean velocity -> intensity bucket -> preset name
 ```
 
 ## Loudness Normalisation

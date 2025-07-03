@@ -117,6 +117,7 @@ def apply(
     *,
     swing_ratio: float | None = None,
     kick_leak_velocity_jitter: int = 0,
+    global_settings: Mapping[str, Any] | None = None,
 ) -> None:
     """music21.stream.Part に in-place でヒューマナイズを適用"""
     prof = get_profile(profile_name) if profile_name else {}
@@ -176,6 +177,16 @@ def apply(
                 n.offset = beat_start + swing_offset
             elif beat_pos < 0.05 or beat_pos > 0.95:
                 n.offset = beat_start
+
+    gs = global_settings or {}
+    expr = bool(gs.get("use_expr_cc11", USE_EXPR_CC11))
+    aft = bool(gs.get("use_aftertouch", USE_AFTERTOUCH))
+    if expr or aft:
+        _humanize_velocities(
+            part_stream,
+            amount=4,
+            global_settings=gs,
+        )
 
 
 def _validate_ratio(ratio: float) -> float:
@@ -340,11 +351,11 @@ def _humanize_velocities_py(
         n.volume.velocity = new_vel
         if use_expr_cc11:
             part.extra_cc = getattr(part, "extra_cc", []) + [
-                {"time": float(n.offset), "number": 11, "value": new_vel}
+                {"time": float(n.offset), "cc": 11, "val": new_vel}
             ]
         if use_aftertouch:
             part.extra_cc = getattr(part, "extra_cc", []) + [
-                {"time": float(n.offset), "number": 74, "value": new_vel}
+                {"time": float(n.offset), "cc": 74, "val": new_vel}
             ]
 
 
@@ -352,18 +363,16 @@ def _humanize_velocities(
     part: stream.Part,
     amount: int = 4,
     *,
-    use_expr_cc11: bool | None = None,
-    use_aftertouch: bool | None = None,
+    global_settings: Mapping[str, Any] | None = None,
 ) -> None:
     """Randomise note velocities and optionally emit CC messages."""
-    if use_expr_cc11 is None:
-        use_expr_cc11 = USE_EXPR_CC11
-    if use_aftertouch is None:
-        use_aftertouch = USE_AFTERTOUCH
+    gs = global_settings or {}
+    use_expr = bool(gs.get("use_expr_cc11", False))
+    use_at = bool(gs.get("use_aftertouch", False))
     if cy_humanize_velocities is not None:
-        cy_humanize_velocities(part, amount, use_expr_cc11, use_aftertouch)
+        cy_humanize_velocities(part, amount, use_expr, use_at)
     else:
-        _humanize_velocities_py(part, amount, use_expr_cc11, use_aftertouch)
+        _humanize_velocities_py(part, amount, use_expr, use_at)
 
 
 def _apply_velocity_histogram_py(

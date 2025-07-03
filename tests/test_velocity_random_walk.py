@@ -163,7 +163,7 @@ def test_random_walk_cc_export(tmp_path):
             gen.global_ts,
             {"musical_intent": {"intensity": "medium"}},
         )
-    cc20 = [c for c in getattr(part, "extra_cc", []) if c["number"] == 20]
+    cc20 = [c for c in getattr(part, "extra_cc", []) if c["cc"] == 20]
     assert len(cc20) == 2
 
 

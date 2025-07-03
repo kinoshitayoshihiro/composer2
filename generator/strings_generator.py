@@ -1,6 +1,7 @@
 # generator/strings_generator.py
-from .melody_generator import MelodyGenerator
 from music21 import volume
+
+from .melody_generator import MelodyGenerator
 
 
 class StringsGenerator(MelodyGenerator):
@@ -41,9 +42,17 @@ class StringsGenerator(MelodyGenerator):
         )
         # パートごと
         if profile_name:
-            humanizer.apply(part, profile_name)
+            humanizer.apply(
+                part,
+                profile_name,
+                global_settings=self.global_settings,
+            )
 
         # スコア全体
         if global_profile:
-            humanizer.apply(score, global_profile)
+            humanizer.apply(
+                score,
+                global_profile,
+                global_settings=self.global_settings,
+            )
         return part

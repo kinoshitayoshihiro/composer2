@@ -46,13 +46,13 @@ def test_pedal_value_by_intensity():
         "part_params": {},
     }
     parts = gen.compose(section_data=section)
-    cc64 = [c for c in getattr(parts["piano_rh"], "extra_cc", []) if c["number"] == 64]
-    assert cc64 and cc64[0]["value"] == 127
+    cc64 = [c for c in getattr(parts["piano_rh"], "extra_cc", []) if c["cc"] == 64]
+    assert cc64 and cc64[0]["val"] == 127
 
     section["musical_intent"] = {"intensity": "low"}
     parts = gen.compose(section_data=section)
-    cc64 = [c for c in getattr(parts["piano_rh"], "extra_cc", []) if c["number"] == 64]
-    assert cc64 and cc64[0]["value"] == 64
+    cc64 = [c for c in getattr(parts["piano_rh"], "extra_cc", []) if c["cc"] == 64]
+    assert cc64 and cc64[0]["val"] == 64
 
 
 def test_cc11_curve_inserted():
@@ -66,6 +66,6 @@ def test_cc11_curve_inserted():
         "part_params": {},
     }
     parts = gen.compose(section_data=section)
-    c11 = [c for c in getattr(parts["piano_rh"], "extra_cc", []) if c["number"] == 11]
+    c11 = [c for c in getattr(parts["piano_rh"], "extra_cc", []) if c["cc"] == 11]
     assert any(0 < c["time"] < 1.0 for c in c11)
 

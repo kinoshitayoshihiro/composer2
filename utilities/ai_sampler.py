@@ -13,10 +13,11 @@ except Exception:  # pragma: no cover - optional dependency
 class TransformerBassGenerator:
     """Generate bass events using a Transformer model."""
 
-    def __init__(self, model_name: str = "gpt2-medium") -> None:
+    def __init__(self, model_name: str = "gpt2-medium", rhythm_schema: str | None = None) -> None:
         if AutoModelForCausalLM is None:
             raise RuntimeError("transformers package required")
         self.model_name = model_name
+        self.rhythm_schema = rhythm_schema or ""
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForCausalLM.from_pretrained(model_name)
         self.pipe = pipeline("text-generation", model=self.model, tokenizer=self.tokenizer)
@@ -32,6 +33,8 @@ class TransformerBassGenerator:
 
     def generate(self, prompt_events: list[dict], bars: int) -> list[dict]:
         prompt = json.dumps({"events": prompt_events, "bars": bars})
+        if self.rhythm_schema:
+            prompt = f"{self.rhythm_schema} " + prompt
         max_tokens = min(1024, bars * 32)
         out = self.pipe(
             prompt,

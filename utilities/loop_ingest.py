@@ -21,6 +21,13 @@ except Exception:  # pragma: no cover - optional dependency missing
     librosa = None  # type: ignore
     HAVE_LIBROSA = False
 
+try:  # older SciPy compatibility
+    from scipy import signal
+    if not hasattr(signal, "hann") and hasattr(signal, "windows"):
+        signal.hann = signal.windows.hann  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - optional dependency
+    pass
+
 Token = tuple[int, str, int, int]
 
 
@@ -83,8 +90,8 @@ def _scan_wav(path: Path, resolution: int, ppq: int) -> LoopEntry:
     assert librosa is not None
     y, sr = librosa.load(path, sr=None, mono=True)
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    if hasattr(tempo, "size"):
-        tempo_val = float(tempo[0]) if getattr(tempo, "size", 0) else 0.0
+    if hasattr(tempo, "__len__"):
+        tempo_val = float(tempo[0]) if len(tempo) > 0 else 0.0
     else:
         tempo_val = float(tempo)
     bpm = tempo_val or 120.0

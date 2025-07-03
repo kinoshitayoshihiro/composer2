@@ -116,6 +116,7 @@ def apply(
     profile_name: str | None = None,
     *,
     swing_ratio: float | None = None,
+    kick_leak_velocity_jitter: int = 0,
 ) -> None:
     """music21.stream.Part に in-place でヒューマナイズを適用"""
     prof = get_profile(profile_name) if profile_name else {}
@@ -123,7 +124,8 @@ def apply(
     vel = prof.get("velocity", {})
     dur = prof.get("duration_pct", {})
 
-    for n in part_stream.flatten().notes:
+    notes = list(part_stream.flatten().notes)
+    for n in notes:
         # (a) onset shift
         if off:
             jitter = random.normalvariate(off.get("mean", 0.0), off.get("stdev", 0.0))
@@ -142,6 +144,19 @@ def apply(
                 random.normalvariate(dur.get("mean", 100), dur.get("stdev", 0)) / 100.0
             )
             n.quarterLength *= factor
+
+    if kick_leak_velocity_jitter:
+        bpm_el = part_stream.recurse().getElementsByClass(tempo.MetronomeMark).first()
+        bpm = bpm_el.number if bpm_el else 120
+        thr = 0.06 * bpm / 60.0
+        kicks = [n for n in notes if int(n.pitch.midi) == 36]
+        hats = [n for n in notes if int(n.pitch.midi) in {42, 44, 46}]
+        for h in hats:
+            if any(abs(float(h.offset) - float(k.offset)) <= thr for k in kicks):
+                if h.volume.velocity is None:
+                    continue
+                delta = random.randint(-kick_leak_velocity_jitter, kick_leak_velocity_jitter)
+                h.volume.velocity = int(max(1, min(127, h.volume.velocity + delta)))
 
     if swing_ratio is None and profile_name:
         swing_ratio = cast(float | None, PROFILES.get(profile_name, {}).get("swing"))
@@ -333,11 +348,22 @@ def _humanize_velocities_py(
             ]
 
 
-def _humanize_velocities(part: stream.Part, amount: int = 4) -> None:
+def _humanize_velocities(
+    part: stream.Part,
+    amount: int = 4,
+    *,
+    use_expr_cc11: bool | None = None,
+    use_aftertouch: bool | None = None,
+) -> None:
+    """Randomise note velocities and optionally emit CC messages."""
+    if use_expr_cc11 is None:
+        use_expr_cc11 = USE_EXPR_CC11
+    if use_aftertouch is None:
+        use_aftertouch = USE_AFTERTOUCH
     if cy_humanize_velocities is not None:
-        cy_humanize_velocities(part, amount, USE_EXPR_CC11, USE_AFTERTOUCH)
+        cy_humanize_velocities(part, amount, use_expr_cc11, use_aftertouch)
     else:
-        _humanize_velocities_py(part, amount, USE_EXPR_CC11, USE_AFTERTOUCH)
+        _humanize_velocities_py(part, amount, use_expr_cc11, use_aftertouch)
 
 
 def _apply_velocity_histogram_py(

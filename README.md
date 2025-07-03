@@ -199,6 +199,22 @@ though the notes are correct. You can switch mappings programmatically via
 | Fret bend | `bend_amount`, `bend_release_offset` | Bend depth in semitones and release position before note end |
 | Fingering controls | `position_lock`, `preferred_position`, `open_string_bonus`, `string_shift_weight`, `fret_shift_weight`, `strict_string_order` | Defaults: `False`, `0`, `-1`, `2`, `1`, `False` |
 
+## Velocity presets by tuning
+
+Provide a YAML or JSON file containing velocity curves for each tuning and style:
+
+```yaml
+standard:
+  default: [40,50,65,80,96,112,124]
+  power_chord: [45,55,70,85,100,118,127]
+drop_d:
+  default: [38,48,60,75,92,108,122]
+```
+
+Specify the file path via `velocity_preset_path` when instantiating `GuitarGenerator`.
+The generator chooses the preset matching its tuning name and style; if absent,
+a rounded fallback curve is generated.
+
 ## Humanize – intensity envelope / swing override
 
 Velocity scaling now follows each section’s `musical_intent.intensity`.

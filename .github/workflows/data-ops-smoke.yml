@@ -16,3 +16,5 @@ jobs:
       - run: mypy data_ops streamlit_app_v2.py tests/test_auto_tag.py tests/test_augment.py tests/test_gui_import.py --strict
       - run: pytest -m "data_ops or gui" -q
         timeout-minutes: 5
+      - run: pytest -m "velocity" -q
+        timeout-minutes: 5

@@ -188,6 +188,7 @@ def test_stroke_direction_velocity():
         global_key_signature_tonic="C",
         global_key_signature_mode="major",
     )
+    gen.default_velocity_curve = None
     cs = harmony.ChordSymbol("C")
     notes_down = gen._create_notes_from_event(
         cs,

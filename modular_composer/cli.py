@@ -15,7 +15,7 @@ from typing import cast
 
 import click
 import pretty_midi
-import yaml  # type: ignore
+import yaml
 from music21 import stream as m21stream
 
 import utilities.loop_ingest as loop_ingest

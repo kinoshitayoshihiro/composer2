@@ -18,9 +18,6 @@ jobs:
         with:
           python-version: '3.10'
       - run: sudo apt-get update && sudo apt-get install -y fluid-soundfont-gm
-      - run: pip install python-rtmidi
-      - run: pip install soundfile
-      - run: pip install torch --no-cache-dir --index-url https://download.pytorch.org/whl/cpu
       - name: Install test dependencies
         run: pip install -e .[test] -r requirements-test.txt
       - name: build cyext
@@ -39,4 +36,4 @@ jobs:
               pm.write(f'mini_loops/{i}.mid')
           PY
       - run: timeout 180 modcompose groove train mini_loops --order 2
-      - run: pytest tests/test_velocity_histogram.py tests/test_timing_corrector.py -q
+      - run: pytest -x -q tests

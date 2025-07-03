@@ -11,7 +11,7 @@ import random
 import tempfile
 from pathlib import Path
 from types import ModuleType
-from typing import cast
+from typing import Any, cast
 
 import click
 import pretty_midi
@@ -251,6 +251,8 @@ def preset_import(file: Path, name: str | None) -> None:
 @click.option("--port", type=str, default=None)
 @click.option("--latency-buffer", type=float, default=5.0, show_default=True)
 @click.option("--measure-latency", is_flag=True, default=False)
+@click.option("--late-humanize", is_flag=True, default=False)
+@click.option("--rhythm-schema", type=str, default=None)
 def live_cmd(
     model: Path,
     backend: str,
@@ -265,14 +267,16 @@ def live_cmd(
     port: str | None,
     latency_buffer: float,
     measure_latency: bool,
+    late_humanize: bool,
+    rhythm_schema: str | None,
 ) -> None:
     """Stream a trained groove model live."""
     if ai_backend == "transformer":
         from utilities.ai_sampler import TransformerBassGenerator
         from utilities.user_history import load_history, record_generate
 
-        gen = TransformerBassGenerator(model_name)
-        prompt_events: list[dict] = []
+        gen = TransformerBassGenerator(model_name, rhythm_schema=rhythm_schema)
+        prompt_events: list[dict[str, Any]] = []
         if use_history:
             hist = load_history()
             all_ev = [ev for h in hist for ev in h.get("events", [])]
@@ -311,11 +315,12 @@ def live_cmd(
                     lambda _i: part,
                     buffer_ahead=buffer_ahead,
                     parallel_bars=parallel_bars,
+                    late_humanize=late_humanize,
                 )
 
             asyncio.run(_run())
         else:
-            asyncio.run(streamer.play_stream(part))
+            asyncio.run(streamer.play_stream(part, late_humanize=late_humanize))
         if measure_latency:
             stats = streamer.latency_stats() or {}
             click.echo(
@@ -381,6 +386,7 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("--peaks", type=Path)
     ap.add_argument("--lag", type=float, default=10.0)
     ap.add_argument("--tempo-curve", type=Path)
+    ap.add_argument("--rhythm-schema", type=str, default=None)
     ns = ap.parse_args(args)
     if ns.seed is not None:
         random.seed(ns.seed)
@@ -388,8 +394,8 @@ def _cmd_sample(args: list[str]) -> None:
         from utilities.ai_sampler import TransformerBassGenerator
         from utilities.user_history import load_history, record_generate
 
-        gen = TransformerBassGenerator(ns.model_name)
-        prompt_events: list[dict] = []
+        gen = TransformerBassGenerator(ns.model_name, rhythm_schema=ns.rhythm_schema)
+        prompt_events: list[dict[str, Any]] = []
         if ns.use_history:
             hist = load_history()
             all_ev = [ev for h in hist for ev in h.get("events", [])]
@@ -400,7 +406,7 @@ def _cmd_sample(args: list[str]) -> None:
     else:
         model = load(ns.model)
         events = cast(
-            list[dict],
+            list[dict[str, Any]],
             generate_events(
                 model,
                 bars=ns.length,
@@ -416,7 +422,7 @@ def _cmd_sample(args: list[str]) -> None:
         with ns.peaks.open() as fh:
             peaks = json.load(fh)
         events = cast(
-            list[dict],
+            list[dict[str, Any]],
             PeakSynchroniser.sync_events(
                 peaks,
                 cast(list[Event], events),

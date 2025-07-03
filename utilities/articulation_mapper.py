@@ -24,3 +24,34 @@ def add_key_switches(part: stream.Part, profile: dict[str, int] | None = None) -
 
 
 __all__ = ["add_key_switches"]
+
+
+def add_portamento(part: stream.Part, slide_events: list[dict]) -> stream.Part:
+    """Insert portamento CC events for each slide.
+
+    Parameters
+    ----------
+    part : stream.Part
+        Target part to annotate.
+    slide_events : list[dict]
+        Sequence of slide descriptors with ``start`` and ``end`` MIDI pitches,
+        ``offset`` in beats and ``duration`` in beats.
+
+    Returns
+    -------
+    stream.Part
+        The modified part with ``extra_cc`` entries.
+    """
+
+    extra = getattr(part, "extra_cc", [])
+    for ev in slide_events:
+        off = float(ev.get("offset", 0.0))
+        dur = float(ev.get("duration", 0.5))
+        time_val = max(0, min(127, int(dur * 127)))
+        extra.append({"time": off, "number": 5, "value": time_val})
+        extra.append({"time": off, "number": 84, "value": 127})
+    part.extra_cc = extra
+    return part
+
+
+__all__.append("add_portamento")

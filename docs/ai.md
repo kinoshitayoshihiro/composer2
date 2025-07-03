@@ -23,6 +23,21 @@ Or produce a short JSON sample:
 modcompose sample model.pkl --ai-backend transformer --model-name gpt2-medium
 ```
 
+Add rhythm style tokens with `--rhythm-schema`:
+
+```bash
+modcompose sample model.pkl --ai-backend transformer \
+  --model-name gpt2-medium --rhythm-schema <swing16>
+```
+
+Combine with the phrase diversity filter to avoid repetition:
+
+```bash
+modcompose sample model.pkl --ai-backend transformer \
+  --model-name gpt2-medium --rhythm-schema <straight8> | \
+  modcompose diversity-filter --n 8 --max-sim 0.8
+```
+
 Enable feedback from previous sessions with `--use-history`. Generation
 statistics are stored in `~/.otokotoba/history.jsonl` and loaded on start.
 

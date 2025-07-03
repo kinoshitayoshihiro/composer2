@@ -4,7 +4,8 @@ import logging
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Iterable
+import random
 
 
 class LiveBuffer:
@@ -50,3 +51,22 @@ class LiveBuffer:
 
     def shutdown(self) -> None:
         self.executor.shutdown()
+
+
+def apply_late_humanization(
+    notes: Iterable[Any], jitter_ms: tuple[int, int] = (5, 10), *, bpm: float = 120.0, rng: random.Random | None = None
+) -> None:
+    """Jitter note offsets right before playback."""
+
+    rng = rng or random.Random()
+    lower, upper = jitter_ms
+    scale = bpm / 60000.0
+    for n in notes:
+        jitter = rng.uniform(-abs(lower), abs(upper)) * scale
+        if isinstance(n, dict):
+            n["offset"] = float(n.get("offset", 0.0)) + jitter
+        else:
+            try:
+                n.offset += jitter
+            except Exception:  # pragma: no cover - protective
+                continue

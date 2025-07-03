@@ -44,8 +44,8 @@ def append_extra_cc(
                 mido.Message(
                     "control_change",
                     time=to_ticks(cc["time"]),
-                    control=int(cc["number"]),
-                    value=int(cc["value"]),
+                    control=int(cc["cc"]),
+                    value=int(cc["val"]),
                     channel=channel,
                 )
             )

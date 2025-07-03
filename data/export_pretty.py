@@ -62,8 +62,8 @@ def stream_to_pretty_midi(
         # --- ControlChange 変換 (追加) ---
         for cc in getattr(part, "extra_cc", []):
             pm_cc = pretty_midi.ControlChange(
-                number=int(cc.get("number", 0)),
-                value=int(cc.get("value", 0)),
+                number=int(cc.get("cc", 0)),
+                value=int(cc.get("val", 0)),
                 time=float(cc.get("time", 0.0)),
             )
             pm_instrument.control_changes.append(pm_cc)

@@ -17,6 +17,10 @@ import click
 import pretty_midi
 import yaml
 from music21 import stream as m21stream
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - for type checking only
+    from music21.stream import Part  # type: ignore[attr-defined]
 
 import utilities.loop_ingest as loop_ingest
 from utilities import (
@@ -310,7 +314,7 @@ def live_cmd(
         )
         parsed = converter.parse(str(model))
         part_stream = parsed.parts[0] if hasattr(parsed, "parts") else parsed
-        part = cast(m21stream.Part, part_stream)
+        part = cast("Part", part_stream)
         if buffer_ahead > 0:
             async def _run() -> None:
                 await streamer.play_live(

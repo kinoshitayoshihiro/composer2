@@ -106,6 +106,14 @@ TUNING_PRESETS: Dict[str, List[int]] = {
     "open_g": [-2, -2, 0, 0, 0, -2],
 }
 
+# Stroke direction to velocity multiplier mapping
+STROKE_VELOCITY_FACTOR = {
+    "DOWN": 1.10,
+    "D": 1.10,
+    "UP": 0.90,
+    "U": 0.90,
+}
+
 EXEC_STYLE_BLOCK_CHORD = "block_chord"
 EXEC_STYLE_STRUM_BASIC = "strum_basic"
 EXEC_STYLE_ARPEGGIO_FROM_INDICES = "arpeggio_from_indices"
@@ -778,11 +786,9 @@ class GuitarGenerator(BasePartGenerator):
         is_palm_muted = guitar_block_params.get("palm_mute", False)
         stroke_dir = guitar_block_params.get("current_event_stroke") or guitar_block_params.get("stroke_direction")
         if isinstance(stroke_dir, str):
-            sd = stroke_dir.lower()
-            if sd == "down":
-                event_final_velocity = min(127, int(event_final_velocity * 1.1))
-            elif sd == "up":
-                event_final_velocity = max(1, int(event_final_velocity * 0.9))
+            key = str(stroke_dir).strip().upper()
+            factor = STROKE_VELOCITY_FACTOR.get(key, 1.0)
+            event_final_velocity = max(1, min(127, int(event_final_velocity * factor)))
 
         if is_palm_muted:
             event_final_velocity = max(1, int(event_final_velocity * 0.85))
@@ -856,17 +862,12 @@ class GuitarGenerator(BasePartGenerator):
                 "current_event_stroke",
                 guitar_block_params.get(
                     "strum_direction_cycle", "down,down,up,up"
-                ).split(",")[
-                    0
-                ],  # サイクルからも取得
+                ).split(",")[0],  # サイクルからも取得
             )
-            is_down = event_stroke_dir.lower() == "down"  # 小文字比較
+            key = str(event_stroke_dir).strip().upper()
+            is_down = key in ("DOWN", "D")
             play_order = list(reversed(chord_pitches)) if is_down else chord_pitches
-            base_factor = 1.0
-            if is_down:
-                base_factor = 1.10
-            elif event_stroke_dir.lower() == "up":
-                base_factor = 0.90
+            base_factor = STROKE_VELOCITY_FACTOR.get(key, 1.0)
             strum_delay_ql = rhythm_pattern_definition.get(
                 "strum_delay_ql",
                 guitar_block_params.get("strum_delay_ql", GUITAR_STRUM_DELAY_QL),

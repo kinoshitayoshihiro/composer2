@@ -21,6 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          pip install music21
       - name: Restore Essentia wheel cache
         if: runner.os == 'Linux'
         uses: actions/cache@v3
@@ -159,6 +160,7 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
       - run: pip install -r requirements.txt -r requirements-extra.txt --extra-index-url https://download.pytorch.org/whl/cpu
+      - run: pip install music21
       - run: |
           python - <<'EOF'
           import json, tempfile
@@ -183,6 +185,7 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
       - run: pip install -r requirements.txt
+      - run: pip install music21
       - run: |
           python - <<'EOF'
           import mido, sys

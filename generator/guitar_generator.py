@@ -5,6 +5,7 @@ import copy
 from pathlib import Path
 import yaml
 import json
+import os
 
 import music21.stream as stream
 import music21.note as note
@@ -210,6 +211,8 @@ class GuitarGenerator(BasePartGenerator):
         timing_jitter_ms: float = 0.0,
         timing_jitter_mode: str = "uniform",
         strum_delay_jitter_ms: float = 0.0,
+        swing_ratio: float | None = None,
+        velocity_preset_path: str | None = None,
         accent_map: Dict[int, int] | None = None,
         rr_channel_cycle: Sequence[int] | None = None,
         swing_subdiv: int | None = None,
@@ -241,11 +244,22 @@ class GuitarGenerator(BasePartGenerator):
             default_stroke_direction.lower() if isinstance(default_stroke_direction, str) else None
         )
         self.default_palm_mute = bool(default_palm_mute)
-        self.default_velocity_curve_name = default_velocity_curve
-        self.default_velocity_curve = self._resolve_curve(default_velocity_curve)
+        self.velocity_preset_path = velocity_preset_path
+        self.velocity_presets: Dict[str, Dict[str, Any]] = {}
+        self.tuning_name = "standard"
+        if self.tuning == TUNING_PRESETS.get("drop_d"):
+            self.tuning_name = "drop_d"
+        elif self.tuning == TUNING_PRESETS.get("open_g"):
+            self.tuning_name = "open_g"
+        self._load_velocity_presets()
+        if isinstance(default_velocity_curve, (list, tuple, dict)):
+            self.default_velocity_curve = self._prepare_velocity_map(default_velocity_curve)
+        else:
+            self.default_velocity_curve = self._select_velocity_curve(default_velocity_curve)
         self.timing_jitter_ms = float(timing_jitter_ms)
         self.timing_jitter_mode = str(timing_jitter_mode or "uniform").lower()
         self.strum_delay_jitter_ms = float(strum_delay_jitter_ms)
+        self.swing_ratio = float(swing_ratio) if swing_ratio is not None else None
         self.accent_map = {int(k): int(v) for k, v in (accent_map or {}).items()}
         self.rr_channel_cycle = [int(c) for c in rr_channel_cycle] if rr_channel_cycle else []
         self._rr_index = 0
@@ -312,22 +326,35 @@ class GuitarGenerator(BasePartGenerator):
 
     def compose(self, *args, **kwargs):
         self._prev_note_pitch = None
-        part_params = kwargs.get("section_data", {}).get("part_params", {}) if kwargs else {}
+        section = kwargs.get("section_data", {}) if kwargs else {}
+        part_params = section.get("part_params", {})
         orig_subdiv = self.swing_subdiv
-        if isinstance(part_params, dict) and part_params.get("swing_subdiv"):
+        if isinstance(part_params, dict) and "swing_subdiv" in part_params:
             try:
                 self.swing_subdiv = int(part_params.get("swing_subdiv"))
             except Exception:
                 pass
+        ratio_to_apply = None
+        if isinstance(part_params, dict):
+            ratio_to_apply = part_params.pop("swing_ratio", None)
+            section["part_params"] = part_params
+            kwargs["section_data"] = section
+        if ratio_to_apply is None:
+            ratio_to_apply = self.swing_ratio
+
         result = super().compose(*args, **kwargs)
-        self.swing_subdiv = orig_subdiv
         if isinstance(result, stream.Part):
             self._last_part = result
+            if ratio_to_apply is not None:
+                self._apply_swing_internal(self._last_part, float(ratio_to_apply), self.swing_subdiv)
         elif isinstance(result, dict) and result:
-            # store first part if dict
             self._last_part = next(iter(result.values()))
+            if ratio_to_apply is not None:
+                for p in result.values():
+                    self._apply_swing_internal(p, float(ratio_to_apply), self.swing_subdiv)
         else:
             self._last_part = None
+        self.swing_subdiv = orig_subdiv
         return result
 
     def _get_guitar_friendly_voicing(
@@ -389,6 +416,71 @@ class GuitarGenerator(BasePartGenerator):
             return [int(127 * v) for v in curve]
         return [int(v) for v in curve]
 
+    def _prepare_velocity_map(self, spec: Any) -> list[int] | None:
+        curve = self._resolve_curve(spec)
+        if not curve:
+            return None
+        if len(curve) == 128:
+            return [max(0, min(127, int(v))) for v in curve]
+        result: list[int] = []
+        for i in range(128):
+            pos = i / 127 * (len(curve) - 1)
+            idx0 = int(math.floor(pos))
+            idx1 = min(len(curve) - 1, idx0 + 1)
+            frac = pos - idx0
+            val = curve[idx0] * (1 - frac) + curve[idx1] * frac
+            result.append(max(0, min(127, int(round(val)))) )
+        return result
+
+    def _load_velocity_presets(self) -> None:
+        path = self.velocity_preset_path
+        if not path:
+            return
+        if not os.path.exists(path):
+            logger.warning("Velocity preset path '%s' not found", path)
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                if path.lower().endswith(".json"):
+                    data = json.load(f)
+                else:
+                    data = yaml.safe_load(f)
+        except Exception as e:
+            logger.warning("Failed to load velocity presets from %s: %s", path, e)
+            return
+        if not isinstance(data, dict):
+            logger.warning("Velocity preset file format invalid: %s", path)
+            return
+        for tun, presets in data.items():
+            if not isinstance(presets, dict):
+                continue
+            m: Dict[str, Any] = {}
+            for style, curve in presets.items():
+                if isinstance(curve, list) and len(curve) in (7, 128):
+                    m[style] = curve
+                else:
+                    logger.warning("Invalid curve for %s/%s", tun, style)
+            if m:
+                self.velocity_presets[tun] = m
+
+    def _select_velocity_curve(self, style_name: str | None) -> list[int] | None:
+        curve: list[int] | None = None
+        presets = self.velocity_presets.get(self.tuning_name) or {}
+        if style_name and style_name in presets:
+            curve = self._prepare_velocity_map(presets[style_name])
+        elif style_name is None and "default" in presets:
+            curve = self._prepare_velocity_map(presets["default"])
+        elif style_name and "default" in presets:
+            curve = self._prepare_velocity_map(presets["default"])
+        if curve is None and style_name:
+            curve = self._prepare_velocity_map(style_name)
+        if curve is None:
+            curve = [
+                max(0, min(127, int(round(40 + 45 * math.sin((math.pi / 2) * i / 127)))))
+                for i in range(128)
+            ]
+        return curve
+
     def _apply_round_robin(self, el: Union[note.Note, m21chord.Chord]) -> None:
         if not self.rr_channel_cycle:
             return
@@ -424,6 +516,37 @@ class GuitarGenerator(BasePartGenerator):
         ql_shift = jitter * self.global_tempo / 60000.0
         new_offset = float(el.offset) + ql_shift
         el.offset = max(0.0, new_offset)
+
+    def _apply_swing_internal(self, part: stream.Part, ratio: float, subdiv: int) -> None:
+        if ratio is None or abs(ratio - 0.5) < 1e-6:
+            return
+        if not subdiv or subdiv <= 1:
+            return
+        pair = (4.0 / subdiv) * 2.0
+        if pair <= 0:
+            return
+        step = pair / 2.0
+        if step <= 0:
+            return
+        tol = step * 0.1
+        notes = list(part.recurse().notes)
+        for i, n in enumerate(notes):
+            pos = float(n.offset)
+            pair_start = math.floor(pos / pair) * pair
+            within = pos - pair_start
+            if abs(within - step) < tol:
+                target = pair_start + step + (ratio - 0.5) * pair
+                if i > 0:
+                    prev = notes[i - 1]
+                    prev.duration.quarterLength = max(
+                        MIN_NOTE_DURATION_QL,
+                        step - (ratio - 0.5) * pair,
+                    )
+                try:
+                    n.setOffsetBySite(part, target)
+                except Exception:
+                    n.offset = target
+        part.coreElementsChanged()
 
     def _estimate_fingering(
         self, pitches: List[pitch.Pitch]
@@ -547,6 +670,7 @@ class GuitarGenerator(BasePartGenerator):
         guitar_block_params: Dict[str, Any],
         event_duration_ql: float,
         event_final_velocity: int,
+        event_offset_ql: float = 0.0,
     ) -> List[Union[note.Note, m21chord.Chord]]:
         notes_for_event: List[Union[note.Note, m21chord.Chord]] = []
         # イベントパラメータとパターン定義の両方からアーティキュレーションを収集
@@ -657,6 +781,16 @@ class GuitarGenerator(BasePartGenerator):
         if is_palm_muted:
             event_final_velocity = max(1, int(event_final_velocity * 0.85))
 
+        beat_pos = (event_offset_ql % 4.0) / 4.0
+        if self.default_velocity_curve:
+            base_velocity = int(
+                self.default_velocity_curve[int(round(127 * beat_pos))]
+            )
+        else:
+            base_velocity = event_final_velocity
+        accent_adj = int(self.accent_map.get(int(math.floor(event_offset_ql)), 0))
+        event_final_velocity = max(1, min(127, base_velocity + accent_adj))
+
         if execution_style == EXEC_STYLE_POWER_CHORDS and cs.root():
             p_root = pitch.Pitch(cs.root().name)
             target_power_chord_octave = DEFAULT_GUITAR_OCTAVE_RANGE[0]
@@ -722,15 +856,12 @@ class GuitarGenerator(BasePartGenerator):
             )
             is_down = event_stroke_dir.lower() == "down"  # 小文字比較
             play_order = list(reversed(chord_pitches)) if is_down else chord_pitches
-            strum_delay = rhythm_pattern_definition.get(
+            strum_delay_ql = rhythm_pattern_definition.get(
                 "strum_delay_ql",
                 guitar_block_params.get("strum_delay_ql", GUITAR_STRUM_DELAY_QL),
             )
-            if self.strum_delay_jitter_ms or guitar_block_params.get("strum_delay_jitter_ms"):
-                jitter_ms = guitar_block_params.get("strum_delay_jitter_ms", self.strum_delay_jitter_ms)
-                strum_delay += self.rng.uniform(-jitter_ms, jitter_ms) * self.global_tempo / 60000.0
-                if strum_delay < 0:
-                    strum_delay = 0.0
+            jitter_ms = guitar_block_params.get("strum_delay_jitter_ms", self.strum_delay_jitter_ms)
+            strum_delay_ms = strum_delay_ql * 60000.0 / self.global_tempo
 
             for i, p_obj_strum in enumerate(play_order):
                 n_strum = note.Note(p_obj_strum)
@@ -741,7 +872,11 @@ class GuitarGenerator(BasePartGenerator):
                 n_strum.duration = music21_duration.Duration(
                     quarterLength=max(MIN_NOTE_DURATION_QL, base_dur)
                 )
-                n_strum.offset = self._jitter(i * strum_delay)
+                delay_ms = i * strum_delay_ms
+                if jitter_ms:
+                    delay_ms += self.rng.uniform(-jitter_ms / 2.0, jitter_ms / 2.0)
+                delay_ql = delay_ms / (60000.0 / self.global_tempo)
+                n_strum.offset = self._jitter(delay_ql)
                 self._humanize_timing(n_strum, guitar_block_params.get("timing_jitter_ms", self.timing_jitter_ms))
                 vel_adj_range = 10
                 vel_adj = 0
@@ -760,15 +895,7 @@ class GuitarGenerator(BasePartGenerator):
                             ((i / (len(play_order) - 1)) * vel_adj_range)
                             - (vel_adj_range / 2)
                         )
-                if is_down:
-                    base_factor = 1.10
-                elif event_stroke_dir.lower() == "up":
-                    base_factor = 0.90
-                else:
-                    base_factor = 1.0
-                final_vel = int(
-                    max(1, min(127, (event_final_velocity + vel_adj) * base_factor))
-                )
+                final_vel = max(1, min(127, event_final_velocity + vel_adj))
                 n_strum.volume = m21volume.Volume(velocity=final_vel)
                 if is_palm_muted:
                     n_strum.articulations.append(articulations.Staccatissimo())
@@ -1078,11 +1205,9 @@ class GuitarGenerator(BasePartGenerator):
         velocity_curve_spec = (
             options.get("velocity_curve")
             or rhythm_details.get("velocity_curve_name")
-            or self.default_velocity_curve_name
+            or None
         )
-        velocity_curve_list = self._resolve_curve(velocity_curve_spec)
-        if not velocity_curve_list and self.default_velocity_curve:
-            velocity_curve_list = list(self.default_velocity_curve)
+        velocity_curve_list = self._select_velocity_curve(velocity_curve_spec)
 
         pattern_ref_duration = rhythm_details.get(
             "reference_duration_ql", self.measure_duration
@@ -1243,6 +1368,7 @@ class GuitarGenerator(BasePartGenerator):
                 current_event_guitar_params,
                 final_actual_event_dur_for_create,
                 final_event_velocity,
+                current_event_start_offset_in_block,
             )
 
             exec_style = event_rhythm.get("execution_style", EXEC_STYLE_BLOCK_CHORD)

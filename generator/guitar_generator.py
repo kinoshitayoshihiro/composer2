@@ -1,28 +1,27 @@
 # --- START OF FILE generator/guitar_generator.py (BasePartGenerator継承・改修版) ---
-import music21
-from typing import List, Dict, Optional, Tuple, Any, Sequence, Union, cast
 import copy
-from pathlib import Path
-import yaml
 import json
-import os
-
-import music21.stream as stream
-import music21.note as note
-import music21.harmony as harmony
-import music21.pitch as pitch
-import music21.meter as meter
-import music21.duration as music21_duration
-from utilities.velocity_curve import resolve_velocity_curve
-import music21.interval as interval
-import music21.tempo as tempo
-import music21.chord as m21chord
-import music21.articulations as articulations
-import music21.volume as m21volume
-from music21 import instrument as m21instrument
-
-import random
 import logging
+import os
+import random
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+import music21.articulations as articulations
+import music21.chord as m21chord
+import music21.duration as music21_duration
+import music21.harmony as harmony
+import music21.interval as interval
+import music21.meter as meter
+import music21.note as note
+import music21.pitch as pitch
+import music21.stream as stream
+import music21.volume as m21volume
+import yaml
+
+from utilities.velocity_curve import resolve_velocity_curve
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,8 +43,9 @@ def _get_fret_indicator_cls():
     return None
 import math
 
-from .base_part_generator import BasePartGenerator
 from utilities import humanizer
+
+from .base_part_generator import BasePartGenerator
 
 # Minimum note duration for generated notes (quarterLength)
 MIN_NOTE_DURATION_QL = 0.0125  # minimum quarterLength for strum notes
@@ -73,7 +73,7 @@ try:
     )
 except ImportError:
 
-    def get_time_signature_object(ts_str: Optional[str]) -> meter.TimeSignature:
+    def get_time_signature_object(ts_str: str | None) -> meter.TimeSignature:
         if not ts_str:
             ts_str = "4/4"
         try:
@@ -81,7 +81,7 @@ except ImportError:
         except Exception:
             return meter.TimeSignature("4/4")
 
-    def sanitize_chord_label(label: Optional[str]) -> Optional[str]:
+    def sanitize_chord_label(label: str | None) -> str | None:
         if not label or label.strip().lower() in [
             "rest",
             "r",
@@ -95,12 +95,12 @@ except ImportError:
 
 
 
-DEFAULT_GUITAR_OCTAVE_RANGE: Tuple[int, int] = (2, 5)
+DEFAULT_GUITAR_OCTAVE_RANGE: tuple[int, int] = (2, 5)
 GUITAR_STRUM_DELAY_QL: float = 0.02
 STANDARD_TUNING_OFFSETS = [0, 0, 0, 0, 0, 0]
 
 # User-friendly tuning presets (semitone offsets per string)
-TUNING_PRESETS: Dict[str, List[int]] = {
+TUNING_PRESETS: dict[str, list[int]] = {
     "standard": STANDARD_TUNING_OFFSETS,
     "drop_d": [-2, 0, 0, 0, 0, 0],
     "open_g": [-2, -2, 0, 0, 0, -2],
@@ -123,7 +123,7 @@ EXEC_STYLE_MUTED_RHYTHM = "muted_rhythm"
 EXEC_STYLE_HAMMER_ON = "hammer_on"
 EXEC_STYLE_PULL_OFF = "pull_off"
 
-EMOTION_INTENSITY_MAP: Dict[Tuple[str, str], str] = {
+EMOTION_INTENSITY_MAP: dict[tuple[str, str], str] = {
     ("quiet_pain_and_nascent_strength", "low"): "guitar_ballad_arpeggio",
     ("deep_regret_gratitude_and_realization", "medium_low"): "guitar_ballad_arpeggio",
     (
@@ -163,7 +163,7 @@ DEFAULT_GUITAR_RHYTHM_KEY = "guitar_default_quarters"
 
 
 class GuitarStyleSelector:
-    def __init__(self, mapping: Dict[Tuple[str, str], str] | None = None):
+    def __init__(self, mapping: dict[tuple[str, str], str] | None = None):
         self.mapping = mapping if mapping is not None else EMOTION_INTENSITY_MAP
 
     def select(
@@ -173,7 +173,7 @@ class GuitarStyleSelector:
         intensity: str | None,
         cli_override: str | None = None,
         part_params_override_rhythm_key: str | None = None,
-        rhythm_library_keys: List[str],
+        rhythm_library_keys: list[str],
     ) -> str:
         if cli_override and cli_override in rhythm_library_keys:
             return cli_override
@@ -205,10 +205,10 @@ class GuitarGenerator(BasePartGenerator):
     def __init__(
         self,
         *args,
-        tuning: Optional[Union[str, Sequence[int]]] = None,
+        tuning: str | Sequence[int] | None = None,
         timing_variation: float = 0.0,
         gate_length_variation: float = 0.0,
-        external_patterns_path: Optional[str] = None,
+        external_patterns_path: str | None = None,
         hammer_on_interval: int = 2,
         pull_off_interval: int = 2,
         hammer_on_probability: float = 0.5,
@@ -221,7 +221,7 @@ class GuitarGenerator(BasePartGenerator):
         strum_delay_jitter_ms: float = 0.0,
         swing_ratio: float | None = None,
         velocity_preset_path: str | None = None,
-        accent_map: Dict[int, int] | None = None,
+        accent_map: dict[int, int] | None = None,
         rr_channel_cycle: Sequence[int] | None = None,
         swing_subdiv: int | None = None,
         position_lock: bool = False,
@@ -253,7 +253,7 @@ class GuitarGenerator(BasePartGenerator):
         )
         self.default_palm_mute = bool(default_palm_mute)
         self.velocity_preset_path = velocity_preset_path
-        self.velocity_presets: Dict[str, Dict[str, Any]] = {}
+        self.velocity_presets: dict[str, dict[str, Any]] = {}
         self.tuning_name = "standard"
         if self.tuning == TUNING_PRESETS.get("drop_d"):
             self.tuning_name = "drop_d"
@@ -376,7 +376,7 @@ class GuitarGenerator(BasePartGenerator):
         cs: harmony.ChordSymbol,
         num_strings: int = 6,
         preferred_octave_bottom: int = 2,
-    ) -> List[pitch.Pitch]:
+    ) -> list[pitch.Pitch]:
         if not cs or not cs.pitches:
             return []
         original_pitches = list(cs.pitches)
@@ -405,7 +405,7 @@ class GuitarGenerator(BasePartGenerator):
                 p_cand.transpose(int(oct_shift * 12)) for p_cand in candidate_pitches
             ]
             candidate_pitches.sort(key=lambda p_sort: p_sort.ps)
-        selected_dict: Dict[str, pitch.Pitch] = {}
+        selected_dict: dict[str, pitch.Pitch] = {}
         for p_cand_select in candidate_pitches:
             if guitar_min_ps <= p_cand_select.ps <= guitar_max_ps:
                 if p_cand_select.name not in selected_dict:
@@ -415,14 +415,14 @@ class GuitarGenerator(BasePartGenerator):
         )
         return self._apply_tuning(final_voiced_pitches[:num_strings])
 
-    def _apply_tuning(self, pitches: List[pitch.Pitch]) -> List[pitch.Pitch]:
+    def _apply_tuning(self, pitches: list[pitch.Pitch]) -> list[pitch.Pitch]:
         tuned = []
         for i, p in enumerate(pitches):
             offset = self.tuning[i % len(self.tuning)]
             tuned.append(p.transpose(offset))
         return tuned
 
-    def _resolve_curve(self, spec: Any) -> List[int]:
+    def _resolve_curve(self, spec: Any) -> list[int]:
         curve = resolve_velocity_curve(spec)
         if not curve:
             return []
@@ -454,7 +454,7 @@ class GuitarGenerator(BasePartGenerator):
             logger.warning("Velocity preset path '%s' not found", path)
             return
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 if path.lower().endswith(".json"):
                     data = json.load(f)
                 else:
@@ -468,7 +468,7 @@ class GuitarGenerator(BasePartGenerator):
         for tun, presets in data.items():
             if not isinstance(presets, dict):
                 continue
-            m: Dict[str, Any] = {}
+            m: dict[str, Any] = {}
             for style, curve in presets.items():
                 if isinstance(curve, list) and len(curve) in (7, 128):
                     m[style] = curve
@@ -495,7 +495,7 @@ class GuitarGenerator(BasePartGenerator):
             ]
         return curve
 
-    def _apply_round_robin(self, el: Union[note.Note, m21chord.Chord]) -> None:
+    def _apply_round_robin(self, el: note.Note | m21chord.Chord) -> None:
         if not self.rr_channel_cycle:
             return
         pitch_val: int | None = None
@@ -563,14 +563,14 @@ class GuitarGenerator(BasePartGenerator):
         part.coreElementsChanged()
 
     def _estimate_fingering(
-        self, pitches: List[pitch.Pitch]
-    ) -> List[Tuple[int, int]]:
+        self, pitches: list[pitch.Pitch]
+    ) -> list[tuple[int, int]]:
         """Estimate guitar fingering (string index, fret) for a sequence of pitches."""
         # Standard tuning MIDI numbers
         base_midis = [40, 45, 50, 55, 59, 64]
         tuned = [m + off for m, off in zip(base_midis, self.tuning)]
 
-        candidates: List[List[Tuple[int, int]]] = []
+        candidates: list[list[tuple[int, int]]] = []
         max_fret = 20
         for p in pitches:
             opts = []
@@ -586,9 +586,9 @@ class GuitarGenerator(BasePartGenerator):
                 opts.append((0, max(0, pm - tuned[0])))
             candidates.append(opts)
 
-        dp: List[Dict[Tuple[int, int], Tuple[float, Tuple[int, int] | None]]] = []
+        dp: list[dict[tuple[int, int], tuple[float, tuple[int, int] | None]]] = []
         for i, opts in enumerate(candidates):
-            layer: Dict[Tuple[int, int], Tuple[float, Tuple[int, int] | None]] = {}
+            layer: dict[tuple[int, int], tuple[float, tuple[int, int] | None]] = {}
             if i == 0:
                 for o in opts:
                     cost = self.open_string_bonus if o[1] == 0 else 0
@@ -597,7 +597,7 @@ class GuitarGenerator(BasePartGenerator):
                 prev_layer = dp[i - 1]
                 for o in opts:
                     best_cost = float("inf")
-                    best_prev: Tuple[int, int] | None = None
+                    best_prev: tuple[int, int] | None = None
                     for prev_o, (prev_cost, _) in prev_layer.items():
                         cost = (
                             prev_cost
@@ -616,7 +616,7 @@ class GuitarGenerator(BasePartGenerator):
             return []
         last_layer = dp[-1]
         current = min(last_layer.items(), key=lambda x: x[1][0])[0]
-        result: List[Tuple[int, int]] = [current]
+        result: list[tuple[int, int]] = [current]
         for i in range(len(dp) - 1, 0, -1):
             prev = dp[i][current][1]
             if prev is None:
@@ -635,7 +635,7 @@ class GuitarGenerator(BasePartGenerator):
                         result[idx] = (s, 0)
                         break
                 else:
-                    best: Tuple[int, int] | None = None
+                    best: tuple[int, int] | None = None
                     best_diff = None
                     for s, open_m in enumerate(tuned):
                         fr = target_midi - open_m
@@ -680,15 +680,15 @@ class GuitarGenerator(BasePartGenerator):
     def _create_notes_from_event(
         self,
         cs: harmony.ChordSymbol,
-        rhythm_pattern_definition: Dict[str, Any],
-        guitar_block_params: Dict[str, Any],
+        rhythm_pattern_definition: dict[str, Any],
+        guitar_block_params: dict[str, Any],
         event_duration_ql: float,
         event_final_velocity: int,
         event_offset_ql: float = 0.0,
-    ) -> List[Union[note.Note, m21chord.Chord]]:
-        notes_for_event: List[Union[note.Note, m21chord.Chord]] = []
+    ) -> list[note.Note | m21chord.Chord]:
+        notes_for_event: list[note.Note | m21chord.Chord] = []
         # イベントパラメータとパターン定義の両方からアーティキュレーションを収集
-        art_objs: List[articulations.Articulation] = []
+        art_objs: list[articulations.Articulation] = []
         for src in (guitar_block_params, rhythm_pattern_definition):
             art = src.get("articulation") or src.get("event_articulation")
             if isinstance(art, str):
@@ -754,7 +754,7 @@ class GuitarGenerator(BasePartGenerator):
             "execution_style", EXEC_STYLE_BLOCK_CHORD
         )
 
-        def _attach_artics(elem: Union[note.Note, m21chord.Chord]) -> None:
+        def _attach_artics(elem: note.Note | m21chord.Chord) -> None:
             if not art_objs:
                 return
             if isinstance(elem, m21chord.Chord):
@@ -783,16 +783,6 @@ class GuitarGenerator(BasePartGenerator):
         if not chord_pitches:
             return []
 
-        is_palm_muted = guitar_block_params.get("palm_mute", False)
-        stroke_dir = guitar_block_params.get("current_event_stroke") or guitar_block_params.get("stroke_direction")
-        if isinstance(stroke_dir, str):
-            key = str(stroke_dir).strip().upper()
-            factor = STROKE_VELOCITY_FACTOR.get(key, 1.0)
-            event_final_velocity = max(1, min(127, int(event_final_velocity * factor)))
-
-        if is_palm_muted:
-            event_final_velocity = max(1, int(event_final_velocity * 0.85))
-
         beat_pos = (event_offset_ql % 4.0) / 4.0
         if self.default_velocity_curve:
             base_velocity = int(
@@ -802,6 +792,16 @@ class GuitarGenerator(BasePartGenerator):
             base_velocity = event_final_velocity
         accent_adj = int(self.accent_map.get(int(math.floor(event_offset_ql)), 0))
         event_final_velocity = max(1, min(127, base_velocity + accent_adj))
+
+        stroke_dir = guitar_block_params.get("current_event_stroke") or guitar_block_params.get("stroke_direction")
+        if isinstance(stroke_dir, str):
+            key = str(stroke_dir).strip().upper()
+            factor = STROKE_VELOCITY_FACTOR.get(key, 1.0)
+            event_final_velocity = max(1, min(127, int(event_final_velocity * factor)))
+
+        is_palm_muted = guitar_block_params.get("palm_mute", False)
+        if is_palm_muted:
+            event_final_velocity = max(1, int(event_final_velocity * 0.85))
 
         if execution_style == EXEC_STYLE_POWER_CHORDS and cs.root():
             p_root = pitch.Pitch(cs.root().name)
@@ -922,7 +922,7 @@ class GuitarGenerator(BasePartGenerator):
             arp_note_dur_ql = rhythm_pattern_definition.get(
                 "note_duration_ql", guitar_block_params.get("note_duration_ql", 0.5)
             )
-            ordered_arp_pitches: List[pitch.Pitch] = []
+            ordered_arp_pitches: list[pitch.Pitch] = []
             if isinstance(arp_pattern_indices, list) and chord_pitches:
                 ordered_arp_pitches = [
                     chord_pitches[idx % len(chord_pitches)]
@@ -1046,7 +1046,7 @@ class GuitarGenerator(BasePartGenerator):
                 f"GuitarGen: Unknown or unhandled execution_style '{execution_style}' for chord {cs.figure if cs else 'N/A'}. No notes generated for this event."
             )
         # Fingering estimation
-        flat_pitches: List[pitch.Pitch] = []
+        flat_pitches: list[pitch.Pitch] = []
         for el in notes_for_event:
             if isinstance(el, m21chord.Chord):
                 flat_pitches.extend(n.pitch for n in el.notes)
@@ -1070,8 +1070,8 @@ class GuitarGenerator(BasePartGenerator):
 
     def _render_part(
         self,
-        section_data: Dict[str, Any],
-        next_section_data: Optional[Dict[str, Any]] = None,
+        section_data: dict[str, Any],
+        next_section_data: dict[str, Any] | None = None,
     ) -> stream.Part:
         guitar_part = stream.Part(id=self.part_name)
         actual_instrument = copy.deepcopy(
@@ -1138,7 +1138,7 @@ class GuitarGenerator(BasePartGenerator):
             return guitar_part  # 空のパートを返す
 
         sanitized_label = sanitize_chord_label(chord_label_str)
-        cs_object: Optional[harmony.ChordSymbol] = None
+        cs_object: harmony.ChordSymbol | None = None
         if sanitized_label and sanitized_label.lower() != "rest":
             try:
                 cs_object = harmony.ChordSymbol(sanitized_label)
@@ -1447,7 +1447,11 @@ class GuitarGenerator(BasePartGenerator):
             or self.global_settings.get("humanize_profile")
         )
         if profile_name:
-            humanizer.apply(guitar_part, profile_name)
+            humanizer.apply(
+                guitar_part,
+                profile_name,
+                global_settings=self.global_settings,
+            )
 
         return guitar_part
 
@@ -1659,7 +1663,7 @@ class GuitarGenerator(BasePartGenerator):
             },
         ]
 
-        shuffle_pattern: List[Dict[str, Union[float, str]]] = []
+        shuffle_pattern: list[dict[str, float | str]] = []
         first_len = 2.0 / 3.0
         second_len = 1.0 / 3.0
         current = 0.0

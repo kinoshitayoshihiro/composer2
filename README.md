@@ -197,6 +197,7 @@ though the notes are correct. You can switch mappings programmatically via
 | Palm mute | `palm_mute` | Shortens sustain by 15% and lowers velocity |
 | Slide timing | `slide_in_offset`, `slide_out_offset` | Fractional offsets (0.0–1.0) describing portamento start and end |
 | Fret bend | `bend_amount`, `bend_release_offset` | Bend depth in semitones and release position before note end |
+| Fingering controls | `position_lock`, `preferred_position`, `open_string_bonus`, `string_shift_weight`, `fret_shift_weight`, `strict_string_order` | Defaults: `False`, `0`, `-1`, `2`, `1`, `False` |
 
 ## Humanize – intensity envelope / swing override
 

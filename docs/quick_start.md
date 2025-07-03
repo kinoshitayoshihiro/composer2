@@ -14,3 +14,51 @@ For live playback, run:
 ```bash
 modcompose realtime
 ```
+
+### Arpeggio Pattern DSL
+
+You can specify an arpeggio note order directly in your rhythm library using
+`pattern_type: "arpeggio"`.
+
+```yaml
+guitar_arpeggio_basic:
+  pattern_type: arpeggio
+  string_order: [5,4,3,2,1,0,1,2,3,4]
+  strict_string_order: true
+  reference_duration_ql: 1.0
+```
+
+The guitar generator will strum notes sequentially according to
+`string_order`.
+
+### Fingering Options
+
+`GuitarGenerator` exposes several parameters to control how fingering is
+estimated:
+
+- `position_lock`: restricts fingering around `preferred_position` (fret)
+- `preferred_position`: center fret when `position_lock` is enabled
+- `open_string_bonus`: negative cost encouraging open strings
+- `string_shift_weight`: cost for changing strings between notes
+- `fret_shift_weight`: cost for moving frets between notes
+- `strict_string_order`: raise an error when the given `string_order` does not
+  match the number of arpeggio notes
+
+### Exporting Enhanced Tablature
+
+After composing a guitar part you can write a simple tablature file:
+
+```python
+gen = GuitarGenerator(...)
+part = gen.compose(section_data=some_section)
+gen.export_tab_enhanced("out_tab.txt")
+```
+
+Each line of `out_tab.txt` contains the string number and fret for a note,
+allowing quick import into external tools.
+
+You can also export a MusicXML file containing the tablature markings:
+
+```python
+gen.export_musicxml_tab("out_tab.xml")
+```

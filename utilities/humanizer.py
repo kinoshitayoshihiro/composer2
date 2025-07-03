@@ -186,6 +186,7 @@ def apply(
             part_stream,
             amount=4,
             global_settings=gs,
+            expr_curve="cubic-in",
         )
 
 
@@ -341,6 +342,7 @@ def _humanize_velocities_py(
     amount: int = 4,
     use_expr_cc11: bool = False,
     use_aftertouch: bool = False,
+    expr_curve: str = "cubic-in",
 ) -> None:
     for n in part.recurse().notes:
         if n.volume is None:
@@ -349,13 +351,16 @@ def _humanize_velocities_py(
         delta = random.randint(-amount, amount)
         new_vel = max(1, min(127, vel + delta))
         n.volume.velocity = new_vel
+        cc_val = new_vel
+        if expr_curve == "cubic-in":
+            cc_val = int(max(1, min(127, (new_vel / 127.0) ** 3 * 127)))
         if use_expr_cc11:
             part.extra_cc = getattr(part, "extra_cc", []) + [
-                {"time": float(n.offset), "cc": 11, "val": new_vel}
+                {"time": float(n.offset), "cc": 11, "val": cc_val}
             ]
         if use_aftertouch:
             part.extra_cc = getattr(part, "extra_cc", []) + [
-                {"time": float(n.offset), "cc": 74, "val": new_vel}
+                {"time": float(n.offset), "cc": 74, "val": cc_val}
             ]
 
 
@@ -364,15 +369,16 @@ def _humanize_velocities(
     amount: int = 4,
     *,
     global_settings: Mapping[str, Any] | None = None,
+    expr_curve: str = "cubic-in",
 ) -> None:
     """Randomise note velocities and optionally emit CC messages."""
     gs = global_settings or {}
     use_expr = bool(gs.get("use_expr_cc11", False))
     use_at = bool(gs.get("use_aftertouch", False))
     if cy_humanize_velocities is not None:
-        cy_humanize_velocities(part, amount, use_expr, use_at)
+        cy_humanize_velocities(part, amount, use_expr, use_at, expr_curve)
     else:
-        _humanize_velocities_py(part, amount, use_expr, use_at)
+        _humanize_velocities_py(part, amount, use_expr, use_at, expr_curve)
 
 
 def _apply_velocity_histogram_py(

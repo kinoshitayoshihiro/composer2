@@ -216,6 +216,7 @@ def test_strum_delay_jitter_ms(_basic_gen):
 
 def test_stroke_direction_velocity(_basic_gen):
     gen = _basic_gen()
+    gen.default_velocity_curve = None
     cs = harmony.ChordSymbol("C")
     notes_down = gen._create_notes_from_event(
         cs,
@@ -228,6 +229,28 @@ def test_stroke_direction_velocity(_basic_gen):
         cs,
         {"execution_style": EXEC_STYLE_STRUM_BASIC},
         {"current_event_stroke": "up", "num_strings": 1},
+        1.0,
+        80,
+    )
+    assert notes_down[0].volume.velocity == int(int(80 * 1.1) * 1.1)
+    assert notes_up[0].volume.velocity == int(int(80 * 0.9) * 0.9)
+
+
+def test_stroke_direction_velocity_shorthand(_basic_gen):
+    gen = _basic_gen()
+    gen.default_velocity_curve = None
+    cs = harmony.ChordSymbol("C")
+    notes_down = gen._create_notes_from_event(
+        cs,
+        {"execution_style": EXEC_STYLE_STRUM_BASIC},
+        {"current_event_stroke": "D", "num_strings": 1},
+        1.0,
+        80,
+    )
+    notes_up = gen._create_notes_from_event(
+        cs,
+        {"execution_style": EXEC_STYLE_STRUM_BASIC},
+        {"current_event_stroke": "U", "num_strings": 1},
         1.0,
         80,
     )

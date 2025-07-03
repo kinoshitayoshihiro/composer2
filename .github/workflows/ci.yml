@@ -147,8 +147,21 @@ jobs:
           if [ "$STATUS" = "0" ]; then
             pytest -m stretch
           else
-            pytest -m stretch -k "not rnn_smoke"
+          pytest -m stretch -k "not rnn_smoke"
           fi
+
+  core-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install .
+      - run: python -m build --wheel
+      - run: pip install music21
+      - run: pytest -q tests/test_guitar_phase3.py
 
   hi-fi-train:
     runs-on: ubuntu-latest

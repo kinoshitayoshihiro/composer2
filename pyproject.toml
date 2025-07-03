@@ -24,9 +24,7 @@ dependencies = [
   "pydantic>=2.7",
   "pydub>=0.25",
   "mido>=1.3.0",
-  "scipy>=1.10",
   "tomli>=2.0",
-  "soundfile>=0.12",
   "audioread>=2.1.9",
   "pretty_midi>=0.2",
 ]
@@ -44,6 +42,10 @@ audio = [
   "soundfile>=0.12",
   "fluidsynth",
   "tqdm",
+]
+velocity = [
+  "numpy>=1.24",
+  "scipy>=1.10",
 ]
 essentia = [
   "essentia>=2.1",
@@ -70,6 +72,8 @@ all = [
   "soundfile>=0.12",
   "fluidsynth",
   "tqdm",
+  "numpy>=1.24",
+  "scipy>=1.10",
   "essentia>=2.1",
   "pretty_midi>=0.2.10",
   "streamlit",

@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
+
+import pytest
 from music21 import stream
-from generator.drum_generator import DrumGenerator, RESOLUTION
-from utilities.groove_sampler_ngram import Event
-from typing import cast
+
+from generator.drum_generator import RESOLUTION, DrumGenerator
 from tests.helpers.events import make_event
 
 
@@ -51,3 +52,28 @@ def test_velocity_curve_scaling(tmp_path: Path):
     )
     vels = [n.volume.velocity for n in part.flatten().notes]
     assert vels == [50, 75, 100]
+
+
+def test_interp_modes():
+    from utilities.velocity_curve import interpolate_7pt
+
+    curve = [0.0, 0.1, 0.4, 0.9, 0.4, 0.1, 0.0]
+    linear = interpolate_7pt(curve, mode="linear")
+    try:
+        import scipy  # noqa: F401
+    except Exception:
+        pytest.skip("SciPy not installed")
+    spline = interpolate_7pt(curve, mode="spline")
+    assert linear != pytest.approx(spline)
+
+
+def test_interp_spline_fallback(monkeypatch):
+    import importlib
+    import sys
+
+    monkeypatch.setitem(sys.modules, "scipy", None)
+    vc = importlib.reload(importlib.import_module("utilities.velocity_curve"))
+
+    curve = [0.0, 0.1, 0.4, 0.9, 0.4, 0.1, 0.0]
+    result = vc.interpolate_7pt(curve, mode="spline")
+    assert len(result) == 128

@@ -17,14 +17,27 @@ class ToneShaper:
         self._knn = None
 
     def choose_preset(self, avg_velocity: float, intensity: str) -> str:
-        """Return preset name for given velocity and intensity."""
-        if intensity in {"high", "very_high"} or avg_velocity >= 85:
+        """Return preset name derived from intensity and average velocity."""
+        score = 0
+        if intensity in {"very_high", "high"}:
+            score += 2
+        elif intensity in {"medium_high", "medium"}:
+            score += 1
+        elif intensity in {"medium_low", "low"}:
+            score -= 1
+        if avg_velocity >= 90:
+            score += 2
+        elif avg_velocity >= 75:
+            score += 1
+        elif avg_velocity < 60:
+            score -= 1
+        if score >= 3:
+            return "fuzz"
+        if score == 2:
             return "drive"
-        if intensity in {"medium_high", "medium"}:
+        if score >= 0:
             return "svt"
-        if intensity in {"medium_low", "low"} or avg_velocity < 60:
-            return "clean"
-        return "fuzz"
+        return "clean"
 
     def to_cc_events(self, preset_name: str, offset: float) -> list[dict]:
         value = self.presets.get(preset_name, self.presets["clean"])

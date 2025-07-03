@@ -37,7 +37,8 @@ humanizer.apply(part, global_settings={"use_expr_cc11": True, "use_aftertouch": 
 
 Measure the average note velocity of a part and feed the value to
 ``ToneShaper.choose_preset`` together with an intensity label.
-The returned preset is converted to a CC#31 event which should be inserted at
+Both values are combined to determine the preset. The returned preset is
+converted to a CC#31 event which should be inserted at
 the start of the part.
 
 ```python
@@ -51,14 +52,15 @@ part.extra_cc = shaper.to_cc_events(preset, offset=0.0)
 A simplified decision flow:
 
 ```
-mean velocity -> intensity bucket -> preset name
+mean velocity + intensity -> preset name
 ```
 
 ## Loudness Normalisation
 
 When rendering audio with ``modcompose render`` pass ``--normalize-lufs`` to
-target a specific loudness level. The helper ``normalize_wav`` rewrites the WAV
-file in place:
+target a specific loudness level. The helper ``normalize_wav`` can infer a
+target from the section name using ``{'verse': -16, 'chorus': -12}`` and
+rewrites the WAV file in place:
 
 ```bash
 modcompose render spec.yml --soundfont sf2 --normalize-lufs -14

@@ -21,6 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          pip install -e .[test] -r requirements-test.txt
           pip install music21
       - name: Restore Essentia wheel cache
         if: runner.os == 'Linux'

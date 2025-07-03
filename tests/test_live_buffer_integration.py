@@ -65,4 +65,4 @@ def test_rt_play_live(monkeypatch):
     on_times = [t for t, msg in midi.events if msg[0] == 0x90]
     assert len(on_times) == 2
     diff = on_times[1] - on_times[0]
-    assert 0.23 <= diff <= 0.27
+    assert 0.24 <= diff <= 0.26

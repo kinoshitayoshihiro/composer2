@@ -1,28 +1,16 @@
 import statistics
 import pytest
 import music21
-from music21 import instrument, harmony
+from music21 import harmony
 from generator.guitar_generator import (
-    GuitarGenerator,
     EXEC_STYLE_STRUM_BASIC,
     GUITAR_STRUM_DELAY_QL,
 )
 
 
-def _basic_gen(**kwargs):
-    return GuitarGenerator(
-        global_settings={},
-        default_instrument=instrument.Guitar(),
-        part_name="g",
-        global_tempo=120,
-        global_time_signature="4/4",
-        global_key_signature_tonic="C",
-        global_key_signature_mode="major",
-        **kwargs
-    )
 
 
-def test_timing_jitter_ms_variation():
+def test_timing_jitter_ms_variation(_basic_gen):
     gen = _basic_gen(timing_jitter_ms=20)
     gen.rng.seed(0)
     notes = gen._create_notes_from_event(
@@ -36,7 +24,7 @@ def test_timing_jitter_ms_variation():
     assert statistics.pstdev(diffs) > 0
 
 
-def test_swing_ratio_applied():
+def test_swing_ratio_applied(_basic_gen):
     gen = _basic_gen()
     gen.part_parameters["pair"] = {
         "pattern": [
@@ -62,7 +50,7 @@ def test_swing_ratio_applied():
     assert round(notes[0].quarterLength, 2) == pytest.approx(0.4, abs=0.01)
 
 
-def test_accent_map_velocity():
+def test_accent_map_velocity(_basic_gen):
     gen = _basic_gen(accent_map={0: 10, 2: -5})
     gen.part_parameters["qpat"] = {
         "pattern": [
@@ -91,7 +79,7 @@ def test_accent_map_velocity():
     assert vels[2] == base2 - 5
 
 
-def test_round_robin_channels():
+def test_round_robin_channels(_basic_gen):
     gen = _basic_gen(rr_channel_cycle=[10, 11])
     gen.part_parameters["tri"] = {
         "pattern": [
@@ -116,7 +104,7 @@ def test_round_robin_channels():
     assert chans[:3] == [10, 11, 10]
 
 
-def test_velocity_curve():
+def test_velocity_curve(_basic_gen):
     curve = [i + 1 for i in range(128)]
     gen = _basic_gen(default_velocity_curve=curve, accent_map={}, swing_ratio=0.5)
     gen.part_parameters["vc1"] = {
@@ -140,7 +128,7 @@ def test_velocity_curve():
     assert vels[0] == curve[0]
 
 
-def test_jitter_mode_gauss_vs_uniform():
+def test_jitter_mode_gauss_vs_uniform(_basic_gen):
     gen_u = _basic_gen(timing_jitter_ms=20, timing_jitter_mode="uniform")
     gen_g = _basic_gen(timing_jitter_ms=20, timing_jitter_mode="gauss")
     gen_u.rng.seed(1)
@@ -164,7 +152,7 @@ def test_jitter_mode_gauss_vs_uniform():
     assert statistics.pstdev(diffs_g) > statistics.pstdev(diffs_u)
 
 
-def test_swing_subdiv_shuffle():
+def test_swing_subdiv_shuffle(_basic_gen):
     gen = _basic_gen()
     gen.part_parameters["tri"] = {
         "pattern": [
@@ -188,7 +176,7 @@ def test_swing_subdiv_shuffle():
     assert offs[1] == pytest.approx(0.44, abs=0.01)
 
 
-def test_swing_subdiv_zero():
+def test_swing_subdiv_zero(_basic_gen):
     gen = _basic_gen()
     gen.part_parameters["pair"] = {
         "pattern": [
@@ -212,7 +200,7 @@ def test_swing_subdiv_zero():
     assert offs == [0.0, 0.5]
 
 
-def test_strum_delay_jitter_ms():
+def test_strum_delay_jitter_ms(_basic_gen):
     gen = _basic_gen(strum_delay_jitter_ms=10)
     gen.rng.seed(0)
     notes = gen._create_notes_from_event(
@@ -224,6 +212,27 @@ def test_strum_delay_jitter_ms():
     )
     offsets_ms = [float(n.offset) * (60000 / gen.global_tempo) for n in notes]
     assert statistics.pstdev(offsets_ms) > 0
+
+
+def test_stroke_direction_velocity(_basic_gen):
+    gen = _basic_gen()
+    cs = harmony.ChordSymbol("C")
+    notes_down = gen._create_notes_from_event(
+        cs,
+        {"execution_style": EXEC_STYLE_STRUM_BASIC},
+        {"current_event_stroke": "down", "num_strings": 1},
+        1.0,
+        80,
+    )
+    notes_up = gen._create_notes_from_event(
+        cs,
+        {"execution_style": EXEC_STYLE_STRUM_BASIC},
+        {"current_event_stroke": "up", "num_strings": 1},
+        1.0,
+        80,
+    )
+    assert notes_down[0].volume.velocity == int(int(80 * 1.1) * 1.1)
+    assert notes_up[0].volume.velocity == int(int(80 * 0.9) * 0.9)
 
 
 

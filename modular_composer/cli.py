@@ -252,6 +252,7 @@ def preset_import(file: Path, name: str | None) -> None:
 @click.option("--latency-buffer", type=float, default=5.0, show_default=True)
 @click.option("--measure-latency", is_flag=True, default=False)
 @click.option("--late-humanize", is_flag=True, default=False)
+@click.option("--lufs-hud", is_flag=True, default=False)
 @click.option("--rhythm-schema", type=str, default=None)
 def live_cmd(
     model: Path,
@@ -268,6 +269,7 @@ def live_cmd(
     latency_buffer: float,
     measure_latency: bool,
     late_humanize: bool,
+    lufs_hud: bool,
     rhythm_schema: str | None,
 ) -> None:
     """Stream a trained groove model live."""
@@ -336,7 +338,31 @@ def live_cmd(
     engine = RealtimeEngine(
         str(model), backend=backend, bpm=bpm, sync=sync, buffer_bars=buffer
     )
+    meter = None
+    hud_thread = None
+    if lufs_hud:
+        from utilities.loudness_meter import RealtimeLoudnessMeter
+
+        meter = RealtimeLoudnessMeter()
+        meter.start(None)
+
+        def _hud() -> None:
+            import time
+
+            while meter is not None:
+                print(f"LUFS: {meter.get_current_lufs():.1f}", end="\r")
+                time.sleep(0.5)
+
+        import threading
+
+        hud_thread = threading.Thread(target=_hud, daemon=True)
+        hud_thread.start()
+
     live_player.play_live(engine, bpm=bpm)  # type: ignore[arg-type]
+    if meter is not None:
+        meter.stop()
+    if hud_thread is not None:
+        hud_thread.join(timeout=0.2)
 
 
 def _cmd_demo(args: list[str]) -> None:
@@ -533,6 +559,25 @@ def _cmd_render(args: list[str]) -> None:
         print(f"Rendered {wav}")
 
 
+def _cmd_meter(args: list[str]) -> None:
+    ap = argparse.ArgumentParser(prog="modcompose meter")
+    ap.add_argument("--device", type=str, default=None)
+    ns = ap.parse_args(args)
+    from utilities.loudness_meter import RealtimeLoudnessMeter
+
+    meter = RealtimeLoudnessMeter()
+    meter.start(ns.device)
+    try:
+        import time
+
+        while True:
+            lufs = meter.get_current_lufs()
+            print(f"LUFS: {lufs:.1f}", end="\r")
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        meter.stop()
+
+
 def _cmd_realtime(args: list[str]) -> None:
     ap = argparse.ArgumentParser(
         prog="modcompose realtime",
@@ -692,6 +737,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_peaks(argv[1:])
     elif cmd == "render":
         _cmd_render(argv[1:])
+    elif cmd == "meter":
+        _cmd_meter(argv[1:])
     elif cmd == "realtime":
         _cmd_realtime(argv[1:])
     elif cmd == "interact":

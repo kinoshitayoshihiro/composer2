@@ -1,27 +1,16 @@
 import pytest
 import music21
-from music21 import instrument, harmony
+from music21 import harmony
 import xml.etree.ElementTree as ET
 from generator.guitar_generator import (
-    GuitarGenerator,
     EXEC_STYLE_ARPEGGIO_PATTERN,
 )
 
 
-def _basic_gen(**kwargs):
-    return GuitarGenerator(
-        global_settings={},
-        default_instrument=instrument.Guitar(),
-        part_name="g",
-        global_tempo=120,
-        global_time_signature="4/4",
-        global_key_signature_tonic="C",
-        global_key_signature_mode="major",
-        **kwargs
-    )
 
 
-def test_arpeggio_pattern_offsets():
+
+def test_arpeggio_pattern_offsets(_basic_gen):
     gen = _basic_gen()
     cs = harmony.ChordSymbol("C")
     pattern = {"execution_style": EXEC_STYLE_ARPEGGIO_PATTERN, "string_order": [5,4,3,2]}
@@ -31,7 +20,7 @@ def test_arpeggio_pattern_offsets():
     assert offs == [0.0, 0.5, 1.0, 1.5]
 
 
-def test_position_lock_effect():
+def test_position_lock_effect(_basic_gen):
     cs = harmony.ChordSymbol("C")
     pattern = {"execution_style": EXEC_STYLE_ARPEGGIO_PATTERN, "string_order": [5,4,3,2,1,0]}
     gen_free = _basic_gen()
@@ -45,7 +34,7 @@ def test_position_lock_effect():
     assert (min(free_frets) < 1) or (max(free_frets) > 5)
 
 
-def test_export_tab_enhanced(tmp_path):
+def test_export_tab_enhanced(_basic_gen, tmp_path):
     gen = _basic_gen()
     part = gen.compose(section_data={
         "section_name": "A",
@@ -63,7 +52,7 @@ def test_export_tab_enhanced(tmp_path):
     assert "|" in content
 
 
-def test_export_musicxml_tab(tmp_path):
+def test_export_musicxml_tab(_basic_gen, tmp_path):
     gen = _basic_gen()
     part = gen.compose(section_data={
         "section_name": "A",
@@ -84,7 +73,7 @@ def test_export_musicxml_tab(tmp_path):
     assert len(strings) == len(frets) > 0
 
 
-def test_hybrid_pattern_types():
+def test_hybrid_pattern_types(_basic_gen):
     gen = _basic_gen()
     gen.part_parameters["hybrid"] = {
         "pattern": [
@@ -120,7 +109,7 @@ def test_hybrid_pattern_types():
     assert offsets == sorted(offsets)
 
 
-def test_arpeggio_note_overlap():
+def test_arpeggio_note_overlap(_basic_gen):
     gen = _basic_gen()
     cs = harmony.ChordSymbol("C")
     pattern = {
@@ -133,7 +122,7 @@ def test_arpeggio_note_overlap():
         assert a.offset + a.quarterLength <= b.offset + 1e-3
 
 
-def test_string_order_loop():
+def test_string_order_loop(_basic_gen):
     gen = _basic_gen()
     cs = harmony.ChordSymbol("C7")
     pattern = {
@@ -145,7 +134,7 @@ def test_string_order_loop():
     assert len(notes) == 4
 
 
-def test_string_order_missing():
+def test_string_order_missing(_basic_gen):
     gen = _basic_gen(strict_string_order=True)
     cs = harmony.ChordSymbol("C")
     pattern = {"execution_style": EXEC_STYLE_ARPEGGIO_PATTERN}

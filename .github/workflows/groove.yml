@@ -5,6 +5,7 @@ jobs:
   train:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env: ${{ matrix.env }}
     strategy:
       matrix:
         include:
@@ -12,6 +13,7 @@ jobs:
               PURE_PY: '1'
           - env:
               CYTHON: '1'
+              MCY_USE_CYTHON: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,7 +36,7 @@ jobs:
       - name: build cyext
         run: |
           if [ "${{ matrix.env.CYTHON }}" = '1' ]; then
-            MCY_USE_CYTHON=1 python setup.py build_ext --inplace
+            python setup.py build_ext --inplace
           else
             echo "skip C extension build"
           fi

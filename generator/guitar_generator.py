@@ -106,6 +106,14 @@ TUNING_PRESETS: dict[str, list[int]] = {
     "open_g": [-2, -2, 0, 0, 0, -2],
 }
 
+# Stroke direction to velocity multiplier mapping
+STROKE_VELOCITY_FACTOR = {
+    "DOWN": 1.10,
+    "D": 1.10,
+    "UP": 0.90,
+    "U": 0.90,
+}
+
 EXEC_STYLE_BLOCK_CHORD = "block_chord"
 EXEC_STYLE_STRUM_BASIC = "strum_basic"
 EXEC_STYLE_ARPEGGIO_FROM_INDICES = "arpeggio_from_indices"
@@ -322,6 +330,12 @@ class GuitarGenerator(BasePartGenerator):
             "hammer_on": articulations.HammerOn(),
             "pull_off": articulations.PullOff(),
         }
+
+        if not self.default_velocity_curve or len(self.default_velocity_curve) != 128:
+            self.default_velocity_curve = [
+                max(0, min(127, int(round(40 + 45 * math.sin((math.pi / 2) * i / 127)))))
+                for i in range(128)
+            ]
 
 
     def compose(self, *args, **kwargs):
@@ -781,11 +795,9 @@ class GuitarGenerator(BasePartGenerator):
 
         stroke_dir = guitar_block_params.get("current_event_stroke") or guitar_block_params.get("stroke_direction")
         if isinstance(stroke_dir, str):
-            sd = stroke_dir.lower()
-            if sd == "down":
-                event_final_velocity = min(127, int(event_final_velocity * 1.1))
-            elif sd == "up":
-                event_final_velocity = max(1, int(event_final_velocity * 0.9))
+            key = str(stroke_dir).strip().upper()
+            factor = STROKE_VELOCITY_FACTOR.get(key, 1.0)
+            event_final_velocity = max(1, min(127, int(event_final_velocity * factor)))
 
         is_palm_muted = guitar_block_params.get("palm_mute", False)
         if is_palm_muted:
@@ -850,12 +862,12 @@ class GuitarGenerator(BasePartGenerator):
                 "current_event_stroke",
                 guitar_block_params.get(
                     "strum_direction_cycle", "down,down,up,up"
-                ).split(",")[
-                    0
-                ],  # サイクルからも取得
+                ).split(",")[0],  # サイクルからも取得
             )
-            is_down = event_stroke_dir.lower() == "down"  # 小文字比較
+            key = str(event_stroke_dir).strip().upper()
+            is_down = key in ("DOWN", "D")
             play_order = list(reversed(chord_pitches)) if is_down else chord_pitches
+            base_factor = STROKE_VELOCITY_FACTOR.get(key, 1.0)
             strum_delay_ql = rhythm_pattern_definition.get(
                 "strum_delay_ql",
                 guitar_block_params.get("strum_delay_ql", GUITAR_STRUM_DELAY_QL),
@@ -895,7 +907,7 @@ class GuitarGenerator(BasePartGenerator):
                             ((i / (len(play_order) - 1)) * vel_adj_range)
                             - (vel_adj_range / 2)
                         )
-                final_vel = max(1, min(127, event_final_velocity + vel_adj))
+                final_vel = max(1, min(127, int(event_final_velocity * base_factor) + vel_adj))
                 n_strum.volume = m21volume.Volume(velocity=final_vel)
                 if is_palm_muted:
                     n_strum.articulations.append(articulations.Staccatissimo())
@@ -1202,12 +1214,15 @@ class GuitarGenerator(BasePartGenerator):
             pattern_events = []
 
         options = rhythm_details.get("options", {})
-        velocity_curve_spec = (
-            options.get("velocity_curve")
-            or rhythm_details.get("velocity_curve_name")
-            or None
-        )
-        velocity_curve_list = self._select_velocity_curve(velocity_curve_spec)
+        velocity_curve_spec = options.get("velocity_curve")
+        if velocity_curve_spec is None:
+            velocity_curve_spec = rhythm_details.get("velocity_curve_name")
+
+        if velocity_curve_spec is None and self.default_velocity_curve is not None:
+            velocity_curve_list = self.default_velocity_curve
+        else:
+            velocity_curve_spec = velocity_curve_spec or ""
+            velocity_curve_list = self._select_velocity_curve(velocity_curve_spec)
 
         pattern_ref_duration = rhythm_details.get(
             "reference_duration_ql", self.measure_duration

@@ -136,15 +136,15 @@ logger = logging.getLogger("modular_composer.bass_generator")
 
 
 def _apply_tone(part: stream.Part, intensity: str) -> None:
-    """Insert CC31 events based on average velocity."""
+    """Insert a single CC31 event based on average velocity."""
     notes = list(part.flat.notes)
     if not notes:
         return
     avg_vel = float(np.mean([n.volume.velocity or 0 for n in notes]))
     shaper = ToneShaper()
     preset = shaper.choose_preset(avg_vel, intensity)
-    part.extra_cc = getattr(part, "extra_cc", [])
-    part.extra_cc.extend(shaper.to_cc_events(preset, 0.0))
+    existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
+    part.extra_cc = existing + shaper.to_cc_events(preset, 0.0)
 
 DIRECTION_UP = 1
 DIRECTION_DOWN = -1

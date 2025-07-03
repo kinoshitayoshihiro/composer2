@@ -21,7 +21,19 @@ if not ext_modules:
     ext_modules = [Extension(f"cyext.{s.split('/')[-1]}", [f"{s}.c"]) for s in SOURCES]
 
 try:
-    setup(name="cyext", ext_modules=ext_modules)
+    setup(
+        name="cyext",
+        ext_modules=ext_modules,
+        extras_require={
+            "test": ["scikit-learn>=1.3.0", "librosa>=0.10.0", "soundfile>=0.12.0"],
+        },
+    )
 except Exception as exc:  # pragma: no cover - build may fail
     logging.warning("C extension build failed, using pure Python fallback: %s", exc)
-    setup(name="cyext", ext_modules=[])
+    setup(
+        name="cyext",
+        ext_modules=[],
+        extras_require={
+            "test": ["scikit-learn>=1.3.0", "librosa>=0.10.0", "soundfile>=0.12.0"],
+        },
+    )

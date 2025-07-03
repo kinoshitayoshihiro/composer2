@@ -22,14 +22,13 @@ jobs:
         run: pip install -e .[test] -r requirements-test.txt
       - name: Install torch CPU wheel
         run: pip install torch --no-cache-dir --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -r requirements-test.txt
       - name: Install Cython
         run: pip install Cython
       - name: build cyext
         run: |
           if [ "${{ matrix.env.CYTHON }}" = '1' ]; then
             MCY_USE_CYTHON=1 python setup.py build_ext --inplace
-          else
-            python setup.py build_ext --inplace
           fi
       - name: make loops
         run: |

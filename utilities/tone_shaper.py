@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 
+try:
+    from sklearn.neighbors import KNeighborsClassifier  # type: ignore
+except Exception:  # pragma: no cover - optional
+    KNeighborsClassifier = None
+
+
 class ToneShaper:
     """Select amp/cabinet presets and emit CC events."""
 
@@ -27,7 +33,13 @@ class ToneShaper:
     def fit(self, preset_samples: dict[str, "np.ndarray"]) -> None:
         """Fit KNN model from preset MFCC samples."""
         import numpy as np
-        from sklearn.neighbors import KNeighborsClassifier
+        if KNeighborsClassifier is None:  # pragma: no cover - optional
+            import warnings
+
+            warnings.warn(
+                "scikit-learn not installed; ToneShaper disabled", RuntimeWarning
+            )
+            return
 
         X = []
         y = []
@@ -41,8 +53,13 @@ class ToneShaper:
         self._knn.fit(X, y)
 
     def predict_preset(self, mfcc: "np.ndarray") -> str:
-        if self._knn is None:
-            raise RuntimeError("ToneShaper model not fitted")
+        import warnings
+        if self._knn is None or KNeighborsClassifier is None:  # pragma: no cover - optional
+            warnings.warn(
+                "scikit-learn not installed or ToneShaper not fitted; returning default",
+                RuntimeWarning,
+            )
+            return "clean"
         import numpy as np
 
         feat = np.asarray(mfcc)

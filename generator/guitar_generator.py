@@ -323,6 +323,12 @@ class GuitarGenerator(BasePartGenerator):
             "pull_off": articulations.PullOff(),
         }
 
+        if not self.default_velocity_curve or len(self.default_velocity_curve) != 128:
+            self.default_velocity_curve = [
+                max(0, min(127, int(round(40 + 45 * math.sin((math.pi / 2) * i / 127)))))
+                for i in range(128)
+            ]
+
 
     def compose(self, *args, **kwargs):
         self._prev_note_pitch = None
@@ -856,6 +862,11 @@ class GuitarGenerator(BasePartGenerator):
             )
             is_down = event_stroke_dir.lower() == "down"  # 小文字比較
             play_order = list(reversed(chord_pitches)) if is_down else chord_pitches
+            base_factor = 1.0
+            if is_down:
+                base_factor = 1.10
+            elif event_stroke_dir.lower() == "up":
+                base_factor = 0.90
             strum_delay_ql = rhythm_pattern_definition.get(
                 "strum_delay_ql",
                 guitar_block_params.get("strum_delay_ql", GUITAR_STRUM_DELAY_QL),
@@ -895,7 +906,7 @@ class GuitarGenerator(BasePartGenerator):
                             ((i / (len(play_order) - 1)) * vel_adj_range)
                             - (vel_adj_range / 2)
                         )
-                final_vel = max(1, min(127, event_final_velocity + vel_adj))
+                final_vel = max(1, min(127, int(event_final_velocity * base_factor) + vel_adj))
                 n_strum.volume = m21volume.Volume(velocity=final_vel)
                 if is_palm_muted:
                     n_strum.articulations.append(articulations.Staccatissimo())
@@ -1202,12 +1213,15 @@ class GuitarGenerator(BasePartGenerator):
             pattern_events = []
 
         options = rhythm_details.get("options", {})
-        velocity_curve_spec = (
-            options.get("velocity_curve")
-            or rhythm_details.get("velocity_curve_name")
-            or None
-        )
-        velocity_curve_list = self._select_velocity_curve(velocity_curve_spec)
+        velocity_curve_spec = options.get("velocity_curve")
+        if velocity_curve_spec is None:
+            velocity_curve_spec = rhythm_details.get("velocity_curve_name")
+
+        if velocity_curve_spec is None and self.default_velocity_curve is not None:
+            velocity_curve_list = self.default_velocity_curve
+        else:
+            velocity_curve_spec = velocity_curve_spec or ""
+            velocity_curve_list = self._select_velocity_curve(velocity_curve_spec)
 
         pattern_ref_duration = rhythm_details.get(
             "reference_duration_ql", self.measure_duration

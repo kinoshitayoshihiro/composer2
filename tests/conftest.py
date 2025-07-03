@@ -54,3 +54,23 @@ def _midi_port_available() -> bool:
 def pytest_runtest_setup(item: pytest.Item) -> None:
     if "no_midi_port" in item.keywords and not _midi_port_available():
         pytest.skip("no midi port")
+
+
+@pytest.fixture
+def _basic_gen():
+    from music21 import instrument
+    from generator.guitar_generator import GuitarGenerator
+
+    def factory(**kwargs):
+        return GuitarGenerator(
+            global_settings={},
+            default_instrument=instrument.Guitar(),
+            part_name="g",
+            global_tempo=120,
+            global_time_signature="4/4",
+            global_key_signature_tonic="C",
+            global_key_signature_mode="major",
+            **kwargs,
+        )
+
+    return factory

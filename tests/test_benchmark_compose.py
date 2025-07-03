@@ -19,5 +19,5 @@ def dummy_compose(num_workers=1):
 
 
 def test_compose_benchmark(benchmark):
-    benchmark(dummy_compose, num_workers=1)
     benchmark(dummy_compose, num_workers=2)
+    assert benchmark.stats.get('mean') <= 0.5

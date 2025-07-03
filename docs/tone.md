@@ -35,3 +35,25 @@ file in place:
 ```bash
 modcompose render spec.yml --soundfont sf2 --normalize-lufs -14
 ```
+
+## Automatic ToneShaper Learning
+
+`ToneShaper.fit()` allows training a simple KNN classifier from MFCC features of your favourite presets. Pass a mapping of preset names to MFCC matrices:
+
+```python
+mfcc_clean = librosa.feature.mfcc(y=clean_wav, sr=sr)
+mfcc_drive = librosa.feature.mfcc(y=drive_wav, sr=sr)
+shaper.fit({"clean": mfcc_clean, "drive": mfcc_drive})
+```
+
+You can then call `predict_preset(mfcc)` to infer the closest preset.
+
+## Real‑time Loudness HUD
+
+Run the loudness meter to monitor output LUFS:
+
+```bash
+modcompose meter --device default
+```
+
+In live mode pass `--lufs-hud` to display the meter overlay.

@@ -16,3 +16,5 @@ python-rtmidi
 transformers==4.*
 torch==2.*
 soundfile
+sounddevice>=0.4
+pyloudnorm>=0.1

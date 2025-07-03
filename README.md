@@ -764,6 +764,16 @@ Common CLI options:
 - `--rhythm-schema` prepends a rhythm style token when sampling transformer bass.
 - `--normalize-lufs` normalises rendered audio to the given loudness target.
 - ToneShaper selects amp presets and emits CC31 at the start of each part.
+  Use it automatically at the end of `BassGenerator.compose()`:
+
+  ```python
+  from utilities.tone_shaper import ToneShaper
+
+  shaper = ToneShaper()
+  preset = shaper.choose_preset(avg_vel, "medium")
+  part.extra_cc.extend(shaper.to_cc_events(preset, 0.0))
+  ```
+
 See [docs/tone.md](docs/tone.md) for details.
 
 ## Realtime Low-Latency

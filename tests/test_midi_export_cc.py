@@ -9,7 +9,7 @@ def test_extra_cc_written():
     n = note.Note("C4", quarterLength=1.0)
     n.volume.velocity = 90
     part.insert(0.0, n)
-    part.extra_cc = [{"time": 0.0, "number": 20, "value": 64}]
+    part.extra_cc = [{"time": 0.0, "cc": 20, "val": 64}]
     mid = music21_to_mido(part)
     msgs = [
         msg

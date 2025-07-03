@@ -404,9 +404,9 @@ class PianoGenerator(BasePartGenerator):
             if hasattr(ped, "pedalForm") and hasattr(expressions, "PedalForm"):
                 ped.pedalForm = expressions.PedalForm.Line
             part.insert(t, ped)
-            cc_events.append({"time": t, "number": 64, "value": pedal_value})
+            cc_events.append({"time": t, "cc": 64, "val": pedal_value})
             cc_events.append(
-                {"time": min(t + measure_len, end_offset), "number": 64, "value": 0}
+                {"time": min(t + measure_len, end_offset), "cc": 64, "val": 0}
             )
             t += measure_len
 
@@ -431,7 +431,7 @@ class PianoGenerator(BasePartGenerator):
                 t = start_t + frac * (end_t - start_t)
                 val = int(round(start_val + (end_val - start_val) * frac))
                 cc_events.append(
-                    {"time": t, "number": 11, "value": max(0, min(127, val))}
+                    {"time": t, "cc": 11, "val": max(0, min(127, val))}
                 )
         part.extra_cc = cc_events
 

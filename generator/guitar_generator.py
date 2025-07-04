@@ -26,8 +26,21 @@ import yaml
 
 
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
+from utilities.tone_shaper import ToneShaper
 
 logger = logging.getLogger(__name__)
+
+if not hasattr(articulations, "Shake"):
+    class Shake(articulations.Articulation):
+        pass
+
+    articulations.Shake = Shake
+
+if not hasattr(articulations, "PinchHarmonic"):
+    class PinchHarmonic(articulations.Articulation):
+        pass
+
+    articulations.PinchHarmonic = PinchHarmonic
 
 
 def _get_string_indicator_cls():
@@ -113,11 +126,13 @@ TUNING_PRESETS: dict[str, list[int]] = {
 
 # Stroke direction to velocity multiplier mapping
 _DEFAULT_STROKE_VELOCITY_FACTOR = {
-    "DOWN": 1.20,
-    "D": 1.20,
-    "UP": 0.80,
-    "U": 0.80,
+    "DOWN": 1.10,
+    "D": 1.10,
+    "UP": 0.90,
+    "U": 0.90,
 }
+
+STROKE_VELOCITY_FACTOR = _DEFAULT_STROKE_VELOCITY_FACTOR.copy()
 
 @dataclass
 class FingeringCost:
@@ -242,6 +257,7 @@ class GuitarGenerator(BasePartGenerator):
         strum_delay_jitter_ms: float = 0.0,
         swing_ratio: float | None = None,
         velocity_preset_path: str | None = None,
+        style_db_path: str | None = None,
         accent_map: dict[int, int] | None = None,
         rr_channel_cycle: Sequence[int] | None = None,
         swing_subdiv: int | None = None,
@@ -289,13 +305,21 @@ class GuitarGenerator(BasePartGenerator):
         )
         self.default_palm_mute = bool(default_palm_mute)
         self.velocity_curve_interp_mode = str(velocity_curve_interp_mode).lower()
-        base_sv = {k.upper(): float(v) for k, v in _DEFAULT_STROKE_VELOCITY_FACTOR.items()}
+        base_sv = {k.upper(): float(v) for k, v in STROKE_VELOCITY_FACTOR.items()}
         if stroke_velocity_factor:
             for k, v in stroke_velocity_factor.items():
                 base_sv[k.upper()] = float(v)
+        STROKE_VELOCITY_FACTOR.clear()
+        STROKE_VELOCITY_FACTOR.update(base_sv)
         self.stroke_velocity_factor = base_sv
         self.velocity_preset_path = velocity_preset_path
         self.velocity_presets: dict[str, dict[str, Any]] = {}
+        if style_db_path:
+            try:
+                from utilities import style_db
+                style_db.load_style_db(style_db_path)
+            except Exception:
+                pass
         self.tuning_name = "standard"
         if self.tuning == TUNING_PRESETS.get("drop_d"):
             self.tuning_name = "drop_d"
@@ -347,6 +371,7 @@ class GuitarGenerator(BasePartGenerator):
         )
         self.cfg: dict = kwargs.copy()
         self.style_selector = GuitarStyleSelector()
+        self.tone_shaper = ToneShaper()
         self.swing_subdiv = int(swing_subdiv) if swing_subdiv else 8
         # ここから self.part_parameters を参照・初期化する
         if not hasattr(self, "part_parameters"):
@@ -397,6 +422,8 @@ class GuitarGenerator(BasePartGenerator):
                 for i in range(128)
             ]
 
+        self.stroke_velocity_factor = STROKE_VELOCITY_FACTOR
+
     @property
     def fingering_costs(self) -> FingeringCost:
         """Return current fingering cost configuration."""
@@ -426,11 +453,68 @@ class GuitarGenerator(BasePartGenerator):
             self._last_part = result
             if ratio_to_apply is not None:
                 self._apply_swing_internal(self._last_part, float(ratio_to_apply), self.swing_subdiv)
+            marks = section.get("phrase_marks")
+            if marks:
+                self._apply_phrase_dynamics(self._last_part, marks)
+            env = section.get("envelope_map")
+            if env:
+                self._apply_envelope(self._last_part, env)
+            hint = section.get("style_hint")
+            if hint:
+                self._apply_style_curve(self._last_part, hint)
+            rw = section.get("random_walk_cc")
+            if rw:
+                if isinstance(rw, dict):
+                    rng = None
+                    if "seed" in rw:
+                        rng = random.Random(int(rw["seed"]))
+                    self._apply_random_walk_cc(
+                        self._last_part,
+                        cc=int(rw.get("cc", 1)),
+                        step=int(rw.get("step", 2)),
+                        rng=rng,
+                    )
+                else:
+                    self._apply_random_walk_cc(self._last_part)
+            fx_params = section.get("fx_params")
+            if fx_params:
+                self._apply_fx_cc(self._last_part, fx_params, section.get("musical_intent", {}))
         elif isinstance(result, dict) and result:
             self._last_part = next(iter(result.values()))
             if ratio_to_apply is not None:
                 for p in result.values():
                     self._apply_swing_internal(p, float(ratio_to_apply), self.swing_subdiv)
+            marks = section.get("phrase_marks")
+            env = section.get("envelope_map")
+            if marks or env:
+                for p in result.values():
+                    if marks:
+                        self._apply_phrase_dynamics(p, marks)
+                    if env:
+                        self._apply_envelope(p, env)
+            hint = section.get("style_hint")
+            if hint:
+                for p in result.values():
+                    self._apply_style_curve(p, hint)
+            rw = section.get("random_walk_cc")
+            if rw:
+                for p in result.values():
+                    if isinstance(rw, dict):
+                        rng = None
+                        if "seed" in rw:
+                            rng = random.Random(int(rw["seed"]))
+                        self._apply_random_walk_cc(
+                            p,
+                            cc=int(rw.get("cc", 1)),
+                            step=int(rw.get("step", 2)),
+                            rng=rng,
+                        )
+                    else:
+                        self._apply_random_walk_cc(p)
+                fx_params = section.get("fx_params")
+                if fx_params:
+                    for p in result.values():
+                        self._apply_fx_cc(p, fx_params, section.get("musical_intent", {}))
         else:
             self._last_part = None
         self.swing_subdiv = orig_subdiv
@@ -560,19 +644,27 @@ class GuitarGenerator(BasePartGenerator):
             if m:
                 self.velocity_presets[tun] = m
 
-    def _select_velocity_curve(self, style_name: str | None) -> list[int] | None:
+    def _select_velocity_curve(self, style_name: str | None) -> list[int]:
+        """Return velocity curve list for *style_name* or fallback."""
         curve_spec: Any = None
         presets = self.velocity_presets.get(self.tuning_name) or {}
-        if style_name and style_name in presets:
+
+        if style_name is None:
+            base = getattr(self, "default_velocity_curve", None)
+            if base:
+                return list(base)
+        elif style_name in presets:
             curve_spec = presets[style_name]
-        elif style_name is None and "default" in presets:
+        elif "default" in presets:
             curve_spec = presets["default"]
-        elif style_name and "default" in presets:
-            curve_spec = presets["default"]
-        elif style_name:
+        else:
             curve_spec = style_name
+
         curve = self._prepare_velocity_map(curve_spec)
         if curve is None:
+            base = getattr(self, "default_velocity_curve", None)
+            if base:
+                return list(base)
             curve = [
                 max(0, min(127, int(round(40 + 45 * math.sin((math.pi / 2) * i / 127)))))
                 for i in range(128)
@@ -601,7 +693,8 @@ class GuitarGenerator(BasePartGenerator):
         """Apply stroke velocity factor and clamp to MIDI range."""
         key = _normalize_stroke_key(stroke)
         factor = self.stroke_velocity_factor.get(key, 1.0) if key else 1.0
-        return _clamp_velocity(base_vel * factor)
+        val = int(base_vel * factor)
+        return _clamp_velocity(val)
 
     def _jitter(self, offset: float) -> float:
         if self.timing_variation:
@@ -845,6 +938,16 @@ class GuitarGenerator(BasePartGenerator):
         execution_style = rhythm_pattern_definition.get(
             "execution_style", EXEC_STYLE_BLOCK_CHORD
         )
+        extra_art: articulations.Articulation | None = None
+        if execution_style == "pinch_harmonic":
+            extra_art = articulations.PinchHarmonic()
+            execution_style = EXEC_STYLE_BLOCK_CHORD
+        elif execution_style == "harmonic":
+            extra_art = articulations.Harmonic()
+            execution_style = EXEC_STYLE_BLOCK_CHORD
+        elif execution_style == "vibrato":
+            extra_art = articulations.Shake()
+            execution_style = EXEC_STYLE_BLOCK_CHORD
 
         def _attach_artics(elem: note.Note | m21chord.Chord) -> None:
             if not art_objs:
@@ -877,6 +980,10 @@ class GuitarGenerator(BasePartGenerator):
 
         is_palm_muted = guitar_block_params.get("palm_mute", False)
         stroke_dir = guitar_block_params.get("current_event_stroke") or guitar_block_params.get("stroke_direction")
+        if isinstance(stroke_dir, str):
+            key = str(stroke_dir).strip().upper()
+            factor = self.stroke_velocity_factor.get(key, 1.0)
+            event_final_velocity = max(1, min(127, int(event_final_velocity * factor)))
 
         if is_palm_muted:
             event_final_velocity = _clamp_velocity(event_final_velocity * 0.85)
@@ -892,10 +999,6 @@ class GuitarGenerator(BasePartGenerator):
         event_final_velocity = _clamp_velocity(base_velocity + accent_adj)
 
         stroke_dir = guitar_block_params.get("current_event_stroke") or guitar_block_params.get("stroke_direction")
-        if isinstance(stroke_dir, str):
-            key = str(stroke_dir).strip().upper()
-            factor = STROKE_VELOCITY_FACTOR.get(key, 1.0)
-            event_final_velocity = max(1, min(127, int(event_final_velocity * factor)))
 
         is_palm_muted = guitar_block_params.get("palm_mute", False)
         if is_palm_muted:
@@ -1180,6 +1283,14 @@ class GuitarGenerator(BasePartGenerator):
                     self._attach_fingering(el, finger_info[i][0], finger_info[i][1])
                 i += 1
 
+        if extra_art is not None:
+            for el in notes_for_event:
+                if isinstance(el, m21chord.Chord):
+                    for n_in in el.notes:
+                        n_in.articulations.append(copy.deepcopy(extra_art))
+                else:
+                    el.articulations.append(copy.deepcopy(extra_art))
+
         return notes_for_event
 
     def _render_part(
@@ -1226,6 +1337,7 @@ class GuitarGenerator(BasePartGenerator):
 
         final_guitar_params.setdefault("stroke_direction", self.default_stroke_direction)
         final_guitar_params.setdefault("palm_mute", self.default_palm_mute)
+        final_guitar_params.setdefault("pick_position", None)
 
         # 必要な情報を section_data から取得
         block_duration_ql = safe_get(
@@ -1548,8 +1660,16 @@ class GuitarGenerator(BasePartGenerator):
                                     el.articulations.append(copy.deepcopy(art))
                 if pitch_for_check:
                     self._prev_note_pitch = pitch_for_check
-
                 guitar_part.insert(el.offset, el)  # パート内でのオフセットで挿入
+                pick_pos = final_guitar_params.get("pick_position")
+                if pick_pos is not None:
+                    try:
+                        val = int(max(0, min(127, round(float(pick_pos) * 127))))
+                        cc_events = getattr(guitar_part, "extra_cc", [])
+                        cc_events.append({"time": float(el.offset), "cc": 74, "val": val})
+                        guitar_part.extra_cc = cc_events
+                    except Exception:
+                        pass
 
         logger.info(
             f"{log_blk_prefix}: Finished processing. Part has {len(list(guitar_part.flatten().notesAndRests))} elements before groove/humanize."
@@ -1885,6 +2005,124 @@ class GuitarGenerator(BasePartGenerator):
         for key, val in defaults.items():
             if key not in self.part_parameters:
                 self.part_parameters[key] = val
+
+    def _apply_phrase_dynamics(self, part: stream.Part, marks: list[str]) -> None:
+        notes = sorted(part.flatten().notes, key=lambda n: n.offset)
+        if not notes:
+            return
+        if "crescendo" in marks:
+            for i, n in enumerate(notes):
+                if n.volume is None:
+                    n.volume = m21volume.Volume(velocity=64)
+                n.volume.velocity = _clamp_velocity(60 + int(40 * i / max(1, len(notes) - 1)))
+        if "diminuendo" in marks:
+            for i, n in enumerate(notes):
+                if n.volume is None:
+                    n.volume = m21volume.Volume(velocity=64)
+                n.volume.velocity = _clamp_velocity(100 - int(40 * i / max(1, len(notes) - 1)))
+
+    def _apply_envelope(self, part: stream.Part, envelope_map: dict) -> None:
+        cc_events = getattr(part, "extra_cc", [])
+        for off, spec in envelope_map.items():
+            try:
+                start = float(off)
+            except Exception:
+                continue
+            etype = spec.get("type")
+            dur = float(spec.get("duration_ql", 1.0))
+            cc_list = spec.get("cc", [11, 72])
+            steps = max(2, int(dur * 4))
+            for s in range(steps + 1):
+                frac = s / steps
+                t = start + frac * dur
+                if etype == "crescendo":
+                    val = int(40 + 87 * frac)
+                elif etype == "diminuendo":
+                    val = int(127 - 87 * frac)
+                elif etype == "reverb_swell":
+                    val = int(127 * frac)
+                    if not cc_list:
+                        cc_list = [91]
+                elif etype == "delay_fade":
+                    val = int(127 * (1 - frac))
+                    if not cc_list:
+                        cc_list = [93]
+                else:
+                    continue
+                val = max(0, min(127, val))
+                for c in cc_list:
+                    cc_events.append({"time": t, "cc": int(c), "val": val})
+        part.extra_cc = cc_events
+
+    def _apply_style_curve(self, part: stream.Part, hint: str) -> None:
+        try:
+            from utilities import style_db
+        except Exception:
+            return
+        curve = style_db.get_style_curve(hint)
+        if not curve:
+            return
+        vels = curve.get("velocity")
+        if vels:
+            notes = sorted(part.flatten().notes, key=lambda n: n.offset)
+            for i, n in enumerate(notes):
+                if n.volume is None:
+                    n.volume = m21volume.Volume(velocity=64)
+                idx = int(i / max(1, len(notes)-1) * (len(vels)-1))
+                n.volume.velocity = int(vels[idx])
+        ccs = curve.get("cc")
+        if ccs:
+            cc_events = getattr(part, "extra_cc", [])
+            total = part.highestTime or 0
+            for i, val in enumerate(ccs):
+                t = total * i / max(1, len(ccs)-1)
+                cc_events.append({"time": t, "cc": 11, "val": int(val)})
+            part.extra_cc = cc_events
+
+    def _apply_random_walk_cc(
+        self,
+        part: stream.Part,
+        *,
+        cc: int = 1,
+        step: int = 2,
+        rng: random.Random | None = None,
+    ) -> None:
+        rng = rng or self.rng
+        total = part.highestTime or 0.0
+        val = 64
+        t = 0.0
+        events = getattr(part, "extra_cc", [])
+        while t <= total:
+            events.append({"time": t, "cc": cc, "val": _clamp_velocity(val)})
+            val += rng.randint(-step, step)
+            val = max(0, min(127, val))
+            t += 1.0
+        part.extra_cc = events
+
+    def _apply_fx_cc(
+        self, part: stream.Part, fx_params: dict, musical_intent: dict | None
+    ) -> None:
+        """Inject CC events for effect parameters."""
+        events = getattr(part, "extra_cc", [])
+        if not isinstance(fx_params, dict):
+            return
+        if "reverb_send" in fx_params:
+            events.append({"time": 0.0, "cc": 91, "val": int(fx_params["reverb_send"])})
+        if "chorus_send" in fx_params:
+            events.append({"time": 0.0, "cc": 93, "val": int(fx_params["chorus_send"])})
+        intensity = None
+        if musical_intent and isinstance(musical_intent, dict):
+            intensity = musical_intent.get("intensity")
+        avg_vel = 80
+        notes = list(part.flatten().notes)
+        if notes:
+            avg_vel = sum(n.volume.velocity or 64 for n in notes) / len(notes)
+        preset = fx_params.get("tone_preset")
+        shaper = ToneShaper()
+        if not preset:
+            preset = shaper.choose_preset(avg_vel, str(intensity or "medium"))
+        events.extend(shaper.to_cc_events(preset, 0.0))
+        part.extra_cc = events
 
 
 

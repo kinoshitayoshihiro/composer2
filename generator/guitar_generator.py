@@ -25,6 +25,7 @@ import statistics
 
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 from utilities.tone_shaper import ToneShaper
+from utilities.cc_tools import merge_cc_events, to_sorted_dicts, CCEvent
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +149,19 @@ def _clamp_velocity(value: float) -> int:
 
 def _normalize_stroke_key(stroke: str | None) -> str | None:
     return stroke.strip().upper() if isinstance(stroke, str) else None
+
+
+def _add_cc_events(part: stream.Part, events: Sequence[CCEvent]) -> None:
+    base: set[CCEvent] = set(getattr(part, "_extra_cc", set()))
+    merged = merge_cc_events(base, events)
+    part._extra_cc = set(merged)
+
+
+def _finalize_cc_events(part: stream.Part) -> None:
+    events: set[CCEvent] = set(getattr(part, "_extra_cc", set()))
+    part.extra_cc = to_sorted_dicts(events)
+    if hasattr(part, "_extra_cc"):
+        delattr(part, "_extra_cc")
 
 EXEC_STYLE_BLOCK_CHORD = "block_chord"
 EXEC_STYLE_STRUM_BASIC = "strum_basic"
@@ -541,11 +555,6 @@ class GuitarGenerator(BasePartGenerator):
                 else:
                     self._apply_random_walk_cc(p)
 
-            # ── FX CC 反映 ────────────────────────────────
-            fx_params = section.get("fx_params")
-            if fx_params:
-                self._apply_fx_cc(p, fx_params, section.get("musical_intent", {}))
-
             eff_env = section.get("effect_envelope")
             if eff_env:
                 self._apply_effect_envelope(p, eff_env)
@@ -560,20 +569,47 @@ class GuitarGenerator(BasePartGenerator):
                 or section.get("intensity"),
                 avg_vel,
             )
+            if chosen not in self.tone_shaper.preset_map:
+                logger.error(
+                    "Preset '%s' not found for section %s", chosen, section.get("section_name")
+                )
 
-            if not hasattr(p, "extra_cc"):
-                p.extra_cc = []
             events = self.tone_shaper.to_cc_events(
                 chosen,
                 part_cfg.get("fx_preset_intensity", "med"),
                 as_dict=False,
             )
-            p.extra_cc.extend({"time": t, "cc": c, "val": v} for t, c, v in events)
+            _add_cc_events(p, events)
+            self.tone_shaper.fx_envelope = to_sorted_dicts(events)
+
+            fx_env = section.get("fx_envelope")
+            if fx_env:
+                for off, spec in fx_env.items():
+                    try:
+                        start = float(off)
+                    except Exception:
+                        continue
+                    mix = float(spec.get("mix", spec))
+                    env_events = self.tone_shaper.to_cc_events(
+                        chosen,
+                        part_cfg.get("fx_preset_intensity", "med"),
+                        mix=mix,
+                        as_dict=False,
+                        store=False,
+                    )
+                    shifted = {(start + t, c, v) for t, c, v in env_events}
+                    merged = merge_cc_events(p._extra_cc if hasattr(p, "_extra_cc") else set(), shifted)
+                    p._extra_cc = set(merged)
+                    self.tone_shaper.fx_envelope = to_sorted_dicts(merged)
+            fx_params = section.get("fx_params")
+            if fx_params:
+                self._apply_fx_cc(p, fx_params, section.get("musical_intent", {}))
             from music21 import metadata as m21metadata
             if p.metadata is None:
                 p.metadata = m21metadata.Metadata()
             setattr(p.metadata, "ir_file", self.tone_shaper.ir_map.get(chosen))
-            setattr(p.metadata, "extra_cc", events)
+            setattr(p.metadata, "extra_cc", to_sorted_dicts(p._extra_cc))
+            _finalize_cc_events(p)
 
         # ------------------------------------------------------------------
         # 単一 Part か dict かで処理分岐
@@ -2185,27 +2221,27 @@ class GuitarGenerator(BasePartGenerator):
         total = part.highestTime or 0.0
         val = 64
         t = 0.0
-        events = getattr(part, "extra_cc", [])
+        events: list[CCEvent] = []
         while t <= total:
-            events.append({"time": t, "cc": cc, "val": _clamp_velocity(val)})
+            events.append((t, cc, _clamp_velocity(val)))
             val += rng.randint(-step, step)
             val = max(0, min(127, val))
             t += 1.0
-        part.extra_cc = events
+        _add_cc_events(part, events)
 
     def _apply_fx_cc(
         self, part: stream.Part, fx_params: dict, musical_intent: dict | None
     ) -> None:
         """Inject CC events for effect parameters."""
-        events = getattr(part, "extra_cc", [])
+        events: list[CCEvent] = []
         if not isinstance(fx_params, dict):
             return
         if "reverb_send" in fx_params:
-            events.append({"time": 0.0, "cc": 91, "val": int(fx_params["reverb_send"])})
+            events.append((0.0, 91, int(fx_params["reverb_send"])) )
         if "chorus_send" in fx_params:
-            events.append({"time": 0.0, "cc": 93, "val": int(fx_params["chorus_send"])})
+            events.append((0.0, 93, int(fx_params["chorus_send"])) )
         if "delay_send" in fx_params:
-            events.append({"time": 0.0, "cc": 94, "val": int(fx_params["delay_send"])})
+            events.append((0.0, 94, int(fx_params["delay_send"])) )
 
         pick_pos = fx_params.get("pick_position")
         if pick_pos is not None:
@@ -2215,7 +2251,7 @@ class GuitarGenerator(BasePartGenerator):
                 for n in notes:
                     vel = n.volume.velocity or 64
                     val = int(max(0, min(127, round(pick * 127 * vel / 127))))
-                    events.append({"time": float(n.offset), "cc": 74, "val": val})
+                    events.append((float(n.offset), 74, val))
             except Exception:
                 pass
 
@@ -2236,11 +2272,11 @@ class GuitarGenerator(BasePartGenerator):
                         frac = s / steps
                         val = int(round(v0 + (v1 - v0) * frac))
                         t = b0 + (b1 - b0) * frac
-                        events.append({"time": t, "cc": 74, "val": max(0, min(127, val))})
-        part.extra_cc = events
+                        events.append((t, 74, max(0, min(127, val))))
+        _add_cc_events(part, events)
 
     def _apply_effect_envelope(self, part: stream.Part, envelope_map: dict) -> None:
-        events = getattr(part, "extra_cc", [])
+        events: list[CCEvent] = []
         bpm = float(self.global_tempo or 120.0)
         step_ql = bpm / 3000.0  # 20 ms in quarterLength
         for off, spec in envelope_map.items():
@@ -2260,8 +2296,8 @@ class GuitarGenerator(BasePartGenerator):
                     frac = frac * frac
                 val = int(round(start_val + (end_val - start_val) * frac))
                 t = start + dur * frac
-                events.append({"time": t, "cc": cc_num, "val": max(0, min(127, val))})
-        part.extra_cc = events
+                events.append((t, cc_num, max(0, min(127, val))))
+        _add_cc_events(part, events)
 
     def export_audio(
         self,

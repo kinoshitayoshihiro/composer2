@@ -13,7 +13,7 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Generating MIDI](#generating-midi)
 - [Demo MIDI Generation](#demo-midi-generation)
 - [Notebook Demo](#notebook-demo)
-- [Tone and Dynamics](#tone-and-dynamics)
+- [Tone and Dynamics](docs/tone.md)
 - [Groove Enhancements](docs/groove.md)
 - [Phrase Diversity](docs/diversity.md)
 
@@ -817,6 +817,9 @@ humanizer.set_cc_flags(True, True)
 ```
 
 See [docs/tone.md](docs/tone.md) for details.
+Realtime playback supports `--kick-leak-jitter` and `--expr-curve` to tweak
+velocity curves.
+See [docs/live_tips.md](docs/live_tips.md) for realtime options.
 
 ## Realtime Low-Latency
 

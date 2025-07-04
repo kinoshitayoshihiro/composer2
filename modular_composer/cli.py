@@ -253,6 +253,8 @@ def preset_import(file: Path, name: str | None) -> None:
 @click.option("--measure-latency", is_flag=True, default=False)
 @click.option("--late-humanize", is_flag=True, default=False)
 @click.option("--lufs-hud", is_flag=True, default=False)
+@click.option("--kick-leak-jitter", type=int, default=0, show_default=True)
+@click.option("--expr-curve", type=str, default="cubic-in", show_default=True)
 @click.option("--rhythm-schema", type=str, default=None)
 def live_cmd(
     model: Path,
@@ -270,6 +272,8 @@ def live_cmd(
     measure_latency: bool,
     late_humanize: bool,
     lufs_hud: bool,
+    kick_leak_jitter: int,
+    expr_curve: str,
     rhythm_schema: str | None,
 ) -> None:
     """Stream a trained groove model live."""
@@ -483,6 +487,8 @@ def _cmd_render(args: list[str]) -> None:
     ap.add_argument("--ema-alpha", type=float, default=0.1)
     ap.add_argument("--humanize-timing", type=float, default=0.0)
     ap.add_argument("--humanize-velocity", type=float, default=0.0)
+    ap.add_argument("--expr-curve", type=str, default="cubic-in")
+    ap.add_argument("--kick-leak-jitter", type=int, default=0)
     ap.add_argument("--preset", type=str, default=None)
     ap.add_argument("--normalize-lufs", type=float, default=None)
     ns = ap.parse_args(args)

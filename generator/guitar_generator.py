@@ -5,10 +5,8 @@ import logging
 import os
 import random
 from collections.abc import Sequence
-
 from dataclasses import dataclass
 from functools import lru_cache
-
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +22,6 @@ import music21.stream as stream
 import music21.volume as m21volume
 import yaml
 import statistics
-
 
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 from utilities.tone_shaper import ToneShaper
@@ -132,6 +129,7 @@ _DEFAULT_STROKE_VELOCITY_FACTOR = {
     "UP": 0.90,
     "U": 0.90,
 }
+STROKE_VELOCITY_FACTOR = _DEFAULT_STROKE_VELOCITY_FACTOR
 
 STROKE_VELOCITY_FACTOR = _DEFAULT_STROKE_VELOCITY_FACTOR.copy()
 
@@ -250,7 +248,7 @@ class GuitarGenerator(BasePartGenerator):
         pull_off_interval: int = 2,
         hammer_on_probability: float = 0.5,
         pull_off_probability: float = 0.5,
-        default_stroke_direction: str | None = None,
+        default_stroke_direction: str | None = "down",
         default_palm_mute: bool = False,
         default_velocity_curve: str | dict | None = None,
         timing_jitter_ms: float = 0.0,
@@ -456,118 +454,150 @@ class GuitarGenerator(BasePartGenerator):
             ratio_to_apply = self.swing_ratio
 
         result = super().compose(*args, **kwargs)
+
+        def post(part: stream.Part) -> None:
+            self._post_process_generated_part(part, section, ratio_to_apply)
+
         if isinstance(result, stream.Part):
             self._last_part = result
+        # ------------------------------------------------------------------
+        # 生成済みパートのポストプロセス
+        # ------------------------------------------------------------------
+        def _post_process_one(part: stream.Part) -> None:
+            # 1) スウィング
             if ratio_to_apply is not None:
-                self._apply_swing_internal(self._last_part, float(ratio_to_apply), self.swing_subdiv)
+                self._apply_swing_internal(part, float(ratio_to_apply), self.swing_subdiv)
+
+            # 2) ToneShaper（平均 Velocity × intensity で CC31 挿入）
+            self._auto_tone_shape(part, section.get("musical_intent", {}).get("intensity"))
+
+            # 3) フレーズ強弱／エンベロープ／スタイルカーブ
             marks = section.get("phrase_marks")
             if marks:
-                self._apply_phrase_dynamics(self._last_part, marks)
+                self._apply_phrase_dynamics(part, marks)
+
             env = section.get("envelope_map")
             if env:
-                self._apply_envelope(self._last_part, env)
+                self._apply_envelope(part, env)
+
             hint = section.get("style_hint")
             if hint:
-                self._apply_style_curve(self._last_part, hint)
+                self._apply_style_curve(part, hint)
+
+            # 4) ランダムウォーク CC
             rw = section.get("random_walk_cc")
             if rw:
                 if isinstance(rw, dict):
-                    rng = None
-                    if "seed" in rw:
-                        rng = random.Random(int(rw["seed"]))
+                    rng = random.Random(int(rw["seed"])) if "seed" in rw else None
                     self._apply_random_walk_cc(
-                        self._last_part,
+                        part,
                         cc=int(rw.get("cc", 1)),
                         step=int(rw.get("step", 2)),
                         rng=rng,
                     )
                 else:
-                    self._apply_random_walk_cc(self._last_part)
+                    self._apply_random_walk_cc(part)
+
+            # 5) エフェクト CC
             fx_params = section.get("fx_params")
             if fx_params:
-                self._apply_fx_cc(self._last_part, fx_params, section.get("musical_intent", {}))
-            # Automatic amp preset application
-            notes = list(self._last_part.flatten().notes)
-            if notes:
-                avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
-            else:
-                avg_vel = 64.0
-            chosen = self.tone_shaper.choose_preset(
+                self._apply_fx_cc(part, fx_params, section.get("musical_intent", {}))
+
+        # ------------------------------------------------------------------
+        # 共通ポストプロセス（Swing・ダイナミクス・FX・Ampプリセット 等）
+        # ------------------------------------------------------------------
+        def _post_process_one(p: stream.Part) -> None:
+            # ── Swing 適用 ──────────────────────────────
+            if ratio_to_apply is not None:
+                self._apply_swing_internal(p, float(ratio_to_apply), self.swing_subdiv)
+
+            # ── フレーズ・エンベロープ／ダイナミクス ────────────────
+            marks = section.get("phrase_marks")
+            env   = section.get("envelope_map")
+            if marks:
+                self._apply_phrase_dynamics(p, marks)
+            if env:
+                self._apply_envelope(p, env)
+
+            # ── スタイルカーブ & ランダムウォーク CC ───────────────
+            hint = section.get("style_hint")
+            if hint:
+                self._apply_style_curve(p, hint)
+
+            rw = section.get("random_walk_cc")
+            if rw:
+                if isinstance(rw, dict):
+                    rng = random.Random(int(rw.get("seed"))) if "seed" in rw else None
+                    self._apply_random_walk_cc(
+                        p,
+                        cc   = int(rw.get("cc",   1)),
+                        step = int(rw.get("step", 2)),
+                        rng  = rng,
+                    )
+                else:
+                    self._apply_random_walk_cc(p)
+
+            # ── FX CC 反映 ────────────────────────────────
+            fx_params = section.get("fx_params")
+            if fx_params:
+                self._apply_fx_cc(p, fx_params, section.get("musical_intent", {}))
+
+            # ── Amp / Cab プリセット & IR ファイル登録 ───────────
+            notes   = list(p.flatten().notes)
+            avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes) if notes else 64.0
+            chosen  = self.tone_shaper.choose_preset(
                 section.get("amp_preset"),
                 section.get("intensity"),
                 avg_vel,
             )
-            if not hasattr(self._last_part, "extra_cc"):
-                self._last_part.extra_cc = []
-            self._last_part.extra_cc.extend(
-                self.tone_shaper.to_cc_events(as_dict=True)
-            )
+
+            if not hasattr(p, "extra_cc"):
+                p.extra_cc = []
+            p.extra_cc.extend(self.tone_shaper.to_cc_events(as_dict=True))
+
             from music21 import metadata as m21metadata
+            if p.metadata is None:
+                p.metadata = m21metadata.Metadata()
+            setattr(p.metadata, "ir_file", self.tone_shaper.ir_map.get(chosen))
 
-            if self._last_part.metadata is None:
-                self._last_part.metadata = m21metadata.Metadata()
-            setattr(self._last_part.metadata, "ir_file", self.tone_shaper.ir_map.get(chosen))
+        # ------------------------------------------------------------------
+        # 単一 Part か dict かで処理分岐
+        # ------------------------------------------------------------------
+        if isinstance(result, stream.Part):
+            self._last_part = result
+            _post_process_one(self._last_part)
+
         elif isinstance(result, dict) and result:
+            # dict なら各 Part に同じ後処理を適用
             self._last_part = next(iter(result.values()))
-            if ratio_to_apply is not None:
-                for p in result.values():
-                    self._apply_swing_internal(p, float(ratio_to_apply), self.swing_subdiv)
-            marks = section.get("phrase_marks")
-            env = section.get("envelope_map")
-            if marks or env:
-                for p in result.values():
-                    if marks:
-                        self._apply_phrase_dynamics(p, marks)
-                    if env:
-                        self._apply_envelope(p, env)
-            hint = section.get("style_hint")
-            if hint:
-                for p in result.values():
-                    self._apply_style_curve(p, hint)
-            rw = section.get("random_walk_cc")
-            if rw:
-                for p in result.values():
-                    if isinstance(rw, dict):
-                        rng = None
-                        if "seed" in rw:
-                            rng = random.Random(int(rw["seed"]))
-                        self._apply_random_walk_cc(
-                            p,
-                            cc=int(rw.get("cc", 1)),
-                            step=int(rw.get("step", 2)),
-                            rng=rng,
-                        )
-                    else:
-                        self._apply_random_walk_cc(p)
-                fx_params = section.get("fx_params")
-                if fx_params:
-                    for p in result.values():
-                        self._apply_fx_cc(p, fx_params, section.get("musical_intent", {}))
-                for p in result.values():
-                    notes = list(p.flatten().notes)
-                    if notes:
-                        avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
-                    else:
-                        avg_vel = 64.0
-                    chosen = self.tone_shaper.choose_preset(
-                        section.get("amp_preset"),
-                        section.get("intensity"),
-                        avg_vel,
-                    )
-                    if not hasattr(p, "extra_cc"):
-                        p.extra_cc = []
-                    p.extra_cc.extend(
-                        self.tone_shaper.to_cc_events(as_dict=True)
-                    )
-                    from music21 import metadata as m21metadata
-
-                    if p.metadata is None:
-                        p.metadata = m21metadata.Metadata()
-                    setattr(p.metadata, "ir_file", self.tone_shaper.ir_map.get(chosen))
+            for p in result.values():
+                _post_process_one(p)
         else:
             self._last_part = None
         self.swing_subdiv = orig_subdiv
         return result
+
+    def _post_process_generated_part(
+        self, part: stream.Part, section: dict[str, Any], ratio: float | None
+    ) -> None:
+        """Apply post-generation tweaks to *part*."""
+        if ratio is not None:
+            self._apply_swing_internal(part, float(ratio), self.swing_subdiv)
+        intensity = section.get("musical_intent", {}).get("intensity", "medium")
+        self._auto_tone_shape(part, intensity)
+        for name in (
+            "_apply_phrase_dynamics",
+            "_apply_envelope",
+            "_apply_style_curve",
+            "_apply_random_walk_cc",
+            "_apply_fx_cc",
+        ):
+            func = getattr(self, name, None)
+            if callable(func):
+                try:
+                    func(part)  # type: ignore[misc]
+                except Exception:  # pragma: no cover - best effort
+                    pass
 
     def _get_guitar_friendly_voicing(
         self,

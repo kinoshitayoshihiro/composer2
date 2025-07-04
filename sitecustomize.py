@@ -9,7 +9,9 @@ from __future__ import annotations
 import subprocess
 import sys
 import types
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # 1. subprocess.check_call を薄くラップ
@@ -17,7 +19,9 @@ from pathlib import Path
 _orig_check_call = subprocess.check_call  # keep original
 
 
-def _stub_check_call(cmd, *args, **kwargs):  # noqa: D401
+
+
+def _stub_check_call(cmd: Sequence[str] | str, *args: Any, **kwargs: Any) -> int:  # noqa: D401
     """Intercept mkdocs and build commands for lightweight stubbing."""
     # cmd may be list / tuple / str
     if isinstance(cmd, list | tuple):

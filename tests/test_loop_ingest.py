@@ -10,10 +10,12 @@ from click.testing import CliRunner
 
 from utilities.loop_ingest import cli, load_cache, save_cache, scan_loops
 
-try:
-    librosa = pytest.importorskip("librosa")
+import importlib.util
+
+if importlib.util.find_spec("librosa") is not None:
+    import librosa  # type: ignore
     HAVE_LIBROSA = True
-except pytest.SkipTest:
+else:
     HAVE_LIBROSA = False
 
 

@@ -215,6 +215,27 @@ Specify the file path via `velocity_preset_path` when instantiating `GuitarGener
 The generator chooses the preset matching its tuning name and style; if absent,
 a rounded fallback curve is generated.
 
+### Amp presets
+
+Set an amp model per section using `amp_preset`.  Preset values, effect levels
+and cabinet IRs are loaded from `data/amp_presets.yml` by default:
+
+```yaml
+part_params:
+  guitar:
+    amp_preset: drive
+```
+The preset file now defines CC levels per amp model:
+
+```yaml
+presets:
+  drive: 90
+levels:
+  drive: {reverb: 60, chorus: 45, delay: 30}
+```
+When you later call `export_audio()` the selected IR file will be used
+automatically if `part.metadata.ir_file` is present.
+
 ## Humanize – intensity envelope / swing override
 
 Velocity scaling now follows each section’s `musical_intent.intensity`.
@@ -758,6 +779,44 @@ Use articulation key switches and amp presets to refine playback. Add
 `--articulation-profile` to `compose` commands to load a YAML mapping.
 Audio rendered with `modcompose render` can be loudness normalised via
 `--normalize-lufs`.
+### Realtime Options
+
+Common CLI options:
+
+- `--late-humanize` shifts note timing a few milliseconds right before playback.
+- `--rhythm-schema` prepends a rhythm style token when sampling transformer bass.
+- `--normalize-lufs` normalises rendered audio to the given loudness target.
+- `normalize_wav` can also infer targets per section using
+  `{'verse': -16, 'chorus': -12}`.
+- `--buffer-ahead` and `--parallel-bars` control the pre-generation buffer for
+  live mode. Increase them if generation is slow.
+- ToneShaper selects amp presets using both intensity and average note
+  velocity, then emits CC31 at the start of each part. Use it automatically at
+  the end of `BassGenerator.compose()`:
+
+  ```python
+  from utilities.tone_shaper import ToneShaper
+
+  shaper = ToneShaper()
+  preset = shaper.choose_preset(avg_vel, "medium")
+  part.extra_cc.extend(shaper.to_cc_events(as_dict=True))
+  ```
+
+Run with automatic tone shaping:
+
+```bash
+modcompose render spec.yml --tone-auto
+```
+
+To emit CC11 and aftertouch for dynamic playback enable the flags programmatically:
+
+```python
+from utilities import humanizer
+
+humanizer.set_cc_flags(True, True)
+```
+
+See [docs/tone.md](docs/tone.md) for details.
 Realtime playback supports `--kick-leak-jitter` and `--expr-curve` to tweak
 velocity curves.
 See [docs/live_tips.md](docs/live_tips.md) for realtime options.

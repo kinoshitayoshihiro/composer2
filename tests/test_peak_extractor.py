@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+import pytest
+
+if importlib.util.find_spec("librosa") is None:
+    pytest.skip("librosa missing", allow_module_level=True)
 
 from utilities.peak_extractor import PeakExtractorConfig, extract_peaks
 

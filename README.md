@@ -756,13 +756,20 @@ Sample with:
 modcompose rnn sample model.pt -l 4 > pattern.json
 ```
 
-## AI Transformer Backend
+## AI Bass Generator
 
+See [docs/ai_generator.md](docs/ai_generator.md) for advanced usage.
 Install `transformers` and `torch` to experiment with a language-model driven bass line
-generator. Pass `--ai-backend transformer` and specify the model name:
+generator. Pass `--backend transformer` and specify the model name and optional rhythm schema.
+
+| Token | Description |
+|-------|-------------|
+| `<straight8>` | Even eighths |
+| `<swing16>` | Swing 16th feel |
+| `<shuffle>` | Shuffle groove |
 
 ```bash
-modcompose live model.pkl --ai-backend transformer --model-name gpt2-medium
+modcompose live model.pkl --backend transformer --model-name gpt2-medium --rhythm-schema <straight8>
 ```
 
 Historical generation data can guide future runs when `--use-history` is set.
@@ -772,7 +779,8 @@ Interactive usage:
 
 ```bash
 modcompose interact --backend transformer --model-name gpt2-medium \
-  --midi-in "Device In" --midi-out "Device Out" --bpm 120
+  --midi-in "Device In" --midi-out "Device Out" --bpm 120 \
+  --rhythm-schema <swing16>
 ```
 
 ## Tone and Dynamics
@@ -800,7 +808,7 @@ Common CLI options:
   from utilities.tone_shaper import ToneShaper
 
   shaper = ToneShaper()
-  preset = shaper.choose_preset(avg_vel, "medium")
+  preset = shaper.choose_preset(None, "medium", avg_vel)
   part.extra_cc.extend(shaper.to_cc_events(as_dict=True))
   ```
 

@@ -69,9 +69,9 @@ class BasePartGenerator(ABC):
             return
         avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
         shaper = ToneShaper()
-        shaper.choose_preset(avg_vel, intensity)
+        shaper.choose_preset(None, intensity, avg_vel)
         existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
-        part.extra_cc = existing + shaper.to_cc_events(0.0, as_dict=True)
+        part.extra_cc = existing + shaper.to_cc_events(as_dict=True)
 
     def compose(
         self,

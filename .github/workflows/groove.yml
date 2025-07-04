@@ -14,6 +14,16 @@ jobs:
           - env:
               CYTHON: '1'
               MCY_USE_CYTHON: '1'
+          - env:
+              AI: '1'
+              TRANSFORMERS_OFFLINE: '1'
+              HF_DATASETS_OFFLINE: '1'
+          - env:
+              CYTHON: '1'
+              AI: '1'
+              MCY_USE_CYTHON: '1'
+              TRANSFORMERS_OFFLINE: '1'
+              HF_DATASETS_OFFLINE: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,8 +40,15 @@ jobs:
       - name: Install test dependencies
         run: |
           for i in 1 2 3; do
-            pip install -e .[test] -r requirements-test.txt && break || sleep 5
+            pip install -e .[all,test] -r requirements-test.txt && break || sleep 5
           done
+      - name: Install hdbscan
+        run: |
+          pip install hdbscan
+      - name: Install transformers
+        if: matrix.env.AI == '1'
+        run: |
+          pip install --no-cache-dir --prefer-binary transformers
       - name: Install torch CPU wheel
         run: |
           for i in 1 2 3; do
@@ -62,4 +79,4 @@ jobs:
               pm.write(f'mini_loops/{i}.mid')
           PY
       - run: timeout 180 modcompose groove train mini_loops --order 2
-      - run: pytest -x -q tests
+      - run: pytest -x -q tests -k "not slow"

@@ -1,3 +1,5 @@
+import pytest
+
 from utilities.tone_shaper import ToneShaper
 
 
@@ -34,3 +36,27 @@ def test_choose_preset_rules(tmp_path):
     cfg.write_text(yaml.safe_dump(data))
     ts = ToneShaper.from_yaml(cfg)
     assert ts.choose_preset(None, "low", 120) == "drive"
+
+
+def test_from_yaml_malformed(tmp_path):
+    cfg = tmp_path / "bad.yml"
+    cfg.write_text("presets:\n  a: 10\n")
+    with pytest.raises(ValueError):
+        ToneShaper.from_yaml(cfg)
+
+
+def test_choose_preset_unknown_intensity():
+    ts = ToneShaper({"clean": {"amp": 20}}, {})
+    assert ts.choose_preset(None, "extreme", 80) == "clean"
+
+
+def test_export_audio_with_ir(tmp_path):
+    midi = tmp_path / "in.mid"
+    wav = tmp_path / "out.wav"
+    midi.write_bytes(b"MThd\x00\x00\x00\x06\x00\x01\x00\x01\x00\x60MTrk\x00\x00\x00\x04\x00\xFF\x2F\x00")
+    ir = tmp_path / "ir.wav"
+    import soundfile as sf
+    sf.write(ir, [0.0], 44100)
+    from utilities import synth
+    synth.export_audio(midi, wav, ir_file=ir)
+    assert wav.read_bytes().startswith(b"RIFF")

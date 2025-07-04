@@ -134,6 +134,19 @@ except ImportError as e:
 
 logger = logging.getLogger("modular_composer.bass_generator")
 
+
+def _apply_tone(part: stream.Part, intensity: str) -> None:
+    """Insert a single CC31 event based on average velocity."""
+    notes = list(part.flat.notes)
+    if not notes:
+        return
+    avg_vel = float(np.mean([n.volume.velocity or 0 for n in notes]))
+    shaper = ToneShaper()
+    preset = shaper.choose_preset(None, intensity, avg_vel)
+    existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
+    new_events = shaper.to_cc_events(as_dict=True)
+    part.extra_cc = existing + new_events
+
 DIRECTION_UP = 1
 DIRECTION_DOWN = -1
 

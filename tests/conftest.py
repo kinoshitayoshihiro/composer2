@@ -7,9 +7,15 @@ import sitecustomize
 
 import pytest
 
-from utilities.rhythm_library_loader import load_rhythm_library
-
 REQUIRED_PACKAGES = ["music21", "pretty_midi", "mido"]
+missing = [pkg for pkg in REQUIRED_PACKAGES if importlib.util.find_spec(pkg) is None]
+if missing:
+    pytest.skip(
+        "Missing packages: {}".format(", ".join(missing)),
+        allow_module_level=True,
+    )
+
+from utilities.rhythm_library_loader import load_rhythm_library
 
 
 def pytest_configure(config):
@@ -34,6 +40,11 @@ def pytest_addoption(parser):
         action="store_true",
         help="Regenerate golden MIDI files",
     )
+
+
+def _opt_dep_available(mod: str) -> bool:
+    """Return True if optional dependency *mod* can be imported."""
+    return importlib.util.find_spec(mod) is not None
 
 
 @pytest.fixture(scope="session")

@@ -2,7 +2,7 @@
 
 This project can shape bass tone via MIDI control changes. The `ToneShaper`
 selects an amp/cabinet preset depending on playing intensity. The chosen preset
-is sent as a CC#31 value at the start of the part.
+is sent as CC#31 (amp type) and optional effect levels at the start of the part.
 All control change events now use the keys ``cc`` and ``val`` instead of
 ``number`` and ``value``:
 
@@ -59,15 +59,15 @@ Reference this file with ``--expr-curve`` or pass the mapping to
 Measure the average note velocity of a part and feed the value to
 ``ToneShaper.choose_preset`` together with an intensity label.
 Both values are combined to determine the preset. The returned preset is
-converted to a CC#31 event which should be inserted at
+converted to CC events (31/91/93/94) which should be inserted at
 the start of the part.
 
 ```python
 from utilities.tone_shaper import ToneShaper
 
 shaper = ToneShaper()
-preset = shaper.choose_preset(avg_velocity=80.0, intensity="medium")
-part.extra_cc = shaper.to_cc_events(preset, offset=0.0)
+preset = shaper.choose_preset(None, "medium", 80.0)
+part.extra_cc = shaper.to_cc_events(as_dict=True)
 ```
 
 A simplified decision flow:

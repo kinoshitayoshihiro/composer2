@@ -230,6 +230,40 @@ def preset_import(file: Path, name: str | None) -> None:
     preset_manager.save_preset(name or file.stem, cfg)
 
 
+@cli.group()
+def fx() -> None:
+    """Effects and rendering commands."""
+
+
+@fx.command("render")
+@click.argument("midi", type=Path)
+@click.option("--preset", type=str, default=None)
+@click.option("--ir", "ir_name", type=str, default=None)
+@click.option("-o", "--out", type=Path, default=Path("out.wav"))
+@click.option("--soundfont", type=Path, default=None)
+def fx_render(
+    midi: Path,
+    preset: str | None,
+    ir_name: str | None,
+    out: Path,
+    soundfont: Path | None,
+) -> None:
+    """Render ``midi`` to ``out`` applying optional IR convolution."""
+    from utilities import synth
+    synth.export_audio(midi, out, soundfont=soundfont, ir_file=ir_name)
+    click.echo(str(out))
+
+
+@fx.command("list-presets")
+def fx_list_presets() -> None:
+    """List available amp presets."""
+    from utilities.tone_shaper import ToneShaper
+
+    ts = ToneShaper.from_yaml(Path("data/amp_presets.yml"))
+    for name in ts.preset_map:
+        click.echo(name)
+
+
 @cli.command("live")
 @click.argument("model", type=Path)
 @click.option(

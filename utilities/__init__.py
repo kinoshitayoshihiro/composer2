@@ -55,7 +55,7 @@ from .humanizer import (
 )
 from .midi_export import write_demo_bar
 from .scale_registry import ScaleRegistry, build_scale_object
-from .synth import render_midi
+from .synth import render_midi, export_audio
 from .tempo_curve import TempoCurve, TempoPoint, load_tempo_curve
 from .tempo_utils import (
     TempoMap,
@@ -109,6 +109,7 @@ __all__ = [
     "TempoVelocitySmoother",
     "write_demo_bar",
     "render_midi",
+    "export_audio",
     "get_drum_map",
     "AccentMapper",
     "EssentiaUnavailable",

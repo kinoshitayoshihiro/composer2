@@ -67,6 +67,7 @@ class ToneShaper:
 
         self._selected: str = default_preset
         self._knn: KNeighborsClassifier | None = None
+        self.fx_envelope: list[dict[str, int | float]] = []
 
     # ---- YAML ローダ ---------------------------------------------------------
     @classmethod
@@ -91,9 +92,24 @@ class ToneShaper:
 
         preset_map: dict[str, dict[str, int]] = {}
         for name, val in presets_raw.items():
-            entry = {"amp": int(val)}
+            try:
+                amp_val = int(val)
+            except Exception as exc:
+                raise ValueError(f"Invalid preset value for {name}: {val}") from exc
+            if not 0 <= amp_val <= 127:
+                raise ValueError(f"Preset value for {name} out of range: {amp_val}")
+            entry = {"amp": amp_val}
             if name in levels_raw:
-                entry.update({k: int(v) for k, v in levels_raw[name].items()})
+                tmp: dict[str, int] = {}
+                for k, v in levels_raw[name].items():
+                    try:
+                        iv = int(v)
+                    except Exception as exc:
+                        raise ValueError(f"Invalid level value for {name}:{k}") from exc
+                    if not 0 <= iv <= 127:
+                        raise ValueError(f"Level value for {name}:{k} out of range: {iv}")
+                    tmp[k] = iv
+                entry.update(tmp)
             preset_map[name] = entry
 
         ir_map: dict[str, Path] = {}
@@ -161,6 +177,9 @@ class ToneShaper:
                 else "clean"
             )
 
+        if not chosen:
+            chosen = self.default_preset
+
         if chosen not in self.preset_map:
             logger.warning("Unknown preset %s; fallback to default", chosen)
             chosen = self.default_preset
@@ -190,6 +209,7 @@ class ToneShaper:
         cc_cho: int = 94,
         *,
         as_dict: bool = False,
+        store: bool = True,
     ) -> list[tuple[float, int, int]] | list[dict[str, int | float]]:
         preset = self.preset_map.get(self._selected, self.preset_map[self.default_preset])
 
@@ -199,15 +219,21 @@ class ToneShaper:
         cho = max(0, min(127, int(preset.get("chorus", int(base * 0.30)))))
         dly = max(0, min(127, int(preset.get("delay", int(base * 0.30)))))
 
-        events: list[tuple[float, int, int]] = [
+        events = {
             (float(offset_ql), cc_amp, amp),
             (float(offset_ql), cc_rev, rev),
             (float(offset_ql), cc_del, dly),
             (float(offset_ql), cc_cho, cho),
-        ]
+        }
+        if store:
+            self.fx_envelope = [
+                {"time": t, "cc": c, "val": v} for t, c, v in sorted(events, key=lambda e: e[0])
+            ]
         if as_dict:
-            return [{"time": o, "cc": c, "val": v} for o, c, v in events]
-        return events
+            return [
+                {"time": t, "cc": c, "val": v} for t, c, v in sorted(events, key=lambda e: e[0])
+            ]
+        return sorted(events, key=lambda e: e[0])
 
     def to_cc_events(
         self,
@@ -216,6 +242,7 @@ class ToneShaper:
         mix: float = 1.0,
         *,
         as_dict: bool = False,
+        store: bool = True,
     ) -> list[tuple[float, int, int]] | list[dict[str, int | float]]:
         """Return CC events for ``amp_name`` scaled by ``intensity`` and ``mix``."""
 
@@ -224,19 +251,29 @@ class ToneShaper:
         )
         amp_base = int(preset.get("amp", 0))
         amp = max(0, min(127, amp_base))
-        rev = max(0, min(127, int(preset.get("reverb", int(amp_base * 0.3)) * mix)))
-        cho = max(0, min(127, int(preset.get("chorus", int(amp_base * 0.3)) * mix)))
-        dly = max(0, min(127, int(preset.get("delay", int(amp_base * 0.3)) * mix)))
+        scale = {"low": 0.5, "medium": 0.8, "high": 1.0}.get(intensity.lower(), 0.8)
+        rev_base = int(preset.get("reverb", int(amp_base * 0.3)))
+        cho_base = int(preset.get("chorus", int(amp_base * 0.3)))
+        dly_base = int(preset.get("delay", int(amp_base * 0.3)))
+        rev = max(0, min(127, int(rev_base * scale * mix)))
+        cho = max(0, min(127, int(cho_base * scale * mix)))
+        dly = max(0, min(127, int(dly_base * scale * mix)))
 
-        events = [
+        events = {
             (0.0, 31, amp),
             (0.0, 91, rev),
             (0.0, 93, dly),
             (0.0, 94, cho),
-        ]
+        }
+        if store:
+            self.fx_envelope = [
+                {"time": t, "cc": c, "val": v} for t, c, v in sorted(events, key=lambda e: e[0])
+            ]
         if as_dict:
-            return [{"time": t, "cc": c, "val": v} for t, c, v in events]
-        return events
+            return [
+                {"time": t, "cc": c, "val": v} for t, c, v in sorted(events, key=lambda e: e[0])
+            ]
+        return sorted(events, key=lambda e: e[0])
 
     def render_with_ir(self, mix_wav: Path, preset_name: str, out: Path) -> Path:
         """Apply impulse response for ``preset_name`` to ``mix_wav``."""

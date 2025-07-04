@@ -1,0 +1,14 @@
+import subprocess
+from pathlib import Path
+
+
+def test_cli_fx_render(tmp_path: Path) -> None:
+    midi = tmp_path / "demo.mid"
+    midi.write_bytes(
+        b"MThd\x00\x00\x00\x06\x00\x01\x00\x01\x00\x60MTrk\x00\x00\x00\x04\x00\xFF\x2F\x00"
+    )
+    out = tmp_path / "out.wav"
+    subprocess.check_call(
+        ["modcompose", "fx", "render", str(midi), "-o", str(out), "--preset", "clean"]
+    )
+    assert out.exists()

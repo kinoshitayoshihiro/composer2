@@ -14,6 +14,8 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Demo MIDI Generation](#demo-midi-generation)
 - [Notebook Demo](#notebook-demo)
 - [Tone and Dynamics](docs/tone.md)
+- [Humanizer Reference](docs/humanizer.md)
+- [Late-Humanize & Leak Jitter](docs/humanizer.md#late-humanize)
 - [Groove Enhancements](docs/groove.md)
 - [Phrase Diversity](docs/diversity.md)
 

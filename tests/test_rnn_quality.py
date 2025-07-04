@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 
 from utilities import groove_sampler_rnn
+from tests import skip_if_no_torch
+import pytest
 
 
 def _make_loop(path: Path) -> None:
@@ -9,9 +11,7 @@ def _make_loop(path: Path) -> None:
     for i in range(64):
         lbl = "kick" if i % 2 == 0 else "snare"
         tokens.append((i % 16, lbl, 100, 0))
-import pytest
-
-pytest.importorskip("torch", reason="torch not installed")
+skip_if_no_torch(allow_module_level=True)
 pytest.importorskip("pytorch_lightning")
 
 from utilities import groove_rnn_v2

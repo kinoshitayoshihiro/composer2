@@ -27,6 +27,7 @@ jobs:
           for i in 1 2 3; do
             pip install -e .[test] -r requirements-test.txt && break || sleep 5
           done
+          pip install music21>=9.1 soundfile>=0.12 pyloudnorm>=0.1 pydub>=0.25 mkdocs
       - name: Restore Essentia wheel cache
         if: runner.os == 'Linux'
         uses: actions/cache@v3
@@ -112,6 +113,8 @@ jobs:
         with:
           name: coverage.xml
           path: coverage.xml
+      - name: Build docs
+        run: mkdocs build --strict
 
   perf-gate:
     runs-on: ubuntu-latest
@@ -131,6 +134,7 @@ jobs:
           for i in 1 2 3; do
             pip install -e .[test] -r requirements-test.txt && break || sleep 5
           done
+          pip install music21>=9.1 soundfile>=0.12 pyloudnorm>=0.1 pydub>=0.25 mkdocs
       - name: Perf Gate
         run: pytest -m ci_perf --quiet
 
@@ -152,6 +156,7 @@ jobs:
           for i in 1 2 3; do
             pip install -e .[test,gui] -r requirements-test.txt && break || sleep 5
           done
+          pip install music21>=9.1 soundfile>=0.12 pyloudnorm>=0.1 pydub>=0.25 mkdocs
       - name: Install PyTorch
         run: |
           for i in 1 2 3; do
@@ -199,6 +204,7 @@ jobs:
           for i in 1 2 3; do
             pip install -e .[test] -r requirements-test.txt && break || sleep 5
           done
+          pip install music21>=9.1 soundfile>=0.12 pyloudnorm>=0.1 pydub>=0.25 mkdocs
       - run: |
           python - <<'EOF'
           import json, tempfile
@@ -231,6 +237,7 @@ jobs:
           for i in 1 2 3; do
             pip install -e .[test] -r requirements-test.txt && break || sleep 5
           done
+          pip install music21>=9.1 soundfile>=0.12 pyloudnorm>=0.1 pydub>=0.25 mkdocs
       - run: |
           python - <<'EOF'
           import mido, sys

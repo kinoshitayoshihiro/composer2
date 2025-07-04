@@ -1,4 +1,4 @@
-music21>=8.4
+music21>=9.1
 numpy
 scipy
 pretty_midi
@@ -19,4 +19,5 @@ torch==2.*
 soundfile>=0.12
 sounddevice>=0.4
 pyloudnorm>=0.1
+pydub>=0.25
 pytest-cov==4.1.0

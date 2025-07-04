@@ -144,7 +144,10 @@ def _apply_tone(part: stream.Part, intensity: str) -> None:
     shaper = ToneShaper()
     preset = shaper.choose_preset(None, intensity, avg_vel)
     existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
-    new_events = shaper.to_cc_events(as_dict=True)
+    new_events = [
+        {"time": t, "cc": c, "val": v}
+        for t, c, v in shaper.to_cc_events(preset, intensity)
+    ]
     part.extra_cc = existing + new_events
 
 DIRECTION_UP = 1

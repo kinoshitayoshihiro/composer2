@@ -13,7 +13,7 @@ import click
 
 try:  # optional dependency
     import torch
-except ModuleNotFoundError:  # lightweight install
+except (ModuleNotFoundError, OSError):  # lightweight install or missing libs
     torch: Any | None = None  # type: ignore[assignment]
 else:
     torch: Any | None

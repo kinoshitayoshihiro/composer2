@@ -1,7 +1,13 @@
 from pathlib import Path
 
+import importlib.util
 import numpy as np
 import soundfile as sf
+
+import pytest
+
+if importlib.util.find_spec("librosa") is None:
+    pytest.skip("librosa missing", allow_module_level=True)
 
 from utilities.loudness_normalizer import normalize_wav
 

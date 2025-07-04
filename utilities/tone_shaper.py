@@ -10,38 +10,115 @@ except Exception:  # pragma: no cover - optional
 class ToneShaper:
     """Select amp/cabinet presets and emit CC events."""
 
-    def __init__(self, presets: dict[str, int] | None = None) -> None:
-        self.presets = {"clean": 0, "drive": 32, "svt": 64, "fuzz": 96}
-        if presets:
-            self.presets.update(presets)
+    def __init__(
+        self,
+        preset_map: dict[str, dict[str, int] | int] | None = None,
+        ir_map: dict[str, str] | None = None,
+        default_preset: str = "clean",
+        rules: list[dict[str, str]] | None = None,
+    ) -> None:
+        self.preset_map: dict[str, dict[str, int]] = {"clean": {"amp": 20}}
+        if preset_map:
+            for name, data in preset_map.items():
+                if isinstance(data, int):
+                    self.preset_map[name] = {"amp": int(data)}
+                else:
+                    self.preset_map[name] = {k: int(v) for k, v in data.items()}
+        self.ir_map = ir_map or {}
+        self.default_preset = default_preset
+        self.rules = rules or []
+        self._selected = default_preset
         self._knn = None
 
-    def choose_preset(self, avg_velocity: float, intensity: str) -> str:
-        """Return preset name derived from intensity and average velocity."""
-        score = 0
-        if intensity in {"very_high", "high"}:
-            score += 2
-        elif intensity in {"medium_high", "medium"}:
-            score += 1
-        elif intensity in {"medium_low", "low"}:
-            score -= 1
-        if avg_velocity >= 90:
-            score += 2
-        elif avg_velocity >= 75:
-            score += 1
-        elif avg_velocity < 60:
-            score -= 1
-        if score >= 5:
-            return "fuzz"
-        if score >= 3:
-            return "drive"
-        if score >= 0:
-            return "svt"
-        return "clean"
+    @classmethod
+    def from_yaml(cls, path: str | "Path") -> "ToneShaper":
+        import yaml
+        from pathlib import Path
 
-    def to_cc_events(self, preset_name: str, offset: float) -> list[dict]:
-        value = self.presets.get(preset_name, self.presets["clean"])
-        return [{"time": float(offset), "cc": 31, "val": value}]
+        path = Path(path)
+        if not path.is_file():
+            return cls()
+        with path.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        presets = data.get("presets") or {}
+        levels = data.get("levels") or {}
+        ir_map = data.get("ir") or {}
+        rules = data.get("rules") or []
+        preset_map: dict[str, dict[str, int]] = {}
+        for name, val in presets.items():
+            entry = {"amp": int(val)}
+            if name in levels:
+                for k, v in levels[name].items():
+                    entry[k] = int(v)
+            preset_map[name] = entry
+        return cls(preset_map=preset_map, ir_map=ir_map, rules=rules)
+
+    def choose_preset(
+        self,
+        amp_preset: str | None,
+        intensity: str | None,
+        avg_velocity: float,
+    ) -> str:
+        """Return preset name based on explicit label or heuristics."""
+        if amp_preset:
+            chosen = amp_preset
+        else:
+            env = {
+                "intensity": str(intensity or "medium").lower(),
+                "avg_vel": avg_velocity,
+                "avg_velocity": avg_velocity,
+            }
+            chosen = None
+            for rule in self.rules:
+                cond = rule.get("if")
+                preset = rule.get("preset")
+                if not cond or not preset:
+                    continue
+                try:
+                    if eval(cond, {"__builtins__": {}}, env):
+                        chosen = preset
+                        break
+                except Exception:
+                    continue
+            if not chosen:
+                level = env["intensity"]
+                if level == "high" or avg_velocity > 100:
+                    chosen = "drive"
+                elif level == "medium" or avg_velocity > 60:
+                    chosen = "crunch"
+                else:
+                    chosen = "clean"
+        if chosen not in self.preset_map:
+            chosen = self.default_preset
+        self._selected = chosen
+        return chosen
+
+    def to_cc_events(
+        self,
+        offset_ql: float = 0.0,
+        cc_amp: int = 31,
+        cc_rev: int = 91,
+        cc_cho: int = 93,
+        cc_del: int = 94,
+        *,
+        as_dict: bool = False,
+    ) -> list[tuple[float, int, int] | dict[str, int | float]]:
+        """Return CC events for the last chosen preset."""
+        preset = self.preset_map.get(self._selected) or self.preset_map.get(self.default_preset, {})
+        amp = max(0, min(127, int(preset.get("amp", 0))))
+        base = amp
+        rev = max(0, min(127, int(preset.get("reverb", int(base * 0.3)))))
+        cho = max(0, min(127, int(preset.get("chorus", int(base * 0.3)))))
+        dly = max(0, min(127, int(preset.get("delay", int(base * 0.3)))))
+        events: list[tuple[float, int, int]] = [
+            (float(offset_ql), int(cc_amp), amp),
+            (float(offset_ql), int(cc_rev), rev),
+            (float(offset_ql), int(cc_cho), cho),
+            (float(offset_ql), int(cc_del), dly),
+        ]
+        if as_dict:
+            return [{"time": o, "cc": c, "val": v} for o, c, v in events]
+        return events
 
     def fit(self, preset_samples: dict[str, "np.ndarray"]) -> None:
         """Fit KNN model from preset MFCC samples."""

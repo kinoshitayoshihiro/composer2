@@ -2,7 +2,11 @@ import json
 import random
 from pathlib import Path
 
+import importlib.util
 import pytest
+
+if importlib.util.find_spec("hypothesis") is None:
+    pytest.skip("hypothesis missing", allow_module_level=True)
 from music21 import stream, note
 from generator.drum_generator import DrumGenerator, GM_DRUM_MAP
 from utilities.groove_sampler_ngram import Event

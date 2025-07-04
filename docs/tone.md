@@ -10,6 +10,14 @@ All control change events now use the keys ``cc`` and ``val`` instead of
 {"cc": 11, "val": 100}
 ```
 
+Example Python:
+
+```python
+from utilities.loudness_normalizer import normalize_wav
+
+normalize_wav(Path("mix.wav"), section="chorus")
+```
+
 Key switch notes for articulations can be inserted with
 `add_key_switches()` from `utilities.articulation_mapper`.
 
@@ -78,11 +86,20 @@ flowchart TD
     D --> E[Emit CC31]
 ```
 
-| Intensity | AvgVel <60 | AvgVel ≥60 |
+| Intensity | AvgVel <70 | AvgVel ≥70 |
 |-----------|------------|-----------|
 | low       | clean      | crunch    |
 | medium    | crunch     | drive     |
 | high      | drive      | fuzz      |
+
+CC31 values:
+
+| Preset | CC31 |
+|--------|-----|
+| clean  | 0   |
+| crunch | 32  |
+| drive  | 64  |
+| fuzz   | 96  |
 
 ## Loudness Normalisation
 

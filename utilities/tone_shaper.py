@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Dict, List
 
 import numpy as np
 from numpy.typing import NDArray
@@ -9,18 +10,18 @@ from numpy.typing import NDArray
 try:
     from sklearn.neighbors import KNeighborsClassifier  # type: ignore
 except Exception:  # pragma: no cover – optional dependency
-    KNeighborsClassifier = None
+    KNeighborsClassifier = None  # type: ignore
 
 # ──────────────────────────────────────────────────────────
-# プリセット表 (Intensity × Loud/Soft) ― main ブランチ由来の簡易マップ
+# プリセット表 (Intensity × Loud/Soft)
 # ──────────────────────────────────────────────────────────
 PRESET_TABLE: dict[tuple[str, str], str] = {
-    ("low",    "soft"): "clean",
-    ("low",    "loud"): "crunch",
+    ("low", "soft"): "clean",
+    ("low", "loud"): "crunch",
     ("medium", "soft"): "crunch",
     ("medium", "loud"): "drive",
-    ("high",   "soft"): "drive",
-    ("high",   "loud"): "fuzz",
+    ("high", "soft"): "drive",
+    ("high", "loud"): "fuzz",
 }
 
 logger = logging.getLogger(__name__)
@@ -30,10 +31,10 @@ class ToneShaper:
     """
     Amp / Cabinet プリセットを選択し、必要な CC イベントを生成するユーティリティ。
 
-    - **プリセットマップ**   : プリセット名 → {"amp": 0-127, "reverb": …, …}
-    - **IR マップ**        : プリセット名 → Impulse Response ファイルパス
-    - **ルール**           : ``{"if": "<python-expr>", "preset": "<name>"}``
-    - **KNN**  (option)   : MFCC からプリセット推定
+    - **プリセットマップ** : プリセット名 → {"amp": 0-127, "reverb": …, …}
+    - **IR マップ**       : プリセット名 → Impulse Response ファイルパス
+    - **ルール**          : ``{"if": "<python-expr>", "preset": "<name>"}``
+    - **KNN**             : MFCC からプリセット推定 (任意)
     """
 
     # ------------------------------------------------------
@@ -59,26 +60,18 @@ class ToneShaper:
         self.default_preset: str = default_preset
         self.rules: list[dict[str, str]] = rules or []
 
+        # 旧シンプル API と互換のため
+        self.presets: Dict[str, int] = {
+            n: d.get("amp", 0) for n, d in self.preset_map.items()
+        }
+
         self._selected: str = default_preset
         self._knn: KNeighborsClassifier | None = None
 
     # ---- YAML ローダ ---------------------------------------------------------
     @classmethod
-    def from_yaml(cls, path: str | Path) -> ToneShaper:
-        """Load preset and IR mappings from ``path``.
-
-        Parameters
-        ----------
-        path:
-            YAML file containing ``presets``, ``ir`` and ``rules`` sections.
-
-        Raises
-        ------
-        FileNotFoundError
-            If the file does not exist or has an unknown extension.
-        ValueError
-            If required sections are missing.
-        """
+    def from_yaml(cls, path: str | Path) -> "ToneShaper":
+        """Load preset and IR mappings from ``path``."""
         import yaml
 
         path = Path(path)
@@ -88,7 +81,7 @@ class ToneShaper:
         with path.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
 
-        if not {"presets", "ir", "rules"} <= data.keys():
+        if not {"presets", "ir"}.issubset(data.keys()):
             raise ValueError("Malformed preset file")
 
         presets_raw = data.get("presets", {})
@@ -101,8 +94,6 @@ class ToneShaper:
             entry = {"amp": int(val)}
             if name in levels_raw:
                 entry.update({k: int(v) for k, v in levels_raw[name].items()})
-            if name in preset_map:
-                logger.warning("Duplicate preset %s found; using last", name)
             preset_map[name] = entry
 
         ir_map: dict[str, Path] = {}
@@ -123,71 +114,72 @@ class ToneShaper:
         intensity: str | None = None,
         avg_velocity: float = 64.0,
     ) -> str:
-        """Select an amp preset based on intensity and velocity.
-
-        The chosen preset determines the CC31 value and maps to an IR file via
-        ``ir_map``. The algorithm prioritises explicit arguments, then rule
-        evaluation, finally falling back to ``PRESET_TABLE`` and heuristics.
         """
-        # --- 0) intensity validation -----------------------------------------
-        if intensity and str(intensity).lower() not in {"low", "med", "hi"}:
-            logger.warning("Unknown intensity %s; falling back to default", intensity)
-            self._selected = self.default_preset
-            return self.default_preset
+        Select amp preset based on intensity & velocity.
 
-        # --- 1) 明示指定 ------------------------------------------------------
-        if amp_preset:
-            chosen = amp_preset
-        else:
-            lvl = str(intensity or "medium").lower()
-            env = {
-                "intensity": lvl,
-                "avg_vel": avg_velocity,
-                "avg_velocity": avg_velocity,
-            }
+        1. `amp_preset` 明示指定を最優先
+        2. rule ベース (`self.rules`)
+        3. PRESET_TABLE (threshold 65)
+        4. fallback heuristic
+        """
+        # 1) explicit
+        chosen: str | None = amp_preset
 
-            # --- 2) ルールベース ----------------------------------------------
-            chosen: str | None = None
+        lvl = (intensity or "medium").lower()
+
+        # 2) rule-based
+        if not chosen and self.rules:
+            env = {"intensity": lvl, "avg_vel": avg_velocity}
             for rule in self.rules:
-                cond = rule.get("if")
-                preset = rule.get("preset")
+                cond, preset = rule.get("if"), rule.get("preset")
                 if not cond or not preset:
                     continue
                 try:
-                    if eval(cond, {"__builtins__": {}}, env):
+                    if eval(cond, {"__builtins__": {}}, env):  # nosec
                         chosen = preset
                         break
                 except Exception:
                     continue
 
-            # --- 3) PRESET_TABLE ---------------------------------------------
-            if not chosen:
-                vel_bucket = "loud" if avg_velocity >= 60 else "soft"
-                int_bucket = (
-                    "high"   if lvl in {"very_high", "high"} else
-                    "medium" if lvl.startswith("medium") else
-                    "low"
-                )
-                chosen = PRESET_TABLE.get((int_bucket, vel_bucket))
+        # 3) table
+        if not chosen:
+            vel_bucket = "loud" if avg_velocity >= 65 else "soft"
+            int_bucket = (
+                "high"
+                if lvl.startswith("h")
+                else "medium" if lvl.startswith("m") else "low"
+            )
+            chosen = PRESET_TABLE.get((int_bucket, vel_bucket))
 
-            # --- 4) codex ヒューリスティック ---------------------------------
-            if not chosen:
-                if lvl == "high" or avg_velocity > 100:
-                    chosen = "drive"
-                elif lvl == "medium" or avg_velocity > 60:
-                    chosen = "crunch"
-                else:
-                    chosen = "clean"
+        # 4) fallback
+        if not chosen:
+            chosen = (
+                "drive"
+                if avg_velocity > 100 or lvl == "high"
+                else "crunch"
+                if avg_velocity > 60 or lvl == "medium"
+                else "clean"
+            )
 
-        # --- 5) フォールバック ----------------------------------------------
         if chosen not in self.preset_map:
+            logger.warning("Unknown preset %s; fallback to default", chosen)
             chosen = self.default_preset
 
         self._selected = chosen
         return chosen
 
     # ------------------------------------------------------
-    # CC events
+    # シンプル CC31 だけ返す互換 API
+    # ------------------------------------------------------
+    def to_cc_events_simple(
+        self, preset_name: str, offset_ql: float = 0.0
+    ) -> List[dict]:
+        """Return single CC31 event dictionary (旧互換)."""
+        value = self.presets.get(preset_name, self.presets[self.default_preset])
+        return [{"time": float(offset_ql), "cc": 31, "val": value}]
+
+    # ------------------------------------------------------
+    # multi-CC events (amp/rev/cho/dly)
     # ------------------------------------------------------
     def _events_for_selected(
         self,
@@ -199,24 +191,13 @@ class ToneShaper:
         *,
         as_dict: bool = False,
     ) -> list[tuple[float, int, int]] | list[dict[str, int | float]]:
-        """
-        選択中プリセットに対応する CC イベントを生成する。
-
-        Returns
-        --------
-        list[tuple]  : (offset, cc#, value)  
-        list[dict]   : {"time": offset, "cc": cc#, "val": value}  (as_dict=True)
-        """
-        preset = (
-            self.preset_map.get(self._selected)
-            or self.preset_map.get(self.default_preset, {})
-        )
+        preset = self.preset_map.get(self._selected, self.preset_map[self.default_preset])
 
         amp = max(0, min(127, int(preset.get("amp", 0))))
         base = amp
         rev = max(0, min(127, int(preset.get("reverb", int(base * 0.30)))))
         cho = max(0, min(127, int(preset.get("chorus", int(base * 0.30)))))
-        dly = max(0, min(127, int(preset.get("delay",  int(base * 0.30)))))
+        dly = max(0, min(127, int(preset.get("delay", int(base * 0.30)))))
 
         events: list[tuple[float, int, int]] = [
             (float(offset_ql), cc_amp, amp),
@@ -273,7 +254,11 @@ class ToneShaper:
         """Fit KNN model from preset MFCC samples (optional)."""
         if KNeighborsClassifier is None:  # pragma: no cover
             import warnings
-            warnings.warn("scikit-learn not installed; ToneShaper KNN disabled", RuntimeWarning)
+
+            warnings.warn(
+                "scikit-learn not installed; ToneShaper KNN disabled",
+                RuntimeWarning,
+            )
             return
 
         X, y = [], []
@@ -292,7 +277,10 @@ class ToneShaper:
         import warnings
 
         if self._knn is None or KNeighborsClassifier is None:  # pragma: no cover
-            warnings.warn("ToneShaper KNN not available; returning default", RuntimeWarning)
+            warnings.warn(
+                "ToneShaper KNN not available; returning default",
+                RuntimeWarning,
+            )
             return self.default_preset
 
         feat = np.asarray(mfcc)

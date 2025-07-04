@@ -546,6 +546,10 @@ class GuitarGenerator(BasePartGenerator):
             if fx_params:
                 self._apply_fx_cc(p, fx_params, section.get("musical_intent", {}))
 
+            eff_env = section.get("effect_envelope")
+            if eff_env:
+                self._apply_effect_envelope(p, eff_env)
+
             # ── Amp / Cab プリセット & IR ファイル登録 ───────────
             notes   = list(p.flatten().notes)
             avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes) if notes else 64.0
@@ -2202,14 +2206,89 @@ class GuitarGenerator(BasePartGenerator):
             events.append({"time": 0.0, "cc": 93, "val": int(fx_params["chorus_send"])})
         if "delay_send" in fx_params:
             events.append({"time": 0.0, "cc": 94, "val": int(fx_params["delay_send"])})
+
+        pick_pos = fx_params.get("pick_position")
+        if pick_pos is not None:
+            try:
+                pick = float(pick_pos)
+                notes = sorted(part.flatten().notes, key=lambda n: n.offset)
+                for n in notes:
+                    vel = n.volume.velocity or 64
+                    val = int(max(0, min(127, round(pick * 127 * vel / 127))))
+                    events.append({"time": float(n.offset), "cc": 74, "val": val})
+            except Exception:
+                pass
+
+        curve = fx_params.get("brightness_curve")
+        if curve:
+            try:
+                pts = sorted((float(b), float(v)) for b, v in curve)
+            except Exception:
+                pts = []
+            if len(pts) >= 2:
+                for i in range(len(pts) - 1):
+                    b0, v0 = pts[i]
+                    b1, v1 = pts[i + 1]
+                    if b1 <= b0:
+                        continue
+                    steps = max(2, int((b1 - b0) * 4))
+                    for s in range(steps + 1):
+                        frac = s / steps
+                        val = int(round(v0 + (v1 - v0) * frac))
+                        t = b0 + (b1 - b0) * frac
+                        events.append({"time": t, "cc": 74, "val": max(0, min(127, val))})
         part.extra_cc = events
 
-    def export_audio(self, midi_path: str | Path, out_wav: str | Path, **kwargs):
+    def _apply_effect_envelope(self, part: stream.Part, envelope_map: dict) -> None:
+        events = getattr(part, "extra_cc", [])
+        bpm = float(self.global_tempo or 120.0)
+        step_ql = bpm / 3000.0  # 20 ms in quarterLength
+        for off, spec in envelope_map.items():
+            try:
+                start = float(off)
+            except Exception:
+                continue
+            dur = float(spec.get("duration_ql", 1.0))
+            cc_num = int(spec.get("cc", 91))
+            start_val = int(spec.get("start_val", spec.get("start", 0)))
+            end_val = int(spec.get("end_val", spec.get("end", 127)))
+            shape = str(spec.get("shape", "lin"))
+            steps = max(1, int(dur / step_ql))
+            for i in range(steps + 1):
+                frac = i / steps
+                if shape == "exp":
+                    frac = frac * frac
+                val = int(round(start_val + (end_val - start_val) * frac))
+                t = start + dur * frac
+                events.append({"time": t, "cc": cc_num, "val": max(0, min(127, val))})
+        part.extra_cc = events
+
+    def export_audio(
+        self,
+        midi_path: str | Path,
+        out_wav: str | Path,
+        *,
+        realtime: bool = False,
+        write_mix_json: bool = False,
+        streamer=None,
+        **kwargs,
+    ):
         """Render and convolve using the last composed part's IR."""
         from utilities.synth import export_audio as synth_export_audio
+        from utilities import mix_profile
+        from utilities import rt_midi_streamer
 
         part = getattr(self, "_last_part", None)
-        return synth_export_audio(midi_path, out_wav, part=part, **kwargs)
+        if realtime and part is not None:
+            if streamer is None:
+                streamer = rt_midi_streamer.RtMidiStreamer("dummy")  # pragma: no cover - default
+            rt_midi_streamer.stream_cc_events(part, streamer)
+            return None
+
+        wav = synth_export_audio(midi_path, out_wav, part=part, **kwargs)
+        if write_mix_json and part is not None:
+            mix_profile.export_mix_json(part, Path(out_wav).with_suffix(".json"))
+        return wav
 
 
 

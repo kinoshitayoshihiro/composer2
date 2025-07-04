@@ -13,17 +13,30 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install -e .[plugin]
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
+      - name: Install dependencies
+        run: |
+          for i in 1 2 3; do
+            pip install -e .[test,plugin] -r requirements-test.txt && break || sleep 5
+          done
       - name: Install JUCE (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y juce-tools
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y juce-tools && break || sleep 5
+          done
       - name: Install JUCE (macOS)
         if: runner.os == 'macOS'
         run: brew install juce || true
       - name: Build plugin
         if: env.RUN_LIGHT != '1'
         run: |
-          pip install pybind11 cmake ninja
+          for i in 1 2 3; do
+            pip install pybind11 cmake ninja && break || sleep 5
+          done
           cmake -B build -DMODC_BUILD_PLUGIN=ON
           cmake --build build --config Release
       - name: Tests

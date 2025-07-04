@@ -3,6 +3,7 @@ import copy
 import logging
 import math
 import random  # 追加
+import statistics
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,6 @@ from music21 import (
 )
 
 from utilities import MIN_NOTE_DURATION_QL, humanizer
-from utilities.tone_shaper import ToneShaper
 
 try:
     from cyext import (
@@ -353,7 +353,7 @@ class BassGenerator(BasePartGenerator):
         if isinstance(result, dict):
             for p in result.values():
                 apply_shift(p)
-                _apply_tone(p, str(intensity_label))
+                self._auto_tone_shape(p, intensity_label)
                 label = section_data.get("section_name")
                 if label in self.phrase_insertions:
                     self._insert_custom_phrase(p, self.phrase_insertions[label])
@@ -363,7 +363,7 @@ class BassGenerator(BasePartGenerator):
             return result
         else:
             part = apply_shift(result)
-            _apply_tone(part, str(intensity_label))
+            self._auto_tone_shape(part, intensity_label)
             label = section_data.get("section_name")
             if label in self.phrase_insertions:
                 self._insert_custom_phrase(part, self.phrase_insertions[label])

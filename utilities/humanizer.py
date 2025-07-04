@@ -186,7 +186,8 @@ def apply(
             part_stream,
             amount=4,
             global_settings=gs,
-            expr_curve="cubic-in",
+            expr_curve=str(gs.get("expr_curve", "cubic-in")),
+            kick_leak_jitter=int(gs.get("kick_leak_jitter", 0)),
         )
 
 
@@ -342,14 +343,24 @@ def _humanize_velocities_py(
     amount: int = 4,
     use_expr_cc11: bool = False,
     use_aftertouch: bool = False,
-    expr_curve: str = "cubic-in",
+    expr_curve: str = "linear",
+    kick_leak_jitter: int = 0,
 ) -> None:
-    for n in part.recurse().notes:
+    notes = list(part.recurse().notes)
+    kicks = [n for n in notes if int(n.pitch.midi) == 36]
+    for n in notes:
         if n.volume is None:
             n.volume = volume.Volume(velocity=64)
         vel = n.volume.velocity or 64
         delta = random.randint(-amount, amount)
         new_vel = max(1, min(127, vel + delta))
+        if kick_leak_jitter and int(n.pitch.midi) in {42, 44, 46}:
+            bpm_el = part.recurse().getElementsByClass(tempo.MetronomeMark).first()
+            bpm = bpm_el.number if bpm_el else 120
+            thr = 0.1 * bpm / 60.0
+            if any(abs(float(n.offset) - float(k.offset)) <= thr for k in kicks):
+                jitter = random.randint(-kick_leak_jitter, kick_leak_jitter)
+                new_vel = max(1, min(127, new_vel + jitter))
         n.volume.velocity = new_vel
         cc_val = new_vel
         if expr_curve == "cubic-in":
@@ -370,15 +381,20 @@ def _humanize_velocities(
     *,
     global_settings: Mapping[str, Any] | None = None,
     expr_curve: str = "cubic-in",
+    kick_leak_jitter: int = 0,
 ) -> None:
     """Randomise note velocities and optionally emit CC messages."""
     gs = global_settings or {}
     use_expr = bool(gs.get("use_expr_cc11", False))
     use_at = bool(gs.get("use_aftertouch", False))
     if cy_humanize_velocities is not None:
-        cy_humanize_velocities(part, amount, use_expr, use_at, expr_curve)
+        cy_humanize_velocities(
+            part, amount, use_expr, use_at, expr_curve, kick_leak_jitter
+        )
     else:
-        _humanize_velocities_py(part, amount, use_expr, use_at, expr_curve)
+        _humanize_velocities_py(
+            part, amount, use_expr, use_at, expr_curve, kick_leak_jitter
+        )
 
 
 def _apply_velocity_histogram_py(

@@ -1,10 +1,12 @@
 # --- START OF FILE generator/base_part_generator.py (修正版) ---
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
+import statistics
 from music21 import stream, meter
 import logging
 import random
 from music21 import instrument as m21instrument
+from utilities.tone_shaper import ToneShaper
 
 try:
     from utilities.prettymidi_sync import apply_groove_pretty, load_groove_profile
@@ -60,6 +62,16 @@ class BasePartGenerator(ABC):
         # 各ジェネレーター固有のロガー
         name = self.part_name or self.__class__.__name__.lower()
         self.logger = logging.getLogger(f"modular_composer.{name}")
+
+    def _auto_tone_shape(self, part: stream.Part, intensity: str) -> None:
+        notes = list(part.flatten().notes)
+        if not notes:
+            return
+        avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
+        shaper = ToneShaper()
+        preset = shaper.choose_preset(avg_vel, intensity)
+        existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
+        part.extra_cc = existing + shaper.to_cc_events(preset, 0.0)
 
     def compose(
         self,
@@ -167,6 +179,7 @@ class BasePartGenerator(ABC):
                 apply_offset_profile(part, profile)
             if ratio is not None:               # Swing が指定されていれば適用
                 apply_swing(part, ratio, subdiv=self.swing_subdiv)
+            self._auto_tone_shape(part, intensity)
             return part
 
         if isinstance(parts, dict):

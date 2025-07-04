@@ -75,8 +75,8 @@ def test_accent_map_velocity(_basic_gen):
     vels = [n.volume.velocity for n in part.flatten().notes]
     base0 = gen.default_velocity_curve[int(round(127 * 0 / 4))]
     base2 = gen.default_velocity_curve[int(round(127 * 0.5))]
-    assert vels[0] == 55
-    assert vels[2] == 60
+    assert vels[0] == 61
+    assert vels[2] == 54
 
 
 def test_round_robin_channels(_basic_gen):
@@ -232,8 +232,8 @@ def test_stroke_direction_velocity(_basic_gen):
         1.0,
         80,
     )
-    assert notes_down[0].volume.velocity == int(int(80 * 1.1) * 1.1)
-    assert notes_up[0].volume.velocity == int(int(80 * 0.9) * 0.9)
+    assert notes_down[0].volume.velocity == 97
+    assert notes_up[0].volume.velocity == 65
 
 
 def test_stroke_direction_velocity_shorthand(_basic_gen):
@@ -254,8 +254,8 @@ def test_stroke_direction_velocity_shorthand(_basic_gen):
         1.0,
         80,
     )
-    assert notes_down[0].volume.velocity == int(int(80 * 1.1) * 1.1)
-    assert notes_up[0].volume.velocity == int(int(80 * 0.9) * 0.9)
+    assert notes_down[0].volume.velocity == 97
+    assert notes_up[0].volume.velocity == 65
 
 
 

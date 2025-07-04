@@ -237,20 +237,22 @@ def fx() -> None:
 
 @fx.command("render")
 @click.argument("midi", type=Path)
-@click.option("--preset", type=str, default=None)
-@click.option("--ir", "ir_name", type=str, default=None)
-@click.option("-o", "--out", type=Path, default=Path("out.wav"))
+@click.option("--preset", required=True, type=str)
+@click.option("-o", "--out", required=True, type=Path)
 @click.option("--soundfont", type=Path, default=None)
 def fx_render(
     midi: Path,
-    preset: str | None,
-    ir_name: str | None,
+    preset: str,
     out: Path,
     soundfont: Path | None,
 ) -> None:
-    """Render ``midi`` to ``out`` applying optional IR convolution."""
+    """Render ``midi`` to ``out`` applying the preset's IR."""
     from utilities import synth
-    synth.export_audio(midi, out, soundfont=soundfont, ir_file=ir_name)
+    from utilities.tone_shaper import ToneShaper
+
+    ts = ToneShaper.from_yaml(Path("data/amp_presets.yml"))
+    ir = ts.ir_map.get(preset)
+    synth.export_audio(midi, out, soundfont=soundfont, ir_file=ir)
     click.echo(str(out))
 
 
@@ -262,6 +264,15 @@ def fx_list_presets() -> None:
     ts = ToneShaper.from_yaml(Path("data/amp_presets.yml"))
     for name in ts.preset_map:
         click.echo(name)
+
+
+@fx.command("cc")
+def fx_cc() -> None:
+    """Output preset CC mapping as JSON."""
+    from utilities.tone_shaper import ToneShaper
+
+    ts = ToneShaper.from_yaml(Path("data/amp_presets.yml"))
+    click.echo(json.dumps(ts.preset_map))
 
 
 @cli.command("live")

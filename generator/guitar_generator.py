@@ -21,6 +21,7 @@ import music21.pitch as pitch
 import music21.stream as stream
 import music21.volume as m21volume
 import yaml
+import statistics
 
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 from utilities.tone_shaper import ToneShaper
@@ -268,6 +269,7 @@ class GuitarGenerator(BasePartGenerator):
         fret_shift_weight: int = 1,
         strict_string_order: bool = False,
         fingering_costs: dict[str, int] | None = None,
+        amp_preset_file: str | Path | None = None,
         **kwargs,
     ):
         """Create a guitar part generator.
@@ -369,7 +371,12 @@ class GuitarGenerator(BasePartGenerator):
         )
         self.cfg: dict = kwargs.copy()
         self.style_selector = GuitarStyleSelector()
-        self.tone_shaper = ToneShaper()
+        if amp_preset_file is None:
+            amp_preset_file = Path("data/amp_presets.yml")
+        try:
+            self.tone_shaper = ToneShaper.from_yaml(amp_preset_file)
+        except Exception:
+            self.tone_shaper = ToneShaper()
         self.swing_subdiv = int(swing_subdiv) if swing_subdiv else 8
         # ここから self.part_parameters を参照・初期化する
         if not hasattr(self, "part_parameters"):
@@ -497,6 +504,63 @@ class GuitarGenerator(BasePartGenerator):
                 self._apply_fx_cc(part, fx_params, section.get("musical_intent", {}))
 
         # ------------------------------------------------------------------
+        # 共通ポストプロセス（Swing・ダイナミクス・FX・Ampプリセット 等）
+        # ------------------------------------------------------------------
+        def _post_process_one(p: stream.Part) -> None:
+            # ── Swing 適用 ──────────────────────────────
+            if ratio_to_apply is not None:
+                self._apply_swing_internal(p, float(ratio_to_apply), self.swing_subdiv)
+
+            # ── フレーズ・エンベロープ／ダイナミクス ────────────────
+            marks = section.get("phrase_marks")
+            env   = section.get("envelope_map")
+            if marks:
+                self._apply_phrase_dynamics(p, marks)
+            if env:
+                self._apply_envelope(p, env)
+
+            # ── スタイルカーブ & ランダムウォーク CC ───────────────
+            hint = section.get("style_hint")
+            if hint:
+                self._apply_style_curve(p, hint)
+
+            rw = section.get("random_walk_cc")
+            if rw:
+                if isinstance(rw, dict):
+                    rng = random.Random(int(rw.get("seed"))) if "seed" in rw else None
+                    self._apply_random_walk_cc(
+                        p,
+                        cc   = int(rw.get("cc",   1)),
+                        step = int(rw.get("step", 2)),
+                        rng  = rng,
+                    )
+                else:
+                    self._apply_random_walk_cc(p)
+
+            # ── FX CC 反映 ────────────────────────────────
+            fx_params = section.get("fx_params")
+            if fx_params:
+                self._apply_fx_cc(p, fx_params, section.get("musical_intent", {}))
+
+            # ── Amp / Cab プリセット & IR ファイル登録 ───────────
+            notes   = list(p.flatten().notes)
+            avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes) if notes else 64.0
+            chosen  = self.tone_shaper.choose_preset(
+                section.get("amp_preset"),
+                section.get("intensity"),
+                avg_vel,
+            )
+
+            if not hasattr(p, "extra_cc"):
+                p.extra_cc = []
+            p.extra_cc.extend(self.tone_shaper.to_cc_events(as_dict=True))
+
+            from music21 import metadata as m21metadata
+            if p.metadata is None:
+                p.metadata = m21metadata.Metadata()
+            setattr(p.metadata, "ir_file", self.tone_shaper.ir_map.get(chosen))
+
+        # ------------------------------------------------------------------
         # 単一 Part か dict かで処理分岐
         # ------------------------------------------------------------------
         if isinstance(result, stream.Part):
@@ -508,7 +572,6 @@ class GuitarGenerator(BasePartGenerator):
             self._last_part = next(iter(result.values()))
             for p in result.values():
                 _post_process_one(p)
-
         else:
             self._last_part = None
         self.swing_subdiv = orig_subdiv
@@ -2126,19 +2189,16 @@ class GuitarGenerator(BasePartGenerator):
             events.append({"time": 0.0, "cc": 91, "val": int(fx_params["reverb_send"])})
         if "chorus_send" in fx_params:
             events.append({"time": 0.0, "cc": 93, "val": int(fx_params["chorus_send"])})
-        intensity = None
-        if musical_intent and isinstance(musical_intent, dict):
-            intensity = musical_intent.get("intensity")
-        avg_vel = 80
-        notes = list(part.flatten().notes)
-        if notes:
-            avg_vel = sum(n.volume.velocity or 64 for n in notes) / len(notes)
-        preset = fx_params.get("tone_preset")
-        shaper = ToneShaper()
-        if not preset:
-            preset = shaper.choose_preset(avg_vel, str(intensity or "medium"))
-        events.extend(shaper.to_cc_events(preset, 0.0))
+        if "delay_send" in fx_params:
+            events.append({"time": 0.0, "cc": 94, "val": int(fx_params["delay_send"])})
         part.extra_cc = events
+
+    def export_audio(self, midi_path: str | Path, out_wav: str | Path, **kwargs):
+        """Render and convolve using the last composed part's IR."""
+        from utilities.synth import export_audio as synth_export_audio
+
+        part = getattr(self, "_last_part", None)
+        return synth_export_audio(midi_path, out_wav, part=part, **kwargs)
 
 
 

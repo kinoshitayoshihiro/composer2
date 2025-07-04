@@ -1,8 +1,13 @@
+import importlib.util
 import pytest
 from pathlib import Path
 from utilities.tempo_curve import TempoCurve
 from utilities.tempo_utils import TempoMap
 from music21 import meter
+
+if importlib.util.find_spec("hypothesis") is None:
+    pytest.skip("hypothesis missing", allow_module_level=True)
+
 from hypothesis import given, strategies as st
 from utilities.timing_utils import _combine_timing
 from utilities.tempo_utils import beat_to_seconds

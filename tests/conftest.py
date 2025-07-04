@@ -43,8 +43,8 @@ def rhythm_library():
 
 
 def _midi_port_available() -> bool:
+    mido = pytest.importorskip("mido", reason="mido not installed")
     try:
-        import mido
         return bool(mido.get_input_names())
     except Exception:
         return False

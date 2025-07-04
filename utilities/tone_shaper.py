@@ -31,9 +31,9 @@ class ToneShaper:
             score += 1
         elif avg_velocity < 60:
             score -= 1
-        if score >= 3:
+        if score >= 5:
             return "fuzz"
-        if score == 2:
+        if score >= 3:
             return "drive"
         if score >= 0:
             return "svt"

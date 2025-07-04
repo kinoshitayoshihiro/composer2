@@ -76,6 +76,8 @@ from .timing_corrector import TimingCorrector
 from .emotion_profile_loader import load_emotion_profile
 from .loudness_meter import RealtimeLoudnessMeter
 from .install_utils import run_with_retry
+from . import mix_profile
+from . import ir_renderer
 
 __all__ = [
     "MIN_NOTE_DURATION_QL",
@@ -117,6 +119,8 @@ __all__ = [
     "run_with_retry",
     "groove_sampler_ngram",
     "groove_sampler_rnn",
+    "mix_profile",
+    "ir_renderer",
 ]
 
 

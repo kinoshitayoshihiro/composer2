@@ -1,4 +1,8 @@
+import importlib.util
 import pytest
+
+if importlib.util.find_spec("scipy") is None:
+    pytest.skip("scipy missing", allow_module_level=True)
 
 from eval import metrics
 

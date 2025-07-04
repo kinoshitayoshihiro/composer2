@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from music21 import stream
 
 
 def render_midi(midi_path: str | Path, out_wav: str | Path, sf2_path: str | Path | None = None) -> Path:
@@ -33,3 +34,22 @@ def render_midi(midi_path: str | Path, out_wav: str | Path, sf2_path: str | Path
     ]
     subprocess.run(cmd, check=True)
     return out_wav
+
+
+def export_audio(
+    midi_path: str | Path,
+    out_wav: str | Path,
+    *,
+    soundfont: str | Path | None = None,
+    ir_file: str | Path | None = None,
+    part: "stream.Part" | None = None,
+) -> Path:
+    """Render ``midi_path`` and optionally convolve with ``ir_file``."""
+    wav = render_midi(midi_path, out_wav, sf2_path=soundfont)
+    if ir_file is None and part is not None and hasattr(part, "metadata"):
+        ir_file = getattr(part.metadata, "ir_file", None)
+    if ir_file:
+        from .convolver import render_with_ir
+
+        render_with_ir(wav, ir_file, out_wav)
+    return Path(out_wav)

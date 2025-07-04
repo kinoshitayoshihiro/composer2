@@ -4,8 +4,12 @@ import tempfile
 import wave
 from pathlib import Path
 
+import importlib.util
 import numpy as np
 import pytest
+
+if importlib.util.find_spec("librosa") is None:
+    pytest.skip("librosa missing", allow_module_level=True)
 
 from utilities.consonant_extract import (
     EssentiaUnavailable,

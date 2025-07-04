@@ -75,8 +75,7 @@ class RtMidiStreamer:
 
     async def _play_note(self, start: float, end: float, pitch: int, velocity: int) -> None:
         loop = asyncio.get_running_loop()
-        await asyncio.sleep(max(0.0, start - self.buffer - loop.time()))
-        await asyncio.sleep(max(0.0, start - loop.time()))
+        await asyncio.sleep(max(0.0, start - loop.time() - self.buffer))
         self._send_with_retry([0x90, pitch, velocity])
         sent = loop.time()
         if self.measure_latency:

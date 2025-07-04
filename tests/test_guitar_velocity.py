@@ -83,10 +83,11 @@ def test_fallback_curve(tmp_path):
         "humanized_duration_beats": 4.0,
         "original_chord_label": "C",
         "chord_symbol_for_voicing": "C",
-        "part_params": {"g": {"guitar_rhythm_key": "qpat"}},
+        "part_params": {"g": {"guitar_rhythm_key": "qpat", "strum_direction_cycle": "D,D,D,D"}},
         "musical_intent": {},
         "shared_tracks": {},
     }
+    gen.rng.seed(0)
     part = gen.compose(section_data=sec)
     vels = [n.volume.velocity for n in part.flatten().notes]
     assert all(0 <= v <= 127 for v in vels)

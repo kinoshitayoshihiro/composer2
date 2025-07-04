@@ -12,8 +12,19 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
       - uses: conda-incubator/setup-miniconda@v3
-      - run: pip install build twine mkdocs mkdocs-material mkdocstrings[python]
+      - name: Install dependencies
+        run: |
+          for i in 1 2 3; do
+            pip install -e .[test] -r requirements-test.txt && break || sleep 5
+          done
+          for i in 1 2 3; do
+            pip install build twine mkdocs mkdocs-material mkdocstrings[python] && break || sleep 5
+          done
       - run: conda install -y conda-build
         shell: bash -l {0}
       - run: python -m build

@@ -1,8 +1,9 @@
 import json
 from pathlib import Path
 import pytest
+from tests import skip_if_no_torch
 
-pytest.importorskip("torch")
+skip_if_no_torch(allow_module_level=True)
 pytest.importorskip("pytorch_lightning")
 
 from utilities import groove_sampler_rnn

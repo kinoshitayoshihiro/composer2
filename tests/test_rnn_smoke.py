@@ -2,9 +2,11 @@ import json
 import random
 from pathlib import Path
 import pytest
+from tests import skip_if_no_torch
 
 pytest.importorskip("pytorch_lightning")
 pytestmark = pytest.mark.stretch
+skip_if_no_torch()
 
 from utilities import groove_sampler_rnn
 

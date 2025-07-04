@@ -1,6 +1,7 @@
 import json
 import os
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +39,17 @@ def export_mix_json(parts, path: str) -> None:
         if meta is not None:
             ir_file = getattr(meta, "ir_file", None)
             if ir_file:
-                entry["ir_file"] = ir_file
+                p = Path(ir_file)
+                if p.is_file():
+                    entry["ir_file"] = str(p)
+                else:
+                    logger.warning("IR file missing: %s", ir_file)
+                    entry["ir_file"] = None
         shaper = getattr(part, "tone_shaper", None)
         if shaper is not None and hasattr(shaper, "_selected"):
             entry["preset"] = shaper._selected
+            if getattr(shaper, "fx_envelope", None):
+                entry["fx_cc"] = shaper.fx_envelope
         data[name] = entry
 
     if isinstance(parts, dict):

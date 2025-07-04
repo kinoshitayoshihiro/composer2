@@ -27,6 +27,7 @@ def test_choose_preset_table() -> None:
     マッチング動作を確認。
     """
     shaper = ToneShaper()
+
     # avg_velocity が 50 / intensity "low" → clean
     assert shaper.choose_preset(None, "low", 50.0) == "clean"
     # avg_velocity が 70 / intensity "medium" → drive

@@ -1,10 +1,11 @@
-music21>=9.0
+music21>=8.4
 numpy
 scipy
 pretty_midi
 pytest
-scikit-learn>=1.3.0
-librosa>=0.10.0
+scikit-learn>=1.3
+librosa>=0.10
+numba>=0.59
 pytest-benchmark
 PyYAML
 types-PyYAML
@@ -15,6 +16,7 @@ mido
 python-rtmidi
 transformers==4.*
 torch==2.*
-soundfile>=0.12.0
+soundfile>=0.12
 sounddevice>=0.4
 pyloudnorm>=0.1
+pytest-cov==4.1.0

@@ -24,6 +24,9 @@ nav:
   - GUI v2 Walkthrough: gui_v2_walkthrough.md
   - Evaluation Metrics: evaluation_metrics.md
   - Plugin Guide: plugin_guide.md
+  - Tone & Dynamics: tone.md
+  - Humanizer Reference: humanizer.md
+  - Live Tips: live_tips.md
   - API Reference:
       - modular_composer: api/modular_composer.md
 plugins:

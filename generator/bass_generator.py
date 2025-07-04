@@ -3,6 +3,7 @@ import copy
 import logging
 import math
 import random  # 追加
+import statistics
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,6 @@ from music21 import (
 )
 
 from utilities import MIN_NOTE_DURATION_QL, humanizer
-from utilities.tone_shaper import ToneShaper
 
 try:
     from cyext import (
@@ -133,18 +133,6 @@ except ImportError as e:
 
 
 logger = logging.getLogger("modular_composer.bass_generator")
-
-
-def _apply_tone(part: stream.Part, intensity: str) -> None:
-    """Insert a single CC31 event based on average velocity."""
-    notes = list(part.flat.notes)
-    if not notes:
-        return
-    avg_vel = float(np.mean([n.volume.velocity or 0 for n in notes]))
-    shaper = ToneShaper()
-    preset = shaper.choose_preset(avg_vel, intensity)
-    existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
-    part.extra_cc = existing + shaper.to_cc_events(preset, 0.0)
 
 DIRECTION_UP = 1
 DIRECTION_DOWN = -1
@@ -352,7 +340,7 @@ class BassGenerator(BasePartGenerator):
         if isinstance(result, dict):
             for p in result.values():
                 apply_shift(p)
-                _apply_tone(p, str(intensity_label))
+                self._auto_tone_shape(p, intensity_label)
                 label = section_data.get("section_name")
                 if label in self.phrase_insertions:
                     self._insert_custom_phrase(p, self.phrase_insertions[label])
@@ -362,7 +350,7 @@ class BassGenerator(BasePartGenerator):
             return result
         else:
             part = apply_shift(result)
-            _apply_tone(part, str(intensity_label))
+            self._auto_tone_shape(part, intensity_label)
             label = section_data.get("section_name")
             if label in self.phrase_insertions:
                 self._insert_custom_phrase(part, self.phrase_insertions[label])

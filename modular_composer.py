@@ -283,12 +283,26 @@ def compose(
     for name, p_stream in part_streams.items():
         prof = main_cfg["part_defaults"].get(name, {}).get("humanize_profile")
         if prof:
-            humanizer.apply(p_stream, prof)
+            humanizer.apply(
+                p_stream,
+                prof,
+                global_settings={
+                    "expr_curve": args.expr_curve,
+                    "kick_leak_jitter": args.kick_leak_jitter,
+                },
+            )
 
     score = stream.Score(list(part_streams.values()))
     global_prof = main_cfg["global_settings"].get("humanize_profile")
     if global_prof:
-        humanizer.apply(score, global_prof)
+        humanizer.apply(
+            score,
+            global_prof,
+            global_settings={
+                "expr_curve": args.expr_curve,
+                "kick_leak_jitter": args.kick_leak_jitter,
+            },
+        )
 
     tempo_map_path = main_cfg["global_settings"].get("tempo_map_path")
     if tempo_map_path:
@@ -406,6 +420,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--strict-drum-map",
         action="store_true",
         help="未知のドラムキーをエラーにする",
+    )
+    p.add_argument(
+        "--expr-curve",
+        default="cubic-in",
+        help="Expression CC11 curve",
+    )
+    p.add_argument(
+        "--kick-leak-jitter",
+        type=int,
+        default=0,
+        help="Hi-hat velocity jitter range near kicks",
     )
     from utilities.drum_map_registry import DRUM_MAPS
 

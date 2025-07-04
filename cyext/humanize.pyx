@@ -20,7 +20,20 @@ def apply_swing(part_stream, double swing_ratio, int subdiv=8):
 cpdef humanize_velocities(part_stream, int amount=4,
                           bint use_expr_cc11=False,
                           bint use_aftertouch=False,
-                          expr_curve="cubic-in"):
+                          str expr_curve="cubic-in",
+                          int kick_leak_jitter=0):
+    cdef list kicks = []
+    cdef double thr = 0.0
+    cdef bint need_jitter = kick_leak_jitter != 0
+    if need_jitter:
+        for n in part_stream.recurse().notes:
+            if int(n.pitch.midi) == 36:
+                kicks.append(float(n.offset))
+        bpm_el = part_stream.recurse().getElementsByClass('MetronomeMark').first()
+        bpm = bpm_el.number if bpm_el is not None else 120
+        thr = 0.1 * bpm / 60.0
+
+    cdef double last_cc = 0.0
     for n in part_stream.recurse().notes:
         vel = getattr(n.volume, 'velocity', None)
         if vel is None:
@@ -31,20 +44,27 @@ cpdef humanize_velocities(part_stream, int amount=4,
                 n.volume.velocity = vel
         delta = random.randint(-amount, amount)
         new_vel = max(1, min(127, vel + delta))
+        if need_jitter and int(n.pitch.midi) in (42, 44, 46):
+            for k in kicks:
+                if abs(float(n.offset) - k) <= thr:
+                    jitter = random.randint(-kick_leak_jitter, kick_leak_jitter)
+                    new_vel = max(1, min(127, new_vel + jitter))
+                    break
         n.volume.velocity = new_vel
-        if use_expr_cc11:
-            if expr_curve == "cubic-in":
-                cc_val = int(max(1, min(127, (new_vel / 127.0) ** 3 * 127)))
-            else:
-                cc_val = new_vel
+        cc_val = new_vel
+        if expr_curve == "cubic-in":
+            cc_val = int(max(1, min(127, (new_vel / 127.0) ** 3 * 127)))
+        cc_val = max(1, min(127, cc_val))
+        if cc_val < last_cc:
+            cc_val = last_cc
+        if use_expr_cc11 or use_aftertouch:
             if not hasattr(part_stream, "extra_cc"):
                 part_stream.extra_cc = []
+        if use_expr_cc11:
             part_stream.extra_cc.append({"time": n.offset, "cc": 11, "val": cc_val})
         if use_aftertouch:
-            if not hasattr(part_stream, "extra_cc"):
-                part_stream.extra_cc = []
-            val = cc_val if use_expr_cc11 else new_vel
-            part_stream.extra_cc.append({"time": n.offset, "cc": 74, "val": val})
+            part_stream.extra_cc.append({"time": n.offset, "cc": 74, "val": cc_val})
+        last_cc = cc_val
 
 def apply_envelope(part_stream, int start, int end, double scale):
     """Cython-accelerated envelope scaling."""

@@ -18,11 +18,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          pip install -e .[test] -r requirements-test.txt
-          pip install music21
+          for i in 1 2 3; do
+            pip install -e .[test] -r requirements-test.txt && break || sleep 5
+          done
       - name: Restore Essentia wheel cache
         if: runner.os == 'Linux'
         uses: actions/cache@v3
@@ -32,7 +36,9 @@ jobs:
       - name: Install Essentia extras
         if: runner.os == 'Linux'
         run: |
-          pip install -e ".[essentia]"
+          for i in 1 2 3; do
+            pip install -e ".[essentia]" && break || sleep 5
+          done
       - name: Save Essentia wheel cache
         if: runner.os == 'Linux'
         uses: actions/cache@v3
@@ -48,8 +54,9 @@ jobs:
       - name: Install SoundFont
         if: steps.cache-sf2.outputs.cache-hit != 'true'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y fluidsynth timgm6mb-soundfont
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y fluidsynth timgm6mb-soundfont && break || sleep 5
+          done
           mkdir -p sf2
           cp /usr/share/sounds/sf2/TimGM6mb.sf2 sf2/
       - name: Verify SF2 Size
@@ -58,6 +65,8 @@ jobs:
         run: ruff check . --output-format=github
       - name: Mypy
         run: mypy modular_composer utilities tests --strict
+      - name: Debug music21
+        run: pip list | grep music21
       - name: Pytest
         run: pytest -q -m "not ess_optional" --cov --cov-report=xml
       - name: Pytest Essentia
@@ -113,8 +122,15 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
       - name: Install dependencies
-        run: pip install -e ".[dev,groove]"
+        run: |
+          for i in 1 2 3; do
+            pip install -e .[test] -r requirements-test.txt && break || sleep 5
+          done
       - name: Perf Gate
         run: pytest -m ci_perf --quiet
 
@@ -127,29 +143,23 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
       - name: Install deps
-        run: pip install -e .[gui]
+        run: |
+          for i in 1 2 3; do
+            pip install -e .[test,gui] -r requirements-test.txt && break || sleep 5
+          done
       - name: Install PyTorch
-        run: pip install torch==2.3.0+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html
+        run: |
+          for i in 1 2 3; do
+            pip install torch==2.3.0+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html && break || sleep 5
+          done
         continue-on-error: true
       - name: Stretch Tests
-        run: |
-          python - <<'EOF'
-          import importlib
-          ok = True
-          try:
-              importlib.import_module('torch')
-          except Exception:
-              ok = False
-          if ok:
-              exit(0)
-          EOF
-          STATUS=$?
-          if [ "$STATUS" = "0" ]; then
-            pytest -m stretch
-          else
-          pytest -m stretch -k "not rnn_smoke"
-          fi
+        run: pytest -m stretch
 
   core-tests:
     runs-on: ubuntu-latest
@@ -159,9 +169,16 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install .
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
+      - name: Install dependencies
+        run: |
+          for i in 1 2 3; do
+            pip install -e .[test] -r requirements-test.txt && break || sleep 5
+          done
       - run: python -m build --wheel
-      - run: pip install music21
       - run: pytest -q tests/test_guitar_phase3.py
 
   hi-fi-train:
@@ -173,8 +190,15 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install -r requirements.txt -r requirements-extra.txt --extra-index-url https://download.pytorch.org/whl/cpu
-      - run: pip install music21
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
+      - name: Install dependencies
+        run: |
+          for i in 1 2 3; do
+            pip install -e .[test] -r requirements-test.txt && break || sleep 5
+          done
       - run: |
           python - <<'EOF'
           import json, tempfile
@@ -198,8 +222,15 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install -r requirements.txt
-      - run: pip install music21
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
+      - name: Install dependencies
+        run: |
+          for i in 1 2 3; do
+            pip install -e .[test] -r requirements-test.txt && break || sleep 5
+          done
       - run: |
           python - <<'EOF'
           import mido, sys

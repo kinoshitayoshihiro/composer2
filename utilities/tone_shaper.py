@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import Dict, List, Union
 
 import numpy as np
 from numpy.typing import NDArray
@@ -22,6 +22,8 @@ PRESET_TABLE: dict[tuple[str, str], str] = {
     ("high",   "soft"): "drive",
     ("high",   "loud"): "fuzz",
 }
+
+logger = logging.getLogger(__name__)
 
 
 class ToneShaper:
@@ -62,26 +64,45 @@ class ToneShaper:
 
     # ---- YAML ローダ ---------------------------------------------------------
     @classmethod
-    def from_yaml(cls, path: Union[str, Path]) -> "ToneShaper":
+    def from_yaml(cls, path: str | Path) -> ToneShaper:
+        """Load preset and IR mappings from ``path``.
+
+        Parameters
+        ----------
+        path:
+            YAML file containing ``presets``, ``ir`` and ``rules`` sections.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the file does not exist or has an unknown extension.
+        ValueError
+            If required sections are missing.
+        """
         import yaml
 
         path = Path(path)
-        if not path.is_file():
-            return cls()
+        if not path.is_file() or path.suffix.lower() not in {".yml", ".yaml"}:
+            raise FileNotFoundError(str(path))
 
         with path.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
 
-        presets_raw = data.get("presets") or {}
-        levels_raw  = data.get("levels") or {}
-        ir_map      = data.get("ir")     or {}
-        rules       = data.get("rules")  or []
+        if not {"presets", "ir", "rules"} <= data.keys():
+            raise ValueError("Malformed preset file")
+
+        presets_raw = data.get("presets", {})
+        levels_raw = data.get("levels", {})
+        ir_map = data.get("ir", {})
+        rules = data.get("rules", [])
 
         preset_map: dict[str, dict[str, int]] = {}
         for name, val in presets_raw.items():
             entry = {"amp": int(val)}
             if name in levels_raw:
                 entry.update({k: int(v) for k, v in levels_raw[name].items()})
+            if name in preset_map:
+                logger.warning("Duplicate preset %s found; using last", name)
             preset_map[name] = entry
 
         return cls(preset_map=preset_map, ir_map=ir_map, rules=rules)
@@ -95,14 +116,18 @@ class ToneShaper:
         intensity: str | None = None,
         avg_velocity: float = 64.0,
     ) -> str:
+        """Select an amp preset based on intensity and velocity.
+
+        The chosen preset determines the CC31 value and maps to an IR file via
+        ``ir_map``. The algorithm prioritises explicit arguments, then rule
+        evaluation, finally falling back to ``PRESET_TABLE`` and heuristics.
         """
-        プリセット決定アルゴリズム（優先順位）  
-        1. amp_preset が明示指定されていればそれを採用  
-        2. ルールベース（self.rules）で成立する条件があれば採用  
-        3. PRESET_TABLE に (intensity, loud/soft) があれば採用  
-        4. codex 版ヒューリスティックで drive / crunch / clean を決定  
-        5. 未登録なら default_preset
-        """
+        # --- 0) intensity validation -----------------------------------------
+        if intensity and str(intensity).lower() not in {"low", "med", "hi"}:
+            logger.warning("Unknown intensity %s; falling back to default", intensity)
+            self._selected = self.default_preset
+            return self.default_preset
+
         # --- 1) 明示指定 ------------------------------------------------------
         if amp_preset:
             chosen = amp_preset

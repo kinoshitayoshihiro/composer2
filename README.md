@@ -849,6 +849,16 @@ Metrics include swing accuracy, note density and velocity variance.
 ``BLEC`` (Binned Log-likelihood Error per Class) is computed as
 ``mean( KL(p_true || p_pred) / log(N) )`` where ``N`` is the number of bins.
 
+## Effects & Rendering
+
+Use ``modcompose fx render`` to convolve a MIDI file with an impulse response:
+
+```bash
+modcompose fx render song.mid --preset CRUNCH --ir 4x12
+```
+
+Impulse responses distributed with this project are licensed under CC-BY 4.0.
+
 ## ABX Test
 
 Launch a simple browser-based ABX comparison:

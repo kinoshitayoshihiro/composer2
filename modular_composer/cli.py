@@ -445,7 +445,7 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("model", type=Path)
     ap.add_argument("-l", "--length", type=int, default=4)
     ap.add_argument(
-        "--ai-backend",
+        "--backend",
         choices=["ngram", "rnn", "transformer"],
         default="ngram",
     )
@@ -465,17 +465,21 @@ def _cmd_sample(args: list[str]) -> None:
     ns = ap.parse_args(args)
     if ns.seed is not None:
         random.seed(ns.seed)
-    if ns.ai_backend == "transformer":
-        from utilities.ai_sampler import TransformerBassGenerator
+    if ns.backend == "transformer":
         from utilities.user_history import load_history, record_generate
 
-        gen = TransformerBassGenerator(ns.model_name, rhythm_schema=ns.rhythm_schema)
-        prompt_events: list[dict[str, Any]] = []
+        prompt: list[dict[str, Any]] = []
         if ns.use_history:
             hist = load_history()
-            all_ev = [ev for h in hist for ev in h.get("events", [])]
-            prompt_events = all_ev[-128:]
-        events = gen.generate(prompt_events, ns.length)
+            prompt = [ev for h in hist for ev in h.get("events", [])][-128:]
+        from generator.bass_generator import sample_transformer_bass
+
+        events = sample_transformer_bass(
+            ns.model_name,
+            ns.length,
+            temperature=ns.temperature,
+            rhythm_schema=ns.rhythm_schema,
+        )
         if ns.use_history:
             record_generate({"model_name": ns.model_name}, events)
     else:

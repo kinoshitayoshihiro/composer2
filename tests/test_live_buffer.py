@@ -1,6 +1,7 @@
 import logging
 import time
 
+import pytest
 from utilities.live_buffer import LiveBuffer
 
 
@@ -9,6 +10,7 @@ def slow_gen(idx: int):
     return idx
 
 
+@pytest.mark.slow
 def test_live_buffer_warn(caplog):
     buf = LiveBuffer(slow_gen, buffer_ahead=1, parallel_bars=1)
     caplog.set_level(logging.WARNING)

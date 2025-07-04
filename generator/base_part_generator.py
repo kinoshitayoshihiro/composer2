@@ -62,28 +62,30 @@ class BasePartGenerator(ABC):
         # 各ジェネレーター固有のロガー
         name = self.part_name or self.__class__.__name__.lower()
         self.logger = logging.getLogger(f"modular_composer.{name}")
-
+    # --------------------------------------------------------------
+    # Tone & Dynamics - 自動アンプ／キャビネット CC 付与
+    # --------------------------------------------------------------
     def _auto_tone_shape(self, part: stream.Part, intensity: str) -> None:
+        """平均 Velocity と Intensity から ToneShaper を適用し CC を追加。"""
         notes = list(part.flatten().notes)
-        if not notes:
+        if not notes:                       # 無音パートなら何もしない
             return
+
         avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
-        shaper = ToneShaper()
-# ---- ToneShaper から CC イベントを付与 ----
-# 平均 velocity と楽曲の intensity をもとにプリセット名を決定
-        preset_name = shaper.choose_preset(avg_vel, intensity)
 
-# CC31（アンプ）を含む一連の CC イベントを生成
-# to_cc_events は (preset_name, intensity) -> [(time, cc, val), …] を返す
-        events = [
-            {"time": t, "cc": cc, "val": val}
-            for t, cc, val in shaper.to_cc_events(preset_name, intensity)
-        ]
+        shaper = ToneShaper()               # グローバル設定を渡す場合はここで引数化
+        preset_name = shaper.choose_preset(  # (amp_preset=None, intensity, avg_velocity)
+            None,
+            intensity,
+            avg_vel,
+        )
 
-# 既に付与されている CC のうち、CC31 以外は温存してマージ
-        existing = [e for e in getattr(part, "extra_cc", []) if e.get("cc") != 31]
-        part.extra_cc = existing + events
+        # CC31 系イベントを生成（dict 形式）
+        tone_events = shaper.to_cc_events(as_dict=True)
 
+        # 既存 CC を温存しつつ CC31 系を上書き
+        existing = [cc for cc in getattr(part, "extra_cc", []) if cc.get("cc") != 31]
+        part.extra_cc = existing + tone_events
     def compose(
         self,
         *,

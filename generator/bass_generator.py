@@ -28,6 +28,8 @@ from music21 import (
 )
 
 from utilities import MIN_NOTE_DURATION_QL, humanizer
+from utilities.bass_transformer import BassTransformer
+from utilities.tone_shaper import ToneShaper
 
 try:
     from cyext import (
@@ -130,6 +132,33 @@ except ImportError as e:
 
         def model_dump(self, exclude_unset=True):
             return {}
+
+
+def sample_transformer_bass(
+    model_name: str,
+    bars: int = 4,
+    *,
+    top_k: int = 8,
+    temperature: float = 1.0,
+    rhythm_schema: str | None = None,
+) -> list[dict[str, Any]]:
+    """Sample ``bars`` worth of bass tokens and return MIDI-style events."""
+
+    model = BassTransformer(model_name)
+    seq: list[int] = [0]
+    for _ in range(bars):
+        seq.extend(model.sample(seq[-16:], top_k, temperature, rhythm_schema))
+    events: list[dict[str, Any]] = []
+    for i, tok in enumerate(seq[1:]):
+        events.append(
+            {
+                "pitch": int(tok),
+                "velocity": 100,
+                "offset": i * 0.25,
+                "duration": 0.25,
+            }
+        )
+    return events
 
 
 logger = logging.getLogger("modular_composer.bass_generator")
@@ -446,9 +475,9 @@ class BassGenerator(BasePartGenerator):
             return preset or "clean"
         avg = statistics.mean(n.volume.velocity or self.base_velocity for n in notes)
         shaper = ToneShaper()
-        use_preset = preset or shaper.choose_preset(avg, intensity)
+        use_preset = preset or shaper.choose_preset(None, intensity, avg)
         existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
-        part.extra_cc = existing + shaper.to_cc_events(use_preset, 0.0)
+        part.extra_cc = existing + shaper.to_cc_events(offset_ql=0.0, as_dict=True)
         return use_preset
 
     def _apply_kick_lock(self, part: stream.Part, kick_offsets_sec: list[float]) -> None:

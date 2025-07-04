@@ -1,5 +1,6 @@
 import logging
 import time
+import pytest
 
 import asyncio
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ def slow_gen(idx: int) -> int:
     return idx
 
 
+@pytest.mark.slow
 def test_live_buffer_integration(caplog):
     buf = LiveBuffer(slow_gen, buffer_ahead=2, parallel_bars=1, warn_level=logging.ERROR)
     caplog.set_level(logging.WARNING)
@@ -51,6 +53,7 @@ def _make_part() -> stream.Part:
     return p
 
 
+@pytest.mark.slow
 def test_rt_play_live(monkeypatch):
     midi = DummyMidiOut()
     monkeypatch.setattr(rt_midi_streamer, "rtmidi", SimpleNamespace(MidiOut=lambda: midi))

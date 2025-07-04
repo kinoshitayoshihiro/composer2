@@ -166,6 +166,8 @@ class ToneShaper:
                 else "medium" if lvl.startswith("m") else "low"
             )
             chosen = PRESET_TABLE.get((int_bucket, vel_bucket))
+            if chosen and chosen not in self.preset_map:
+                chosen = None
 
         # 4) fallback
         if not chosen:

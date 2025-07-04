@@ -27,6 +27,7 @@ except ImportError:
 from . import groove_sampler_ngram
 from .groove_sampler_ngram import sample as sample_ngram
 from .streaming_sampler import BaseSampler
+from .live_buffer import LiveBuffer
 
 try:  # optional dependency
     import mido
@@ -73,6 +74,7 @@ class RealtimeEngine:
         bpm: float = 120.0,
         sync: str = "internal",
         buffer_bars: int = 1,
+        midi_in_ports: list[str] | None = None,
     ) -> None:
         if backend not in {"rnn", "ngram"}:
             raise ValueError("backend must be 'rnn' or 'ngram'")
@@ -89,6 +91,8 @@ class RealtimeEngine:
         self.bpm = bpm
         self.sync = sync
         self.buffer_bars = buffer_bars
+        self.midi_in_ports = midi_in_ports or []
+        self._incoming: list[tuple[int, str]] = []
         self._bar = 0
         self._clock_thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -97,6 +101,23 @@ class RealtimeEngine:
         self._pool = ThreadPoolExecutor(max_workers=1)
         self._next: list[Event] = []
         self._load_model()
+        self._midi_threads: list[threading.Thread] = []
+        if self.midi_in_ports and mido is not None:
+            for name in self.midi_in_ports:
+                try:
+                    port = mido.open_input(name)
+                except Exception:
+                    continue
+                t = threading.Thread(target=self._listen, args=(port,), daemon=True)
+                t.start()
+                self._midi_threads.append(t)
+
+    def _listen(self, port: Any) -> None:
+        for msg in port:
+            if self._stop.is_set():
+                break
+            if msg.type == "note_on" and getattr(msg, "velocity", 0) > 0:
+                self._incoming.append((0, str(msg.note)))
 
     def _start_midi_clock(self) -> None:
         if mido is None:
@@ -159,6 +180,9 @@ class RealtimeEngine:
         for _ in range(bars):
             fut = self._pool.submit(self._gen_bar)
             start = time.time()
+            if getattr(self, "_incoming", None):
+                self.sampler.feed_history(self._incoming)
+                self._incoming.clear()
             for ev in self._next:
                 t = start + ev.get("offset", 0.0) * 60.0 / self.bpm
                 delay = t - time.time()

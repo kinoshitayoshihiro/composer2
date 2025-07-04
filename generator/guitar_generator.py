@@ -5,10 +5,8 @@ import logging
 import os
 import random
 from collections.abc import Sequence
-
 from dataclasses import dataclass
 from functools import lru_cache
-
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +21,6 @@ import music21.pitch as pitch
 import music21.stream as stream
 import music21.volume as m21volume
 import yaml
-
 
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 
@@ -423,24 +420,43 @@ class GuitarGenerator(BasePartGenerator):
             ratio_to_apply = self.swing_ratio
 
         result = super().compose(*args, **kwargs)
+
+        def post(part: stream.Part) -> None:
+            self._post_process_generated_part(part, section, ratio_to_apply)
+
         if isinstance(result, stream.Part):
             self._last_part = result
-            if ratio_to_apply is not None:
-                self._apply_swing_internal(self._last_part, float(ratio_to_apply), self.swing_subdiv)
-            intensity = section.get("musical_intent", {}).get("intensity", "medium")
-            self._auto_tone_shape(self._last_part, intensity)
+            post(self._last_part)
         elif isinstance(result, dict) and result:
             self._last_part = next(iter(result.values()))
-            if ratio_to_apply is not None:
-                for p in result.values():
-                    self._apply_swing_internal(p, float(ratio_to_apply), self.swing_subdiv)
-            intensity = section.get("musical_intent", {}).get("intensity", "medium")
             for p in result.values():
-                self._auto_tone_shape(p, intensity)
+                post(p)
         else:
             self._last_part = None
         self.swing_subdiv = orig_subdiv
         return result
+
+    def _post_process_generated_part(
+        self, part: stream.Part, section: dict[str, Any], ratio: float | None
+    ) -> None:
+        """Apply post-generation tweaks to *part*."""
+        if ratio is not None:
+            self._apply_swing_internal(part, float(ratio), self.swing_subdiv)
+        intensity = section.get("musical_intent", {}).get("intensity", "medium")
+        self._auto_tone_shape(part, intensity)
+        for name in (
+            "_apply_phrase_dynamics",
+            "_apply_envelope",
+            "_apply_style_curve",
+            "_apply_random_walk_cc",
+            "_apply_fx_cc",
+        ):
+            func = getattr(self, name, None)
+            if callable(func):
+                try:
+                    func(part)  # type: ignore[misc]
+                except Exception:  # pragma: no cover - best effort
+                    pass
 
     def _get_guitar_friendly_voicing(
         self,

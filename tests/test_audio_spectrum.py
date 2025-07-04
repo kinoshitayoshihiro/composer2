@@ -13,6 +13,7 @@ def fft_magnitude(path: Path) -> np.ndarray:
     return spectrum / np.max(spectrum)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("style", ["rock_drive_loop", "brush_light_loop"])
 def test_spectrum_match(style: str) -> None:
     base = Path("data/golden/wav") / f"{style}.wav"

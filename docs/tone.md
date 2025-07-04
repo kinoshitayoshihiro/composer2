@@ -92,6 +92,19 @@ flowchart TD
 | medium    | crunch     | drive     |
 | high      | drive      | fuzz      |
 
+Example preset mapping file:
+
+```yaml
+presets:
+  clean: {amp: 0}
+  drive: {amp: 64, reverb: 40}
+ir:
+  clean: clean_ir.wav
+  drive: drive_ir.wav
+```
+
+Load with ``ToneShaper.from_yaml('amp.yml')``.
+
 CC31 values:
 
 | Preset | CC31 |

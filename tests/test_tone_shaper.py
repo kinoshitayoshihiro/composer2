@@ -21,16 +21,26 @@ def test_choose_preset_drive() -> None:
     assert preset == "drive"
 
 
-def test_choose_preset_table() -> None:
-    """
-    ToneShaper がデフォルトのプリセット・ルールを保持している場合の
-    マッチング動作を確認。
-    """
-    shaper = ToneShaper()
+import pytest
 
-    # avg_velocity が 50 / intensity "low" → clean
-    assert shaper.choose_preset(None, "low", 50.0) == "clean"
-    # avg_velocity が 70 / intensity "medium" → drive
-    assert shaper.choose_preset(None, "medium", 70.0) == "drive"
-    # avg_velocity が 90 / intensity "high" → fuzz
-    assert shaper.choose_preset(None, "high", 90.0) == "fuzz"
+
+@pytest.mark.parametrize(
+    "intensity,vel,expected",
+    [
+        ("low", 50.0, "clean"),
+        ("low", 80.0, "crunch"),
+        ("medium", 50.0, "crunch"),
+        ("medium", 80.0, "drive"),
+        ("high", 50.0, "drive"),
+        ("high", 90.0, "fuzz"),
+    ],
+)
+def test_choose_preset_table(intensity: str, vel: float, expected: str) -> None:
+    """PRESET_TABLE mapping matrix."""
+    shaper = ToneShaper({
+        "clean": {"amp": 0},
+        "crunch": {"amp": 32},
+        "drive": {"amp": 64},
+        "fuzz": {"amp": 96},
+    })
+    assert shaper.choose_preset(None, intensity, vel) == expected

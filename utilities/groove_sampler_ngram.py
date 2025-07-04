@@ -28,6 +28,7 @@ from typing_extensions import Required
 from utilities import cli_playback
 from utilities.loop_ingest import scan_loops
 from utilities.types import AuxTuple
+from utilities import phrase_filter
 
 from .drum_map_registry import GM_DRUM_MAP
 
@@ -866,6 +867,7 @@ def sample(
     top_k: int | None = None,
     seed: int | None = None,
     cond: dict[str, Any] | None = None,
+    rhythm_schema: str | None = None,
     progress: bool = False,
     humanize_vel: bool = False,
     humanize_micro: bool = False,
@@ -884,6 +886,7 @@ def sample(
         top_k: Restrict choices to the ``k`` most likely states.
         seed: Optional RNG seed for reproducible output.
         cond: Optional auxiliary conditioning dictionary.
+        rhythm_schema: Optional rhythm style token to prepend.
         progress: Display a progress bar when ``bars`` is large.
         humanize_vel: Apply velocity deltas from the training data.
         humanize_micro: Apply micro timing offsets from the training data.
@@ -903,6 +906,7 @@ def sample(
 
     rng = Random(seed)
     events: list[Event] = []
+    events_by_bar: list[list[Event]] = []
     history_arg = history
     history = list(history) if history is not None else []
 
@@ -924,6 +928,7 @@ def sample(
             temperature=temperature,
             top_k=top_k,
             cond=cond,
+            rhythm_schema=rhythm_schema,
             humanize_vel=humanize_vel,
             humanize_micro=humanize_micro,
             micro_max=micro_max,
@@ -933,10 +938,17 @@ def sample(
         )
         for ev in bar_events:
             ev["offset"] += bar * 4
+        events_by_bar.append(bar_events)
         events.extend(bar_events)
 
     if bar_obj is not None:
         bar_obj.close()
+
+    try:
+        mask = phrase_filter.cluster_phrases(events_by_bar)
+        events = [ev for keep, bar in zip(mask, events_by_bar) if keep for ev in bar]
+    except Exception:
+        pass
 
     events.sort(key=lambda x: x["offset"])
     if history_arg is not None:
@@ -951,6 +963,7 @@ def _generate_bar(
     temperature: float = 1.0,
     top_k: int | None = None,
     cond: dict[str, Any] | None = None,
+    rhythm_schema: str | None = None,
     humanize_vel: bool = False,
     humanize_micro: bool = False,
     micro_max: int = 30,
@@ -968,6 +981,7 @@ def _generate_bar(
         temperature: Sampling temperature. ``0`` selects the most probable state.
         top_k: Restrict choices to the ``k`` most likely states.
         cond: Optional auxiliary conditioning dictionary.
+        rhythm_schema: Optional rhythm style token prepended to ``history``.
         humanize_vel: Apply velocity jitter from ``vel_deltas``.
         humanize_micro: Apply micro timing offsets from ``micro_offsets``.
         micro_max: Maximum absolute micro timing in ticks.
@@ -987,6 +1001,8 @@ def _generate_bar(
         raise TypeError(f"unexpected keys: {', '.join(kwargs)}")
 
     history = list(prev_history) if prev_history is not None else []
+    if rhythm_schema:
+        history.insert(0, (-1, str(rhythm_schema)))
     events: list[Event] = []
     if bar_cache is None:
         bar_cache = {} if use_bar_cache else None
@@ -1073,6 +1089,7 @@ def generate_bar(
     temperature: float = 1.0,
     top_k: int | None = None,
     cond: dict[str, Any] | None = None,
+    rhythm_schema: str | None = None,
     humanize_vel: bool = False,
     humanize_micro: bool = False,
     micro_max: int = 30,
@@ -1084,6 +1101,7 @@ def generate_bar(
     Args:
         history: Mutable history context updated in-place when provided.
         model: Trained n-gram model to sample from.
+        rhythm_schema: Optional rhythm style token prepended to ``history``.
         micro_max: Maximum absolute micro timing in ticks.
         vel_max: Maximum absolute velocity delta in MIDI units.
     """
@@ -1097,6 +1115,7 @@ def generate_bar(
         temperature=temperature,
         top_k=top_k,
         cond=cond,
+        rhythm_schema=rhythm_schema,
         humanize_vel=humanize_vel,
         humanize_micro=humanize_micro,
         micro_max=micro_max,
@@ -1259,6 +1278,7 @@ def train_cmd(
     default=None,
     help="JSON aux condition, e.g. '{\"section\":\"chorus\"}'",
 )
+@click.option("--rhythm-schema", default=None, help="Rhythm style token")
 @click.option("--progress/--no-progress", default=True, help="Show progress bar")
 @click.option(
     "--humanize",
@@ -1288,6 +1308,7 @@ def sample_cmd(
     temperature: float,
     seed: int,
     cond: str | None,
+    rhythm_schema: str | None,
     list_aux: bool,
     use_bar_cache: bool,
     progress: bool,
@@ -1304,6 +1325,7 @@ def sample_cmd(
         temperature: Sampling temperature.
         seed: Random seed for deterministic output.
         cond: JSON mapping of auxiliary conditions.
+        rhythm_schema: Optional rhythm style token.
         list_aux: List available aux tuples instead of generating.
         use_bar_cache: Enable per-bar cache; disable for benchmarking.
         progress: Display a progress bar when ``length`` is large.
@@ -1351,6 +1373,7 @@ def sample_cmd(
         temperature=temperature,
         seed=seed,
         cond=cond_map,
+        rhythm_schema=rhythm_schema,
         progress=progress,
         humanize_vel="vel" in h_opts,
         humanize_micro="micro" in h_opts,

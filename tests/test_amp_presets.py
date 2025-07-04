@@ -31,6 +31,7 @@ def test_choose_preset_rules(tmp_path):
     data = {
         "presets": {"clean": 20, "drive": 90},
         "rules": [{"if": "avg_velocity>100", "preset": "drive"}],
+        "ir": {"clean": "a.wav", "drive": "b.wav"},
     }
     cfg = tmp_path / "amp.yml"
     cfg.write_text(yaml.safe_dump(data))

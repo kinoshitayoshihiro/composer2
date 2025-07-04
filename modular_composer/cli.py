@@ -15,7 +15,7 @@ from typing import Any, cast
 
 import click
 import pretty_midi
-import yaml
+import yaml  # type: ignore
 from music21 import stream as m21stream
 
 import utilities.loop_ingest as loop_ingest
@@ -561,7 +561,11 @@ def _cmd_render(args: list[str]) -> None:
         if ns.normalize_lufs is not None:
             from utilities.loudness_normalizer import normalize_wav
 
-            normalize_wav(wav, wav, ns.normalize_lufs)
+            normalize_wav(
+                wav,
+                section="chorus",
+                target_lufs_map={"chorus": float(ns.normalize_lufs)},
+            )
         print(f"Rendered {wav}")
 
 

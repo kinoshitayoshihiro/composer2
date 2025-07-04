@@ -6,14 +6,15 @@
 humanize_velocities(part_stream, amount=4,
                     use_expr_cc11=False,
                     use_aftertouch=False,
-                    expr_curve="cubic-in",
+                    expr_curve="linear",
                     kick_leak_jitter=0)
 ```
 
-- **expr_curve**: Curve used when converting velocities to CC values.
-  The default ``"cubic-in"`` emphasises softer notes.
- - **kick_leak_jitter**: Random velocity range (default ``0``) applied to
+- **expr_curve**: ``"linear"`` or ``"cubic-in"`` curve used when converting
+  velocities to CC values. ``"cubic-in"`` emphasises softer notes.
+- **kick_leak_jitter**: Random velocity range (default ``0``) applied to
   hi-hats when a kick occurs nearby. Values around ``2``–``5`` work well.
+
 
 The helper :func:`utilities.humanizer.apply` exposes the same parameters and
 passes them through to the Cython implementation when available.

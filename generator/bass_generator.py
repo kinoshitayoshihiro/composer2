@@ -338,9 +338,13 @@ class BassGenerator(BasePartGenerator):
         intensity_label = section_data.get("musical_intent", {}).get("intensity", "medium")
 
         if isinstance(result, dict):
+            shared_preset: str | None = None
             for p in result.values():
                 apply_shift(p)
-                self._auto_tone_shape(p, intensity_label)
+                if shared_preset is None:
+                    shared_preset = self._apply_tone(p, intensity_label)
+                else:
+                    self._apply_tone(p, intensity_label, shared_preset)
                 label = section_data.get("section_name")
                 if label in self.phrase_insertions:
                     self._insert_custom_phrase(p, self.phrase_insertions[label])
@@ -350,7 +354,7 @@ class BassGenerator(BasePartGenerator):
             return result
         else:
             part = apply_shift(result)
-            self._auto_tone_shape(part, intensity_label)
+            self._apply_tone(part, intensity_label)
             label = section_data.get("section_name")
             if label in self.phrase_insertions:
                 self._insert_custom_phrase(part, self.phrase_insertions[label])
@@ -417,6 +421,19 @@ class BassGenerator(BasePartGenerator):
                 midi += 12
             midi = max(self.bass_range_lo, min(self.bass_range_hi, midi))
             n.pitch.midi = midi
+
+    def _apply_tone(
+        self, part: stream.Part, intensity: str, preset: str | None = None
+    ) -> str:
+        notes = list(part.flatten().notes)
+        if not notes:
+            return preset or "clean"
+        avg = statistics.mean(n.volume.velocity or self.base_velocity for n in notes)
+        shaper = ToneShaper()
+        use_preset = preset or shaper.choose_preset(avg, intensity)
+        existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
+        part.extra_cc = existing + shaper.to_cc_events(use_preset, 0.0)
+        return use_preset
 
     def _apply_kick_lock(self, part: stream.Part, kick_offsets_sec: list[float]) -> None:
         if not kick_offsets_sec:

@@ -186,7 +186,7 @@ def apply(
             part_stream,
             amount=4,
             global_settings=gs,
-            expr_curve=str(gs.get("expr_curve", "cubic-in")),
+            expr_curve=str(gs.get("expr_curve", "linear")),
             kick_leak_jitter=int(gs.get("kick_leak_jitter", 0)),
         )
 
@@ -380,7 +380,7 @@ def _humanize_velocities(
     amount: int = 4,
     *,
     global_settings: Mapping[str, Any] | None = None,
-    expr_curve: str = "cubic-in",
+    expr_curve: str = "linear",
     kick_leak_jitter: int = 0,
 ) -> None:
     """Randomise note velocities and optionally emit CC messages."""

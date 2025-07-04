@@ -12,7 +12,15 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install -e .[rnn,live,data_ops] music21
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
+      - name: Install dependencies
+        run: |
+          for i in 1 2 3; do
+            pip install -e .[test,rnn,live,data_ops] -r requirements-test.txt && break || sleep 5
+          done
       - name: mini corpus
         run: |
           python - <<'PY'

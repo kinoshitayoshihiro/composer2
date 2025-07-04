@@ -1,6 +1,14 @@
 <a name="unreleased"></a>
 ## [Unreleased]
 
+<a name="v0.12.0-beta"></a>
+## v0.12.0-beta - 2025-07-04
+### Features
+- CI 安定化
+- Tone & Dynamics 微調整
+### Added
+- ToneShaper auto-apply
+- Humanizer expr_curve/kick_leak
 
 <a name="v1.0.0"></a>
 ## v1.0.0 - 2025-07-01

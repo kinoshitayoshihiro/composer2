@@ -33,6 +33,19 @@ or by passing a mapping to ``humanizer.apply``:
 humanizer.apply(part, global_settings={"use_expr_cc11": True, "use_aftertouch": True})
 ```
 
+Example YAML defining custom curves:
+
+```yaml
+# tone_curves.yml
+expr_curve:
+  cubic-in: [0, 1, 8, 27, 64, 125, 127]
+aftertouch_curve:
+  linear: [0, 21, 42, 64, 85, 106, 127]
+```
+
+Reference this file with ``--expr-curve`` or pass the mapping to
+``humanizer.apply``.
+
 ## Using ``ToneShaper``
 
 Measure the average note velocity of a part and feed the value to
@@ -55,6 +68,22 @@ A simplified decision flow:
 mean velocity + intensity -> preset name
 ```
 
+### Auto-Apply Flow
+
+```mermaid
+flowchart TD
+    A[Compose Part] --> B[Measure Avg Velocity]
+    B --> C{Intensity Label}
+    C --> D[ToneShaper.choose_preset]
+    D --> E[Emit CC31]
+```
+
+| Intensity | AvgVel <60 | AvgVel ≥60 |
+|-----------|------------|-----------|
+| low       | clean      | crunch    |
+| medium    | crunch     | drive     |
+| high      | drive      | fuzz      |
+
 ## Loudness Normalisation
 
 When rendering audio with ``modcompose render`` pass ``--normalize-lufs`` to
@@ -64,6 +93,17 @@ rewrites the WAV file in place:
 
 ```bash
 modcompose render spec.yml --soundfont sf2 --normalize-lufs -14
+```
+
+```mermaid
+flowchart LR
+    A[Rendered WAV] --> B[measure_lufs()]
+    B --> C{Section target?}
+    C -- yes --> D[use mapping]
+    C -- no --> E[use flag]
+    D --> F(normalize_wav())
+    E --> F
+    F --> G[Write WAV]
 ```
 
 ## Automatic ToneShaper Learning

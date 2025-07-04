@@ -7,37 +7,35 @@ except Exception:  # pragma: no cover - optional
     KNeighborsClassifier = None
 
 
+PRESET_TABLE = {
+    ("low", "soft"): "clean",
+    ("low", "loud"): "crunch",
+    ("medium", "soft"): "crunch",
+    ("medium", "loud"): "drive",
+    ("high", "soft"): "drive",
+    ("high", "loud"): "fuzz",
+}
+
+
 class ToneShaper:
     """Select amp/cabinet presets and emit CC events."""
 
     def __init__(self, presets: dict[str, int] | None = None) -> None:
-        self.presets = {"clean": 0, "drive": 32, "svt": 64, "fuzz": 96}
+        self.presets = {"clean": 0, "crunch": 32, "drive": 64, "fuzz": 96}
         if presets:
             self.presets.update(presets)
         self._knn = None
 
     def choose_preset(self, avg_velocity: float, intensity: str) -> str:
         """Return preset name derived from intensity and average velocity."""
-        score = 0
-        if intensity in {"very_high", "high"}:
-            score += 2
-        elif intensity in {"medium_high", "medium"}:
-            score += 1
-        elif intensity in {"medium_low", "low"}:
-            score -= 1
-        if avg_velocity >= 90:
-            score += 2
-        elif avg_velocity >= 75:
-            score += 1
-        elif avg_velocity < 60:
-            score -= 1
-        if score >= 3:
-            return "fuzz"
-        if score == 2:
-            return "drive"
-        if score >= 0:
-            return "svt"
-        return "clean"
+        vel_bucket = "loud" if avg_velocity >= 60 else "soft"
+        int_bucket = (
+            "high"
+            if intensity in ("high", "very_high")
+            else "medium" if intensity in ("medium", "medium_high")
+            else "low"
+        )
+        return PRESET_TABLE.get((int_bucket, vel_bucket), "clean")
 
     def to_cc_events(self, preset_name: str, offset: float) -> list[dict]:
         value = self.presets.get(preset_name, self.presets["clean"])

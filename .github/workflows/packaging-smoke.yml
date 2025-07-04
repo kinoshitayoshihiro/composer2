@@ -14,9 +14,20 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install build mkdocs mkdocs-material mkdocstrings[python]
-      - run: pip install -e .[dev]
-      - run: pip install music21
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
+      - name: Install packaging tools
+        run: |
+          for i in 1 2 3; do
+            pip install build mkdocs mkdocs-material mkdocstrings[python] && break || sleep 5
+          done
+      - name: Install dependencies
+        run: |
+          for i in 1 2 3; do
+            pip install -e .[test] -r requirements-test.txt && break || sleep 5
+          done
       - run: python -m build --wheel
       - run: mkdocs build --strict
       - run: pytest tests/test_wheel_import.py tests/test_docs_build.py -q

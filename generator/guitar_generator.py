@@ -113,11 +113,12 @@ TUNING_PRESETS: dict[str, list[int]] = {
 
 # Stroke direction to velocity multiplier mapping
 _DEFAULT_STROKE_VELOCITY_FACTOR = {
-    "DOWN": 1.20,
-    "D": 1.20,
-    "UP": 0.80,
-    "U": 0.80,
+    "DOWN": 1.10,
+    "D": 1.10,
+    "UP": 0.90,
+    "U": 0.90,
 }
+STROKE_VELOCITY_FACTOR = _DEFAULT_STROKE_VELOCITY_FACTOR
 
 @dataclass
 class FingeringCost:
@@ -234,7 +235,7 @@ class GuitarGenerator(BasePartGenerator):
         pull_off_interval: int = 2,
         hammer_on_probability: float = 0.5,
         pull_off_probability: float = 0.5,
-        default_stroke_direction: str | None = None,
+        default_stroke_direction: str | None = "down",
         default_palm_mute: bool = False,
         default_velocity_curve: str | dict | None = None,
         timing_jitter_ms: float = 0.0,
@@ -426,11 +427,16 @@ class GuitarGenerator(BasePartGenerator):
             self._last_part = result
             if ratio_to_apply is not None:
                 self._apply_swing_internal(self._last_part, float(ratio_to_apply), self.swing_subdiv)
+            intensity = section.get("musical_intent", {}).get("intensity", "medium")
+            self._auto_tone_shape(self._last_part, intensity)
         elif isinstance(result, dict) and result:
             self._last_part = next(iter(result.values()))
             if ratio_to_apply is not None:
                 for p in result.values():
                     self._apply_swing_internal(p, float(ratio_to_apply), self.swing_subdiv)
+            intensity = section.get("musical_intent", {}).get("intensity", "medium")
+            for p in result.values():
+                self._auto_tone_shape(p, intensity)
         else:
             self._last_part = None
         self.swing_subdiv = orig_subdiv

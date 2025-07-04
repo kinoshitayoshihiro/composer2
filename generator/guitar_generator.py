@@ -23,6 +23,7 @@ import music21.pitch as pitch
 import music21.stream as stream
 import music21.volume as m21volume
 import yaml
+import statistics
 
 
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
@@ -270,6 +271,7 @@ class GuitarGenerator(BasePartGenerator):
         fret_shift_weight: int = 1,
         strict_string_order: bool = False,
         fingering_costs: dict[str, int] | None = None,
+        amp_preset_file: str | Path | None = None,
         **kwargs,
     ):
         """Create a guitar part generator.
@@ -371,7 +373,12 @@ class GuitarGenerator(BasePartGenerator):
         )
         self.cfg: dict = kwargs.copy()
         self.style_selector = GuitarStyleSelector()
-        self.tone_shaper = ToneShaper()
+        if amp_preset_file is None:
+            amp_preset_file = Path("data/amp_presets.yml")
+        try:
+            self.tone_shaper = ToneShaper.from_yaml(amp_preset_file)
+        except Exception:
+            self.tone_shaper = ToneShaper()
         self.swing_subdiv = int(swing_subdiv) if swing_subdiv else 8
         # ここから self.part_parameters を参照・初期化する
         if not hasattr(self, "part_parameters"):
@@ -479,6 +486,27 @@ class GuitarGenerator(BasePartGenerator):
             fx_params = section.get("fx_params")
             if fx_params:
                 self._apply_fx_cc(self._last_part, fx_params, section.get("musical_intent", {}))
+            # Automatic amp preset application
+            notes = list(self._last_part.flatten().notes)
+            if notes:
+                avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
+            else:
+                avg_vel = 64.0
+            chosen = self.tone_shaper.choose_preset(
+                section.get("amp_preset"),
+                section.get("intensity"),
+                avg_vel,
+            )
+            if not hasattr(self._last_part, "extra_cc"):
+                self._last_part.extra_cc = []
+            self._last_part.extra_cc.extend(
+                self.tone_shaper.to_cc_events(as_dict=True)
+            )
+            from music21 import metadata as m21metadata
+
+            if self._last_part.metadata is None:
+                self._last_part.metadata = m21metadata.Metadata()
+            setattr(self._last_part.metadata, "ir_file", self.tone_shaper.ir_map.get(chosen))
         elif isinstance(result, dict) and result:
             self._last_part = next(iter(result.values()))
             if ratio_to_apply is not None:
@@ -515,6 +543,27 @@ class GuitarGenerator(BasePartGenerator):
                 if fx_params:
                     for p in result.values():
                         self._apply_fx_cc(p, fx_params, section.get("musical_intent", {}))
+                for p in result.values():
+                    notes = list(p.flatten().notes)
+                    if notes:
+                        avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
+                    else:
+                        avg_vel = 64.0
+                    chosen = self.tone_shaper.choose_preset(
+                        section.get("amp_preset"),
+                        section.get("intensity"),
+                        avg_vel,
+                    )
+                    if not hasattr(p, "extra_cc"):
+                        p.extra_cc = []
+                    p.extra_cc.extend(
+                        self.tone_shaper.to_cc_events(as_dict=True)
+                    )
+                    from music21 import metadata as m21metadata
+
+                    if p.metadata is None:
+                        p.metadata = m21metadata.Metadata()
+                    setattr(p.metadata, "ir_file", self.tone_shaper.ir_map.get(chosen))
         else:
             self._last_part = None
         self.swing_subdiv = orig_subdiv
@@ -2110,19 +2159,16 @@ class GuitarGenerator(BasePartGenerator):
             events.append({"time": 0.0, "cc": 91, "val": int(fx_params["reverb_send"])})
         if "chorus_send" in fx_params:
             events.append({"time": 0.0, "cc": 93, "val": int(fx_params["chorus_send"])})
-        intensity = None
-        if musical_intent and isinstance(musical_intent, dict):
-            intensity = musical_intent.get("intensity")
-        avg_vel = 80
-        notes = list(part.flatten().notes)
-        if notes:
-            avg_vel = sum(n.volume.velocity or 64 for n in notes) / len(notes)
-        preset = fx_params.get("tone_preset")
-        shaper = ToneShaper()
-        if not preset:
-            preset = shaper.choose_preset(avg_vel, str(intensity or "medium"))
-        events.extend(shaper.to_cc_events(preset, 0.0))
+        if "delay_send" in fx_params:
+            events.append({"time": 0.0, "cc": 94, "val": int(fx_params["delay_send"])})
         part.extra_cc = events
+
+    def export_audio(self, midi_path: str | Path, out_wav: str | Path, **kwargs):
+        """Render and convolve using the last composed part's IR."""
+        from utilities.synth import export_audio as synth_export_audio
+
+        part = getattr(self, "_last_part", None)
+        return synth_export_audio(midi_path, out_wav, part=part, **kwargs)
 
 
 

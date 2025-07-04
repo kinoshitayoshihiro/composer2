@@ -142,9 +142,10 @@ def _apply_tone(part: stream.Part, intensity: str) -> None:
         return
     avg_vel = float(np.mean([n.volume.velocity or 0 for n in notes]))
     shaper = ToneShaper()
-    preset = shaper.choose_preset(avg_vel, intensity)
+    preset = shaper.choose_preset(None, intensity, avg_vel)
     existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
-    part.extra_cc = existing + shaper.to_cc_events(preset, 0.0)
+    new_events = shaper.to_cc_events(as_dict=True)
+    part.extra_cc = existing + new_events
 
 DIRECTION_UP = 1
 DIRECTION_DOWN = -1

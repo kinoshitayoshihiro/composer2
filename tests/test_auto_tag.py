@@ -1,7 +1,11 @@
 from pathlib import Path
 
+import importlib.util
 import pretty_midi
 import pytest
+
+if importlib.util.find_spec("sklearn") is None:
+    pytest.skip("sklearn missing", allow_module_level=True)
 
 from data_ops.auto_tag import auto_tag
 

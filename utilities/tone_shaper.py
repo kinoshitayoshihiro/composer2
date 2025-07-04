@@ -43,7 +43,7 @@ class ToneShaper:
     def __init__(
         self,
         preset_map: dict[str, dict[str, int] | int] | None = None,
-        ir_map: dict[str, str] | None = None,
+        ir_map: dict[str, Path] | None = None,
         default_preset: str = "clean",
         rules: list[dict[str, str]] | None = None,
     ) -> None:
@@ -56,7 +56,7 @@ class ToneShaper:
                 else:
                     self.preset_map[name] = {k: int(v) for k, v in data.items()}
 
-        self.ir_map: dict[str, str] = ir_map or {}
+        self.ir_map: dict[str, Path] = {k: Path(v) for k, v in (ir_map or {}).items()}
         self.default_preset: str = default_preset
         self.rules: list[dict[str, str]] = rules or []
 
@@ -86,7 +86,7 @@ class ToneShaper:
 
         presets_raw = data.get("presets", {})
         levels_raw = data.get("levels", {})
-        ir_map = data.get("ir", {})
+        ir_raw = data.get("ir", {})
         rules = data.get("rules", [])
 
         preset_map: dict[str, dict[str, int]] = {}
@@ -95,6 +95,13 @@ class ToneShaper:
             if name in levels_raw:
                 entry.update({k: int(v) for k, v in levels_raw[name].items()})
             preset_map[name] = entry
+
+        ir_map: dict[str, Path] = {}
+        for name, path_str in ir_raw.items():
+            p = Path(path_str)
+            if not p.is_file():
+                logger.warning("IR file missing: %s", path_str)
+            ir_map[name] = p
 
         return cls(preset_map=preset_map, ir_map=ir_map, rules=rules)
 
@@ -174,13 +181,13 @@ class ToneShaper:
     # ------------------------------------------------------
     # multi-CC events (amp/rev/cho/dly)
     # ------------------------------------------------------
-    def to_cc_events(
+    def _events_for_selected(
         self,
         offset_ql: float = 0.0,
         cc_amp: int = 31,
         cc_rev: int = 91,
-        cc_cho: int = 93,
-        cc_del: int = 94,
+        cc_del: int = 93,
+        cc_cho: int = 94,
         *,
         as_dict: bool = False,
     ) -> list[tuple[float, int, int]] | list[dict[str, int | float]]:
@@ -195,12 +202,50 @@ class ToneShaper:
         events: list[tuple[float, int, int]] = [
             (float(offset_ql), cc_amp, amp),
             (float(offset_ql), cc_rev, rev),
-            (float(offset_ql), cc_cho, cho),
             (float(offset_ql), cc_del, dly),
+            (float(offset_ql), cc_cho, cho),
         ]
         if as_dict:
             return [{"time": o, "cc": c, "val": v} for o, c, v in events]
         return events
+
+    def to_cc_events(
+        self,
+        amp_name: str,
+        intensity: str,
+        mix: float = 1.0,
+        *,
+        as_dict: bool = False,
+    ) -> list[tuple[float, int, int]] | list[dict[str, int | float]]:
+        """Return CC events for ``amp_name`` scaled by ``intensity`` and ``mix``."""
+
+        preset = self.preset_map.get(amp_name) or self.preset_map.get(
+            self.default_preset, {}
+        )
+        amp_base = int(preset.get("amp", 0))
+        amp = max(0, min(127, amp_base))
+        rev = max(0, min(127, int(preset.get("reverb", int(amp_base * 0.3)) * mix)))
+        cho = max(0, min(127, int(preset.get("chorus", int(amp_base * 0.3)) * mix)))
+        dly = max(0, min(127, int(preset.get("delay", int(amp_base * 0.3)) * mix)))
+
+        events = [
+            (0.0, 31, amp),
+            (0.0, 91, rev),
+            (0.0, 93, dly),
+            (0.0, 94, cho),
+        ]
+        if as_dict:
+            return [{"time": t, "cc": c, "val": v} for t, c, v in events]
+        return events
+
+    def render_with_ir(self, mix_wav: Path, preset_name: str, out: Path) -> Path:
+        """Apply impulse response for ``preset_name`` to ``mix_wav``."""
+        ir_path = self.ir_map.get(preset_name)
+        if ir_path is None:
+            raise KeyError(preset_name)
+        from .convolver import render_with_ir as _render
+
+        return _render(mix_wav, ir_path, out)
 
     # ------------------------------------------------------
     # KNN (MFCC → preset)  optional

@@ -7,7 +7,7 @@ def test_amp_preset_loading():
     ts = ToneShaper.from_yaml("data/amp_presets.yml")
     assert ts.preset_map["drive"]["amp"] == 90
     assert ts.preset_map["drive"]["reverb"] == 60
-    assert ts.ir_map["crunch"].endswith(".wav")
+    assert ts.ir_map["crunch"].suffix == ".wav"
 
 
 def test_choose_preset_priority():
@@ -19,8 +19,7 @@ def test_choose_preset_priority():
 
 def test_cc_event_generation():
     ts = ToneShaper({"clean": {"amp": 20}}, {})
-    ts.choose_preset("clean", None, 80)
-    events = ts.to_cc_events()
+    events = ts.to_cc_events("clean", "low")
     assert (0.0, 31, 20) in events
     assert any(e[1] == 93 for e in events)
 

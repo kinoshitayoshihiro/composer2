@@ -69,9 +69,20 @@ class BasePartGenerator(ABC):
             return
         avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
         shaper = ToneShaper()
-        shaper.choose_preset(avg_vel, intensity)
-        existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
-        part.extra_cc = existing + shaper.to_cc_events(0.0, as_dict=True)
+# ---- ToneShaper から CC イベントを付与 ----
+# 平均 velocity と楽曲の intensity をもとにプリセット名を決定
+        preset_name = shaper.choose_preset(avg_vel, intensity)
+
+# CC31（アンプ）を含む一連の CC イベントを生成
+# to_cc_events は (preset_name, intensity) -> [(time, cc, val), …] を返す
+        events = [
+            {"time": t, "cc": cc, "val": val}
+            for t, cc, val in shaper.to_cc_events(preset_name, intensity)
+        ]
+
+# 既に付与されている CC のうち、CC31 以外は温存してマージ
+        existing = [e for e in getattr(part, "extra_cc", []) if e.get("cc") != 31]
+        part.extra_cc = existing + events
 
     def compose(
         self,

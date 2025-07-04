@@ -270,6 +270,7 @@ class GuitarGenerator(BasePartGenerator):
         strict_string_order: bool = False,
         fingering_costs: dict[str, int] | None = None,
         amp_preset_file: str | Path | None = None,
+        tone_shaper: ToneShaper | None = None,
         **kwargs,
     ):
         """Create a guitar part generator.
@@ -371,12 +372,15 @@ class GuitarGenerator(BasePartGenerator):
         )
         self.cfg: dict = kwargs.copy()
         self.style_selector = GuitarStyleSelector()
-        if amp_preset_file is None:
-            amp_preset_file = Path("data/amp_presets.yml")
-        try:
-            self.tone_shaper = ToneShaper.from_yaml(amp_preset_file)
-        except Exception:
-            self.tone_shaper = ToneShaper()
+        if tone_shaper is not None:
+            self.tone_shaper = tone_shaper
+        else:
+            if amp_preset_file is None:
+                amp_preset_file = Path("data/amp_presets.yml")
+            try:
+                self.tone_shaper = ToneShaper.from_yaml(amp_preset_file)
+            except Exception:
+                self.tone_shaper = ToneShaper()
         self.swing_subdiv = int(swing_subdiv) if swing_subdiv else 8
         # ここから self.part_parameters を参照・初期化する
         if not hasattr(self, "part_parameters"):
@@ -549,20 +553,27 @@ class GuitarGenerator(BasePartGenerator):
             # ── Amp / Cab プリセット & IR ファイル登録 ───────────
             notes   = list(p.flatten().notes)
             avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes) if notes else 64.0
-            chosen  = self.tone_shaper.choose_preset(
-                section.get("amp_preset"),
-                section.get("intensity"),
+            part_cfg = section.get("part_params", {}).get(self.part_name, {})
+            chosen = self.tone_shaper.choose_preset(
+                part_cfg.get("amp_preset"),
+                part_cfg.get("fx_preset_intensity")
+                or section.get("intensity"),
                 avg_vel,
             )
 
             if not hasattr(p, "extra_cc"):
                 p.extra_cc = []
-            p.extra_cc.extend(self.tone_shaper.to_cc_events(as_dict=True))
-
+            events = self.tone_shaper.to_cc_events(
+                chosen,
+                part_cfg.get("fx_preset_intensity", "med"),
+                as_dict=False,
+            )
+            p.extra_cc.extend({"time": t, "cc": c, "val": v} for t, c, v in events)
             from music21 import metadata as m21metadata
             if p.metadata is None:
                 p.metadata = m21metadata.Metadata()
             setattr(p.metadata, "ir_file", self.tone_shaper.ir_map.get(chosen))
+            setattr(p.metadata, "extra_cc", events)
 
         # ------------------------------------------------------------------
         # 単一 Part か dict かで処理分岐

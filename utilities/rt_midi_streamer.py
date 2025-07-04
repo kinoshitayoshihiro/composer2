@@ -137,3 +137,27 @@ class RtMidiStreamer:
             "stdev_ms": statistics.pstdev(self.latencies) * 1000.0,
             "max_ms": max(self.latencies) * 1000.0,
         }
+
+    # --------------------------------------------------------------
+    # Low level CC helpers
+    # --------------------------------------------------------------
+    def send_cc(self, cc: int, value: int, time: float) -> None:
+        """Send Control Change message at absolute ``time`` seconds."""
+        loop = asyncio.get_event_loop()
+
+        async def _task() -> None:
+            await asyncio.sleep(max(0.0, time - loop.time() - self.buffer))
+            self._send_with_retry([0xB0, int(cc), int(value)])
+
+        loop.create_task(_task())
+
+
+def stream_cc_events(part: stream.Part, streamer: RtMidiStreamer) -> None:
+    """Send ``part.extra_cc`` events using ``streamer``."""
+    now = asyncio.get_event_loop().time()
+    for ev in getattr(part, "extra_cc", []):
+        t = now + beat_to_seconds(float(ev.get("time", 0.0)), streamer.tempo.events)
+        cc = int(ev.get("cc", 0))
+        val = int(ev.get("val", 0))
+        streamer.send_cc(cc, val, t)
+

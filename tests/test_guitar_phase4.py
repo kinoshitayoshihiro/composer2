@@ -76,6 +76,29 @@ def test_pick_position_cc74(_basic_gen):
     assert val2 > val1
 
 
+def test_fx_pick_position_cc74(_basic_gen):
+    gen = _basic_gen()
+    gen.part_parameters["qpat"] = {
+        "pattern": [{"offset": 0.0, "duration": 1.0}],
+        "reference_duration_ql": 1.0,
+    }
+    base = {
+        "section_name": "A",
+        "q_length": 1.0,
+        "humanized_duration_beats": 1.0,
+        "original_chord_label": "C",
+        "chord_symbol_for_voicing": "C",
+        "part_params": {"g": {"guitar_rhythm_key": "qpat"}},
+    }
+    sec1 = base | {"fx_params": {"pick_position": 0.2}}
+    sec2 = base | {"fx_params": {"pick_position": 0.8}}
+    p1 = gen.compose(section_data=sec1)
+    p2 = gen.compose(section_data=sec2)
+    val1 = [c["val"] for c in p1.extra_cc if c.get("cc") == 74][0]
+    val2 = [c["val"] for c in p2.extra_cc if c.get("cc") == 74][0]
+    assert val2 > val1
+
+
 def test_style_hint_soft(_basic_gen):
     gen = _basic_gen()
     gen.part_parameters["qpat"] = {

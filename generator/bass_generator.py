@@ -28,6 +28,7 @@ from music21 import (
 )
 
 from utilities import MIN_NOTE_DURATION_QL, humanizer
+from utilities.bass_transformer import BassTransformer
 from utilities.tone_shaper import ToneShaper
 
 try:
@@ -131,6 +132,33 @@ except ImportError as e:
 
         def model_dump(self, exclude_unset=True):
             return {}
+
+
+def sample_transformer_bass(
+    model_name: str,
+    bars: int = 4,
+    *,
+    top_k: int = 8,
+    temperature: float = 1.0,
+    rhythm_schema: str | None = None,
+) -> list[dict[str, Any]]:
+    """Sample ``bars`` worth of bass tokens and return MIDI-style events."""
+
+    model = BassTransformer(model_name)
+    seq: list[int] = [0]
+    for _ in range(bars):
+        seq.extend(model.sample(seq[-16:], top_k, temperature, rhythm_schema))
+    events: list[dict[str, Any]] = []
+    for i, tok in enumerate(seq[1:]):
+        events.append(
+            {
+                "pitch": int(tok),
+                "velocity": 100,
+                "offset": i * 0.25,
+                "duration": 0.25,
+            }
+        )
+    return events
 
 
 logger = logging.getLogger("modular_composer.bass_generator")
@@ -438,21 +466,48 @@ class BassGenerator(BasePartGenerator):
                 midi += 12
             midi = max(self.bass_range_lo, min(self.bass_range_hi, midi))
             n.pitch.midi = midi
-
     def _apply_tone(
-        self, part: stream.Part, intensity: str, preset: str | None = None
+        self,
+        part: stream.Part,
+        intensity: str,
+        preset: str | None = None,
     ) -> str:
+        """
+        Piano/Bass パートに ToneShaper の CC31 系を付与する。
+
+        Parameters
+        ----------
+        part : music21.stream.Part
+        intensity : str
+            "low" / "medium" / "high" などのセクション強度ラベル
+        preset : str | None
+            ユーザーが明示指定したプリセット名（無ければ自動選択）
+
+        Returns
+        -------
+        str
+            実際に適用されたプリセット名
+        """
+        # ── 平均ベロシティを算出 ──────────────────────────────
         notes = list(part.flatten().notes)
         if not notes:
             return preset or "clean"
-        avg = statistics.mean(n.volume.velocity or self.base_velocity for n in notes)
+
+        avg_vel = statistics.mean(n.volume.velocity or self.base_velocity for n in notes)
+
+        # ── ToneShaper でプリセット選択 ─────────────────────
         shaper = ToneShaper()
-        use_preset = preset or shaper.choose_preset(None, intensity, avg)
-        existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
-        part.extra_cc = existing + shaper.to_cc_events(
-            use_preset, intensity, as_dict=True
+        chosen = preset or shaper.choose_preset(
+            amp_preset=None,
+            intensity=intensity,
+            avg_velocity=avg_vel,
         )
-        return use_preset
+
+        # ── 既存 extra_cc から CC31 系を除去して付け替え ────
+        existing = [cc for cc in getattr(part, "extra_cc", []) if cc.get("cc") != 31]
+        part.extra_cc = existing + shaper.to_cc_events(offset_ql=0.0, as_dict=True)
+
+        return chosen
 
     def _apply_kick_lock(self, part: stream.Part, kick_offsets_sec: list[float]) -> None:
         if not kick_offsets_sec:

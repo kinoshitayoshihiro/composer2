@@ -14,26 +14,26 @@ pip install transformers torch mido python-rtmidi
 Generate with the new backend:
 
 ```bash
-modcompose live model.pkl --ai-backend transformer --model-name gpt2-medium
+modcompose live model.pkl --backend transformer --model-name gpt2-medium
 ```
 
 Or produce a short JSON sample:
 
 ```bash
-modcompose sample model.pkl --ai-backend transformer --model-name gpt2-medium
+modcompose sample model.pkl --backend transformer --model-name gpt2-medium
 ```
 
 Add rhythm style tokens with `--rhythm-schema`:
 
 ```bash
-modcompose sample model.pkl --ai-backend transformer \
+modcompose sample model.pkl --backend transformer \
   --model-name gpt2-medium --rhythm-schema <swing16>
 ```
 
 Combine with the phrase diversity filter to avoid repetition:
 
 ```bash
-modcompose sample model.pkl --ai-backend transformer \
+modcompose sample model.pkl --backend transformer \
   --model-name gpt2-medium --rhythm-schema <straight8> | \
   modcompose diversity-filter --n 8 --max-sim 0.8
 ```

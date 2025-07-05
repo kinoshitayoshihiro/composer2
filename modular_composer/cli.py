@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
+import warnings
 
 import click
 import pretty_midi
@@ -37,6 +38,18 @@ from utilities.groove_sampler_ngram import Event, State  # noqa: E402
 from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401,E402
 from utilities.peak_synchroniser import PeakSynchroniser  # noqa: E402
 from utilities.realtime_engine import RealtimeEngine  # noqa: E402
+
+
+def _schema_to_swing(schema: str | None) -> float | None:
+    """Map rhythm schema token to swing ratio."""
+    if not schema:
+        return None
+    table = {
+        "<straight8>": 0.5,
+        "<swing16>": 0.66,
+        "<shuffle>": 0.75,
+    }
+    return table.get(schema)
 from utilities.tempo_utils import beat_to_seconds  # noqa: E402
 from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple  # noqa: E402
 
@@ -384,9 +397,17 @@ def live_cmd(
         raise click.ClickException("Realtime engine unavailable")
     if backend == "rnn" and _lazy_import_groove_rnn() is None:
         raise click.ClickException("Install extras: rnn")
-    engine = RealtimeEngine(
-        str(model), backend=backend, bpm=bpm, sync=sync, buffer_bars=buffer
-    )
+    try:
+        engine = RealtimeEngine(
+            str(model),
+            backend=backend,
+            bpm=bpm,
+            sync=sync,
+            buffer_bars=buffer,
+            swing_ratio=_schema_to_swing(rhythm_schema),
+        )
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
     meter = None
     hud_thread = None
     if lufs_hud:
@@ -449,6 +470,13 @@ def _cmd_sample(args: list[str]) -> None:
         choices=["ngram", "rnn", "transformer"],
         default="ngram",
     )
+    ap.add_argument(
+        "--ai-backend",
+        dest="ai_backend",
+        choices=["ngram", "rnn", "transformer"],
+        help=argparse.SUPPRESS,
+        default=None,
+    )
     ap.add_argument("--model-name", type=str, default="gpt2-medium")
     ap.add_argument("--use-history", action="store_true", default=False)
     ap.add_argument("--temperature", type=float, default=1.0)
@@ -463,6 +491,9 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("--tempo-curve", type=Path)
     ap.add_argument("--rhythm-schema", type=str, default=None)
     ns = ap.parse_args(args)
+    if ns.ai_backend:
+        warnings.warn("--ai-backend is deprecated; use --backend", DeprecationWarning)
+        ns.backend = ns.ai_backend
     if ns.seed is not None:
         random.seed(ns.seed)
     if ns.backend == "transformer":
@@ -474,12 +505,15 @@ def _cmd_sample(args: list[str]) -> None:
             prompt = [ev for h in hist for ev in h.get("events", [])][-128:]
         from generator.bass_generator import sample_transformer_bass
 
-        events = sample_transformer_bass(
-            ns.model_name,
-            ns.length,
-            temperature=ns.temperature,
-            rhythm_schema=ns.rhythm_schema,
-        )
+        try:
+            events = sample_transformer_bass(
+                ns.model_name,
+                ns.length,
+                temperature=ns.temperature,
+                rhythm_schema=ns.rhythm_schema,
+            )
+        except RuntimeError as exc:
+            raise click.ClickException(str(exc)) from exc
         if ns.use_history:
             record_generate({"model_name": ns.model_name}, events)
     else:
@@ -495,6 +529,12 @@ def _cmd_sample(args: list[str]) -> None:
                 cond_kick=ns.cond_kick,
             ),
         )
+        ratio = _schema_to_swing(ns.rhythm_schema)
+        if ratio is not None:
+            from utilities.humanizer import swing_offset
+
+            for ev in events:
+                ev["offset"] = swing_offset(float(ev.get("offset", 0.0)), ratio)
     if ns.peaks:
         import json
 
@@ -682,7 +722,11 @@ def _cmd_realtime(args: list[str]) -> None:
 
 def _cmd_interact(args: list[str]) -> None:
     ap = argparse.ArgumentParser(prog="modcompose interact")
-    ap.add_argument("--backend", default="transformer")
+    ap.add_argument(
+        "--backend",
+        choices=["ngram", "rnn", "transformer"],
+        default="ngram",
+    )
     ap.add_argument("--model-name", default="gpt2-medium")
     ap.add_argument("--bpm", type=float, default=120.0)
     ap.add_argument("--midi-in", default="")
@@ -690,15 +734,31 @@ def _cmd_interact(args: list[str]) -> None:
     ap.add_argument("--buffer-ms", type=int, default=100)
     ap.add_argument("--lookahead-bars", type=float, default=0.5)
     ns = ap.parse_args(args)
-    from utilities.interactive_engine import InteractiveEngine
+    if ns.backend == "transformer":
+        from utilities import interactive_engine
+        from utilities.interactive_engine import TransformerInteractiveEngine
+        if interactive_engine.mido is None:
+            raise click.ClickException("mido not installed")
 
-    engine = InteractiveEngine(
-        backend=ns.backend,
-        model_name=ns.model_name,
-        bpm=ns.bpm,
-        buffer_ms=ns.buffer_ms,
-        lookahead_bars=ns.lookahead_bars,
-    )
+        try:
+            engine = TransformerInteractiveEngine(
+                model_name=ns.model_name,
+                bpm=ns.bpm,
+                buffer_ms=ns.buffer_ms,
+                lookahead_bars=ns.lookahead_bars,
+            )
+        except RuntimeError as exc:
+            raise click.ClickException(str(exc)) from exc
+    else:
+        if RealtimeEngine is None:
+            raise RuntimeError("Realtime engine unavailable")
+        engine = RealtimeEngine(
+            ns.model_name,
+            backend=ns.backend,
+            bpm=ns.bpm,
+            buffer_bars=max(1, int(ns.lookahead_bars)),
+            swing_ratio=_schema_to_swing(ns.rhythm_schema),
+        )
     engine.add_callback(lambda ev: print(json.dumps(ev)))
     import asyncio
 

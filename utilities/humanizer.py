@@ -146,6 +146,17 @@ def apply(
             )
             n.quarterLength *= factor
 
+    if prof.get("gliss_pairs"):
+        extra = getattr(part_stream, "extra_cc", [])
+        for a, b in zip(notes, notes[1:]):
+            if int(a.pitch.midi) != int(b.pitch.midi):
+                dur = float(b.offset) - float(a.offset)
+                val = max(0, min(127, int(dur * 127)))
+                off = float(a.offset)
+                extra.append({"time": off, "cc": 5, "val": val})
+                extra.append({"time": off, "cc": 65, "val": 127})
+        part_stream.extra_cc = extra
+
     if kick_leak_velocity_jitter:
         bpm_el = part_stream.recurse().getElementsByClass(tempo.MetronomeMark).first()
         bpm = bpm_el.number if bpm_el else 120

@@ -1,4 +1,5 @@
-import torch
+import pytest
+torch = pytest.importorskip("torch")
 from utilities import bass_transformer
 
 

@@ -24,8 +24,28 @@ def cluster_phrases(events_list: Sequence[Sequence[dict]], n: int = 4) -> List[b
     X = vec.fit_transform(texts)
     sim = cosine_similarity(X)
     if hdbscan is None:
-        warnings.warn("hdbscan not installed; skipping phrase clustering", RuntimeWarning)
-        return [True] * len(texts)
+        warnings.warn(
+            "hdbscan not installed; using Jaccard dedupe fallback",
+            RuntimeWarning,
+        )
+        token_sets = [set(t.split()) for t in texts]
+
+        def _jacc(a: set[str], b: set[str]) -> float:
+            if not a and not b:
+                return 1.0
+            return len(a & b) / len(a | b)
+
+        keep: List[bool] = []
+        kept_sets: list[set[str]] = []
+        for ts in token_sets:
+            if any(_jacc(ts, ks) >= 0.75 for ks in kept_sets):
+                keep.append(False)
+            else:
+                keep.append(True)
+                kept_sets.append(ts)
+        while len(keep) < len(texts):
+            keep.append(True)
+        return keep
     clusterer = hdbscan.HDBSCAN(min_cluster_size=n, metric="precomputed")
     labels = clusterer.fit_predict(1 - sim)
     keep: List[bool] = []

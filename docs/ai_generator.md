@@ -31,3 +31,18 @@ Quick sampling via CLI:
 modcompose sample model.pkl --backend transformer --model-name gpt2-medium \
   --rhythm-schema <straight8>
 ```
+
+Few-shot history improves continuity:
+
+```bash
+modcompose sample model.pkl --backend transformer --model-name gpt2-medium \
+  --use-history --rhythm-schema <straight8>
+```
+
+For quicker experiments consider the tiny model `tiny-random-GPT2` or attach a
+LoRA adapter:
+
+```bash
+pip install tiny-random-gpt2
+modcompose sample model.pkl --backend transformer --model-name tiny-random-GPT2 --rhythm-schema <straight8>
+```

@@ -36,7 +36,9 @@ def test_phrase_marks_crescendo(_basic_gen):
 
 def test_execution_style_harmonic(_basic_gen):
     gen = _basic_gen()
-    notes = gen._create_notes_from_event(harmony.ChordSymbol("C"), {"execution_style": "harmonic"}, {}, 1.0, 80)
+    notes = gen._create_notes_from_event(
+        harmony.ChordSymbol("C"), {"execution_style": "harmonic"}, {}, 1.0, 80
+    )
     elem = notes[0]
     if hasattr(elem, "notes"):
         elem = elem.notes[0]
@@ -99,6 +101,35 @@ def test_fx_pick_position_cc74(_basic_gen):
     assert val2 > val1
 
 
+def test_pick_position_extremes(_basic_gen):
+    gen = _basic_gen()
+    gen.part_parameters["qpat"] = {
+        "pattern": [{"offset": 0.0, "duration": 1.0}],
+        "reference_duration_ql": 1.0,
+    }
+    base = {
+        "section_name": "A",
+        "q_length": 1.0,
+        "humanized_duration_beats": 1.0,
+        "original_chord_label": "C",
+        "chord_symbol_for_voicing": "C",
+        "musical_intent": {},
+        "shared_tracks": {},
+    }
+    sec_low = base | {
+        "part_params": {"g": {"guitar_rhythm_key": "qpat", "pick_position": 0.0}}
+    }
+    sec_high = base | {
+        "part_params": {"g": {"guitar_rhythm_key": "qpat", "pick_position": 1.0}}
+    }
+    p_low = gen.compose(section_data=sec_low)
+    p_high = gen.compose(section_data=sec_high)
+    v_low = [c["val"] for c in p_low.extra_cc if c.get("cc") == 74][0]
+    v_high = [c["val"] for c in p_high.extra_cc if c.get("cc") == 74][0]
+    assert 35 <= v_low <= 45
+    assert 85 <= v_high <= 95
+
+
 def test_style_hint_soft(_basic_gen):
     gen = _basic_gen()
     gen.part_parameters["qpat"] = {
@@ -118,14 +149,20 @@ def test_style_hint_soft(_basic_gen):
     soft_sec = base_sec | {"style_hint": "soft"}
     p_base = gen.compose(section_data=base_sec)
     p_soft = gen.compose(section_data=soft_sec)
-    base_vel = sum(n.volume.velocity for n in p_base.flatten().notes) / len(p_base.flatten().notes)
-    soft_vel = sum(n.volume.velocity for n in p_soft.flatten().notes) / len(p_soft.flatten().notes)
+    base_vel = sum(n.volume.velocity for n in p_base.flatten().notes) / len(
+        p_base.flatten().notes
+    )
+    soft_vel = sum(n.volume.velocity for n in p_soft.flatten().notes) / len(
+        p_soft.flatten().notes
+    )
     assert soft_vel < base_vel
 
 
 def test_execution_style_vibrato(_basic_gen):
     gen = _basic_gen()
-    notes = gen._create_notes_from_event(harmony.ChordSymbol("C"), {"execution_style": "vibrato"}, {}, 1.0, 80)
+    notes = gen._create_notes_from_event(
+        harmony.ChordSymbol("C"), {"execution_style": "vibrato"}, {}, 1.0, 80
+    )
     elem = notes[0]
     if hasattr(elem, "notes"):
         elem = elem.notes[0]
@@ -162,9 +199,7 @@ def test_execution_style_pinch_harmonic(_basic_gen):
     elem = notes[0]
     if hasattr(elem, "notes"):
         elem = elem.notes[0]
-    assert any(
-        a.__class__.__name__ == "PinchHarmonic" for a in elem.articulations
-    )
+    assert any(a.__class__.__name__ == "PinchHarmonic" for a in elem.articulations)
 
 
 def test_style_db_external_load(_basic_gen, tmp_path):
@@ -210,7 +245,9 @@ def test_envelope_map_multi_cc(_basic_gen):
         "part_params": {"g": {"guitar_rhythm_key": "qpat"}},
         "musical_intent": {},
         "shared_tracks": {},
-        "envelope_map": {0.0: {"type": "crescendo", "duration_ql": 1.0, "cc": [11, 72, 74]}},
+        "envelope_map": {
+            0.0: {"type": "crescendo", "duration_ql": 1.0, "cc": [11, 72, 74]}
+        },
     }
     part = gen.compose(section_data=sec)
     ccs = {e["cc"] for e in getattr(part, "extra_cc", [])}

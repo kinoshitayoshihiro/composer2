@@ -60,7 +60,7 @@ def test_effect_envelope_increasing(_gen):
         "original_chord_label": "C",
         "chord_symbol_for_voicing": "C",
         "part_params": {"g": {"guitar_rhythm_key": "pat"}},
-        "effect_envelope": {
+        "fx_envelope": {
             0.0: {"cc": 91, "start_val": 0, "end_val": 100, "duration_ql": 4.0, "shape": "lin"}
         },
     }
@@ -96,6 +96,40 @@ def test_export_audio_realtime(monkeypatch, tmp_path, _gen):
 
     gen.export_audio(midi, wav, realtime=True, streamer=Dummy())
     assert calls
+
+
+def test_export_audio_realtime_fx_env(monkeypatch, tmp_path, _gen):
+    gen = _gen()
+    gen.part_parameters["pat"] = {
+        "pattern": [{"offset": 0.0, "duration": 1.0}],
+        "reference_duration_ql": 1.0,
+    }
+    sec = {
+        "section_name": "A",
+        "q_length": 1.0,
+        "humanized_duration_beats": 1.0,
+        "original_chord_label": "C",
+        "chord_symbol_for_voicing": "C",
+        "part_params": {"g": {"guitar_rhythm_key": "pat"}},
+        "fx_envelope": {
+            0.0: {"cc": 91, "start_val": 0, "end_val": 100, "duration_ql": 1.0}
+        },
+    }
+    gen.compose(section_data=sec)
+    midi = tmp_path / "i.mid"
+    wav = tmp_path / "o.wav"
+    midi.write_text("m")
+
+    recorded = []
+
+    class Dummy:
+        tempo = type("T", (), {"events": [{"beat": 0.0, "bpm": 120.0}]})()
+
+        def send_cc(self, cc, value, time):
+            recorded.append(cc)
+
+    gen.export_audio(midi, wav, realtime=True, streamer=Dummy())
+    assert 91 in recorded
 
 
 def test_mix_metadata_json(tmp_path, monkeypatch, _gen):

@@ -43,6 +43,8 @@ def test_fx_cc_injection(_gen):
     assert (91, 80) in ccs
     assert (93, 60) in ccs
     assert any(e[0] == 31 for e in ccs)
+    times = [e["time"] for e in part.extra_cc]
+    assert times == sorted(times)
 
 
 def test_effect_envelope_increasing(_gen):

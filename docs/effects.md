@@ -20,6 +20,7 @@ fx_envelope:
 ```
 
 This envelope is converted to CC91/93/94 events via `ToneShaper.to_cc_events`.
+By default CC91 controls reverb send, **93 controls delay**, and **94 controls chorus**.
 
 ## FX Envelope Example
 

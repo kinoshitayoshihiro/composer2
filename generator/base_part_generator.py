@@ -7,6 +7,7 @@ import logging
 import random
 from music21 import instrument as m21instrument
 from utilities.tone_shaper import ToneShaper
+from utilities.cc_tools import merge_cc_events
 
 try:
     from utilities.prettymidi_sync import apply_groove_pretty, load_groove_profile
@@ -72,6 +73,26 @@ class BasePartGenerator(ABC):
             return
 
         avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
+        shaper = ToneShaper()
+# ---- ToneShaper から CC イベントを付与 ----
+# 平均 velocity と楽曲の intensity をもとにプリセット名を決定
+        preset_name = shaper.choose_preset(avg_vel, intensity)
+
+# CC31（アンプ）を含む一連の CC イベントを生成
+# to_cc_events は (preset_name, intensity) -> [(time, cc, val), …] を返す
+        events = [
+            {"time": t, "cc": cc, "val": val}
+            for t, cc, val in shaper.to_cc_events(preset_name, intensity)
+        ]
+
+# 既に付与されている CC のうち、CC31 以外は温存してマージ
+        existing = [e for e in getattr(part, "extra_cc", []) if e.get("cc") != 31]
+        to_add = existing + events
+        tuples = [(e["time"], e["cc"], e["val"]) for e in to_add]
+        base = set(getattr(part, "_extra_cc", set()))
+        merged = merge_cc_events(base, tuples)
+        part._extra_cc = set(merged)
+
 
         shaper = ToneShaper()               # グローバル設定を渡す場合はここで引数化
         preset_name = shaper.choose_preset(  # (amp_preset=None, intensity, avg_velocity)

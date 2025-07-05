@@ -38,13 +38,14 @@ def export_mix_json(parts, path: str) -> None:
         meta = getattr(part, "metadata", None)
         if meta is not None:
             ir_file = getattr(meta, "ir_file", None)
-            if ir_file:
+            if ir_file is not None:
                 p = Path(ir_file)
-                if p.is_file():
-                    entry["ir_file"] = str(p)
-                else:
+                entry["ir_file"] = str(p)
+                if not p.is_file():
                     logger.warning("IR file missing: %s", ir_file)
-                    entry["ir_file"] = None
+            fx_env = getattr(meta, "fx_envelope", None)
+            if fx_env:
+                entry["fx_envelope"] = fx_env
         shaper = getattr(part, "tone_shaper", None)
         if shaper is not None and hasattr(shaper, "_selected"):
             entry["preset"] = shaper._selected

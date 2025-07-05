@@ -153,11 +153,19 @@ class RtMidiStreamer:
 
 
 def stream_cc_events(part: stream.Part, streamer: RtMidiStreamer) -> None:
-    """Send ``part.extra_cc`` events using ``streamer``."""
+    """Send all CC events from ``part`` using ``streamer``."""
     now = asyncio.get_event_loop().time()
+    events: list[tuple[float, int, int]] = []
+    for e in getattr(part, "_extra_cc", set()):
+        events.append((float(e[0]), int(e[1]), int(e[2])))
     for ev in getattr(part, "extra_cc", []):
-        t = now + beat_to_seconds(float(ev.get("time", 0.0)), streamer.tempo.events)
-        cc = int(ev.get("cc", 0))
-        val = int(ev.get("val", 0))
-        streamer.send_cc(cc, val, t)
+        if isinstance(ev, dict):
+            t, c, v = ev.get("time", 0.0), ev.get("cc", 0), ev.get("val", 0)
+        else:
+            t, c, v = ev
+        events.append((float(t), int(c), int(v)))
+    events.sort(key=lambda x: x[0])
+    for t, cc, val in events:
+        abs_time = now + beat_to_seconds(t, streamer.tempo.events)
+        streamer.send_cc(cc, val, abs_time)
 

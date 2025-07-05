@@ -125,12 +125,11 @@ TUNING_PRESETS: dict[str, list[int]] = {
 
 # Stroke direction to velocity multiplier mapping
 _DEFAULT_STROKE_VELOCITY_FACTOR = {
-    "DOWN": 1.10,
-    "D": 1.10,
-    "UP": 0.90,
-    "U": 0.90,
+    "DOWN": 1.20,
+    "D": 1.20,
+    "UP": 0.80,
+    "U": 0.80,
 }
-STROKE_VELOCITY_FACTOR = _DEFAULT_STROKE_VELOCITY_FACTOR
 
 STROKE_VELOCITY_FACTOR = _DEFAULT_STROKE_VELOCITY_FACTOR.copy()
 
@@ -159,6 +158,12 @@ def _add_cc_events(part: stream.Part, events: Sequence[CCEvent]) -> None:
 
 def _finalize_cc_events(part: stream.Part) -> None:
     events: set[CCEvent] = set(getattr(part, "_extra_cc", set()))
+    if hasattr(part, "extra_cc"):
+        existing = [
+            (e["time"], e["cc"], e["val"]) if isinstance(e, dict) else e
+            for e in getattr(part, "extra_cc", [])
+        ]
+        events = set(merge_cc_events(events, existing))
     part.extra_cc = to_sorted_dicts(events)
     if hasattr(part, "_extra_cc"):
         delattr(part, "_extra_cc")

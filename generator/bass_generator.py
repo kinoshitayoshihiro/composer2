@@ -28,6 +28,7 @@ from music21 import (
 )
 
 from utilities import MIN_NOTE_DURATION_QL, humanizer
+from utilities.tone_shaper import ToneShaper
 
 try:
     from cyext import (
@@ -446,9 +447,11 @@ class BassGenerator(BasePartGenerator):
             return preset or "clean"
         avg = statistics.mean(n.volume.velocity or self.base_velocity for n in notes)
         shaper = ToneShaper()
-        use_preset = preset or shaper.choose_preset(avg, intensity)
+        use_preset = preset or shaper.choose_preset(None, intensity, avg)
         existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
-        part.extra_cc = existing + shaper.to_cc_events(use_preset, 0.0)
+        part.extra_cc = existing + shaper.to_cc_events(
+            use_preset, intensity, as_dict=True
+        )
         return use_preset
 
     def _apply_kick_lock(self, part: stream.Part, kick_offsets_sec: list[float]) -> None:

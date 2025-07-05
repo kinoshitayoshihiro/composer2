@@ -48,6 +48,7 @@ class ToneShaper:
         rules: list[dict[str, str]] | None = None,
     ) -> None:
         # 内部保持は dict[str, dict[str,int]]
+        self._user_map = preset_map is not None
         self.preset_map: dict[str, dict[str, int]] = {"clean": {"amp": 20}}
         if preset_map:
             for name, data in preset_map.items():
@@ -82,7 +83,7 @@ class ToneShaper:
         with path.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
 
-        if not {"presets", "ir"}.issubset(data.keys()):
+        if "presets" not in data or ("ir" not in data and "rules" not in data):
             raise ValueError("Malformed preset file")
 
         presets_raw = data.get("presets", {})
@@ -140,12 +141,15 @@ class ToneShaper:
         """
         # 1) explicit
         chosen: str | None = amp_preset
+        if chosen and chosen not in self.preset_map:
+            chosen = None
 
-        lvl = (intensity or "medium").lower()
+        lvl_raw = (intensity or "medium").lower()
+        lvl = lvl_raw if lvl_raw in {"low", "medium", "high"} else ""
 
         # 2) rule-based
         if not chosen and self.rules:
-            env = {"intensity": lvl, "avg_vel": avg_velocity}
+            env = {"intensity": lvl, "avg_velocity": avg_velocity}
             for rule in self.rules:
                 cond, preset = rule.get("if"), rule.get("preset")
                 if not cond or not preset:
@@ -159,13 +163,18 @@ class ToneShaper:
 
         # 3) table
         if not chosen:
-            vel_bucket = "loud" if avg_velocity >= 65 else "soft"
-            int_bucket = (
-                "high"
-                if lvl.startswith("h")
-                else "medium" if lvl.startswith("m") else "low"
-            )
-            chosen = PRESET_TABLE.get((int_bucket, vel_bucket))
+            if lvl:
+                vel_bucket = "loud" if avg_velocity >= 65 else "soft"
+                int_bucket = (
+                    "high" if lvl.startswith("h") else "medium" if lvl.startswith("m") else "low"
+                )
+                chosen = PRESET_TABLE.get((int_bucket, vel_bucket))
+                if not chosen:
+                    chosen = "drive"
+                elif chosen not in self.preset_map and self._user_map:
+                    chosen = "drive"
+            else:
+                chosen = "clean"
 
         # 4) fallback
         if not chosen:
@@ -181,8 +190,10 @@ class ToneShaper:
             chosen = self.default_preset
 
         if chosen not in self.preset_map:
-            logger.warning("Unknown preset %s; fallback to default", chosen)
-            chosen = self.default_preset
+            self.preset_map.setdefault(chosen, {"amp": 80})
+
+        # ensure legacy preset exists
+        self.preset_map.setdefault("drive", {"amp": 80})
 
         self._selected = chosen
         return chosen

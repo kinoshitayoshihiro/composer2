@@ -19,7 +19,7 @@ def test_choose_preset_drive() -> None:
     """
     shaper = ToneShaper({"drive": {"amp": 90}})
     preset = shaper.choose_preset(None, "high", 90.0)
-    assert preset == "clean"
+    assert preset == "drive"
 
 
 def test_choose_preset_table() -> None:
@@ -32,9 +32,9 @@ def test_choose_preset_table() -> None:
     # avg_velocity が 50 / intensity "low" → clean
     assert shaper.choose_preset(None, "low", 50.0) == "clean"
     # avg_velocity が 70 / intensity "medium" → drive (存在しなければ clean)
-    assert shaper.choose_preset(None, "medium", 70.0) in {"drive", "clean"}
+    assert shaper.choose_preset(None, "medium", 70.0) == "drive"
     # avg_velocity が 90 / intensity "high" → fuzz (存在しなければ clean)
-    assert shaper.choose_preset(None, "high", 90.0) in {"fuzz", "clean"}
+    assert shaper.choose_preset(None, "high", 90.0) == "fuzz"
 
 
 def test_choose_preset_fallback() -> None:

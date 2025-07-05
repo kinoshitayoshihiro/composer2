@@ -20,7 +20,7 @@ def test_guitar_generator_cc31(_basic_gen) -> None:
     cc31 = [c for c in part.extra_cc if c["cc"] == 31]
     assert cc31 and cc31[0]["val"] == 20
     assert hasattr(part.metadata, "extra_cc")
-    assert (0.0, 31, 20) in part.metadata.extra_cc
+    assert {"time": 0.0, "cc": 31, "val": 20} in part.metadata.extra_cc
 
 
 @pytest.mark.fx

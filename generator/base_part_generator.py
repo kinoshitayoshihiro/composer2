@@ -7,6 +7,7 @@ import logging
 import random
 from music21 import instrument as m21instrument
 from utilities.tone_shaper import ToneShaper
+from utilities.cc_tools import merge_cc_events
 
 try:
     from utilities.prettymidi_sync import apply_groove_pretty, load_groove_profile
@@ -82,7 +83,11 @@ class BasePartGenerator(ABC):
 
 # 既に付与されている CC のうち、CC31 以外は温存してマージ
         existing = [e for e in getattr(part, "extra_cc", []) if e.get("cc") != 31]
-        part.extra_cc = existing + events
+        to_add = existing + events
+        tuples = [(e["time"], e["cc"], e["val"]) for e in to_add]
+        base = set(getattr(part, "_extra_cc", set()))
+        merged = merge_cc_events(base, tuples)
+        part._extra_cc = set(merged)
 
     def compose(
         self,

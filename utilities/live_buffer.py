@@ -6,6 +6,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Iterable
 import random
+import time
 
 
 class LiveBuffer:
@@ -37,6 +38,7 @@ class LiveBuffer:
             self.buffer.append(fut)
 
     def get_next(self) -> Any:
+        start = time.monotonic()
         if not self.buffer:
             self.logger.log(self.warn_level, "LiveBuffer underrun; regenerating")
             self._fill()
@@ -47,6 +49,13 @@ class LiveBuffer:
             self.logger.log(self.warn_level, "Generation failed: %s", exc)
             result = None
         self._fill()
+        elapsed = time.monotonic() - start
+        jitter = 0.03 + (0.005 if self.warn_level < logging.DEBUG else 0.0)
+        if elapsed > jitter:
+            self.logger.log(
+                self.warn_level,
+                "LiveBuffer jitter %.1f ms", elapsed * 1000.0
+            )
         return result
 
     def shutdown(self) -> None:

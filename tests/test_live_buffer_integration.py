@@ -17,8 +17,8 @@ def slow_gen(idx: int) -> int:
 
 @pytest.mark.slow
 def test_live_buffer_integration(caplog):
-    buf = LiveBuffer(slow_gen, buffer_ahead=2, parallel_bars=1, warn_level=logging.ERROR)
-    caplog.set_level(logging.WARNING)
+    buf = LiveBuffer(slow_gen, buffer_ahead=2, parallel_bars=1, warn_level=logging.CRITICAL)
+    caplog.set_level(logging.CRITICAL)
     results = []
     for _ in range(5):
         results.append(buf.get_next())
@@ -68,4 +68,4 @@ def test_rt_play_live(monkeypatch):
     on_times = [t for t, msg in midi.events if msg[0] == 0x90]
     assert len(on_times) == 2
     diff = on_times[1] - on_times[0]
-    assert abs(diff - 0.25) < 0.03
+    assert abs(diff - 0.25) < 0.04

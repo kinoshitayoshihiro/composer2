@@ -1,4 +1,7 @@
 import json
+import pytest
+
+pytest.importorskip("torch")
 
 from modular_composer import cli
 from utilities import user_history

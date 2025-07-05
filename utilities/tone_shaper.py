@@ -127,22 +127,22 @@ class ToneShaper:
     # ------------------------------------------------------
     def choose_preset(
         self,
-        amp_preset: str | None = None,
+        amp_hint: str | None = None,
         intensity: str | None = None,
-        avg_velocity: float = 64.0,
+        avg_velocity: float | None = None,
     ) -> str:
         """
         Select amp preset based on intensity & velocity.
 
-        1. `amp_preset` 明示指定を最優先
+        1. `amp_hint` 明示指定を最優先
         2. rule ベース (`self.rules`)
         3. PRESET_TABLE (threshold 65)
         4. fallback heuristic
         """
+        avg_velocity = 64.0 if avg_velocity is None else float(avg_velocity)
+
         # 1) explicit
-        chosen: str | None = amp_preset
-        if chosen and chosen not in self.preset_map:
-            chosen = None
+        chosen: str | None = amp_hint if amp_hint in self.preset_map else None
 
         lvl_raw = (intensity or "medium").lower()
         lvl = lvl_raw if lvl_raw in {"low", "medium", "high"} else ""
@@ -197,6 +197,29 @@ class ToneShaper:
 
         self._selected = chosen
         return chosen
+
+    # ------------------------------------------------------
+    # deprecated wrapper for old signature
+    # ------------------------------------------------------
+    @staticmethod
+    def _deprecated(func):
+        import functools, warnings
+
+        @functools.wraps(func)
+        def wrapper(*a, **k):
+            warnings.warn("choose_preset legacy signature is deprecated", DeprecationWarning, stacklevel=2)
+            return func(*a, **k)
+
+        return wrapper
+
+    @_deprecated
+    def choose_preset_legacy(
+        self,
+        amp_preset: str | None = None,
+        intensity: str | None = None,
+        avg_velocity: float = 64.0,
+    ) -> str:
+        return self.choose_preset(amp_preset, intensity, avg_velocity)
 
     # ------------------------------------------------------
     # シンプル CC31 だけ返す互換 API

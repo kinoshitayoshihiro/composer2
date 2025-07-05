@@ -1,4 +1,7 @@
+import pytest
 from utilities import interactive_engine
+
+pytest.importorskip("mido")
 
 
 class Msg:

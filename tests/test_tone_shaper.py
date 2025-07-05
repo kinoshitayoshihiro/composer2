@@ -17,6 +17,22 @@ def test_choose_preset_drive() -> None:
     assert preset == "drive"
 
 
+def test_choose_preset_table() -> None:
+    """
+    ToneShaper がデフォルトのプリセット・ルールを保持している場合の
+    マッチング動作を確認。
+    """
+    shaper = ToneShaper()
+
+    # avg_velocity が 50 / intensity "low" → clean
+    assert shaper.choose_preset(None, "low", 50.0) == "clean"
+    # avg_velocity が 70 / intensity "medium" → drive (存在しなければ clean)
+    assert shaper.choose_preset(None, "medium", 70.0) == "drive"
+    # avg_velocity が 90 / intensity "high" → fuzz (存在しなければ clean)
+    assert shaper.choose_preset(None, "high", 90.0) == "fuzz"
+    assert preset == "clean"        # default_fallback
+
+
 # ──────────────────────────────────────────────────────────────
 # PRESET_TABLE マトリクス通りの動作確認
 # ──────────────────────────────────────────────────────────────

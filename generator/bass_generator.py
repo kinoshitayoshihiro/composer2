@@ -466,19 +466,48 @@ class BassGenerator(BasePartGenerator):
                 midi += 12
             midi = max(self.bass_range_lo, min(self.bass_range_hi, midi))
             n.pitch.midi = midi
-
     def _apply_tone(
-        self, part: stream.Part, intensity: str, preset: str | None = None
+        self,
+        part: stream.Part,
+        intensity: str,
+        preset: str | None = None,
     ) -> str:
+        """
+        Piano/Bass パートに ToneShaper の CC31 系を付与する。
+
+        Parameters
+        ----------
+        part : music21.stream.Part
+        intensity : str
+            "low" / "medium" / "high" などのセクション強度ラベル
+        preset : str | None
+            ユーザーが明示指定したプリセット名（無ければ自動選択）
+
+        Returns
+        -------
+        str
+            実際に適用されたプリセット名
+        """
+        # ── 平均ベロシティを算出 ──────────────────────────────
         notes = list(part.flatten().notes)
         if not notes:
             return preset or "clean"
-        avg = statistics.mean(n.volume.velocity or self.base_velocity for n in notes)
+
+        avg_vel = statistics.mean(n.volume.velocity or self.base_velocity for n in notes)
+
+        # ── ToneShaper でプリセット選択 ─────────────────────
         shaper = ToneShaper()
-        use_preset = preset or shaper.choose_preset(None, intensity, avg)
-        existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
+        chosen = preset or shaper.choose_preset(
+            amp_preset=None,
+            intensity=intensity,
+            avg_velocity=avg_vel,
+        )
+
+        # ── 既存 extra_cc から CC31 系を除去して付け替え ────
+        existing = [cc for cc in getattr(part, "extra_cc", []) if cc.get("cc") != 31]
         part.extra_cc = existing + shaper.to_cc_events(offset_ql=0.0, as_dict=True)
-        return use_preset
+
+        return chosen
 
     def _apply_kick_lock(self, part: stream.Part, kick_offsets_sec: list[float]) -> None:
         if not kick_offsets_sec:

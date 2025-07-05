@@ -19,7 +19,11 @@ def render_midi(midi_path: str | Path, out_wav: str | Path, sf2_path: str | Path
 
     soundfont = sf2_path or os.environ.get("SF2_PATH")
     if not soundfont or not Path(soundfont).exists():
-        raise RuntimeError("SoundFont path not provided or does not exist")
+        default_sf = Path("/usr/share/sounds/sf2/FluidR3_GM.sf2")
+        if default_sf.exists():
+            soundfont = str(default_sf)
+        else:
+            raise RuntimeError("SoundFont path not provided or does not exist")
 
     midi_path = Path(midi_path)
     out_wav = Path(out_wav)

@@ -31,7 +31,12 @@ try:
         ext_modules=ext_modules,
         package_data={"cyext": ["*.so"]} if ext_modules else {},
         extras_require={
-            "test": ["scikit-learn>=1.3.0", "librosa>=0.10.0", "soundfile>=0.12.0"],
+            "test": [
+                "scikit-learn>=1.3.0",
+                "librosa>=0.10.0",
+                "soundfile>=0.12.0",
+                "scipy>=1.10",
+            ],
         },
     )
 except Exception as exc:  # pragma: no cover - build may fail
@@ -41,6 +46,11 @@ except Exception as exc:  # pragma: no cover - build may fail
         ext_modules=[],
         package_data={},
         extras_require={
-            "test": ["scikit-learn>=1.3.0", "librosa>=0.10.0", "soundfile>=0.12.0"],
+            "test": [
+                "scikit-learn>=1.3.0",
+                "librosa>=0.10.0",
+                "soundfile>=0.12.0",
+                "scipy>=1.10",
+            ],
         },
     )

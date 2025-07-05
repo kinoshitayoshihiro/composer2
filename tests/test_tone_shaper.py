@@ -103,3 +103,11 @@ def test_from_yaml_invalid_value(tmp_path) -> None:
     bad_yaml.write_text("presets: {bad: 200}\nir: {bad: foo.wav}")
     with pytest.raises(ValueError):
         ToneShaper.from_yaml(bad_yaml)
+
+
+def test_preset_map_no_duplicates() -> None:
+    ts = ToneShaper({"drive": {"amp": 80}})
+    ts.choose_preset(None, "medium", 70.0)
+    keys = list(ts.preset_map.keys())
+    assert len(keys) == len(set(keys))
+    assert "drive_default" in ts.preset_map

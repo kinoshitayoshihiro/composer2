@@ -18,6 +18,7 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Late-Humanize & Leak Jitter](docs/humanizer.md#late-humanize)
 - [Groove Enhancements](docs/groove.md)
 - [Phrase Diversity](docs/diversity.md)
+- [Effects & Automation](docs/effects.md)
 
 
 ## Setup
@@ -245,6 +246,14 @@ levels:
 ```
 When you later call `export_audio()` the selected IR file will be used
 automatically if `part.metadata.ir_file` is present.
+
+To convolve the rendered WAV offline run:
+
+```bash
+python -m generator.guitar_generator --render section.yml --ir irs/blackface.wav
+```
+
+See [Effects and Automation](docs/effects.md#オフライン-ir-レンダリング) for details.
 
 ## Humanize – intensity envelope / swing override
 

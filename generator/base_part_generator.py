@@ -7,7 +7,8 @@ import logging
 import random
 from music21 import instrument as m21instrument
 from utilities.tone_shaper import ToneShaper
-from utilities.cc_tools import merge_cc_events
+from utilities.cc_tools import merge_cc_events, finalize_cc_events
+from utilities import fx_envelope
 
 try:
     from utilities.prettymidi_sync import apply_groove_pretty, load_groove_profile
@@ -63,29 +64,30 @@ class BasePartGenerator(ABC):
         # 各ジェネレーター固有のロガー
         name = self.part_name or self.__class__.__name__.lower()
         self.logger = logging.getLogger(f"modular_composer.{name}")
+
     # --------------------------------------------------------------
     # Tone & Dynamics - 自動アンプ／キャビネット CC 付与
     # --------------------------------------------------------------
     def _auto_tone_shape(self, part: stream.Part, intensity: str) -> None:
         """平均 Velocity と Intensity から ToneShaper を適用し CC を追加。"""
         notes = list(part.flatten().notes)
-        if not notes:                       # 無音パートなら何もしない
+        if not notes:  # 無音パートなら何もしない
             return
 
         avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
         shaper = ToneShaper()
-# ---- ToneShaper から CC イベントを付与 ----
-# 平均 velocity と楽曲の intensity をもとにプリセット名を決定
+        # ---- ToneShaper から CC イベントを付与 ----
+        # 平均 velocity と楽曲の intensity をもとにプリセット名を決定
         preset_name = shaper.choose_preset(avg_vel, intensity)
 
-# CC31（アンプ）を含む一連の CC イベントを生成
-# to_cc_events は (preset_name, intensity) -> [(time, cc, val), …] を返す
+        # CC31（アンプ）を含む一連の CC イベントを生成
+        # to_cc_events は (preset_name, intensity) -> [(time, cc, val), …] を返す
         events = [
             {"time": t, "cc": cc, "val": val}
             for t, cc, val in shaper.to_cc_events(preset_name, intensity)
         ]
 
-# 既に付与されている CC のうち、CC31 以外は温存してマージ
+        # 既に付与されている CC のうち、CC31 以外は温存してマージ
         existing = [e for e in getattr(part, "extra_cc", []) if e.get("cc") != 31]
         to_add = existing + events
         tuples = [(e["time"], e["cc"], e["val"]) for e in to_add]
@@ -93,12 +95,13 @@ class BasePartGenerator(ABC):
         merged = merge_cc_events(base, tuples)
         part._extra_cc = set(merged)
 
-
-        shaper = ToneShaper()               # グローバル設定を渡す場合はここで引数化
-        preset_name = shaper.choose_preset(  # (amp_preset=None, intensity, avg_velocity)
-            None,
-            intensity,
-            avg_vel,
+        shaper = ToneShaper()  # グローバル設定を渡す場合はここで引数化
+        preset_name = (
+            shaper.choose_preset(  # (amp_preset=None, intensity, avg_velocity)
+                None,
+                intensity,
+                avg_vel,
+            )
         )
 
         # CC31 系イベントを生成（dict 形式）
@@ -107,6 +110,20 @@ class BasePartGenerator(ABC):
         # 既存 CC を温存しつつ CC31 系を上書き
         existing = [cc for cc in getattr(part, "extra_cc", []) if cc.get("cc") != 31]
         part.extra_cc = existing + tone_events
+
+    def _apply_effect_envelope(
+        self, part: stream.Part, envelope_map: dict | None
+    ) -> None:
+        """Helper to apply effect automation envelopes."""
+        if not envelope_map:
+            return
+        try:
+            fx_envelope.apply(part, envelope_map, bpm=float(self.global_tempo or 120.0))
+            if getattr(part, "metadata", None) is not None:
+                part.metadata.fx_envelope = envelope_map
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.error("Failed to apply effect envelope: %s", exc, exc_info=True)
+
     def compose(
         self,
         *,
@@ -137,9 +154,8 @@ class BasePartGenerator(ABC):
         swing_lh = self.overrides.swing_ratio_lh if self.overrides else None
 
         offset_profile = (
-            (self.overrides and getattr(self.overrides, "offset_profile", None))
-            or section_data.get("part_params", {}).get("offset_profile")
-        )
+            self.overrides and getattr(self.overrides, "offset_profile", None)
+        ) or section_data.get("part_params", {}).get("offset_profile")
         offset_profile_rh = (
             self.overrides.offset_profile_rh if self.overrides else None
         ) or section_data.get("part_params", {}).get("offset_profile_rh")
@@ -175,8 +191,7 @@ class BasePartGenerator(ABC):
             humanize_params = part_specific_humanize_params or {}
             if humanize_params.get("enable", False) and p.flatten().notes:
                 try:
-                    template = humanize_params.get(
-                        "template_name", "default_subtle")
+                    template = humanize_params.get("template_name", "default_subtle")
                     custom = humanize_params.get("custom_params", {})
                     p = apply_humanization_to_part(
                         p, template_name=template, custom_params=custom
@@ -191,10 +206,10 @@ class BasePartGenerator(ABC):
                     )
             return p
 
-        intensity = section_data.get(
-            "musical_intent", {}).get("intensity", "medium")
-        scale = {"low": 0.9, "medium": 1.0, "high": 1.1,
-                 "very_high": 1.2}.get(intensity, 1.0)
+        intensity = section_data.get("musical_intent", {}).get("intensity", "medium")
+        scale = {"low": 0.9, "medium": 1.0, "high": 1.1, "very_high": 1.2}.get(
+            intensity, 1.0
+        )
 
         def final_process(
             p: stream.Part,
@@ -202,8 +217,8 @@ class BasePartGenerator(ABC):
             profile: str | None = None,
         ) -> stream.Part:
             part = process_one(p)
-            humanize_apply(part, None)          # 基本ヒューマナイズ
-            apply_envelope(                      # intensity → Velocity スケール
+            humanize_apply(part, None)  # 基本ヒューマナイズ
+            apply_envelope(  # intensity → Velocity スケール
                 part,
                 0,
                 int(section_data.get("q_length", 0)),
@@ -211,9 +226,20 @@ class BasePartGenerator(ABC):
             )
             if profile:
                 apply_offset_profile(part, profile)
-            if ratio is not None:               # Swing が指定されていれば適用
+            if ratio is not None:  # Swing が指定されていれば適用
                 apply_swing(part, ratio, subdiv=self.swing_subdiv)
-            self._auto_tone_shape(part, intensity)
+            env_map = section_data.get("fx_envelope") or section_data.get(
+                "effect_envelope"
+            )
+            self._apply_effect_envelope(part, env_map)
+            post = getattr(self, "_post_process_generated_part", None)
+            if callable(post):
+                try:
+                    post(part, section_data, ratio)
+                except Exception:  # pragma: no cover - best effort
+                    pass
+            finalize_cc_events(part)
+            self._last_section = section_data
             return part
 
         if isinstance(parts, dict):
@@ -221,14 +247,22 @@ class BasePartGenerator(ABC):
                 k: final_process(
                     v,
                     (
-                        swing_rh if "rh" in k.lower() and swing_rh is not None
-                        else swing_lh if "lh" in k.lower() and swing_lh is not None
-                        else swing
+                        swing_rh
+                        if "rh" in k.lower() and swing_rh is not None
+                        else (
+                            swing_lh
+                            if "lh" in k.lower() and swing_lh is not None
+                            else swing
+                        )
                     ),
                     (
-                        offset_profile_rh if "rh" in k.lower() and offset_profile_rh is not None
-                        else offset_profile_lh if "lh" in k.lower() and offset_profile_lh is not None
-                        else offset_profile
+                        offset_profile_rh
+                        if "rh" in k.lower() and offset_profile_rh is not None
+                        else (
+                            offset_profile_lh
+                            if "lh" in k.lower() and offset_profile_lh is not None
+                            else offset_profile
+                        )
                     ),
                 )
                 for k, v in parts.items()

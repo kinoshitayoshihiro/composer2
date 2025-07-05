@@ -99,8 +99,11 @@ presets:
   clean: {amp: 0}
   drive: {amp: 64, reverb: 40}
 ir:
-  clean: clean_ir.wav
-  drive: drive_ir.wav
+  clean: assets/irs/clean_ir.wav
+  drive: assets/irs/drive_ir.wav
+rules:
+  clean: avg_vel<70
+  drive: avg_vel>90 and intensity=='high'
 ```
 
 Load with ``ToneShaper.from_yaml('amp.yml')``.
@@ -147,6 +150,17 @@ shaper.fit({"clean": mfcc_clean, "drive": mfcc_drive})
 ```
 
 You can then call `predict_preset(mfcc)` to infer the closest preset.
+
+## Late‑Humanize Jitter
+
+```mermaid
+flowchart LR
+    A[Notes to play] --> B[Delay]
+    B --> C{±jitter}
+    C --> D[Output]
+```
+
+Pass `--late-humanize-jitter <ms>` to add a random offset after the normal late-humanize delay.
 
 ## Real‑time Loudness HUD
 

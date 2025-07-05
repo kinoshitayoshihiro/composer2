@@ -34,6 +34,14 @@ pip install -r requirements.txt      # core + music21
 pip install -e .[gui]                # optional GUI
 ```
 
+### Quick Start
+
+Install AI and audio extras for transformer-based generation:
+
+```bash
+pip install 'modular-composer[ai,audio]'
+```
+
 ### フル機能を使うには
 
 追加機能（RNN 学習や GUI、外部 MIDI 同期）を利用する場合は
@@ -762,11 +770,11 @@ See [docs/ai_generator.md](docs/ai_generator.md) for advanced usage.
 Install `transformers` and `torch` to experiment with a language-model driven bass line
 generator. Pass `--backend transformer` and specify the model name and optional rhythm schema.
 
-| Token | Description |
-|-------|-------------|
-| `<straight8>` | Even eighths |
-| `<swing16>` | Swing 16th feel |
-| `<shuffle>` | Shuffle groove |
+| Token | フィール | 説明 |
+|-------|---------|------|
+| `<straight8>` | ストレート 8分 | 基本的な 8 分刻み |
+| `<swing16>`   | スウィング 16分 | 軽い跳ね感 |
+| `<shuffle>`   | シャッフルフィール | 複雑な 3 連グルーヴ |
 
 ```bash
 modcompose live model.pkl --backend transformer --model-name gpt2-medium --rhythm-schema <straight8>

@@ -75,6 +75,7 @@ class RealtimeEngine:
         sync: str = "internal",
         buffer_bars: int = 1,
         midi_in_ports: list[str] | None = None,
+        swing_ratio: float | None = None,
     ) -> None:
         if backend not in {"rnn", "ngram"}:
             raise ValueError("backend must be 'rnn' or 'ngram'")
@@ -91,6 +92,7 @@ class RealtimeEngine:
         self.bpm = bpm
         self.sync = sync
         self.buffer_bars = buffer_bars
+        self.swing_ratio = swing_ratio
         self.midi_in_ports = midi_in_ports or []
         self._incoming: list[tuple[int, str]] = []
         self._bar = 0
@@ -172,8 +174,15 @@ class RealtimeEngine:
         if self.backend == "rnn":
             if sample_rnn_v2 is None:
                 raise click.ClickException("Install extras: rnn")
-            return sample_rnn_v2(self.model, bars=1)
-        return list(sample_ngram(self.model, bars=1))
+            events = sample_rnn_v2(self.model, bars=1)
+        else:
+            events = list(sample_ngram(self.model, bars=1))
+        if self.swing_ratio:
+            from .humanizer import swing_offset
+
+            for ev in events:
+                ev["offset"] = swing_offset(float(ev.get("offset", 0.0)), self.swing_ratio)
+        return events
 
     def run(self, bars: int, sink: Callable[[Event], None]) -> None:
         self._next = self._gen_bar()

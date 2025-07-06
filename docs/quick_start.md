@@ -76,3 +76,14 @@ Python からは ``GuitarGenerator.export_audio`` を使って IR 名を指定�
 ```python
 gen.export_audio(ir_name="mesa412")
 ```
+
+### StringsGenerator Phase 2 Example
+
+```yaml
+part_params:
+  strings:
+    default_velocity_curve: [30, 80, 110]
+    timing_jitter_ms: 20
+    timing_jitter_scale_mode: bpm_relative
+    bow_position: tasto
+```

@@ -2,34 +2,38 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict
+import copy
+import enum
 import math
 import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
 
-from music21 import (
-    harmony,
-    instrument as m21instrument,
-    note,
-    pitch,
-    stream,
-    volume,
-    chord,
-    tie,
-    interval,
-)
 import music21.articulations as articulations
 import music21.expressions as expressions
 import music21.spanner as m21spanner
-import copy
+from music21 import (
+    chord,
+    harmony,
+    interval,
+    note,
+    pitch,
+    stream,
+    tie,
+    volume,
+)
+from music21 import (
+    instrument as m21instrument,
+)
 
+from utilities.core_music_utils import (
+    get_key_signature_object,
+    get_time_signature_object,
+)
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 
 from .base_part_generator import BasePartGenerator
-from utilities.core_music_utils import (
-    get_time_signature_object,
-    get_key_signature_object,
-)
 
 
 @dataclass(frozen=True)
@@ -41,11 +45,19 @@ class _SectionInfo:
     velocity_pos: float
 
 
+class BowPosition(enum.StrEnum):
+    """Bow position enumeration."""
+
+    TASTO = "tasto"
+    NORMALE = "normale"
+    PONTICELLO = "ponticello"
+
+
 def parse_articulation_field(field: Any) -> list[str]:
     """Parse an articulation specification string into a list of names."""
     if field is None:
         return []
-    if isinstance(field, (list, tuple, set)):
+    if isinstance(field, (list | tuple | set)):
         result: list[str] = []
         for item in field:
             result.extend(parse_articulation_field(item))
@@ -53,6 +65,16 @@ def parse_articulation_field(field: Any) -> list[str]:
     text = str(field)
     tokens = [t for t in re.split(r"[+\s]+", text) if t]
     return tokens
+
+
+def parse_bow_position(value: Any) -> BowPosition | None:
+    """Convert *value* into a :class:`BowPosition` or ``None``."""
+    if value is None:
+        return None
+    try:
+        return BowPosition(str(value).lower())
+    except Exception:
+        return BowPosition.NORMALE
 
 
 class StringsGenerator(BasePartGenerator):
@@ -75,11 +97,15 @@ class StringsGenerator(BasePartGenerator):
         global_time_signature: str | None = None,
         global_key_signature_tonic: str | None = None,
         global_key_signature_mode: str | None = None,
-        voice_allocation: Dict[str, int] | None = None,
+        voice_allocation: dict[str, int] | None = None,
         default_velocity_curve: list[int] | list[float] | str | None = None,
         voicing_mode: str = "close",
-        divisi: bool | Dict[str, str] | None = None,
+        divisi: bool | dict[str, str] | None = None,
         avoid_low_open_strings: bool = False,
+        timing_jitter_ms: float = 0.0,
+        timing_jitter_mode: str = "uniform",
+        timing_jitter_scale_mode: str = "absolute",
+        balance_scale: float = 1.0,
         rng=None,
         **kwargs: Any,
     ) -> None:
@@ -98,12 +124,28 @@ class StringsGenerator(BasePartGenerator):
             ts_obj.barDuration.quarterLength if ts_obj else self.bar_length
         )
         self.bar_length = self.measure_duration
+        from collections.abc import Sequence
+
         self.voice_allocation = voice_allocation or {}
-        self.default_velocity_curve = self._prepare_velocity_map(default_velocity_curve)
+        if (
+            isinstance(default_velocity_curve, Sequence)
+            and not isinstance(default_velocity_curve, str)
+        ):
+            self.default_velocity_curve = self._prepare_velocity_map(
+                default_velocity_curve
+            )
+        else:
+            self.default_velocity_curve = self._select_velocity_curve(
+                default_velocity_curve
+            )
         self.voicing_mode = str(voicing_mode or "close").lower()
         self.divisi = divisi
         self.avoid_low_open_strings = bool(avoid_low_open_strings)
-        self._last_parts: Dict[str, stream.Part] | None = None
+        self.timing_jitter_ms = float(timing_jitter_ms)
+        self.timing_jitter_mode = str(timing_jitter_mode or "uniform").lower()
+        self.timing_jitter_scale_mode = str(timing_jitter_scale_mode or "absolute").lower()
+        self.balance_scale = float(balance_scale)
+        self._last_parts: dict[str, stream.Part] | None = None
         self._articulation_map = {
             "sustain": None,
             "staccato": articulations.Staccato(),
@@ -114,15 +156,15 @@ class StringsGenerator(BasePartGenerator):
             "pizz": expressions.TextExpression("pizz."),
             "arco": expressions.TextExpression("arco"),
         }
-        self._legato_active: Dict[str, list[note.NotRest]] = {}
-        self._legato_groups: Dict[str, list[tuple[note.NotRest, note.NotRest]]] = {}
+        self._legato_active: dict[str, list[note.NotRest]] = {}
+        self._legato_groups: dict[str, list[tuple[note.NotRest, note.NotRest]]] = {}
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
     def compose(
-        self, *, section_data: Dict[str, Any], **kwargs: Any
-    ) -> Dict[str, stream.Part]:
+        self, *, section_data: dict[str, Any], **kwargs: Any
+    ) -> dict[str, stream.Part]:
         result = super().compose(section_data=section_data, **kwargs)
         if not isinstance(result, dict):
             raise RuntimeError(
@@ -147,13 +189,11 @@ class StringsGenerator(BasePartGenerator):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    def _prepare_velocity_map(self, spec: Any) -> list[int] | None:
+    def _prepare_velocity_map(self, spec: Any) -> list[int]:
+        """Return a normalized 128-point velocity curve."""
         curve = resolve_velocity_curve(spec)
         if not curve:
-            if spec is None:
-                curve = self._default_log_curve()
-            else:
-                return None
+            curve = self._default_log_curve()
         if all(0.0 <= v <= 1.5 for v in curve):
             curve = [int(127 * v) for v in curve]
         else:
@@ -177,6 +217,33 @@ class StringsGenerator(BasePartGenerator):
                 result.append(int(round(val)))
             curve = result
         return [max(0, min(127, int(v))) for v in curve]
+
+    def _select_velocity_curve(self, style: Sequence[int | float] | str | None) -> list[int]:
+        """Return velocity curve list for *style* or fallback."""
+        from collections.abc import Sequence as _Seq
+
+        if style is None:
+            base = getattr(self, "default_velocity_curve", None)
+            if base is not None:
+                return list(base)
+            return self._default_log_curve()
+
+        if not isinstance(style, str) and isinstance(style, _Seq):
+            try:
+                import numpy as np  # type: ignore
+
+                if isinstance(style, np.ndarray):
+                    curve = style.tolist()
+                else:
+                    curve = list(style)
+            except Exception:
+                curve = list(style)
+            return self._prepare_velocity_map(curve)
+
+        curve = resolve_velocity_curve(style)
+        if not curve:
+            return self._default_log_curve()
+        return self._prepare_velocity_map(curve)
 
     @staticmethod
     def _default_log_curve() -> list[int]:
@@ -203,15 +270,45 @@ class StringsGenerator(BasePartGenerator):
             q = pitch.Pitch(midi=high)
         return q
 
-    def _velocity_for(self, section: _SectionInfo) -> int | None:
+    def _estimate_velocity(self, section: _SectionInfo) -> tuple[int, float] | None:
+        """Return (base velocity, factor) for *section*."""
         if not self.default_velocity_curve:
             return None
-        idx = int(round(127 * section.velocity_pos))
-        idx = min(127, idx)
+        idx = min(127, int(round(127 * section.velocity_pos)))
         base = self.default_velocity_curve[idx]
-        val = base + (127 - base) * (section.velocity_pos - 0.5) * 0.25
-        val = max(1, min(127, val))
-        return int(round(val))
+        factor = section.velocity_pos * self.balance_scale
+        return base, factor
+
+    def _velocity_for(self, section: _SectionInfo) -> int | None:
+        result = self._estimate_velocity(section)
+        if result is None:
+            return None
+        base, factor = result
+        val = base * factor
+        val = max(20, min(127, int(round(val))))
+        return val
+
+    def _humanize_timing(
+        self,
+        el: note.NotRest,
+        jitter_ms: float,
+        *,
+        scale_mode: str = "absolute",
+    ) -> None:
+        if not jitter_ms:
+            return
+        jitter_val = jitter_ms
+        reference_bpm = 120.0
+        if scale_mode == "bpm_relative":
+            current = float(self.global_tempo or reference_bpm)
+            jitter_val *= reference_bpm / current
+        if self.timing_jitter_mode == "gauss":
+            jitter = self.rng.gauss(0.0, jitter_val / 2.0)
+        else:
+            jitter = self.rng.uniform(-jitter_val / 2.0, jitter_val / 2.0)
+        ql_shift = jitter * reference_bpm / 60000.0
+        new_offset = float(el.offset) + ql_shift
+        el.offset = max(0.0, new_offset)
 
     # ------------------------------------------------------------------
     # Articulation helpers
@@ -267,13 +364,32 @@ class StringsGenerator(BasePartGenerator):
         part_name: str,
         event_articulations: list[str] | None,
         velocity: int | None,
+        velocity_factor: float = 1.0,
+        bow_position: BowPosition | None = None,
     ) -> note.NotRest:
         if isinstance(base_pitch, chord.Chord):
             n: note.NotRest = chord.Chord(base_pitch.pitches, quarterLength=duration_ql)
         else:
             n = note.Note(base_pitch, quarterLength=duration_ql)
         if velocity is not None:
-            n.volume = volume.Volume(velocity=velocity)
+            final_vel = max(1, min(127, int(round(velocity * velocity_factor))))
+            vol = volume.Volume(velocity=final_vel)
+            try:
+                vol.velocityScalar = final_vel / 127.0
+            except Exception:
+                pass
+            if hasattr(vol, "expressiveDynamic"):
+                try:
+                    vol.expressiveDynamic = final_vel / 127.0
+                except Exception:
+                    pass
+            n.volume = vol
+        if bow_position:
+            value = bow_position.value
+            if hasattr(n.style, "bowPosition"):
+                setattr(n.style, "bowPosition", value)
+            else:
+                setattr(n.style, "other", value)
 
         self._apply_articulations(n, event_articulations, part_name)
         return n
@@ -324,9 +440,9 @@ class StringsGenerator(BasePartGenerator):
     # ------------------------------------------------------------------
     def _render_part(
         self,
-        section_data: Dict[str, Any],
-        next_section_data: Dict[str, Any] | None = None,
-    ) -> Dict[str, stream.Part]:
+        section_data: dict[str, Any],
+        next_section_data: dict[str, Any] | None = None,
+    ) -> dict[str, stream.Part]:
         chord_label = (
             section_data.get("chord_symbol_for_voicing")
             or section_data.get("original_chord_label")
@@ -347,7 +463,7 @@ class StringsGenerator(BasePartGenerator):
             self.logger.error("Invalid chord '%s': %s", chord_label, exc)
             base_pitches = []
 
-        parts: Dict[str, stream.Part] = {}
+        parts: dict[str, stream.Part] = {}
         if not base_pitches:
             for info in self._SECTIONS:
                 part = stream.Part(id=info.name)
@@ -361,7 +477,7 @@ class StringsGenerator(BasePartGenerator):
             base_pitches.append(base_pitches[len(base_pitches) % len(base_pitches)])
 
         prev_midi: int | None = None
-        divisi_map: Dict[str, str] = {}
+        divisi_map: dict[str, str] = {}
         if isinstance(self.divisi, bool) and self.divisi:
             divisi_map = {"violin_i": "octave", "violin_ii": "octave"}
         elif isinstance(self.divisi, dict):
@@ -401,12 +517,35 @@ class StringsGenerator(BasePartGenerator):
                 elif info.name != "viola" and name_oct == "G3":
                     if adj.midi + 12 <= high:
                         adj = adj.transpose(12)
-            vel = self._velocity_for(info)
+            vel_info = self._estimate_velocity(info)
+            if vel_info is None:
+                vel_base, vel_factor = None, 1.0
+            else:
+                vel_base, vel_factor = vel_info
+            offset = 0.0
             for i, dur in enumerate(durations):
                 arts = event_articulations[i] if i < len(event_articulations) else None
                 if not arts:
                     arts = default_arts
-                n = self._create_notes_from_event(adj, dur, info.name, arts, vel)
+                bow_pos = None
+                if events and i < len(events):
+                    bow_pos = parse_bow_position(events[i].get("bow_position"))
+                if bow_pos is None:
+                    bow_pos = parse_bow_position(section_data.get("bow_position"))
+                n = self._create_notes_from_event(
+                    adj,
+                    dur,
+                    info.name,
+                    arts,
+                    vel_base,
+                    vel_factor,
+                    bow_pos,
+                )
+                self._humanize_timing(
+                    n,
+                    self.timing_jitter_ms,
+                    scale_mode=self.timing_jitter_scale_mode,
+                )
                 if len(durations) > 1:
                     if i == 0:
                         n.tie = tie.Tie("start")
@@ -457,12 +596,14 @@ class StringsGenerator(BasePartGenerator):
                     if extra_pitch:
                         chd = chord.Chord([n.pitch, extra_pitch])
                         chd.quarterLength = n.quarterLength
+                        chd.offset = n.offset
                         if n.tie:
                             chd.tie = n.tie
-                        if vel is not None:
-                            chd.volume = volume.Volume(velocity=vel)
+                        if n.volume and n.volume.velocity is not None:
+                            chd.volume = volume.Volume(velocity=int(n.volume.velocity))
                         elem = chd
-                part.append(elem)
+                part.insert(offset + float(n.offset), elem)
+                offset += dur
             parts[info.name] = self._finalize_part(part, info.name)
             prev_midi = adj.midi
         if q_length >= self.bar_length:
@@ -533,7 +674,7 @@ class StringsGenerator(BasePartGenerator):
         return new_part
 
     def _apply_expression_cc(
-        self, parts: Dict[str, stream.Part], crescendo: bool = True
+        self, parts: dict[str, stream.Part], crescendo: bool = True
     ) -> None:
         """Add a simple CC11 crescendo over one bar."""
         from utilities.cc_tools import merge_cc_events

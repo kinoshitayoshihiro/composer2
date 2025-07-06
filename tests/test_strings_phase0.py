@@ -1,4 +1,4 @@
-from music21 import instrument, harmony, pitch, converter
+from music21 import instrument, harmony, pitch, converter, chord, stream, note, tie, meter
 
 import importlib.util
 import sys
@@ -105,7 +105,78 @@ def test_long_duration_ties_and_export(tmp_path):
     assert cb_notes[-1].tie is not None
 
 
+def test_divisi_third():
+    gen = _gen(divisi={"violin_i": "third"})
+    parts = gen.compose(section_data=_basic_section())
+    chord_obj = parts["violin_i"].flatten().notes[0]
+    assert isinstance(chord_obj, chord.Chord)
+    interval_semitones = abs(chord_obj.pitches[1].midi - chord_obj.pitches[0].midi)
+    assert interval_semitones in (3, 4)
+
+
+def test_long_ties_total_duration():
+    section = _basic_section()
+    section["q_length"] = 8.0
+    gen = _gen()
+    parts = gen.compose(section_data=section)
+    notes = list(parts["contrabass"].flatten().notes)
+    total = sum(n.quarterLength for n in notes)
+    assert abs(total - section["q_length"]) < 1e-6
+
+
 def test_missing_voice_returns_rest():
     gen = _gen(voice_allocation={"violin_i": -1})
     parts = gen.compose(section_data=_basic_section())
     assert parts["violin_i"].flatten().notesAndRests[0].isRest
+
+
+def test_long_ties_big():
+    section = _basic_section()
+    section["q_length"] = 64.0
+    gen = _gen()
+    parts = gen.compose(section_data=section)
+    notes = list(parts["contrabass"].flatten().notes)
+    assert abs(sum(n.quarterLength for n in notes) - section["q_length"]) < 1e-6
+
+
+def test_velocity_clamping():
+    gen = _gen()
+    info_low = strings_module._SectionInfo("tmp", instrument.Violin(), "C4", "C6", 0.2)
+    info_high = strings_module._SectionInfo("tmp", instrument.Violin(), "C4", "C6", 0.9)
+    v_low = gen._velocity_for(info_low)
+    v_high = gen._velocity_for(info_high)
+    assert 1 <= v_low <= 127
+    assert 1 <= v_high <= 127
+    assert v_low < v_high
+
+
+def test_merge_identical_bars_duration():
+    gen = _gen()
+    p = stream.Part()
+    p.insert(0, instrument.Violin())
+    p.insert(0, meter.TimeSignature("4/4"))
+    n1 = note.Note("C4", quarterLength=4.0)
+    n1.tie = tie.Tie("start")
+    n2 = note.Note("C4", quarterLength=4.0)
+    n2.tie = tie.Tie("start")
+    p.append(n1)
+    p.append(n2)
+    merged = gen._merge_identical_bars(p)
+    assert abs(merged.highestTime - p.highestTime) < 1e-6
+    assert len(list(merged.flatten().notes)) == 1
+
+
+def test_avoid_low_open_strings():
+    gen = _gen(avoid_low_open_strings=True, voice_allocation={"viola": 0})
+    parts = gen.compose(section_data=_basic_section())
+    viola_note = parts["viola"].flatten().notes[0]
+    assert pitch.Pitch("C4").midi <= viola_note.pitch.midi
+
+
+def test_expression_cc_added():
+    section = _basic_section()
+    section["q_length"] = 4.0
+    gen = _gen()
+    parts = gen.compose(section_data=section)
+    cc = parts["contrabass"].extra_cc
+    assert cc and cc[-1]["val"] == 80

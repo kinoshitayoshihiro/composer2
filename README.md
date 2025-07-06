@@ -914,15 +914,16 @@ around provided kick offsets.
 
 ## PianoGenerator β
 
-Beta adds guide and drop2 voicing options and pedal information.
+Beta adds guide/drop2 voicing, pedal CCs, intensity control and an optional counter line.
 Use the ``--voicing`` flag to select a mode:
 
 ```bash
-modcompose sample dummy.pkl --backend piano_template --voicing guide
+modcompose sample dummy.pkl --backend piano_template \
+  --voicing drop2 --intensity high --counterline -o piano.mid
 ```
 
 The JSON output now includes ``hand`` and ``pedal`` fields.
-![voicing demo placeholder](docs/img/piano_beta.png)
+![voicing demo placeholder](docs/img/piano_beta_counter.gif)
 
 ## PianoGenerator ML
 

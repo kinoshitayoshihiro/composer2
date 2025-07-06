@@ -35,6 +35,7 @@ __all__ = [
     "apply_ghost_jitter",
     "apply_velocity_histogram",
     "apply_velocity_histogram_profile",
+    "get_velocity_histogram",
     "apply_envelope",
     "swing_offset",
 ]
@@ -440,18 +441,36 @@ def _apply_velocity_histogram_py(
 
 
 def apply_velocity_histogram(
-    part: stream.Part, histogram: dict[int, float]
+    part: stream.Part,
+    histogram: dict[int, float] | None = None,
+    *,
+    profile: str | dict[int, float] | None = None,
 ) -> stream.Part:
+    """Apply a velocity histogram mapping.
+
+    Provide ``histogram`` directly or pass ``profile`` as either a preset name
+    or mapping. When ``profile`` is a string it will be resolved via
+    :func:`get_velocity_histogram`.
+    """
+    if histogram is None and profile is None:
+        raise TypeError("either histogram or profile must be provided")
+    if histogram is None:
+        if isinstance(profile, dict):
+            histogram = profile
+        else:
+            histogram = get_velocity_histogram(str(profile))
+    elif isinstance(profile, dict):
+        histogram = profile
     if cy_apply_velocity_histogram is not None:
         return cy_apply_velocity_histogram(part, histogram)
     return _apply_velocity_histogram_py(part, histogram)
 
 
-def apply_velocity_histogram_profile(part: stream.Part, profile: str = "piano_soft") -> stream.Part:
+def apply_velocity_histogram_profile(
+    part: stream.Part, profile: str = "piano_soft"
+) -> stream.Part:
     """Apply a named velocity histogram profile."""
-    hist = VELOCITY_HISTOGRAM_PROFILES.get(profile)
-    if hist is None:
-        raise KeyError(f"velocity histogram profile '{profile}' not found")
+    hist = get_velocity_histogram(profile)
     return apply_velocity_histogram(part, hist)
 
 
@@ -579,10 +598,17 @@ HUMANIZATION_TEMPLATES: dict[str, dict[str, Any]] = {
 }
 
 # Simple velocity histogram profiles
-VELOCITY_HISTOGRAM_PROFILES: dict[str, dict[int, float]] = {
+_VELOCITY_HISTOGRAM_PRESETS: dict[str, dict[int, float]] = {
     "piano_soft": {50: 0.2, 60: 0.5, 70: 0.3},
     "piano_hard": {90: 0.3, 100: 0.5, 110: 0.2},
 }
+
+def get_velocity_histogram(name: str) -> dict[int, float]:
+    """Return velocity histogram preset by name."""
+    try:
+        return _VELOCITY_HISTOGRAM_PRESETS[name]
+    except KeyError:
+        raise KeyError(f"velocity histogram profile '{name}' not found") from None
 
 
 try:

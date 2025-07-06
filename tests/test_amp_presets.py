@@ -10,16 +10,17 @@ def test_amp_preset_loading():
     assert ts.ir_map["crunch"].suffix == ".wav"
 
 
-def test_choose_preset_priority():
+def test_choose_preset_priority() -> None:
     ts = ToneShaper({"clean": {"amp": 20}, "drive": {"amp": 90}}, {})
-    assert ts.choose_preset("drive", None, 70) == "drive"
-    assert ts.choose_preset(None, "high", 110) == "drive"
-    assert ts.choose_preset(None, "low", 40) == "clean"
+    assert ts.choose_preset(amp_hint="drive", intensity=None, avg_velocity=70) == "drive"
+    assert ts.choose_preset(intensity="high", avg_velocity=110) == "drive"
+    assert ts.choose_preset(intensity="low", avg_velocity=40) == "clean"
 
 
 def test_cc_event_generation():
     ts = ToneShaper({"clean": {"amp": 20}}, {})
-    events = ts.to_cc_events("clean", "low")
+    ts.choose_preset(intensity="low", avg_velocity=50)
+    events = ts.to_cc_events()
     assert (0.0, 31, 20) in events
     assert any(e[1] == 93 for e in events)
 
@@ -35,7 +36,7 @@ def test_choose_preset_rules(tmp_path):
     cfg = tmp_path / "amp.yml"
     cfg.write_text(yaml.safe_dump(data))
     ts = ToneShaper.from_yaml(cfg)
-    assert ts.choose_preset(None, "low", 120) == "drive"
+    assert ts.choose_preset(intensity="low", avg_velocity=120) == "drive"
 
 
 def test_from_yaml_malformed(tmp_path):
@@ -47,7 +48,7 @@ def test_from_yaml_malformed(tmp_path):
 
 def test_choose_preset_unknown_intensity():
     ts = ToneShaper({"clean": {"amp": 20}}, {})
-    assert ts.choose_preset(None, "extreme", 80) == "clean"
+    assert ts.choose_preset(intensity="extreme", avg_velocity=80) == "clean"
 
 
 def test_export_audio_with_ir(tmp_path):

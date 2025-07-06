@@ -171,13 +171,20 @@ def _apply_tone(part: stream.Part, intensity: str) -> None:
         return
     avg_vel = float(np.mean([n.volume.velocity or 0 for n in notes]))
     shaper = ToneShaper()
-    preset = shaper.choose_preset(None, intensity, avg_vel)
-    existing = [c for c in getattr(part, "extra_cc", []) if c.get("cc") != 31]
-    new_events = [
-        {"time": t, "cc": c, "val": v}
-        for t, c, v in shaper.to_cc_events(preset, intensity)
+    preset = shaper.choose_preset(
+        amp_hint=None,
+        intensity=intensity,
+        avg_velocity=avg_vel,
+    )
+    existing = [
+        (e["time"], e["cc"], e["val"]) if isinstance(e, dict) else e
+        for e in getattr(part, "extra_cc", [])
+        if (e.get("cc") if isinstance(e, dict) else e[1]) != 31
     ]
-    part.extra_cc = existing + new_events
+    new_events = shaper.to_cc_events(
+        amp_name=preset, intensity=intensity, as_dict=False
+    )
+    part.extra_cc = merge_cc_events(existing, new_events)
 
 DIRECTION_UP = 1
 DIRECTION_DOWN = -1
@@ -498,14 +505,24 @@ class BassGenerator(BasePartGenerator):
         # ── ToneShaper でプリセット選択 ─────────────────────
         shaper = ToneShaper()
         chosen = preset or shaper.choose_preset(
-            amp_preset=None,
+            amp_hint=None,
             intensity=intensity,
             avg_velocity=avg_vel,
         )
 
         # ── 既存 extra_cc から CC31 系を除去して付け替え ────
-        existing = [cc for cc in getattr(part, "extra_cc", []) if cc.get("cc") != 31]
-        part.extra_cc = existing + shaper.to_cc_events(offset_ql=0.0, as_dict=True)
+        existing = [
+            (e["time"], e["cc"], e["val"]) if isinstance(e, dict) else e
+            for e in getattr(part, "extra_cc", [])
+            if (e.get("cc") if isinstance(e, dict) else e[1]) != 31
+        ]
+        tone_events = shaper.to_cc_events(
+            amp_name=chosen,
+            intensity=intensity,
+            offset_ql=0.0,
+            as_dict=False,
+        )
+        part.extra_cc = merge_cc_events(existing, tone_events)
 
         return chosen
 

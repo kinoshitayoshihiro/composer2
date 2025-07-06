@@ -62,3 +62,17 @@ You can also export a MusicXML file containing the tablature markings:
 ```python
 gen.export_musicxml_tab("out_tab.xml")
 ```
+
+### IR レンダリング
+
+MIDI から直接 WAV を生成し、インパルス応答を適用するには `modcompose ir-render` を使用します。
+
+```bash
+modcompose ir-render part.mid irs/room.wav -o rendered.wav
+```
+
+Python からは ``GuitarGenerator.export_audio`` を使って IR 名を指定できます。
+
+```python
+gen.export_audio(ir_name="mesa412")
+```

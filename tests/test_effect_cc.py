@@ -19,6 +19,7 @@ def _gen():
             global_key_signature_tonic="C",
             global_key_signature_mode="major",
         )
+
     return factory
 
 
@@ -73,15 +74,17 @@ def test_effect_envelope_increasing(_gen):
 
 def test_export_audio_realtime(monkeypatch, tmp_path, _gen):
     gen = _gen()
-    p = gen.compose(section_data={
-        "section_name": "A",
-        "q_length": 1.0,
-        "humanized_duration_beats": 1.0,
-        "original_chord_label": "C",
-        "chord_symbol_for_voicing": "C",
-        "part_params": {"g": {"guitar_rhythm_key": "pat"}},
-        "fx_params": {"reverb_send": 80},
-    })
+    p = gen.compose(
+        section_data={
+            "section_name": "A",
+            "q_length": 1.0,
+            "humanized_duration_beats": 1.0,
+            "original_chord_label": "C",
+            "chord_symbol_for_voicing": "C",
+            "part_params": {"g": {"guitar_rhythm_key": "pat"}},
+            "fx_params": {"reverb_send": 80},
+        }
+    )
     midi = tmp_path / "in.mid"
     wav = tmp_path / "out.wav"
     midi.write_text("dummy")
@@ -94,7 +97,7 @@ def test_export_audio_realtime(monkeypatch, tmp_path, _gen):
         def send_cc(self, cc, value, time):
             calls.append((cc, value))
 
-    gen.export_audio(midi, wav, realtime=True, streamer=Dummy())
+    gen.export_audio_old(midi, wav, realtime=True, streamer=Dummy())
     assert calls
 
 
@@ -111,9 +114,7 @@ def test_export_audio_realtime_fx_env(monkeypatch, tmp_path, _gen):
         "original_chord_label": "C",
         "chord_symbol_for_voicing": "C",
         "part_params": {"g": {"guitar_rhythm_key": "pat"}},
-        "fx_envelope": {
-            0.0: {"cc": 91, "start_val": 0, "end_val": 100, "duration_ql": 1.0}
-        },
+        "fx_envelope": {0.0: {"cc": 91, "start_val": 0, "end_val": 100, "duration_ql": 1.0}},
     }
     gen.compose(section_data=sec)
     midi = tmp_path / "i.mid"
@@ -128,7 +129,7 @@ def test_export_audio_realtime_fx_env(monkeypatch, tmp_path, _gen):
         def send_cc(self, cc, value, time):
             recorded.append(cc)
 
-    gen.export_audio(midi, wav, realtime=True, streamer=Dummy())
+    gen.export_audio_old(midi, wav, realtime=True, streamer=Dummy())
     assert 91 in recorded
 
 
@@ -161,7 +162,7 @@ def test_mix_metadata_json(tmp_path, monkeypatch, _gen):
 
     monkeypatch.setattr(synth, "export_audio", fake_export)
 
-    gen.export_audio(midi, wav, write_mix_json=True)
+    gen.export_audio_old(midi, wav, write_mix_json=True)
     meta = json.loads(wav.with_suffix(".json").read_text())
     key = part.id or "part"
     assert "ir_file" in meta[key]

@@ -43,7 +43,7 @@ def test_choose_preset_fallback() -> None:
     # amp_hint が unknown → default へフォールバック
     assert (
         shaper.choose_preset(amp_hint="unknown", intensity="low", avg_velocity=50.0)
-        == "clean"
+        == "unknown_default"
     )
 
 

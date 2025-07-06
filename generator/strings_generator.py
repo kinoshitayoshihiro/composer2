@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 import math
+import re
 
 from music21 import (
     harmony,
@@ -38,6 +39,20 @@ class _SectionInfo:
     range_low: str
     range_high: str
     velocity_pos: float
+
+
+def parse_articulation_field(field: Any) -> list[str]:
+    """Parse an articulation specification string into a list of names."""
+    if field is None:
+        return []
+    if isinstance(field, (list, tuple, set)):
+        result: list[str] = []
+        for item in field:
+            result.extend(parse_articulation_field(item))
+        return result
+    text = str(field)
+    tokens = [t for t in re.split(r"[+\s]+", text) if t]
+    return tokens
 
 
 class StringsGenerator(BasePartGenerator):
@@ -90,6 +105,7 @@ class StringsGenerator(BasePartGenerator):
         self.avoid_low_open_strings = bool(avoid_low_open_strings)
         self._last_parts: Dict[str, stream.Part] | None = None
         self._articulation_map = {
+            "sustain": None,
             "staccato": articulations.Staccato(),
             "accent": articulations.Accent(),
             "tenuto": articulations.Tenuto(),
@@ -214,6 +230,36 @@ class StringsGenerator(BasePartGenerator):
             if buf and buf[0] != buf[1]:
                 self._legato_groups.setdefault(part_name, []).append((buf[0], buf[1]))
 
+    def _apply_articulations(
+        self,
+        elem: note.NotRest,
+        art_names: Any,
+        part_name: str,
+    ) -> None:
+        names = parse_articulation_field(art_names)
+        legato = False
+        for art_name in names:
+            art_obj = self._articulation_map.get(art_name)
+            if art_obj is None:
+                if art_name in self._articulation_map:
+                    continue
+                self.logger.warning("Unknown articulation '%s'", art_name)
+                continue
+            if art_name == "legato":
+                legato = True
+            elif art_name in {"pizz", "arco"}:
+                elem.expressions.append(copy.deepcopy(art_obj))
+            elif art_name == "tremolo" and isinstance(elem, chord.Chord):
+                trem = copy.deepcopy(art_obj)
+                if hasattr(trem, "rapid"):
+                    trem.rapid = True
+                elem.expressions.append(trem)
+            else:
+                elem.articulations.append(copy.deepcopy(art_obj))
+        self._handle_legato(part_name, elem, legato)
+        if not legato:
+            self._handle_legato(part_name, elem, False)
+
     def _create_notes_from_event(
         self,
         base_pitch: pitch.Pitch | chord.Chord,
@@ -229,26 +275,7 @@ class StringsGenerator(BasePartGenerator):
         if velocity is not None:
             n.volume = volume.Volume(velocity=velocity)
 
-        arts = event_articulations or []
-        legato = False
-        for art_name in arts:
-            tmpl = self._articulation_map.get(art_name)
-            if tmpl is None:
-                continue
-            if art_name == "legato":
-                legato = True
-            elif art_name in {"pizz", "arco"}:
-                n.expressions.append(copy.deepcopy(tmpl))
-            elif art_name == "tremolo" and isinstance(n, chord.Chord):
-                trem = copy.deepcopy(tmpl)
-                if hasattr(trem, "rapid"):
-                    trem.rapid = True
-                n.expressions.append(trem)
-            else:
-                n.articulations.append(copy.deepcopy(tmpl))
-        self._handle_legato(part_name, n, legato)
-        if not legato:
-            self._handle_legato(part_name, n, False)
+        self._apply_articulations(n, event_articulations, part_name)
         return n
 
     def _finalize_part(self, part: stream.Part, part_name: str) -> stream.Part:

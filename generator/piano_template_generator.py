@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, List
+from typing import Any
 
-from music21 import harmony, stream, note, chord, volume, duration, instrument, expressions
+from music21 import chord, expressions, harmony, note, stream, volume
+
+from utilities import humanizer
+from utilities.humanizer import apply_swing
 
 from .base_part_generator import BasePartGenerator
 
@@ -13,10 +16,10 @@ class PianoTemplateGenerator(BasePartGenerator):
     """Very simple piano generator for alpha testing."""
 
     def _render_part(
-        self, section_data: Dict[str, Any], next_section_data: Dict[str, Any] | None = None
-    ) -> Dict[str, stream.Part]:
+        self, section_data: dict[str, Any], next_section_data: dict[str, Any] | None = None
+    ) -> dict[str, stream.Part]:
         chord_label = section_data.get("chord_symbol_for_voicing", "C")
-        groove_kicks: List[float] = section_data.get("groove_kicks", [])
+        groove_kicks: list[float] = section_data.get("groove_kicks", [])
         musical_intent = section_data.get("musical_intent", {})
         intensity = musical_intent.get("intensity", "medium")
         voicing_mode = section_data.get("voicing_mode", "shell")
@@ -29,7 +32,7 @@ class PianoTemplateGenerator(BasePartGenerator):
             cs = harmony.ChordSymbol("C")
 
         root = cs.root() or harmony.ChordSymbol("C").root()
-        shell: List[harmony.ChordSymbol] = []
+        shell: list[harmony.ChordSymbol] = []
         if voicing_mode != "guide":
             shell.append(root)
         if cs.third:
@@ -85,10 +88,23 @@ class PianoTemplateGenerator(BasePartGenerator):
                 lh.insert(ev["time"], copy.deepcopy(ped))
             for part in (rh, lh):
                 part.extra_cc = getattr(part, "extra_cc", []) + cc_events
+        profile = (
+            section_data.get("humanize_profile")
+            or self.global_settings.get("humanize_profile")
+        )
+        swing_ratio = (
+            section_data.get("swing_ratio")
+            or self.global_settings.get("swing_ratio")
+        )
+        for p in (rh, lh):
+            if profile:
+                humanizer.apply(p, profile)
+            if swing_ratio:
+                apply_swing(p, float(swing_ratio), subdiv=8)
 
         return {"piano_rh": rh, "piano_lh": lh}
 
-    def _pedal_marks(self, intensity: str, length_ql: float) -> List[Dict[str, Any]]:
+    def _pedal_marks(self, intensity: str, length_ql: float) -> list[dict[str, Any]]:
         measure_len = self.bar_length
         pedal_value = 127 if intensity == "high" else 64
         events = []

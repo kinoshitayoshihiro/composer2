@@ -480,3 +480,18 @@ def test_compose_offset_profile_hand_specific(
     mock_apply_offset.assert_any_call(part_lh, "lh_prof")
     mock_apply_offset.assert_any_call(result["other"], "main")
     assert mock_apply_offset.call_count == 3
+
+
+def test_extra_cc_not_duplicated(test_generator: ConcreteTestGenerator, default_section_data: dict, mock_logger: Mock) -> None:
+    """Ensure _auto_tone_shape does not duplicate CC events across calls."""
+    part1 = stream.Part(id="cc1"); part1.append(note.Note("C4"))
+    test_generator._render_part_mock_method.return_value = part1
+    out1 = test_generator.compose(section_data=default_section_data.copy())
+    len1 = len(getattr(out1, "extra_cc", []))
+
+    part2 = stream.Part(id="cc2"); part2.append(note.Note("C4"))
+    test_generator._render_part_mock_method.return_value = part2
+    out2 = test_generator.compose(section_data=default_section_data.copy())
+    len2 = len(getattr(out2, "extra_cc", []))
+
+    assert len1 == len2

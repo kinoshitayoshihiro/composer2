@@ -825,8 +825,10 @@ Common CLI options:
   from utilities.tone_shaper import ToneShaper
 
   shaper = ToneShaper()
-  preset = shaper.choose_preset(None, "medium", avg_vel)
-  part.extra_cc.extend(shaper.to_cc_events(as_dict=True))
+  preset = shaper.choose_preset(intensity="medium", avg_velocity=avg_vel)
+  part.extra_cc.extend(
+      shaper.to_cc_events(amp_name=preset, intensity="medium", as_dict=True)
+  )
   ```
 
 Run with automatic tone shaping:
@@ -918,7 +920,7 @@ modcompose sample dummy.pkl --backend piano_template --voicing guide
 ```
 
 The JSON output now includes ``hand`` and ``pedal`` fields.
-![voicing demo](docs/img/piano_beta.gif)
+![voicing demo placeholder](docs/img/piano_beta.png)
 
 ## PianoGenerator ML
 

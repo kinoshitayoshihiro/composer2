@@ -29,7 +29,7 @@ modcompose live model.pkl --late-humanize 6 --kick-leak-jitter 3
   shaper = ToneShaper()
   preset = shaper.choose_preset(intensity="medium", avg_velocity=avg_vel)
   part.extra_cc.extend(
-      shaper.to_cc_events(amp_name=preset, intensity="medium", offset_ql=0.0, as_dict=True)
+      shaper.to_cc_events(amp_name=preset, intensity="medium", as_dict=True)
   )
   ```
 

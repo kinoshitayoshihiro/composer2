@@ -19,6 +19,11 @@ try:
 except Exception:  # pragma: no cover - optional
     soxr = None  # type: ignore
 try:
+    if sf is not None:
+        sf.default_subtype("WAV", "FLOAT")
+except Exception:
+    pass
+try:
     from tqdm import tqdm  # type: ignore
 except Exception:  # pragma: no cover - optional
     class _NoTqdm:
@@ -45,9 +50,9 @@ def _write_gain(data: np.ndarray, sr: int, path: Path, gain_db: float) -> None:
     if gain_db:
         data = data * (10 ** (gain_db / 20.0))
     peak = np.max(np.abs(data))
-    if peak > 0:
+    if peak > 1.0:
         data = data / peak
-    sf.write(path, data, sr)
+    sf.write(path, data.astype(np.float32), sr, subtype="FLOAT")
 
 
 def render_with_ir(
@@ -80,6 +85,11 @@ def render_with_ir(
 
     if not irp.is_file():
         logger.warning("IR file missing: %s", ir_wav)
+        if y.shape[1] == 1:
+            y = np.broadcast_to(y, (y.shape[0], 2))
+        peak = np.max(np.abs(y))
+        if peak > 0:
+            y = y / peak
         _write_gain(y, sr, out, gain_db)
         return
 
@@ -196,6 +206,8 @@ def render_wav(
         from scipy.signal import resample
 
         ir = resample(ir, int(len(ir) * sr / ir_sr))
+    if ir.ndim == 1:
+        ir = ir[:, None]
     out = convolve_ir(audio, ir, block_size=mix_opts.get("block_size", 2**14))
     peak = np.max(np.abs(out))
     if peak > 0:

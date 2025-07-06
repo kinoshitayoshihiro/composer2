@@ -36,6 +36,7 @@ __all__ = [
     "apply_velocity_histogram",
     "apply_velocity_histogram_profile",
     "get_velocity_histogram",
+    "VELO_PROFILES",
     "apply_envelope",
     "swing_offset",
 ]
@@ -450,10 +451,13 @@ def apply_velocity_histogram(
 
     Provide ``histogram`` directly or pass ``profile`` as either a preset name
     or mapping. When ``profile`` is a string it will be resolved via
-    :func:`get_velocity_histogram`.
+    :data:`VELO_PROFILES`.
     """
     if isinstance(profile, str):
-        profile = get_velocity_histogram(profile)
+        try:
+            profile = VELO_PROFILES[profile]
+        except KeyError:
+            raise KeyError(f"velocity histogram profile '{profile}' not found") from None
     if histogram is None and profile is None:
         raise TypeError("either histogram or profile must be provided")
     if histogram is None:
@@ -469,7 +473,10 @@ def apply_velocity_histogram_profile(
     part: stream.Part, profile: str = "piano_soft"
 ) -> stream.Part:
     """Apply a named velocity histogram profile."""
-    hist = get_velocity_histogram(profile)
+    try:
+        hist = VELO_PROFILES[profile]
+    except KeyError:
+        raise KeyError(f"velocity histogram profile '{profile}' not found") from None
     return apply_velocity_histogram(part, hist)
 
 
@@ -597,7 +604,7 @@ HUMANIZATION_TEMPLATES: dict[str, dict[str, Any]] = {
 }
 
 # Simple velocity histogram profiles
-_VELOCITY_HISTOGRAM_PRESETS: dict[str, dict[int, float]] = {
+VELO_PROFILES: dict[str, dict[int, float]] = {
     "piano_soft": {50: 0.2, 60: 0.5, 70: 0.3},
     "piano_hard": {90: 0.3, 100: 0.5, 110: 0.2},
 }
@@ -605,7 +612,7 @@ _VELOCITY_HISTOGRAM_PRESETS: dict[str, dict[int, float]] = {
 def get_velocity_histogram(name: str) -> dict[int, float]:
     """Return velocity histogram preset by name."""
     try:
-        return _VELOCITY_HISTOGRAM_PRESETS[name]
+        return VELO_PROFILES[name]
     except KeyError:
         raise KeyError(f"velocity histogram profile '{name}' not found") from None
 

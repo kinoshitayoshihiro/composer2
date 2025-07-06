@@ -34,3 +34,17 @@ section["events"] = [
 
 When two consecutive events specify `legato`, a single slur is created.  Default
 articulations apply when an event omits the key.
+
+## Phase 2 Options
+
+StringsGenerator now supports velocity curves, timing jitter and bow position metadata.
+
+- `default_velocity_curve`: a list of 3, 7 or 128 values describing a velocity
+  mapping. Three-point curves are interpolated to 128 steps.
+- `timing_jitter_ms`: maximum random offset in milliseconds.
+- `timing_jitter_mode`: either `"uniform"` or `"gauss"`.
+- `timing_jitter_scale_mode`: `"absolute"` (default) or `"bpm_relative"` which
+  scales `timing_jitter_ms` relative to a reference BPM of 120.
+- `balance_scale`: blend ratio for section dynamics. Lower values reduce
+  contrast.
+- `bow_position`: one of `tasto`, `normale` or `ponticello`.

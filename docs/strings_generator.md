@@ -48,3 +48,16 @@ StringsGenerator now supports velocity curves, timing jitter and bow position me
 - `balance_scale`: blend ratio for section dynamics. Lower values reduce
   contrast.
 - `bow_position`: one of `tasto`, `normale` or `ponticello`.
+
+## Phase 3 Options
+
+Additional articulation and expression controls:
+
+- Automatic slurs connect neighbouring notes when the interval is a second or
+  smaller and both durations are at least `0.5` quarter lengths. Explicit
+  `legato` articulations still take precedence and rests break the chain.
+- `crescendo`: boolean flag to enable a default expression ramp over the section
+  length.
+- `dim_start` / `dim_end`: numeric CC11 values (1-127) defining a custom
+  expression envelope. Values interpolate linearly from start to end across the
+  section.

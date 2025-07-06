@@ -485,7 +485,7 @@ class GuitarGenerator(BasePartGenerator):
         def _post_process_one(p: stream.Part) -> None:
             # ── Swing 適用 ──────────────────────────────
             if ratio_to_apply is not None:
-                apply_swing(p, float(ratio_to_apply), subdiv=self.swing_subdiv)
+                self._apply_swing_internal(p, float(ratio_to_apply), self.swing_subdiv)
 
             pp_val = section.get("part_params", {}).get(self.part_name, {}).get("pick_position")
             if pp_val is not None:
@@ -2282,7 +2282,7 @@ class GuitarGenerator(BasePartGenerator):
     def _apply_pick_position(self, part: stream.Part, pick_pos: float) -> None:
         """Add CC74 events reflecting ``pick_pos`` across the part."""
         try:
-            val = int(float(pick_pos) * 127)
+            val = int(round(40 + 50 * float(pick_pos)))
         except Exception:
             return
         val = max(0, min(127, val))

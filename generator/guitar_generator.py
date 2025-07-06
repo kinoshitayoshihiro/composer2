@@ -70,6 +70,7 @@ def _get_fret_indicator_cls():
 import math
 
 from utilities import humanizer
+from utilities.humanizer import apply_swing
 
 from .base_part_generator import BasePartGenerator
 
@@ -484,7 +485,20 @@ class GuitarGenerator(BasePartGenerator):
         def _post_process_one(p: stream.Part) -> None:
             # ── Swing 適用 ──────────────────────────────
             if ratio_to_apply is not None:
-                self._apply_swing_internal(p, float(ratio_to_apply), self.swing_subdiv)
+                apply_swing(p, float(ratio_to_apply), subdiv=self.swing_subdiv)
+
+            pp_val = section.get("part_params", {}).get(self.part_name, {}).get("pick_position")
+            if pp_val is not None:
+                try:
+                    self._apply_pick_position(p, float(pp_val))
+                except Exception:
+                    pass
+            fx_pp = section.get("fx_params", {}).get("pick_position")
+            if fx_pp is not None:
+                try:
+                    self._apply_pick_position(p, float(fx_pp))
+                except Exception:
+                    pass
 
             # ── ToneShaper （平均 Velocity × intensity で CC31 挿入） ──
             self._auto_tone_shape(p, section.get("musical_intent", {}).get("intensity"))
@@ -602,7 +616,19 @@ class GuitarGenerator(BasePartGenerator):
     ) -> None:
         """Apply post-generation tweaks to *part*."""
         if ratio is not None:
-            self._apply_swing_internal(part, float(ratio), self.swing_subdiv)
+            apply_swing(part, float(ratio), subdiv=self.swing_subdiv)
+        pp_val = section.get("part_params", {}).get(self.part_name, {}).get("pick_position")
+        if pp_val is not None:
+            try:
+                self._apply_pick_position(part, float(pp_val))
+            except Exception:
+                pass
+        fx_pp = section.get("fx_params", {}).get("pick_position")
+        if fx_pp is not None:
+            try:
+                self._apply_pick_position(part, float(fx_pp))
+            except Exception:
+                pass
         for name in (
             "_apply_phrase_dynamics",
             "_apply_envelope",
@@ -2251,6 +2277,16 @@ class GuitarGenerator(BasePartGenerator):
                         val = int(round(v0 + (v1 - v0) * frac))
                         t = b0 + (b1 - b0) * frac
                         events.append((t, 74, max(0, min(127, val))))
+        _add_cc_events(part, events)
+
+    def _apply_pick_position(self, part: stream.Part, pick_pos: float) -> None:
+        """Add CC74 events reflecting ``pick_pos`` across the part."""
+        try:
+            val = int(float(pick_pos) * 127)
+        except Exception:
+            return
+        val = max(0, min(127, val))
+        events = [(float(n.offset), 74, val) for n in part.recurse().notes]
         _add_cc_events(part, events)
 
     def export_audio_old(

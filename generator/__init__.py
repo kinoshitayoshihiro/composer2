@@ -30,6 +30,7 @@ from .melody_generator import MelodyGenerator
 from .modular_composer_stub import ModularComposer
 from .piano_generator import PianoGenerator
 from .sax_generator import SaxGenerator
+from .strings_generator import StringsGenerator
 from .vocal_generator import VocalGenerator
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "DrumGenerator",
     "VocalGenerator",
     "SaxGenerator",
+    "StringsGenerator",
     "ChordVoicer",
     "ModularComposer",
 ]

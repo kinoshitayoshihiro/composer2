@@ -29,6 +29,8 @@ from .guitar_generator import GuitarGenerator  # ファイル名が guitar_gener
 from .melody_generator import MelodyGenerator
 from .modular_composer_stub import ModularComposer
 from .piano_generator import PianoGenerator
+from .piano_template_generator import PianoTemplateGenerator
+from .piano_transformer import PianoTransformer
 from .sax_generator import SaxGenerator
 from .strings_generator import StringsGenerator
 from .vocal_generator import VocalGenerator
@@ -36,6 +38,8 @@ from .vocal_generator import VocalGenerator
 __all__ = [
     "BasePartGenerator",
     "PianoGenerator",
+    "PianoTemplateGenerator",
+    "PianoTransformer",
     "GuitarGenerator",
     "BassGenerator",
     "MelodyGenerator",

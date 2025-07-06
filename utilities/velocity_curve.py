@@ -42,11 +42,14 @@ def _interpolate_7pt_cached(curve_tuple, mode: str) -> list[float]:
     x_points = [i / 6 for i in range(7)]
 
     if mode == "spline" and np is not None and CubicSpline is not None:
-        x = np.array(x_points)
-        cs = CubicSpline(x, curve7, bc_type="natural")
-        x_new = np.linspace(0.0, 1.0, 128)
-        y_new = cs(x_new)
-        return [float(v) for v in y_new]
+        try:
+            x = np.array(x_points)
+            cs = CubicSpline(x, curve7, bc_type="natural")
+            x_new = np.linspace(0.0, 1.0, 128)
+            y_new = cs(x_new)
+            return [float(v) for v in y_new]
+        except Exception:
+            pass
 
     if np is not None:
         x = np.array(x_points)

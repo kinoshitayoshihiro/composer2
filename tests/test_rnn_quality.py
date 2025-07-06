@@ -6,7 +6,7 @@ from utilities import groove_sampler_rnn
 
 try:
     import torch  # type: ignore
-except Exception:  # pragma: no cover - optional
+except ImportError:  # pragma: no cover - optional
     torch = None  # type: ignore
 
 pytest.importorskip("pytorch_lightning")
@@ -19,12 +19,10 @@ def _make_loop(path: Path) -> None:
         lbl = "kick" if i % 2 == 0 else "snare"
         tokens.append((i % 16, lbl, 100, 0))
 
-from utilities import groove_rnn_v2
 
 
 @pytest.mark.hi_fi
 def test_rnn_quality(tmp_path: Path) -> None:
-    cache = tmp_path / "loops.json"
     data = {
         "ppq": 480,
         "resolution": 16,

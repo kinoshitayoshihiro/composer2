@@ -69,6 +69,19 @@ class BasePartGenerator(ABC):
         self.logger = logging.getLogger(f"modular_composer.{name}")
 
     # --------------------------------------------------------------
+    # Properties
+    # --------------------------------------------------------------
+
+    @property
+    def measure_duration(self) -> float:
+        """Return the quarterLength duration of one bar."""
+        return getattr(self, "_measure_duration", self.bar_length)
+
+    @measure_duration.setter
+    def measure_duration(self, value: float) -> None:
+        self._measure_duration = float(value)
+
+    # --------------------------------------------------------------
     # Tone & Dynamics - 自動アンプ／キャビネット CC 付与
     # --------------------------------------------------------------
     def _auto_tone_shape(self, part: stream.Part, intensity: str) -> None:
@@ -89,7 +102,7 @@ class BasePartGenerator(ABC):
             (e["time"], e["cc"], e["val"]) if isinstance(e, dict) else e
             for e in getattr(part, "extra_cc", [])
         ]
-        part.extra_cc = merge_cc_events(existing, tone_events)
+        part.extra_cc = merge_cc_events(set(existing), set(tone_events))
 
     def _apply_effect_envelope(
         self, part: stream.Part, envelope_map: dict | None

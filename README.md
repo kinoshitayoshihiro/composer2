@@ -42,6 +42,7 @@ Install AI and audio extras for transformer-based generation:
 ```bash
 pip install 'modular-composer[ai,audio]'
 ```
+ML 機能は PyTorch が必須です。
 
 ### フル機能を使うには
 

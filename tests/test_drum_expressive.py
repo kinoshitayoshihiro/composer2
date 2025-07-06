@@ -3,7 +3,6 @@ import pretty_midi
 from pathlib import Path
 from generator.drum_generator import DrumGenerator, GM_DRUM_MAP
 from tests.helpers.events import make_event
-from music21 import note
 
 class SimpleDrum(DrumGenerator):
     def _resolve_style_key(self, mi, ov, section_data=None):
@@ -94,7 +93,6 @@ def test_hh_open_replacement(tmp_path: Path):
     section = {"absolute_offset": 0.0, "q_length": 8.0, "length_in_measures": 2, "part_params": {}}
     part = gen.compose(section_data=section)
     notes = list(part.flatten().notes)
-    chh = GM_DRUM_MAP["chh"][1]
     ohh = GM_DRUM_MAP["ohh"][1]
     target = next(n for n in notes if abs(n.offset - 4.0) < 0.01)
     assert target.pitch.midi == ohh

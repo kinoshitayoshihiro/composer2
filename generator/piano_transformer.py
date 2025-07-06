@@ -5,7 +5,7 @@ from typing import List, Optional
 try:
     import torch
     from torch import nn
-except Exception:  # pragma: no cover - optional
+except ImportError:  # pragma: no cover - optional
     torch = None  # type: ignore
     nn = object  # type: ignore
 

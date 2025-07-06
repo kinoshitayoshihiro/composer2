@@ -37,7 +37,7 @@ def test_position_lock_effect(_basic_gen):
 
 def test_export_tab_enhanced(_basic_gen, tmp_path):
     gen = _basic_gen()
-    part = gen.compose(section_data={
+    gen.compose(section_data={
         "section_name": "A",
         "q_length": 1.0,
         "humanized_duration_beats": 1.0,
@@ -58,7 +58,7 @@ def test_export_tab_enhanced(_basic_gen, tmp_path):
 
 def test_export_musicxml_tab(_basic_gen, tmp_path):
     gen = _basic_gen()
-    part = gen.compose(section_data={
+    gen.compose(section_data={
         "section_name": "A",
         "q_length": 1.0,
         "humanized_duration_beats": 1.0,

@@ -54,7 +54,7 @@ def test_kneser_ney_perplexity(tmp_path: Path) -> None:
     model_kn = train(train_dir, order=3, smoothing="kneser_ney", discount=0.75)
     val_seqs, *_ = _load_events(val_dir, ["midi"])
     seqs = [s for s, _ in val_seqs]
-    ppx_add = _perplexity(model_add["prob"], seqs, model_add["order"])
+    _ = _perplexity(model_add["prob"], seqs, model_add["order"])
     ppx_kn = _perplexity(model_kn["prob"], seqs, model_kn["order"])
     assert np.isfinite(ppx_kn) and ppx_kn > 0
 

@@ -925,6 +925,16 @@ modcompose sample dummy.pkl --backend piano_template \
 The JSON output now includes ``hand`` and ``pedal`` fields.
 ![voicing demo placeholder](docs/img/piano_beta_counter.gif)
 
+#### Intensity & Density
+
+| intensity | RH/LH note density |
+|-----------|--------------------|
+| low       | 50 % (sparse)      |
+| medium    | 100 % (default)    |
+| high      | 110 % + anticipation|
+
+Adjust density with ``--intensity``. See the [test gif](docs/img/piano_beta_quick.gif).
+
 ## PianoGenerator ML
 
 Phase Δ introduces a transformer-based voicing model. First extract voicings

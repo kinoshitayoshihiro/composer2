@@ -6,13 +6,12 @@ from typing import Any
 from music21 import chord, expressions, harmony, note, stream, volume
 
 from utilities import humanizer
-from utilities.humanizer import apply_swing
 from utilities.cc_tools import merge_cc_events
+from utilities.humanizer import apply_swing
 from utilities.pedalizer import generate_pedal_cc
 
-from .voicing_density import VoicingDensityEngine
-
 from .base_part_generator import BasePartGenerator
+from .voicing_density import VoicingDensityEngine
 
 PPQ = 480
 
@@ -86,6 +85,18 @@ class PianoTemplateGenerator(BasePartGenerator):
                         n.volume = n.volume or volume.Volume(velocity=base_vel)
                         n.volume.velocity = min(127, int(n.volume.velocity) + 10)
 
+        # Density scaling before pedal/humanizer logic
+        for part in (rh, lh):
+            notes = list(part.recurse().notes)
+            scaled = self._density_engine.scale_density(notes, str(intensity))
+            for n in notes:
+                part.remove(n)
+            for n in scaled:
+                cp = copy.deepcopy(n)
+                if hasattr(cp, "activeSite"):
+                    cp.activeSite = None
+                part.insert(float(n.offset), cp)
+
         chord_stream = section_data.get("chord_stream")
         if chord_stream:
             events = generate_pedal_cc(chord_stream)
@@ -133,24 +144,4 @@ class PianoTemplateGenerator(BasePartGenerator):
     def _post_process_generated_part(
         self, part: stream.Part, section: dict[str, Any], ratio: float | None
     ) -> None:
-        hand = None
-        if part.id and "rh" in part.id.lower():
-            hand = "RH"
-        elif part.id and "lh" in part.id.lower():
-            hand = "LH"
-        if not hand:
-            return
-
-        intensity = section.get("musical_intent", {}).get("intensity", "medium")
-        notes = list(part.recurse().notes)
-        scaled = self._density_engine.scale_density(notes, str(intensity))
-        note_offsets = []
-        for n in scaled:
-            cp = copy.deepcopy(n)
-            if hasattr(cp, "activeSite"):
-                cp.activeSite = None
-            note_offsets.append((float(n.offset), cp))
-        for n in notes:
-            part.remove(n)
-        for off, n in note_offsets:
-            part.insert(off, n)
+        return

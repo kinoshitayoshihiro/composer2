@@ -26,15 +26,18 @@ jobs:
           path: ~/.cache/pip/wheels/**/cyext*
           key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
       - name: Install dependencies
-        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA'
+        if: matrix.variant != 'PIANO_ML'
         run: pip install -r requirements.txt
       - name: Install dependencies (ML)
-        if: matrix.variant == 'PIANO_ML' || matrix.variant == 'PG_BETA'
+        if: matrix.variant == 'PIANO_ML'
         run: pip install -r requirements.txt torch==2.3.1 transformers==4.43.*
       - name: Install test tools
         run: pip install -e .[test] -r requirements-test.txt
       - name: Set ML env (pure)
-        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA'
+        if: matrix.variant != 'PIANO_ML'
+        run: echo "ENABLE_ML_TESTS=false" >> $GITHUB_ENV
+      - name: Set ML env (beta)
+        if: matrix.variant == 'PG_BETA'
         run: echo "ENABLE_ML_TESTS=false" >> $GITHUB_ENV
       - name: Set ML env (ml)
         if: matrix.variant == 'PIANO_ML'

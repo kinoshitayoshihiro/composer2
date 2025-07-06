@@ -493,6 +493,18 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("--rhythm-schema", type=str, default=None)
     ap.add_argument("--humanize-profile", type=str, default=None)
     ap.add_argument("--voicing", choices=["shell", "guide", "drop2"], default="shell")
+    ap.add_argument(
+        "--intensity",
+        choices=["low", "medium", "high"],
+        default="medium",
+        help="Overall intensity level",
+    )
+    ap.add_argument(
+        "--counterline",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Add a simple counter melody",
+    )
     ns = ap.parse_args(args)
     if ns.ai_backend:
         warnings.warn("--ai-backend is deprecated; use --backend", DeprecationWarning)
@@ -535,11 +547,16 @@ def _cmd_sample(args: list[str]) -> None:
             "q_length": float(ns.length) * 4.0,
             "chord_symbol_for_voicing": "C",
             "groove_kicks": [i * 2.0 for i in range(int(ns.length))],
-            "musical_intent": {"intensity": "medium"},
+            "musical_intent": {"intensity": ns.intensity},
             "voicing_mode": ns.voicing,
             "use_pedal": True,
         }
         parts = gen.compose(section_data=section)
+        if ns.counterline and isinstance(parts, dict) and "piano_rh" in parts:
+            from generator.counter_line import CounterLineGenerator
+
+            counter = CounterLineGenerator().generate(parts["piano_rh"])
+            parts["counterline"] = counter
 
         def _events(p, hand: str):
             ev = []
@@ -564,7 +581,12 @@ def _cmd_sample(args: list[str]) -> None:
         events = []
         if isinstance(parts, dict):
             for hid, p in parts.items():
-                hand = "RH" if "rh" in hid else "LH"
+                if "rh" in hid:
+                    hand = "RH"
+                elif "lh" in hid:
+                    hand = "LH"
+                else:
+                    hand = "CL"
                 events.extend(_events(p, hand))
         else:
             events.extend(_events(parts, "RH"))

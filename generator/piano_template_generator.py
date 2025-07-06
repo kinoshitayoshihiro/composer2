@@ -7,6 +7,8 @@ from music21 import chord, expressions, harmony, note, stream, volume
 
 from utilities import humanizer
 from utilities.humanizer import apply_swing
+from utilities.cc_tools import merge_cc_events
+from utilities.pedalizer import generate_pedal_cc
 
 from .voicing_density import VoicingDensityEngine
 
@@ -83,6 +85,13 @@ class PianoTemplateGenerator(BasePartGenerator):
                     if any(abs(float(n.offset) - k) <= eps for k in groove_kicks):
                         n.volume = n.volume or volume.Volume(velocity=base_vel)
                         n.volume.velocity = min(127, int(n.volume.velocity) + 10)
+
+        chord_stream = section_data.get("chord_stream")
+        if chord_stream:
+            events = generate_pedal_cc(chord_stream)
+            for part in (rh, lh):
+                base: set[tuple[float, int, int]] = set(getattr(part, "_extra_cc", set()))
+                part._extra_cc = set(merge_cc_events(base, events))
 
         if section_data.get("use_pedal"):
             cc_events = self._pedal_marks(intensity, q_length)

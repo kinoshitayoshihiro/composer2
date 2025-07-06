@@ -135,7 +135,13 @@ class PianoTemplateGenerator(BasePartGenerator):
         intensity = section.get("musical_intent", {}).get("intensity", "medium")
         notes = list(part.recurse().notes)
         scaled = self._density_engine.scale_density(notes, str(intensity))
-        for n in list(part.recurse().notes):
-            part.remove(n)
+        note_offsets = []
         for n in scaled:
-            part.insert(float(n.offset), copy.deepcopy(n))
+            cp = copy.deepcopy(n)
+            if hasattr(cp, "activeSite"):
+                cp.activeSite = None
+            note_offsets.append((float(n.offset), cp))
+        for n in notes:
+            part.remove(n)
+        for off, n in note_offsets:
+            part.insert(off, n)

@@ -47,9 +47,8 @@ class VoicingDensityEngine:
                 new_notes.append(n)
                 try:
                     anticip = copy.deepcopy(n)
-                    anticip.offset = float(n.offset) - 0.5
-                    if anticip.offset >= 0:
-                        new_notes.append(anticip)
+                    anticip.offset = max(0.0, float(n.offset) - 0.5)
+                    new_notes.append(anticip)
                 except Exception:
                     continue
             new_notes.sort(key=lambda n: float(n.offset))

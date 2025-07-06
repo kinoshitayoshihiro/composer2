@@ -42,12 +42,7 @@ test = [
   "python-rtmidi",
   "hdbscan>=0.8",
 ]
-audio = [
-  "librosa>=0.10",
-  "soundfile>=0.12",
-  "fluidsynth",
-  "tqdm",
-]
+audio = ["numpy", "scipy", "soundfile>=0.12"]
 velocity = [
   "numpy>=1.24",
   "scipy>=1.10",

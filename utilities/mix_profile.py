@@ -43,6 +43,9 @@ def export_mix_json(parts, path: str) -> None:
                 entry["ir_file"] = str(p)
                 if not p.is_file():
                     logger.warning("IR file missing: %s", ir_file)
+            rendered = getattr(meta, "rendered_wav", None)
+            if rendered is not None:
+                entry["rendered_wav"] = str(rendered)
             fx_env = getattr(meta, "fx_envelope", None)
             if fx_env:
                 entry["fx_envelope"] = fx_env

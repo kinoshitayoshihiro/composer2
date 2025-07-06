@@ -66,8 +66,8 @@ the start of the part.
 from utilities.tone_shaper import ToneShaper
 
 shaper = ToneShaper()
-preset = shaper.choose_preset(None, "medium", 80.0)
-part.extra_cc = shaper.to_cc_events(as_dict=True)
+preset = shaper.choose_preset(intensity="medium", avg_velocity=80.0)
+part.extra_cc = shaper.to_cc_events(amp_name=preset, intensity="medium", as_dict=True)
 ```
 
 A simplified decision flow:
@@ -116,6 +116,14 @@ CC31 values:
 | crunch | 32  |
 | drive  | 64  |
 | fuzz   | 96  |
+
+### Default Preset Mapping
+
+| Intensity | AvgVel <70 | AvgVel ≥70 |
+|-----------|------------|-----------|
+| low       | clean      | crunch    |
+| medium    | crunch     | drive     |
+| high      | drive      | fuzz      |
 
 ## Loudness Normalisation
 

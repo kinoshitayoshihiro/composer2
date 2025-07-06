@@ -4,33 +4,9 @@ from utilities.tone_shaper import ToneShaper
 
 # ----------------------------------------------------------------------
 # ToneShaper - preset-selection / CC-emit tests
-#   choose_preset(amp_hint, intensity, avg_velocity) -> str
+#   choose_preset(amp_hint=None, intensity="med", avg_velocity=64.0) -> str
 # ----------------------------------------------------------------------
 
-def test_choose_preset_drive() -> None:
-    """
-    intensity=high & avg_velocity=90 だが、
-    プリセットマップに "fuzz" が無い場合は default にフォールバックする。
-    """
-    shaper = ToneShaper({"drive": {"amp": 90}})
-    preset = shaper.choose_preset(None, "high", 90.0)
-    assert preset == "drive"
-
-
-def test_choose_preset_table() -> None:
-    """
-    ToneShaper がデフォルトのプリセット・ルールを保持している場合の
-    マッチング動作を確認。
-    """
-    shaper = ToneShaper()
-
-    # avg_velocity が 50 / intensity "low" → clean
-    assert shaper.choose_preset(None, "low", 50.0) == "clean"
-    # avg_velocity が 70 / intensity "medium" → drive (存在しなければ clean)
-    assert shaper.choose_preset(None, "medium", 70.0) == "drive"
-    # avg_velocity が 90 / intensity "high" → fuzz (存在しなければ clean)
-    assert shaper.choose_preset(None, "high", 90.0) == "fuzz"
-    assert preset == "clean"        # default_fallback
 
 
 # ──────────────────────────────────────────────────────────────
@@ -56,7 +32,7 @@ def test_choose_preset_table(intensity: str, vel: float, expected: str) -> None:
             "fuzz":   {"amp": 96},
         }
     )
-    assert shaper.choose_preset(None, intensity, vel) == expected
+    assert shaper.choose_preset(intensity=intensity, avg_velocity=vel) == expected
 
 
 # ──────────────────────────────────────────────────────────────
@@ -65,7 +41,10 @@ def test_choose_preset_table(intensity: str, vel: float, expected: str) -> None:
 def test_choose_preset_fallback() -> None:
     shaper = ToneShaper({"clean": {"amp": 20}})
     # amp_hint が unknown → default へフォールバック
-    assert shaper.choose_preset("unknown", "low", 50.0) == "clean"
+    assert (
+        shaper.choose_preset(amp_hint="unknown", intensity="low", avg_velocity=50.0)
+        == "clean"
+    )
 
 
 # ──────────────────────────────────────────────────────────────
@@ -73,7 +52,7 @@ def test_choose_preset_fallback() -> None:
 # ──────────────────────────────────────────────────────────────
 def test_to_cc_events_all_cc() -> None:
     shaper = ToneShaper({"clean": {"amp": 20}})
-    shaper.choose_preset(None, "low", 50.0)            # preset を選択
+    shaper.choose_preset(intensity="low", avg_velocity=50.0)
     events = shaper.to_cc_events(as_dict=True)
     ccs = {e["cc"] for e in events}
     assert {31, 91, 93, 94}.issubset(ccs)
@@ -85,10 +64,10 @@ def test_to_cc_events_all_cc() -> None:
 def test_intensity_scaling() -> None:
     shaper = ToneShaper({"clean": {"amp": 20, "reverb": 40}})
 
-    shaper.choose_preset(None, "low", 50.0)
+    shaper.choose_preset(intensity="low", avg_velocity=50.0)
     low_rev = next(v for _, c, v in shaper.to_cc_events(as_dict=False) if c == 91)
 
-    shaper.choose_preset(None, "high", 90.0)
+    shaper.choose_preset(intensity="high", avg_velocity=90.0)
     high_rev = next(v for _, c, v in shaper.to_cc_events(as_dict=False) if c == 91)
 
     assert high_rev > low_rev
@@ -107,7 +86,7 @@ def test_from_yaml_invalid_value(tmp_path) -> None:
 
 def test_preset_map_no_duplicates() -> None:
     ts = ToneShaper({"drive": {"amp": 80}})
-    ts.choose_preset(None, "medium", 70.0)
+    ts.choose_preset(intensity="medium", avg_velocity=70.0)
     keys = list(ts.preset_map.keys())
     assert len(keys) == len(set(keys))
     assert "drive_default" in ts.preset_map

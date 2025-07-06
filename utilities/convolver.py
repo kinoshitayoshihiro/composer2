@@ -18,7 +18,21 @@ try:
     import soxr  # type: ignore
 except Exception:  # pragma: no cover - optional
     soxr = None  # type: ignore
-from tqdm import tqdm
+try:
+    from tqdm import tqdm  # type: ignore
+except Exception:  # pragma: no cover - optional
+    class _NoTqdm:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            return
+
+        def update(self, *args: object, **kwargs: object) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    def tqdm(*args: object, **kwargs: object) -> _NoTqdm:  # type: ignore
+        return _NoTqdm()
 
 
 logger = logging.getLogger(__name__)

@@ -31,6 +31,7 @@ from .modular_composer_stub import ModularComposer
 from .piano_generator import PianoGenerator
 from .piano_template_generator import PianoTemplateGenerator
 from .piano_transformer import PianoTransformer
+from .piano_ml_generator import PianoMLGenerator
 from .sax_generator import SaxGenerator
 from .strings_generator import StringsGenerator
 from .vocal_generator import VocalGenerator
@@ -40,6 +41,7 @@ __all__ = [
     "PianoGenerator",
     "PianoTemplateGenerator",
     "PianoTransformer",
+    "PianoMLGenerator",
     "GuitarGenerator",
     "BassGenerator",
     "MelodyGenerator",

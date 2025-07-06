@@ -2132,6 +2132,10 @@ class GuitarGenerator(BasePartGenerator):
             etype = spec.get("type")
             dur = float(spec.get("duration_ql", 1.0))
             cc_list = spec.get("cc", [11, 72])
+            if isinstance(cc_list, (int, float, str)):
+                cc_list = [cc_list]
+            else:
+                cc_list = [float(c) for c in cc_list]
             steps = max(2, int(dur * 4))
             for s in range(steps + 1):
                 frac = s / steps

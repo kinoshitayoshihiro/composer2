@@ -100,3 +100,35 @@ def test_no_articulation_regression():
     sec2["events"] = [{"duration": 2.0}]
     parts = gen.compose(section_data=sec2)
     assert _sig(parts) == _sig(base)
+
+
+def test_sustain_overrides_default():
+    gen = _gen()
+    sec = _basic_section()
+    sec["part_params"] = {"strings": {"default_articulations": ["pizz"]}}
+    sec["events"] = [{"duration": 2.0, "articulations": "sustain"}]
+    parts = gen.compose(section_data=sec)
+    note_obj = list(parts["violin_i"].flatten().notes)[0]
+    assert not note_obj.articulations
+    assert not note_obj.expressions
+
+
+def test_plus_joined_articulations():
+    gen = _gen()
+    sec = _basic_section()
+    sec["events"] = [{"duration": 2.0, "articulations": "staccato+accent"}]
+    parts = gen.compose(section_data=sec)
+    note_obj = list(parts["violin_i"].flatten().notes)[0]
+    assert any(isinstance(a, articulations.Staccato) for a in note_obj.articulations)
+    assert any(isinstance(a, articulations.Accent) for a in note_obj.articulations)
+
+
+def test_unknown_articulation_logs(caplog):
+    gen = _gen()
+    sec = _basic_section()
+    sec["events"] = [{"duration": 2.0, "articulations": "flutter"}]
+    caplog.set_level("WARNING")
+    parts = gen.compose(section_data=sec)
+    note_obj = list(parts["violin_i"].flatten().notes)[0]
+    assert not note_obj.articulations and not note_obj.expressions
+    assert any("Unknown articulation" in r.message for r in caplog.records)

@@ -1,8 +1,12 @@
 import numpy as np
-import soundfile as sf
 import pytest
+import soundfile as sf
 
-from generator.guitar_generator import GuitarGenerator
+from utilities.audio_env import has_fluidsynth
+
+if not has_fluidsynth():
+    pytest.skip("fluidsynth missing", allow_module_level=True)
+
 from utilities.tone_shaper import ToneShaper
 
 

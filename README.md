@@ -923,7 +923,7 @@ modcompose sample dummy.pkl --backend piano_template \
 ```
 
 The JSON output now includes ``hand`` and ``pedal`` fields.
-![voicing demo placeholder](docs/img/piano_beta_counter.gif)
+<!-- TODO: replace with actual GIF -->
 
 #### Intensity & Density
 
@@ -933,7 +933,7 @@ The JSON output now includes ``hand`` and ``pedal`` fields.
 | medium    | 100 % (default)    |
 | high      | 110 % + anticipation|
 
-Adjust density with ``--intensity``. See the [test gif](docs/img/piano_beta_quick.gif).
+Adjust density with ``--intensity``. <!-- TODO: replace with actual GIF -->
 
 ## PianoGenerator ML
 

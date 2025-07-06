@@ -450,6 +450,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=_parse_tuning,
         help="Guitar tuning preset name or comma-separated offsets",
     )
+    p.add_argument(
+        "--counterline",
+        action="store_true",
+        help="Generate a simple counter melody above the vocal part",
+    )
     return p
 
 
@@ -558,6 +563,23 @@ def main_cli() -> None:
         buffer_ahead=args.buffer_ahead,
         parallel_bars=args.parallel_bars,
     )
+
+    if args.counterline:
+        try:
+            from generator.counter_line import CounterLineGenerator
+
+            melody_part = None
+            for p in score.parts:
+                if p.id in {"Vocal", "Melody"} or p.partName in {"Vocal", "Melody"}:
+                    melody_part = p
+                    break
+            if melody_part is None and score.parts:
+                melody_part = score.parts[0]
+            if melody_part is not None:
+                counter = CounterLineGenerator().generate(melody_part)
+                score.insert(0, counter)
+        except Exception as e:  # pragma: no cover - best effort
+            logger.error("Failed to create counter line: %s", e)
 
     # 5) Tempo マップ & 書き出し -------------------------------------------
     tempo_map_path = main_cfg["global_settings"].get("tempo_map_path")

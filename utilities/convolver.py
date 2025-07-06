@@ -21,7 +21,12 @@ except Exception:  # pragma: no cover - optional
     soxr = None  # type: ignore
 try:
     if sf is not None:
-        sf.default_subtype("WAV", "FLOAT")
+        try:
+            sf.default_subtype("WAV", subtype="FLOAT")  # type: ignore[arg-type]
+        except TypeError:
+            # Older soundfile versions only expose a mapping
+            if hasattr(sf, "_default_subtypes"):
+                sf._default_subtypes["WAV"] = "FLOAT"  # type: ignore[attr-defined]
 except Exception:
     pass
 try:

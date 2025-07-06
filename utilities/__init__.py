@@ -18,7 +18,11 @@ utilities package -- 音楽生成プロジェクト全体で利用されるコ�
 """
 
 import importlib
+import importlib.util as importlib_util
 from typing import TYPE_CHECKING, Any
+
+_HAS_MUSIC21 = importlib_util.find_spec("music21") is not None
+_HAS_YAML = importlib_util.find_spec("yaml") is not None
 
 if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from . import groove_sampler_ngram as groove_sampler_ngram
@@ -42,13 +46,13 @@ except Exception:  # pragma: no cover - optional dependency
         raise EssentiaUnavailable("librosa is required for peak detection")
 
 
-try:
+if _HAS_MUSIC21:
     from .core_music_utils import (
         MIN_NOTE_DURATION_QL,
         get_time_signature_object,
         sanitize_chord_label,
     )
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
+else:  # pragma: no cover - optional dependency
     MIN_NOTE_DURATION_QL = 0.0625
 
     def _missing(*_args: Any, **_kwargs: Any) -> Any:
@@ -59,17 +63,73 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
     get_time_signature_object = _missing
     sanitize_chord_label = _missing
 from .drum_map import get_drum_map
-from .humanizer import (
-    HUMANIZATION_TEMPLATES,
-    NUMPY_AVAILABLE,
-    apply_humanization_to_element,
-    apply_humanization_to_part,
-    generate_fractional_noise,
-)
-from .midi_export import write_demo_bar
-from .scale_registry import ScaleRegistry, build_scale_object
-from .synth import render_midi, export_audio
-from .tempo_curve import TempoCurve, TempoPoint, load_tempo_curve
+if _HAS_MUSIC21:
+    from .humanizer import (
+        HUMANIZATION_TEMPLATES,
+        NUMPY_AVAILABLE,
+        apply_humanization_to_element,
+        apply_humanization_to_part,
+        generate_fractional_noise,
+    )
+else:
+    HUMANIZATION_TEMPLATES = {}
+    NUMPY_AVAILABLE = False
+
+    def _missing(*_args: Any, **_kwargs: Any) -> Any:
+        raise ModuleNotFoundError(
+            "music21 is required. Please run 'pip install -r requirements.txt'."
+        )
+
+    apply_humanization_to_element = _missing
+    apply_humanization_to_part = _missing
+    generate_fractional_noise = _missing
+if _HAS_MUSIC21:
+    from .midi_export import write_demo_bar
+else:
+    def write_demo_bar(*_args: Any, **_kwargs: Any) -> None:
+        raise ModuleNotFoundError(
+            "music21 is required. Please run 'pip install -r requirements.txt'."
+        )
+
+if _HAS_MUSIC21:
+    from .scale_registry import ScaleRegistry, build_scale_object
+else:
+    class ScaleRegistry:  # type: ignore[misc]
+        pass
+
+    def build_scale_object(*_args: Any, **_kwargs: Any) -> Any:
+        raise ModuleNotFoundError(
+            "music21 is required. Please run 'pip install -r requirements.txt'."
+        )
+if _HAS_MUSIC21:
+    from .synth import render_midi, export_audio
+else:
+    def render_midi(*_args: Any, **_kwargs: Any) -> None:
+        raise ModuleNotFoundError(
+            "music21 is required. Please run 'pip install -r requirements.txt'."
+        )
+
+    def export_audio(*_args: Any, **_kwargs: Any) -> None:
+        raise ModuleNotFoundError(
+            "music21 is required. Please run 'pip install -r requirements.txt'."
+        )
+if _HAS_MUSIC21 and _HAS_YAML:
+    from .tempo_curve import TempoCurve, TempoPoint, load_tempo_curve
+else:
+    class TempoPoint:  # type: ignore[misc]
+        beat: float
+        bpm: float
+
+    class TempoCurve:  # type: ignore[misc]
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise ModuleNotFoundError(
+                "PyYAML and music21 are required. Please run 'pip install -r requirements.txt'."
+            )
+
+    def load_tempo_curve(*_args: Any, **_kwargs: Any) -> Any:
+        raise ModuleNotFoundError(
+            "PyYAML and music21 are required. Please run 'pip install -r requirements.txt'."
+        )
 from .tempo_utils import (
     TempoMap,
     TempoVelocitySmoother,
@@ -84,14 +144,69 @@ from .tempo_utils import (
 )
 from .velocity_curve import PREDEFINED_CURVES, resolve_velocity_curve
 from .velocity_smoother import EMASmoother, VelocitySmoother
-from .humanizer import apply_velocity_histogram, apply_velocity_histogram_profile
-from .timing_corrector import TimingCorrector
-from .emotion_profile_loader import load_emotion_profile
-from .loudness_meter import RealtimeLoudnessMeter
+if _HAS_MUSIC21:
+    from .humanizer import apply_velocity_histogram, apply_velocity_histogram_profile
+else:
+    def apply_velocity_histogram(*_args: Any, **_kwargs: Any) -> None:
+        raise ModuleNotFoundError(
+            "music21 is required. Please run 'pip install -r requirements.txt'."
+        )
+
+    def apply_velocity_histogram_profile(*_args: Any, **_kwargs: Any) -> None:
+        raise ModuleNotFoundError(
+            "music21 is required. Please run 'pip install -r requirements.txt'."
+        )
+if _HAS_MUSIC21:
+    from .timing_corrector import TimingCorrector
+else:
+    class TimingCorrector:  # type: ignore[misc]
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise ModuleNotFoundError(
+                "music21 is required. Please run 'pip install -r requirements.txt'."
+            )
+if _HAS_YAML:
+    from .emotion_profile_loader import load_emotion_profile
+else:
+    def load_emotion_profile(*_args: Any, **_kwargs: Any) -> None:
+        raise ModuleNotFoundError(
+            "PyYAML is required. Please run 'pip install -r requirements.txt'."
+        )
+if importlib_util.find_spec("numpy") is not None:
+    from .loudness_meter import RealtimeLoudnessMeter
+else:
+    class RealtimeLoudnessMeter:  # type: ignore[misc]
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise ModuleNotFoundError(
+                "numpy is required. Please run 'pip install -r requirements.txt'."
+            )
 from .install_utils import run_with_retry
 from . import mix_profile
-from . import ir_renderer
-from .convolver import load_ir, convolve_ir, render_wav
+try:
+    importlib.import_module("utilities.ir_renderer")
+    from . import ir_renderer
+except ModuleNotFoundError:
+    ir_renderer = None  # type: ignore
+if importlib_util.find_spec("numpy") is not None:
+    from .convolver import load_ir, convolve_ir, render_wav
+else:
+    import types, sys
+
+    convolver_stub = types.ModuleType("utilities.convolver")
+
+    def _missing(*_a: Any, **_k: Any) -> None:
+        raise ModuleNotFoundError(
+            "numpy is required. Please run 'pip install -r requirements.txt'."
+        )
+
+    convolver_stub.load_ir = _missing
+    convolver_stub.convolve_ir = _missing
+    convolver_stub.render_wav = _missing
+    convolver_stub.render_with_ir = _missing
+    sys.modules[__name__ + ".convolver"] = convolver_stub
+
+    load_ir = convolver_stub.load_ir
+    convolve_ir = convolver_stub.convolve_ir
+    render_wav = convolver_stub.render_wav
 
 __all__ = [
     "MIN_NOTE_DURATION_QL",

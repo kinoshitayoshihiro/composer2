@@ -7,7 +7,7 @@ modcompose sample dummy.pkl --backend piano_template \
   --voicing drop2 --intensity medium --counterline -o demo.mid
 ```
 
-![demo gif](docs/img/piano_beta_quick.gif)
+<!-- TODO: replace with actual GIF -->
 
 #### Intensity & Density
 
@@ -17,4 +17,4 @@ modcompose sample dummy.pkl --backend piano_template \
 | medium    | 100 % (default)    |
 | high      | 110 % + anticipation|
 
-Use ``--intensity`` to control note density. See the [test gif](docs/img/piano_beta_quick.gif).
+Use ``--intensity`` to control note density. <!-- TODO: replace with actual GIF -->

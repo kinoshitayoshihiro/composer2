@@ -18,6 +18,7 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Late-Humanize & Leak Jitter](docs/humanizer.md#late-humanize)
 - [Groove Enhancements](docs/groove.md)
 - [Phrase Diversity](docs/diversity.md)
+- [Strings Articulations](docs/strings_generator.md)
 - [Effects & Automation](docs/effects.md)
 
 

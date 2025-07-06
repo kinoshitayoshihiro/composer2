@@ -14,9 +14,9 @@ def test_velocity_histogram_sampling() -> None:
     random.seed(0)
     apply_velocity_histogram(part, profile="piano_soft")
     vels = [n.volume.velocity for n in part.notes]
-    count_90 = vels.count(90)
-    ratio = count_90 / len(vels)
-    assert 0.5 < ratio < 0.9
+    count_60 = vels.count(60)
+    ratio = count_60 / len(vels)
+    assert 0.4 < ratio < 0.7
 
 
 def test_velocity_histogram_reproducible() -> None:

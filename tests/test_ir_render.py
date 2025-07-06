@@ -1,15 +1,19 @@
-import numpy as np
-import pytest
-pytest.importorskip("soundfile")
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from utilities.audio_env import has_fluidsynth
 
 sf = pytest.importorskip("soundfile")
 pyln = pytest.importorskip("pyloudnorm")
 
-from utilities.convolver import render_with_ir
-from utilities.convolver import convolve_ir
+if not has_fluidsynth():
+    pytest.skip("fluidsynth missing", allow_module_level=True)
+
+from utilities.convolver import convolve_ir, render_with_ir
 
 
 def _sine(sr, dur=1.0):

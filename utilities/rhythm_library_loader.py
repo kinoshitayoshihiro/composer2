@@ -11,6 +11,7 @@ from typing import Any, Dict, Final, List, Literal, Optional, Union
 
 import yaml
 import tomli
+
 try:
     from pydantic import BaseModel, Field, ValidationError, field_validator
 except Exception:  # pragma: no cover - optional dependency
@@ -32,7 +33,9 @@ except Exception:  # pragma: no cover - optional dependency
     def field_validator(*args, **kwargs):
         def decorator(func):
             return func
+
         return decorator
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -81,6 +84,10 @@ class PatternEvent(BaseModel):
         None, description="For basslines: if the note should glide to the next."
     )
     accent: Optional[bool] = Field(None, description="If the event should be accented.")
+    articulations: Optional[List[str]] = Field(
+        default=None,
+        description="List of articulations such as 'staccato' for this event.",
+    )
     probability: Optional[float] = Field(
         1.0,
         description="Probability of this event occurring (0.0 to 1.0).",
@@ -97,16 +104,12 @@ class BasePatternDef(BaseModel):
     description: Optional[str] = None
     tags: Optional[List[str]] = Field(default_factory=list)
     time_signature: Optional[str] = "4/4"
-    length_beats: Optional[float] = (
-        Field(  # リズムライブラリYAMLの length_beats と合わせる
-            4.0, description="Reference length of the pattern in beats."
-        )
+    length_beats: Optional[float] = Field(  # リズムライブラリYAMLの length_beats と合わせる
+        4.0, description="Reference length of the pattern in beats."
     )
-    reference_duration_ql: Optional[float] = (
-        Field(  # ジェネレータが参照する可能性のあるキー
-            None,
-            description="Reference duration of the pattern in quarter lengths. If None, often calculated from length_beats and time_signature.",
-        )
+    reference_duration_ql: Optional[float] = Field(  # ジェネレータが参照する可能性のあるキー
+        None,
+        description="Reference duration of the pattern in quarter lengths. If None, often calculated from length_beats and time_signature.",
     )
     swing_ratio: Optional[float] = None
     offset_profile: Optional[str] = None
@@ -162,9 +165,9 @@ class BassPattern(BasePatternDef):
 
 
 class GuitarPattern(BasePatternDef):
-    pattern: Optional[Union[List[PatternEvent], List[float], List[int]]] = (
-        None  # PatternEvent以外は非推奨
-    )
+    pattern: Optional[
+        Union[List[PatternEvent], List[float], List[int]]
+    ] = None  # PatternEvent以外は非推奨
     execution_style: Optional[str] = None  # ★★★ 追加 ★★★
     arpeggio_indices: Optional[List[int]] = None
     strum_width_sec: Optional[float] = None
@@ -184,15 +187,13 @@ class RhythmLibrary(BaseModel):
     piano_patterns: Optional[Dict[str, PianoPattern]] = Field(default_factory=dict)
     drum_patterns: Optional[Dict[str, DrumPattern]] = Field(default_factory=dict)
     bass_patterns: Optional[Dict[str, BassPattern]] = Field(default_factory=dict)
-    guitar: Optional[Dict[str, GuitarPattern]] = (
-        Field(  # ★★★ guitar_patterns から guitar に変更 ★★★
-            default_factory=dict,
-            alias="guitar_patterns",  # YAMLでは guitar_patterns を期待
-        )
+    guitar: Optional[
+        Dict[str, GuitarPattern]
+    ] = Field(  # ★★★ guitar_patterns から guitar に変更 ★★★
+        default_factory=dict,
+        alias="guitar_patterns",  # YAMLでは guitar_patterns を期待
     )
-    extra: Dict[str, Any] = Field(
-        default_factory=dict
-    )  # その他のトップレベルキーを許容
+    extra: Dict[str, Any] = Field(default_factory=dict)  # その他のトップレベルキーを許容
     model_config = {
         "extra": "allow",
         "str_max_length": 2048,
@@ -314,9 +315,7 @@ def _merge_extra_patterns(base: Dict[str, Any], extra_dir: Path) -> Dict[str, An
                         # カテゴリレベルでディープマージ（パターンキーが重複したら上書き）
                         for pattern_key, pattern_value in category_data.items():
                             merged[top_key][pattern_key] = pattern_value
-                    elif isinstance(
-                        category_data, dict
-                    ):  # ベースにないカテゴリならそのまま追加
+                    elif isinstance(category_data, dict):  # ベースにないカテゴリならそのまま追加
                         merged[top_key] = category_data
                     else:
                         LOGGER.warning(

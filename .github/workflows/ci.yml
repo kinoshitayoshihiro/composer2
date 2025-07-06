@@ -36,9 +36,6 @@ jobs:
       - name: Set ML env (pure)
         if: matrix.variant != 'PIANO_ML'
         run: echo "ENABLE_ML_TESTS=false" >> $GITHUB_ENV
-      - name: Set ML env (beta)
-        if: matrix.variant == 'PG_BETA'
-        run: echo "ENABLE_ML_TESTS=false" >> $GITHUB_ENV
       - name: Set ML env (ml)
         if: matrix.variant == 'PIANO_ML'
         run: echo "ENABLE_ML_TESTS=true" >> $GITHUB_ENV
@@ -84,13 +81,12 @@ jobs:
         run: mypy modular_composer utilities tests --strict
       - name: Debug music21
         run: pip list | grep music21
-      - name: Pytest
-        run: |
-          if [ "$ENABLE_ML_TESTS" = "true" ]; then
-            pytest -q
-          else
-            pytest -q -m "not ml"
-          fi
+      - name: Run pytest (no-ml)
+        if: matrix.variant != 'PIANO_ML'
+        run: pytest -q -m "not ml"
+      - name: Run pytest (ml)
+        if: matrix.variant == 'PIANO_ML'
+        run: pytest -q
       - name: MIDI Regression Tests
         run: pytest tests/test_midi_regression.py
         env:

@@ -320,6 +320,46 @@ class PianoGenerator(BasePartGenerator):
         self._prev_voicings[hand] = best
         return best
 
+    def _voice_leading(
+        self, chords: list[harmony.ChordSymbol], mode: str = "shell"
+    ) -> list[list[pitch.Pitch]]:
+        """Return voice-led pitches for a chord progression."""
+        prev: list[pitch.Pitch] | None = None
+        result: list[list[pitch.Pitch]] = []
+        for cs in chords:
+            base: list[pitch.Pitch] = []
+            if mode != "guide":
+                root = cs.root() or harmony.ChordSymbol("C").root()
+                if root:
+                    rp = root.transpose(0)
+                    rp.octave = rp.octave or 4
+                    base.append(rp)
+            if cs.third:
+                tp = cs.third.transpose(0)
+                tp.octave = tp.octave or 4
+                base.append(tp)
+            if cs.seventh:
+                sp = cs.seventh.transpose(0)
+                sp.octave = sp.octave or 4
+                base.append(sp)
+            elif cs.fifth:
+                fp = cs.fifth.transpose(0)
+                fp.octave = fp.octave or 4
+                base.append(fp)
+
+            if prev is None:
+                voiced = base
+            else:
+                voiced = []
+                for idx, p in enumerate(base):
+                    target = prev[min(idx, len(prev) - 1)]
+                    candidates = [p.transpose(o) for o in (-12, 0, 12)]
+                    best = min(candidates, key=lambda c: abs(c.ps - target.ps))
+                    voiced.append(best)
+            prev = voiced
+            result.append(voiced)
+        return result
+
     def _create_music_element(
         self,
         event_type: str,
@@ -393,24 +433,27 @@ class PianoGenerator(BasePartGenerator):
         if not part.flatten().notes:
             return
 
+        cc_events = self._pedal_marks(intensity, end_offset)
+        for ev in cc_events:
+            if ev["val"] and hasattr(expressions, "PedalType"):
+                ped = PedalMark()
+                if hasattr(ped, "pedalType"):
+                    ped.pedalType = expressions.PedalType.Sustain
+                if hasattr(ped, "pedalForm"):
+                    ped.pedalForm = expressions.PedalForm.Line
+                part.insert(ev["time"], ped)
+        part.extra_cc = getattr(part, "extra_cc", []) + cc_events
+
+    def _pedal_marks(self, intensity: str, length_ql: float) -> list[dict[str, Any]]:
         measure_len = self.measure_duration or 4.0
         pedal_value = 127 if intensity == "high" else 64
-        cc_events = []
+        events = []
         t = 0.0
-        while t < end_offset:
-            ped = PedalMark()
-            if hasattr(ped, "pedalType") and hasattr(expressions, "PedalType"):
-                ped.pedalType = expressions.PedalType.Sustain
-            if hasattr(ped, "pedalForm") and hasattr(expressions, "PedalForm"):
-                ped.pedalForm = expressions.PedalForm.Line
-            part.insert(t, ped)
-            cc_events.append({"time": t, "cc": 64, "val": pedal_value})
-            cc_events.append(
-                {"time": min(t + measure_len, end_offset), "cc": 64, "val": 0}
-            )
+        while t < length_ql:
+            events.append({"time": t, "cc": 64, "val": pedal_value})
+            events.append({"time": min(t + measure_len, length_ql), "cc": 64, "val": 0})
             t += measure_len
-
-        part.extra_cc = getattr(part, "extra_cc", []) + cc_events
+        return events
 
     def _insert_cc11_curves(self, part: stream.Part):
         notes = sorted(part.flatten().notes, key=lambda n: n.offset)

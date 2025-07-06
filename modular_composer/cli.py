@@ -470,13 +470,13 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("-l", "--length", type=int, default=4)
     ap.add_argument(
         "--backend",
-        choices=["ngram", "rnn", "transformer"],
+        choices=["ngram", "rnn", "transformer", "piano_template", "piano_ml"],
         default="ngram",
     )
     ap.add_argument(
         "--ai-backend",
         dest="ai_backend",
-        choices=["ngram", "rnn", "transformer"],
+        choices=["ngram", "rnn", "transformer", "piano_template", "piano_ml"],
         help=argparse.SUPPRESS,
         default=None,
     )
@@ -491,6 +491,7 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("--lag", type=float, default=10.0)
     ap.add_argument("--tempo-curve", type=Path)
     ap.add_argument("--rhythm-schema", type=str, default=None)
+    ap.add_argument("--voicing", choices=["shell", "guide", "drop2"], default="shell")
     ns = ap.parse_args(args)
     if ns.ai_backend:
         warnings.warn("--ai-backend is deprecated; use --backend", DeprecationWarning)
@@ -517,6 +518,70 @@ def _cmd_sample(args: list[str]) -> None:
             raise click.ClickException(str(exc)) from exc
         if ns.use_history:
             record_generate({"model_name": ns.model_name}, events)
+    elif ns.backend == "piano_template":
+        from music21 import instrument
+        from generator.piano_template_generator import PianoTemplateGenerator, PPQ
+
+        gen = PianoTemplateGenerator(
+            part_name="piano",
+            default_instrument=instrument.Piano(),
+            global_tempo=120,
+            global_time_signature="4/4",
+            global_key_signature_tonic="C",
+            global_key_signature_mode="major",
+        )
+        section = {
+            "q_length": float(ns.length) * 4.0,
+            "chord_symbol_for_voicing": "C",
+            "groove_kicks": [i * 2.0 for i in range(int(ns.length))],
+            "musical_intent": {"intensity": "medium"},
+            "voicing_mode": ns.voicing,
+            "use_pedal": True,
+        }
+        parts = gen.compose(section_data=section)
+
+        def _events(p, hand: str):
+            ev = []
+            for n in p.flatten().notes:
+                ev.append(
+                    {
+                        "pitch": int(n.pitch.midi),
+                        "velocity": int(n.volume.velocity or 64),
+                        "offset": float(n.offset),
+                        "duration": float(n.duration.quarterLength),
+                        "hand": hand,
+                        "pedal": any(
+                            abs(float(n.offset) - cc["time"]) < (3 / PPQ)
+                            and cc["val"] > 0
+                            for cc in getattr(p, "extra_cc", [])
+                            if cc.get("cc") == 64
+                        ),
+                    }
+                )
+            return ev
+
+        events = []
+        if isinstance(parts, dict):
+            for hid, p in parts.items():
+                hand = "RH" if "rh" in hid else "LH"
+                events.extend(_events(p, hand))
+        else:
+            events.extend(_events(parts, "RH"))
+        events.sort(key=lambda e: e["offset"])
+    elif ns.backend == "piano_ml":
+        from generator.piano_transformer import PianoTransformer
+
+        model = PianoTransformer(ns.model_name)
+        chords = ["Cmaj7" for _ in range(int(ns.length))]
+        events = []
+        prev: list[list[int]] = []
+        off = 0.0
+        for label in chords:
+            notes = model.sample_voicing(label, prev)
+            for p in notes:
+                events.append({"pitch": int(p), "velocity": 100, "offset": off, "duration": 1.0})
+            off += 1.0
+            prev.append(notes)
     else:
         model = load(ns.model)
         events = cast(

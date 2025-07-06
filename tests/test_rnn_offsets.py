@@ -1,10 +1,14 @@
 import json
 from pathlib import Path
 import pytest
-from tests import skip_if_no_torch
 
-skip_if_no_torch(allow_module_level=True)
+try:
+    import torch  # type: ignore
+except Exception:  # pragma: no cover - optional
+    torch = None  # type: ignore
+
 pytest.importorskip("pytorch_lightning")
+pytestmark = pytest.mark.skipif(torch is None, reason="torch not installed")
 
 from utilities import groove_sampler_rnn
 

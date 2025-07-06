@@ -67,6 +67,7 @@ ai = [
   "python-rtmidi",
   "hdbscan>=0.8",
 ]
+piano_ml = ["transformers>=4.43", "torch>=2.2"]
 data_ops = ["hmmlearn>=0.3"]
 plugin = [
   "pybind11>=2.10",

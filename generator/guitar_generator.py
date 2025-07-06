@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
@@ -21,16 +22,15 @@ import music21.pitch as pitch
 import music21.stream as stream
 import music21.volume as m21volume
 import yaml
-import statistics
 
-from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
-from utilities.tone_shaper import ToneShaper
 from utilities.cc_tools import (
-    merge_cc_events,
-    to_sorted_dicts,
     CCEvent,
     finalize_cc_events,
+    merge_cc_events,
+    to_sorted_dicts,
 )
+from utilities.tone_shaper import ToneShaper
+from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 
 logger = logging.getLogger(__name__)
 
@@ -158,9 +158,11 @@ def _normalize_stroke_key(stroke: str | None) -> str | None:
 
 
 def _add_cc_events(part: stream.Part, events: Sequence[CCEvent]) -> None:
-    base: set[CCEvent] = set(getattr(part, "_extra_cc", set()))
-    merged = merge_cc_events(base, events)
-    part._extra_cc = set(merged)
+    existing = [
+        (e["time"], e["cc"], e["val"]) if isinstance(e, dict) else e
+        for e in getattr(part, "extra_cc", [])
+    ]
+    part.extra_cc = merge_cc_events(existing, events)
 
 
 EXEC_STYLE_BLOCK_CHORD = "block_chord"
@@ -522,9 +524,10 @@ class GuitarGenerator(BasePartGenerator):
             avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes) if notes else 64.0
             part_cfg = section.get("part_params", {}).get(self.part_name, {})
             chosen = self.tone_shaper.choose_preset(
-                part_cfg.get("amp_preset"),
-                part_cfg.get("fx_preset_intensity") or section.get("intensity"),
-                avg_vel,
+                amp_hint=part_cfg.get("amp_preset"),
+                intensity=part_cfg.get("fx_preset_intensity")
+                or section.get("intensity"),
+                avg_velocity=avg_vel,
             )
             if chosen not in self.tone_shaper.preset_map:
                 logger.error(
@@ -534,8 +537,8 @@ class GuitarGenerator(BasePartGenerator):
                 )
 
             events = self.tone_shaper.to_cc_events(
-                chosen,
-                part_cfg.get("fx_preset_intensity", "med"),
+                amp_name=chosen,
+                intensity=part_cfg.get("fx_preset_intensity", "med"),
                 as_dict=False,
             )
             _add_cc_events(p, events)
@@ -550,18 +553,19 @@ class GuitarGenerator(BasePartGenerator):
                         continue
                     mix = float(spec.get("mix", spec))
                     env_events = self.tone_shaper.to_cc_events(
-                        chosen,
-                        part_cfg.get("fx_preset_intensity", "med"),
+                        amp_name=chosen,
+                        intensity=part_cfg.get("fx_preset_intensity", "med"),
                         mix=mix,
                         as_dict=False,
                         store=False,
                     )
                     shifted = {(start + t, c, v) for t, c, v in env_events}
-                    merged = merge_cc_events(
-                        p._extra_cc if hasattr(p, "_extra_cc") else set(), shifted
-                    )
-                    p._extra_cc = set(merged)
-                    self.tone_shaper.fx_envelope = to_sorted_dicts(merged)
+                    existing = [
+                        (e["time"], e["cc"], e["val"]) if isinstance(e, dict) else e
+                        for e in getattr(p, "extra_cc", [])
+                    ]
+                    p.extra_cc = merge_cc_events(existing, shifted)
+                    self.tone_shaper.fx_envelope = to_sorted_dicts(p.extra_cc)
             fx_params = section.get("fx_params")
             if fx_params:
                 self._apply_fx_cc(p, fx_params, section.get("musical_intent", {}))
@@ -2254,12 +2258,11 @@ class GuitarGenerator(BasePartGenerator):
         **kwargs,
     ) -> Path | None:
         """Render and convolve using the last composed part's IR."""
-        from utilities.synth import export_audio as synth_export_audio
-        from utilities import mix_profile
-        from utilities import rt_midi_streamer
-        from utilities import convolver
         import tempfile
         from datetime import datetime
+
+        from utilities import convolver, mix_profile, rt_midi_streamer
+        from utilities.synth import export_audio as synth_export_audio
 
         out_path = Path(out_wav) if out_wav else None
 
@@ -2309,8 +2312,9 @@ class GuitarGenerator(BasePartGenerator):
     ) -> Path | None:
         """Render and convolve the last composed part."""
         from tempfile import NamedTemporaryFile
-        from utilities.convolver import render_wav
+
         from utilities import mix_profile
+        from utilities.convolver import render_wav
 
         part = getattr(self, "_last_part", None)
         if part is None:

@@ -1,32 +1,35 @@
 # --- START OF FILE generator/base_part_generator.py (修正版) ---
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
-import statistics
-from music21 import stream, meter
 import logging
 import random
-from music21 import instrument as m21instrument
-from utilities.tone_shaper import ToneShaper
-from utilities.cc_tools import merge_cc_events, finalize_cc_events
+import statistics
+from abc import ABC, abstractmethod
+from typing import Any
+
+from music21 import meter, stream
+
 from utilities import fx_envelope
+from utilities.cc_tools import finalize_cc_events, merge_cc_events
+from utilities.tone_shaper import ToneShaper
 
 try:
-    from utilities.prettymidi_sync import apply_groove_pretty, load_groove_profile
-    from utilities.override_loader import (
-        get_part_override,
-        Overrides as OverrideModelType,
-        PartOverride,
+    from utilities.humanizer import (
+        apply as humanize_apply,
     )
     from utilities.humanizer import (
-        apply_humanization_to_part,
         apply_envelope,
-        apply as humanize_apply,
-        apply_swing,
+        apply_humanization_to_part,
         apply_offset_profile,
+        apply_swing,
     )
+    from utilities.override_loader import (
+        Overrides as OverrideModelType,
+    )
+    from utilities.override_loader import get_part_override
+    from utilities.prettymidi_sync import apply_groove_pretty, load_groove_profile
 except ModuleNotFoundError as e:
     raise ModuleNotFoundError(
-        "Missing optional utilities. Please install dependencies via 'pip install -r requirements.txt'."
+        "Missing optional utilities. Please install dependencies via "
+        "'pip install -r requirements.txt'."
     ) from e
 
 
@@ -76,40 +79,17 @@ class BasePartGenerator(ABC):
 
         avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
         shaper = ToneShaper()
-        # ---- ToneShaper から CC イベントを付与 ----
-        # 平均 velocity と楽曲の intensity をもとにプリセット名を決定
-        preset_name = shaper.choose_preset(avg_vel, intensity)
-
-        # CC31（アンプ）を含む一連の CC イベントを生成
-        # to_cc_events は (preset_name, intensity) -> [(time, cc, val), …] を返す
-        events = [
-            {"time": t, "cc": cc, "val": val}
-            for t, cc, val in shaper.to_cc_events(preset_name, intensity)
-        ]
-
-        # 既に付与されている CC のうち、CC31 以外は温存してマージ
-        existing = [e for e in getattr(part, "extra_cc", []) if e.get("cc") != 31]
-        to_add = existing + events
-        tuples = [(e["time"], e["cc"], e["val"]) for e in to_add]
-        base = set(getattr(part, "_extra_cc", set()))
-        merged = merge_cc_events(base, tuples)
-        part._extra_cc = set(merged)
-
-        shaper = ToneShaper()  # グローバル設定を渡す場合はここで引数化
-        preset_name = (
-            shaper.choose_preset(  # (amp_preset=None, intensity, avg_velocity)
-                None,
-                intensity,
-                avg_vel,
-            )
+        preset = shaper.choose_preset(
+            amp_hint=None, intensity=intensity, avg_velocity=avg_vel
         )
-
-        # CC31 系イベントを生成（dict 形式）
-        tone_events = shaper.to_cc_events(as_dict=True)
-
-        # 既存 CC を温存しつつ CC31 系を上書き
-        existing = [cc for cc in getattr(part, "extra_cc", []) if cc.get("cc") != 31]
-        part.extra_cc = existing + tone_events
+        tone_events = shaper.to_cc_events(
+            amp_name=preset, intensity=intensity, as_dict=False
+        )
+        existing = [
+            (e["time"], e["cc"], e["val"]) if isinstance(e, dict) else e
+            for e in getattr(part, "extra_cc", [])
+        ]
+        part.extra_cc = merge_cc_events(existing, tone_events)
 
     def _apply_effect_envelope(
         self, part: stream.Part, envelope_map: dict | None
@@ -127,12 +107,12 @@ class BasePartGenerator(ABC):
     def compose(
         self,
         *,
-        section_data: Dict[str, Any],
-        overrides_root: Optional[OverrideModelType] = None,
-        groove_profile_path: Optional[str] = None,
-        next_section_data: Optional[Dict[str, Any]] = None,
-        part_specific_humanize_params: Optional[Dict[str, Any]] = None,
-        shared_tracks: Dict[str, Any] | None = None,
+        section_data: dict[str, Any],
+        overrides_root: OverrideModelType | None = None,
+        groove_profile_path: str | None = None,
+        next_section_data: dict[str, Any] | None = None,
+        part_specific_humanize_params: dict[str, Any] | None = None,
+        shared_tracks: dict[str, Any] | None = None,
     ) -> stream.Part:
         shared_tracks = shared_tracks or {}
         section_data.setdefault("shared_tracks", {}).update(shared_tracks)
@@ -163,14 +143,19 @@ class BasePartGenerator(ABC):
             self.overrides.offset_profile_lh if self.overrides else None
         ) or section_data.get("part_params", {}).get("offset_profile_lh")
 
+        overrides_dump = (
+            self.overrides.model_dump(exclude_unset=True)
+            if self.overrides and hasattr(self.overrides, "model_dump")
+            else "None"
+        )
         self.logger.info(
-            f"Rendering part for section: '{section_label}' with overrides: {self.overrides.model_dump(exclude_unset=True) if self.overrides and hasattr(self.overrides, 'model_dump') else 'None'}"
+            f"Rendering part for section: '{section_label}' with overrides: {overrides_dump}"
         )
         parts = self._render_part(section_data, next_section_data)
 
-        if not isinstance(parts, (stream.Part, dict)):
+        if not isinstance(parts, stream.Part | dict):
             self.logger.error(
-                f"_render_part for {self.part_name} did not return a valid stream.Part or dict. Returning empty part."
+                f"_render_part for {self.part_name} did not return a valid part."
             )
             return stream.Part(id=self.part_name)
 
@@ -197,7 +182,9 @@ class BasePartGenerator(ABC):
                         p, template_name=template, custom_params=custom
                     )
                     self.logger.info(
-                        f"Applied final touch humanization (template: {template}) to {self.part_name}."
+                        "Applied final touch humanization (template: %s) to %s",
+                        template,
+                        self.part_name,
                     )
                 except Exception as e:
                     self.logger.error(
@@ -273,9 +260,9 @@ class BasePartGenerator(ABC):
     @abstractmethod
     def _render_part(
         self,
-        section_data: Dict[str, Any],
-        next_section_data: Optional[Dict[str, Any]] = None,
-    ) -> stream.Part | Dict[str, stream.Part]:
+        section_data: dict[str, Any],
+        next_section_data: dict[str, Any] | None = None,
+    ) -> stream.Part | dict[str, stream.Part]:
         raise NotImplementedError
 
 

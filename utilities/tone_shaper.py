@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, List
 
 import numpy as np
 from numpy.typing import NDArray
@@ -62,17 +61,18 @@ class ToneShaper:
         self.rules: list[dict[str, str]] = rules or []
 
         # 旧シンプル API と互換のため
-        self.presets: Dict[str, int] = {
+        self.presets: dict[str, int] = {
             n: d.get("amp", 0) for n, d in self.preset_map.items()
         }
 
         self._selected: str = default_preset
+        self.last_intensity: str | None = None
         self._knn: KNeighborsClassifier | None = None
         self.fx_envelope: list[dict[str, int | float]] = []
 
     # ---- YAML ローダ ---------------------------------------------------------
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "ToneShaper":
+    def from_yaml(cls, path: str | Path) -> ToneShaper:
         """Load preset and IR mappings from ``path``."""
         import yaml
 
@@ -196,37 +196,16 @@ class ToneShaper:
         self.preset_map.setdefault("drive", {"amp": 80})
 
         self._selected = chosen
+        self.last_intensity = lvl or intensity or "medium"
         return chosen
 
-    # ------------------------------------------------------
-    # deprecated wrapper for old signature
-    # ------------------------------------------------------
-    @staticmethod
-    def _deprecated(func):
-        import functools, warnings
-
-        @functools.wraps(func)
-        def wrapper(*a, **k):
-            warnings.warn("choose_preset legacy signature is deprecated", DeprecationWarning, stacklevel=2)
-            return func(*a, **k)
-
-        return wrapper
-
-    @_deprecated
-    def choose_preset_legacy(
-        self,
-        amp_preset: str | None = None,
-        intensity: str | None = None,
-        avg_velocity: float = 64.0,
-    ) -> str:
-        return self.choose_preset(amp_preset, intensity, avg_velocity)
 
     # ------------------------------------------------------
     # シンプル CC31 だけ返す互換 API
     # ------------------------------------------------------
     def to_cc_events_simple(
         self, preset_name: str, offset_ql: float = 0.0
-    ) -> List[dict]:
+    ) -> list[dict]:
         """Return single CC31 event dictionary (旧互換)."""
         value = self.presets.get(preset_name, self.presets[self.default_preset])
         return [{"time": float(offset_ql), "cc": 31, "val": value}]
@@ -271,14 +250,21 @@ class ToneShaper:
 
     def to_cc_events(
         self,
-        amp_name: str,
-        intensity: str,
+        amp_name: str | None = None,
+        intensity: str | None = None,
         mix: float = 1.0,
         *,
         as_dict: bool = False,
         store: bool = True,
     ) -> list[tuple[float, int, int]] | list[dict[str, int | float]]:
-        """Return CC events for ``amp_name`` scaled by ``intensity`` and ``mix``."""
+        """Return CC events for ``amp_name`` scaled by ``intensity`` and ``mix``.
+
+        When ``amp_name`` or ``intensity`` is ``None`` the values from the last
+        :meth:`choose_preset` call are used.
+        """
+
+        amp_name = amp_name or self._selected
+        intensity = intensity or self.last_intensity or "medium"
 
         preset = self.preset_map.get(amp_name) or self.preset_map.get(
             self.default_preset, {}

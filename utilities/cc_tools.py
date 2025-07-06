@@ -10,7 +10,7 @@ CCEvent = Tuple[float, int, int]
 
 
 def merge_cc_events(
-    base: Iterable[CCEvent], more: Iterable[CCEvent | dict]
+    base: Iterable[CCEvent], more: Iterable[CCEvent]
 ) -> List[CCEvent]:
     """Merge CC events where later events override earlier ones."""
 
@@ -18,11 +18,7 @@ def merge_cc_events(
         (float(t), int(c)): int(v)
         for t, c, v in base
     }
-    for e in more:
-        if isinstance(e, dict):
-            t, c, v = e.get("time"), e.get("cc"), e.get("val")
-        else:
-            t, c, v = e
+    for t, c, v in more:
         result[(float(t), int(c))] = int(v)
 
     return [(t, c, v) for (t, c), v in sorted(result.items())]

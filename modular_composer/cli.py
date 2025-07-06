@@ -9,10 +9,10 @@ import json
 import pickle
 import random
 import tempfile
+import warnings
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
-import warnings
 
 import click
 import pretty_midi
@@ -491,6 +491,7 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("--lag", type=float, default=10.0)
     ap.add_argument("--tempo-curve", type=Path)
     ap.add_argument("--rhythm-schema", type=str, default=None)
+    ap.add_argument("--humanize-profile", type=str, default=None)
     ap.add_argument("--voicing", choices=["shell", "guide", "drop2"], default="shell")
     ns = ap.parse_args(args)
     if ns.ai_backend:
@@ -501,10 +502,8 @@ def _cmd_sample(args: list[str]) -> None:
     if ns.backend == "transformer":
         from utilities.user_history import load_history, record_generate
 
-        prompt: list[dict[str, Any]] = []
         if ns.use_history:
-            hist = load_history()
-            prompt = [ev for h in hist for ev in h.get("events", [])][-128:]
+            load_history()
         from generator.bass_generator import sample_transformer_bass
 
         try:
@@ -520,7 +519,8 @@ def _cmd_sample(args: list[str]) -> None:
             record_generate({"model_name": ns.model_name}, events)
     elif ns.backend == "piano_template":
         from music21 import instrument
-        from generator.piano_template_generator import PianoTemplateGenerator, PPQ
+
+        from generator.piano_template_generator import PPQ, PianoTemplateGenerator
 
         gen = PianoTemplateGenerator(
             part_name="piano",
@@ -529,6 +529,7 @@ def _cmd_sample(args: list[str]) -> None:
             global_time_signature="4/4",
             global_key_signature_tonic="C",
             global_key_signature_mode="major",
+            global_settings={"humanize_profile": ns.humanize_profile},
         )
         section = {
             "q_length": float(ns.length) * 4.0,

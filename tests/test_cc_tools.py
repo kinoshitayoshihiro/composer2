@@ -1,10 +1,8 @@
 import utilities.cc_tools as cc
 
-def test_merge_cc_events_dict_support():
+def test_merge_cc_events_override() -> None:
     base = [(0.0, 31, 40)]
-    more = [{"time": 0.5, "cc": 31, "val": 50}]
+    more = [(0.0, 31, 50), (0.5, 31, 60)]
     merged = cc.merge_cc_events(base, more)
-    assert (0.5, 31, 50) in merged
-    assert (0.0, 31, 40) in merged
-    times = [e[0] for e in merged]
-    assert times == sorted(times)
+    assert merged.count((0.0, 31, 50)) == 1
+    assert merged[-1] == (0.5, 31, 60)

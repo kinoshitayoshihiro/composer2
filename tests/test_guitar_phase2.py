@@ -1,6 +1,5 @@
 import statistics
 import pytest
-import music21
 from music21 import harmony
 from generator.guitar_generator import (
     EXEC_STYLE_STRUM_BASIC,
@@ -73,8 +72,8 @@ def test_accent_map_velocity(_basic_gen):
     }
     part = gen.compose(section_data=sec)
     vels = [n.volume.velocity for n in part.flatten().notes]
-    base0 = gen.default_velocity_curve[int(round(127 * 0 / 4))]
-    base2 = gen.default_velocity_curve[int(round(127 * 0.5))]
+    _ = gen.default_velocity_curve[int(round(127 * 0 / 4))]
+    _ = gen.default_velocity_curve[int(round(127 * 0.5))]
     assert vels[0] == 60
     assert vels[2] == 53
 

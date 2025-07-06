@@ -1,6 +1,7 @@
 # AI Bass Generator
 
 This module provides a lightweight Transformer-based bass model.
+ML 機能は PyTorch が必須です。
 Install optional dependencies:
 
 ```bash

@@ -452,15 +452,14 @@ def apply_velocity_histogram(
     or mapping. When ``profile`` is a string it will be resolved via
     :func:`get_velocity_histogram`.
     """
+    if isinstance(profile, str):
+        profile = get_velocity_histogram(profile)
     if histogram is None and profile is None:
         raise TypeError("either histogram or profile must be provided")
     if histogram is None:
-        if isinstance(profile, dict):
-            histogram = profile
-        else:
-            histogram = get_velocity_histogram(str(profile))
-    elif isinstance(profile, dict):
-        histogram = profile
+        histogram = profile  # type: ignore[assignment]
+    elif profile is not None:
+        histogram = profile  # type: ignore[assignment]
     if cy_apply_velocity_histogram is not None:
         return cy_apply_velocity_histogram(part, histogram)
     return _apply_velocity_histogram_py(part, histogram)

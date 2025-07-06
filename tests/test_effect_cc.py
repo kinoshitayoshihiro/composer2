@@ -74,7 +74,7 @@ def test_effect_envelope_increasing(_gen):
 
 def test_export_audio_realtime(monkeypatch, tmp_path, _gen):
     gen = _gen()
-    p = gen.compose(
+    gen.compose(
         section_data={
             "section_name": "A",
             "q_length": 1.0,

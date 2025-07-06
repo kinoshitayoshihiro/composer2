@@ -162,7 +162,7 @@ def _add_cc_events(part: stream.Part, events: Sequence[CCEvent]) -> None:
         (e["time"], e["cc"], e["val"]) if isinstance(e, dict) else e
         for e in getattr(part, "extra_cc", [])
     ]
-    part.extra_cc = merge_cc_events(existing, events)
+    part.extra_cc = merge_cc_events(set(existing), set(events))
 
 
 EXEC_STYLE_BLOCK_CHORD = "block_chord"
@@ -551,7 +551,11 @@ class GuitarGenerator(BasePartGenerator):
                         start = float(off)
                     except Exception:
                         continue
-                    mix = float(spec.get("mix", spec))
+                    if isinstance(spec, dict):
+                        mix_val = spec.get("mix", 1.0)
+                    else:
+                        mix_val = spec
+                    mix = float(mix_val)
                     env_events = self.tone_shaper.to_cc_events(
                         amp_name=chosen,
                         intensity=part_cfg.get("fx_preset_intensity", "med"),
@@ -564,7 +568,7 @@ class GuitarGenerator(BasePartGenerator):
                         (e["time"], e["cc"], e["val"]) if isinstance(e, dict) else e
                         for e in getattr(p, "extra_cc", [])
                     ]
-                    p.extra_cc = merge_cc_events(existing, shifted)
+                    p.extra_cc = merge_cc_events(set(existing), shifted)
                     self.tone_shaper.fx_envelope = to_sorted_dicts(p.extra_cc)
             fx_params = section.get("fx_params")
             if fx_params:
@@ -599,7 +603,6 @@ class GuitarGenerator(BasePartGenerator):
         """Apply post-generation tweaks to *part*."""
         if ratio is not None:
             self._apply_swing_internal(part, float(ratio), self.swing_subdiv)
-        intensity = section.get("musical_intent", {}).get("intensity", "medium")
         for name in (
             "_apply_phrase_dynamics",
             "_apply_envelope",

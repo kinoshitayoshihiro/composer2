@@ -89,7 +89,7 @@ def test_emotional_peak_fill(tmp_path):
         "length_in_measures": 4,
         "part_params": {},
     }
-    part = drum.compose(section_data=section)
+    drum.compose(section_data=section)
 
     offsets = drum.get_fill_offsets()
     assert offsets

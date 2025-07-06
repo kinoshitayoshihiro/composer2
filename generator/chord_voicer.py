@@ -1,6 +1,5 @@
 # --- START OF FILE generators/chord_voicer.py (修正版) ---
-import music21
-from typing import List, Dict, Optional, Tuple, Any, Sequence
+from typing import List, Dict, Optional
 
 # music21 のサブモジュールを正しい形式でインポート
 import music21.stream as stream
@@ -8,18 +7,13 @@ import music21.note as note
 import music21.harmony as harmony
 import music21.pitch as pitch
 import music21.meter as meter
-import music21.duration as duration
 import music21.instrument as m21instrument
-import music21.interval as interval
 import music21.tempo as tempo
-import music21.key as key
 import music21.chord as m21chord
 import music21.volume as m21volume
 from .base_part_generator import BasePartGenerator
-from music21 import expressions
 from music21 import articulations  # 明示的にインポート
 import re  # 正規表現を使用する場合
-import random
 import logging
 
 logger = logging.getLogger(__name__)
@@ -351,7 +345,6 @@ class ChordVoicer:
                                 p.name == cs_obj.root().name
                                 for p in upper_structure_source_pitches
                             ):
-                                root_pitch_for_upper = pitch.Pitch(cs_obj.root().name)
                                 # original_closed_pitches から探す
                                 original_root = next(
                                     (
@@ -571,7 +564,6 @@ class ChordVoicer:
                     # 同時に、離れすぎないようにも調整する（例：ベースのオクターブ+1以内など）
                     # ここでは単純にベースより高ければOKとする
                     transposed_upper_structure = []
-                    current_lowest_upper_ps = lowest_upper_pitch.ps
 
                     # まず、最低音がベースより低ければ、最低音がベースのすぐ上に来るように全体を上げる
                     shift_to_get_above_bass = 0

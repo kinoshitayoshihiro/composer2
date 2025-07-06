@@ -618,10 +618,6 @@ class DrumGenerator(BasePartGenerator):
             self.velocity_range = (0.9, 1.1)
 
         # 楽器設定
-        part_default_cfg = self.main_cfg.get("default_part_parameters", {}).get(
-            self.part_name, {}
-        )
-        instrument_name = part_default_cfg.get("instrument", "DrumSet")
         try:
             self.default_instrument = m21instrument.Percussion()
             if hasattr(self.default_instrument, "midiChannel"):
@@ -1320,12 +1316,6 @@ class DrumGenerator(BasePartGenerator):
         beat_len_ql = (
             current_pattern_ts.beatDuration.quarterLength if current_pattern_ts else 1.0
         )
-        if swing_type == "eighth":
-            subdivision_duration_ql = beat_len_ql / 2.0
-        elif swing_type == "sixteenth":
-            subdivision_duration_ql = beat_len_ql / 4.0
-        else:
-            subdivision_duration_ql = beat_len_ql
         velocity_curve = velocity_curve or [1.0]
 
         if self.use_consonant_sync and self.consonant_sync_mode not in {
@@ -1456,8 +1446,6 @@ class DrumGenerator(BasePartGenerator):
                 MIN_NOTE_DURATION_QL / 16.0
             ):
                 continue
-
-            velocity_idx = int(rel_offset_in_pattern / subdivision_duration_ql)
 
             hit_duration_ql_from_def = safe_get(
                 ev_def,
@@ -2007,7 +1995,6 @@ class DrumGenerator(BasePartGenerator):
         ohh = self.gm_pitch_map.get("ohh")
         if chh is None or ohh is None:
             return
-        beat_len = self.global_ts.beatDuration.quarterLength
         bar_len = self.global_ts.barDuration.quarterLength
         notes = sorted(part.recurse().notes, key=lambda n: n.offset)
         idx = 0

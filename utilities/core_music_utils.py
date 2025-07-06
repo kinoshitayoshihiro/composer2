@@ -1,13 +1,12 @@
 try:
-    import music21
-    from music21 import pitch, harmony, key, meter, stream, note, chord, interval
+    from music21 import pitch, harmony, key, meter, interval
 except ModuleNotFoundError as e:  # pragma: no cover - dependency check
     raise ModuleNotFoundError(
         "music21 is required. Please run 'pip install -r requirements.txt'."
     ) from e
 import re
 import logging
-from typing import List, Dict, Optional, Any, Tuple, Union, cast, Sequence
+from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 _ROOT_RE_STRICT = re.compile(r'^([A-G](?:[#b]{1,2}|[ns])?)(?![#b])')

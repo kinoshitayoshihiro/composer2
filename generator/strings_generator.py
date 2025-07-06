@@ -32,6 +32,7 @@ from utilities.core_music_utils import (
     get_time_signature_object,
 )
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
+from utilities.cc_tools import finalize_cc_events
 
 from .base_part_generator import BasePartGenerator
 
@@ -170,6 +171,8 @@ class StringsGenerator(BasePartGenerator):
             raise RuntimeError(
                 "StringsGenerator expected dict result from _render_part"
             )
+        for part in result.values():
+            finalize_cc_events(part)
         self._last_parts = result
         return result
 
@@ -258,17 +261,22 @@ class StringsGenerator(BasePartGenerator):
     def _fit_pitch(
         p: pitch.Pitch, low: int, high: int, above: int | None
     ) -> pitch.Pitch:
-        q = p.transpose(0)
-        while q.midi < low:
-            q = q.transpose(12)
-        while q.midi > high:
-            q = q.transpose(-12)
+        base = p.midi
+        n_min = math.ceil((low - base) / 12)
+        n_max = math.floor((high - base) / 12)
+        candidates = [base + 12 * n for n in range(n_min, n_max + 1)]
+        if not candidates:
+            val = max(min(base, high), low)
+            return pitch.Pitch(midi=int(val))
         if above is not None:
-            while q.midi <= above and q.midi + 12 <= high:
-                q = q.transpose(12)
-        if q.midi > high:
-            q = pitch.Pitch(midi=high)
-        return q
+            near = [c for c in candidates if abs(c - above) <= 4]
+            if near:
+                val = min(near, key=lambda x: abs(x - above))
+            else:
+                val = min(candidates, key=lambda x: abs(x - above))
+        else:
+            val = min(candidates, key=lambda x: abs(x - base))
+        return pitch.Pitch(midi=int(val))
 
     def _estimate_velocity(self, section: _SectionInfo) -> tuple[int, float] | None:
         """Return (base velocity, factor) for *section*."""
@@ -332,7 +340,7 @@ class StringsGenerator(BasePartGenerator):
         elem: note.NotRest,
         art_names: Any,
         part_name: str,
-    ) -> None:
+    ) -> bool:
         names = parse_articulation_field(art_names)
         legato = False
         for art_name in names:
@@ -356,6 +364,7 @@ class StringsGenerator(BasePartGenerator):
         self._handle_legato(part_name, elem, legato)
         if not legato:
             self._handle_legato(part_name, elem, False)
+        return legato
 
     def _create_notes_from_event(
         self,
@@ -391,7 +400,6 @@ class StringsGenerator(BasePartGenerator):
             else:
                 setattr(n.style, "other", value)
 
-        self._apply_articulations(n, event_articulations, part_name)
         return n
 
     def _finalize_part(self, part: stream.Part, part_name: str) -> stream.Part:
@@ -476,6 +484,24 @@ class StringsGenerator(BasePartGenerator):
         while len(base_pitches) < len(self._SECTIONS):
             base_pitches.append(base_pitches[len(base_pitches) % len(base_pitches)])
 
+        extras_map: dict[str, list[pitch.Pitch]] = {s.name: [] for s in self._SECTIONS}
+        if not self.divisi and len(base_pitches) > len(self._SECTIONS):
+            extras = base_pitches[len(self._SECTIONS):]
+            target_sections = ["violin_i", "violin_ii", "viola"]
+            t_idx = 0
+            for p_extra in extras:
+                for _ in range(len(target_sections)):
+                    sec_name = target_sections[t_idx % len(target_sections)]
+                    sec_info = next(s for s in self._SECTIONS if s.name == sec_name)
+                    low = pitch.Pitch(sec_info.range_low).midi
+                    high = pitch.Pitch(sec_info.range_high).midi
+                    adj_extra = self._fit_pitch(p_extra, low, high, None)
+                    if low <= adj_extra.midi <= high:
+                        extras_map[sec_name].append(adj_extra)
+                        t_idx += 1
+                        break
+                    t_idx += 1
+
         prev_midi: int | None = None
         divisi_map: dict[str, str] = {}
         if isinstance(self.divisi, bool) and self.divisi:
@@ -523,6 +549,7 @@ class StringsGenerator(BasePartGenerator):
             else:
                 vel_base, vel_factor = vel_info
             offset = 0.0
+            prev_note: note.NotRest | None = None
             for i, dur in enumerate(durations):
                 arts = event_articulations[i] if i < len(event_articulations) else None
                 if not arts:
@@ -532,8 +559,13 @@ class StringsGenerator(BasePartGenerator):
                     bow_pos = parse_bow_position(events[i].get("bow_position"))
                 if bow_pos is None:
                     bow_pos = parse_bow_position(section_data.get("bow_position"))
+                base_obj: pitch.Pitch | chord.Chord
+                pitch_list = [adj]
+                if extras_map.get(info.name):
+                    pitch_list.extend(extras_map[info.name])
+                base_obj = chord.Chord(pitch_list) if len(pitch_list) > 1 else adj
                 n = self._create_notes_from_event(
-                    adj,
+                    base_obj,
                     dur,
                     info.name,
                     arts,
@@ -541,6 +573,7 @@ class StringsGenerator(BasePartGenerator):
                     vel_factor,
                     bow_pos,
                 )
+                is_legato = self._apply_articulations(n, arts, info.name)
                 self._humanize_timing(
                     n,
                     self.timing_jitter_ms,
@@ -602,12 +635,38 @@ class StringsGenerator(BasePartGenerator):
                         if n.volume and n.volume.velocity is not None:
                             chd.volume = volume.Volume(velocity=int(n.volume.velocity))
                         elem = chd
+                if not is_legato:
+                    if (
+                        prev_note
+                        and not prev_note.isRest
+                        and not n.isRest
+                        and prev_note.quarterLength >= 0.5
+                        and n.quarterLength >= 0.5
+                        and abs(n.pitch.midi - prev_note.pitch.midi) <= 2
+                    ):
+                        self._handle_legato(info.name, prev_note, True)
+                        self._handle_legato(info.name, n, True)
+                        self._handle_legato(info.name, n, False)
+                    else:
+                        self._handle_legato(info.name, n, False)
                 part.insert(offset + float(n.offset), elem)
                 offset += dur
+                prev_note = n if not n.isRest else None
             parts[info.name] = self._finalize_part(part, info.name)
             prev_midi = adj.midi
-        if q_length >= self.bar_length:
-            self._apply_expression_cc(parts, crescendo=True)
+        dim_start = section_data.get("dim_start")
+        dim_end = section_data.get("dim_end")
+        crescendo_flag = section_data.get("crescendo", q_length >= self.bar_length)
+        if dim_start is not None and dim_end is not None:
+            self._apply_expression_cc(
+                parts,
+                crescendo=bool(crescendo_flag),
+                length=q_length,
+                start_val=int(dim_start),
+                end_val=int(dim_end),
+            )
+        elif q_length >= 0:
+            self._apply_expression_cc(parts, crescendo=bool(crescendo_flag), length=q_length)
         return parts
 
     # ------------------------------------------------------------------
@@ -674,15 +733,43 @@ class StringsGenerator(BasePartGenerator):
         return new_part
 
     def _apply_expression_cc(
-        self, parts: dict[str, stream.Part], crescendo: bool = True
+        self,
+        parts: dict[str, stream.Part],
+        crescendo: bool = True,
+        *,
+        length: float | None = None,
+        start_val: int | None = None,
+        end_val: int | None = None,
     ) -> None:
-        """Add a simple CC11 crescendo over one bar."""
+        """Add a CC11 envelope across *length* quarter lengths.
+
+        Parameters
+        ----------
+        parts:
+            Mapping of part names to ``music21`` Parts.
+        crescendo:
+            If ``True`` and no explicit ``start_val``/``end_val`` provided,
+            ramp from 64 to 80, else from 80 to 64.
+        length:
+            Envelope duration in quarter lengths. Defaults to bar length.
+        start_val:
+            Starting CC11 value. Overrides ``crescendo`` when provided.
+        end_val:
+            Ending CC11 value. Overrides ``crescendo`` when provided.
+        """
         from utilities.cc_tools import merge_cc_events
+
+        if length is None:
+            length = self.bar_length
+        if start_val is None or end_val is None:
+            start_val = 64 if crescendo else 80
+            end_val = 80 if crescendo else 64
 
         for p in parts.values():
             events = [
-                (0.0, 11, 64 if crescendo else 80),
-                (self.bar_length, 11, 80 if crescendo else 64),
+                (0.0, 11, int(start_val)),
+                (float(length), 11, int(end_val)),
             ]
-            base: set[tuple[float, int, int]] = set(getattr(p, "_extra_cc", set()))
-            p._extra_cc = set(merge_cc_events(base, events))
+            base_events = getattr(p, "_extra_cc", set())
+            merged = merge_cc_events(base_events, events)
+            p._extra_cc = set(merged)

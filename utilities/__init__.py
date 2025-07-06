@@ -42,12 +42,22 @@ except Exception:  # pragma: no cover - optional dependency
         raise EssentiaUnavailable("librosa is required for peak detection")
 
 
-from .core_music_utils import (
-    MIN_NOTE_DURATION_QL,
-    get_time_signature_object,
-    sanitize_chord_label,
-    # get_music21_chord_object # --- この行を削除 ---
-)
+try:
+    from .core_music_utils import (
+        MIN_NOTE_DURATION_QL,
+        get_time_signature_object,
+        sanitize_chord_label,
+    )
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    MIN_NOTE_DURATION_QL = 0.0625
+
+    def _missing(*_args: Any, **_kwargs: Any) -> Any:
+        raise ModuleNotFoundError(
+            "music21 is required. Please run 'pip install -r requirements.txt'."
+        )
+
+    get_time_signature_object = _missing
+    sanitize_chord_label = _missing
 from .drum_map import get_drum_map
 from .humanizer import (
     HUMANIZATION_TEMPLATES,

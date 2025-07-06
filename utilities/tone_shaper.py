@@ -194,6 +194,7 @@ class ToneShaper:
 
         # ensure legacy preset exists
         self.preset_map.setdefault("drive", {"amp": 80})
+        self.preset_map.setdefault("drive_default", self.preset_map["drive"])
 
         self._selected = chosen
         self.last_intensity = lvl or intensity or "medium"

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
+
 from music21 import stream
 
-from .cc_tools import merge_cc_events, CCEvent
+from .cc_tools import CCEvent, merge_cc_events
 
 
 def apply(part: stream.Part, envelope_map: Mapping, *, bpm: float = 120.0) -> None:
@@ -70,7 +71,7 @@ def apply(part: stream.Part, envelope_map: Mapping, *, bpm: float = 120.0) -> No
             events.append((t, cc_num, val))
 
     base: set[CCEvent] = set(getattr(part, "_extra_cc", set()))
-    merged = merge_cc_events(base, [(float(t), int(c), int(v)) for (t, c, v) in events])
+    merged = merge_cc_events(base, {(float(t), int(c), int(v)) for (t, c, v) in events})
     part._extra_cc = set(merged)
 
 

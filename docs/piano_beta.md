@@ -8,3 +8,13 @@ modcompose sample dummy.pkl --backend piano_template \
 ```
 
 ![demo gif](docs/img/piano_beta_quick.gif)
+
+#### Intensity & Density
+
+| intensity | RH/LH note density |
+|-----------|--------------------|
+| low       | 50 % (sparse)      |
+| medium    | 100 % (default)    |
+| high      | 110 % + anticipation|
+
+Use ``--intensity`` to control note density. See the [test gif](docs/img/piano_beta_quick.gif).

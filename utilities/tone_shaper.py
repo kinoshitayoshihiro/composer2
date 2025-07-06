@@ -142,7 +142,16 @@ class ToneShaper:
         avg_velocity = 64.0 if avg_velocity is None else float(avg_velocity)
 
         # 1) explicit
-        chosen: str | None = amp_hint if amp_hint in self.preset_map else None
+        chosen: str | None = None
+        if amp_hint is not None:
+            if amp_hint in self.preset_map:
+                chosen = amp_hint
+            else:
+                chosen = f"{amp_hint}_default"
+                if chosen not in self.preset_map:
+                    self.preset_map[chosen] = self.preset_map.get(
+                        self.default_preset, {"amp": 80}
+                    )
 
         lvl_raw = (intensity or "medium").lower()
         lvl = lvl_raw if lvl_raw in {"low", "medium", "high"} else ""

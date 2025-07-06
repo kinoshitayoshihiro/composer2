@@ -60,7 +60,8 @@ class BasePartGenerator(ABC):
             ts_obj = meter.TimeSignature(global_time_signature or "4/4")
             num, denom = ts_obj.numerator, ts_obj.denominator
         self.bar_length = num * (4 / denom)
-        self.swing_subdiv = denom
+        # Default swing resolution is eighth notes (denom * 2)
+        self.swing_subdiv = denom * 2
         self.global_key_signature_tonic = global_key_signature_tonic
         self.global_key_signature_mode = global_key_signature_mode
         self.rng = rng or random.Random()

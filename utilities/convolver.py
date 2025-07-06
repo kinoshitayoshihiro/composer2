@@ -4,6 +4,7 @@ from pathlib import Path
 import logging
 
 import numpy as np
+
 try:
     import soundfile as sf
 except Exception:  # pragma: no cover - optional
@@ -26,6 +27,7 @@ except Exception:
 try:
     from tqdm import tqdm  # type: ignore
 except Exception:  # pragma: no cover - optional
+
     class _NoTqdm:
         def __init__(self, *args: object, **kwargs: object) -> None:
             return
@@ -87,9 +89,6 @@ def render_with_ir(
         logger.warning("IR file missing: %s", ir_wav)
         if y.shape[1] == 1:
             y = np.broadcast_to(y, (y.shape[0], 2))
-        peak = np.max(np.abs(y))
-        if peak > 0:
-            y = y / peak
         _write_gain(y, sr, out, gain_db)
         return
 
@@ -162,7 +161,9 @@ def load_ir(path: str) -> tuple[np.ndarray, int]:
     return data.astype(np.float32), int(sr)
 
 
-def convolve_ir(audio: np.ndarray, ir: np.ndarray, block_size: int = 2**14) -> np.ndarray:
+def convolve_ir(
+    audio: np.ndarray, ir: np.ndarray, block_size: int = 2**14
+) -> np.ndarray:
     """Overlap-add FFT convolution returning the input length."""
     if audio.ndim == 1:
         audio = audio[:, None]

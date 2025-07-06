@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+pytest.importorskip("soundfile")
 from pathlib import Path
 import subprocess
 import sys
@@ -8,6 +9,7 @@ sf = pytest.importorskip("soundfile")
 pyln = pytest.importorskip("pyloudnorm")
 
 from utilities.convolver import render_with_ir
+from utilities.convolver import convolve_ir
 
 
 def _sine(sr, dur=1.0):
@@ -81,3 +83,12 @@ def test_batch_render_dry_run(tmp_path):
     )
     assert res.returncode == 0
     assert not any(tmp_path.glob("*.wav"))
+
+
+@pytest.mark.audio
+def test_convolve_length():
+    audio = np.zeros(50, dtype=np.float32)
+    ir = np.zeros(10, dtype=np.float32)
+    ir[0] = 1.0
+    out = convolve_ir(audio, ir)
+    assert len(out) == len(audio)

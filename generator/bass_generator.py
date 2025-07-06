@@ -29,6 +29,7 @@ from music21 import (
 
 from utilities import MIN_NOTE_DURATION_QL, humanizer
 from utilities.bass_transformer import BassTransformer
+from utilities.cc_tools import finalize_cc_events, merge_cc_events
 from utilities.tone_shaper import ToneShaper
 
 try:
@@ -184,7 +185,7 @@ def _apply_tone(part: stream.Part, intensity: str) -> None:
     new_events = shaper.to_cc_events(
         amp_name=preset, intensity=intensity, as_dict=False
     )
-    part.extra_cc = merge_cc_events(existing, new_events)
+    part.extra_cc = merge_cc_events(set(existing), set(new_events))
 
 DIRECTION_UP = 1
 DIRECTION_DOWN = -1
@@ -397,6 +398,7 @@ class BassGenerator(BasePartGenerator):
                     shared_preset = self._apply_tone(p, intensity_label)
                 else:
                     self._apply_tone(p, intensity_label, shared_preset)
+                finalize_cc_events(p)
                 label = section_data.get("section_name")
                 if label in self.phrase_insertions:
                     self._insert_custom_phrase(p, self.phrase_insertions[label])
@@ -407,6 +409,7 @@ class BassGenerator(BasePartGenerator):
         else:
             part = apply_shift(result)
             self._apply_tone(part, intensity_label)
+            finalize_cc_events(part)
             label = section_data.get("section_name")
             if label in self.phrase_insertions:
                 self._insert_custom_phrase(part, self.phrase_insertions[label])
@@ -519,10 +522,9 @@ class BassGenerator(BasePartGenerator):
         tone_events = shaper.to_cc_events(
             amp_name=chosen,
             intensity=intensity,
-            offset_ql=0.0,
             as_dict=False,
         )
-        part.extra_cc = merge_cc_events(existing, tone_events)
+        part.extra_cc = merge_cc_events(set(existing), set(tone_events))
 
         return chosen
 
@@ -1241,7 +1243,6 @@ class BassGenerator(BasePartGenerator):
                 processed_measure_notes = self._apply_weak_beat(
                     measure_notes_raw, weak_beat_style_final
                 )
-                is_last_measure_in_block = measure_idx == num_measures_in_block - 1
                 if approach_on_4th_this and target_for_approach:
                     processed_measure_notes = self._insert_approach_note_to_measure(
                         processed_measure_notes,
@@ -1575,9 +1576,6 @@ class BassGenerator(BasePartGenerator):
             )
             ghost_factor = safe_get(
                 algo_pattern_options, "ghost_factor", default=0.5, cast_to=float
-            )
-            syncopation_prob = safe_get(
-                algo_pattern_options, "syncopation_prob", default=0.3, cast_to=float
             )
             octave_jump_prob = safe_get(
                 algo_pattern_options, "octave_jump_prob", default=0.6, cast_to=float

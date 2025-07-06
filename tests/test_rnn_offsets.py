@@ -4,7 +4,7 @@ import pytest
 
 try:
     import torch  # type: ignore
-except Exception:  # pragma: no cover - optional
+except ImportError:  # pragma: no cover - optional
     torch = None  # type: ignore
 
 pytest.importorskip("pytorch_lightning")

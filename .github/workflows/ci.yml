@@ -10,24 +10,35 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        python-version: ['3.10', '3.11']
+        variant: [PURE_PY, PIANO_ML]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-test.txt
       - uses: actions/cache@v3
         with:
           path: ~/.cache/pip/wheels/**/cyext*
           key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
       - name: Install dependencies
-        run: |
-          for i in 1 2 3; do
-            pip install -e .[test] -r requirements-test.txt && break || sleep 5
-          done
-          pip install music21>=9.1 soundfile>=0.12 pyloudnorm>=0.1 pydub>=0.25 mkdocs
+        if: matrix.variant == 'PURE_PY'
+        run: pip install -r requirements.txt
+      - name: Install dependencies (ML)
+        if: matrix.variant == 'PIANO_ML'
+        run: pip install -r requirements.txt torch==2.3.1 transformers==4.43.*
+      - name: Install test tools
+        run: pip install -e .[test] -r requirements-test.txt
+      - name: Set ML env (pure)
+        if: matrix.variant == 'PURE_PY'
+        run: echo "ENABLE_ML_TESTS=false" >> $GITHUB_ENV
+      - name: Set ML env (ml)
+        if: matrix.variant == 'PIANO_ML'
+        run: echo "ENABLE_ML_TESTS=true" >> $GITHUB_ENV
       - name: Restore Essentia wheel cache
         if: runner.os == 'Linux'
         uses: actions/cache@v3
@@ -69,10 +80,12 @@ jobs:
       - name: Debug music21
         run: pip list | grep music21
       - name: Pytest
-        run: pytest -q -m "not ess_optional" --cov --cov-report=xml
-      - name: Pytest Essentia
-        if: runner.os == 'Linux'
-        run: pytest -q -m ess_optional --cov --cov-append
+        run: |
+          if [ "$ENABLE_ML_TESTS" = "true" ]; then
+            pytest -q
+          else
+            pytest -q -m "not ml"
+          fi
       - name: MIDI Regression Tests
         run: pytest tests/test_midi_regression.py
         env:

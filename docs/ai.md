@@ -2,6 +2,7 @@
 
 This project optionally integrates a Transformer-based bass generator via
 Hugging Face Transformers.
+ML 機能は PyTorch が必須です。
 
 ## Usage
 

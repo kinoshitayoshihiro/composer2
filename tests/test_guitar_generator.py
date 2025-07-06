@@ -1,5 +1,4 @@
 import yaml
-from pathlib import Path
 from music21 import chord
 from music21 import instrument, harmony, articulations, pitch
 from generator.guitar_generator import GuitarGenerator
@@ -127,7 +126,7 @@ def test_export_musicxml(tmp_path):
         global_key_signature_tonic="C",
         global_key_signature_mode="major",
     )
-    part = gen.compose(section_data=_basic_section())
+    gen.compose(section_data=_basic_section())
     path = tmp_path / "out.xml"
     gen.export_musicxml(str(path))
     assert path.exists() and path.stat().st_size > 0

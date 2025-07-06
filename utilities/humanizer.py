@@ -34,6 +34,7 @@ from .ghost_jitter import apply_ghost_jitter  # re-export
 __all__ = [
     "apply_ghost_jitter",
     "apply_velocity_histogram",
+    "apply_velocity_histogram_profile",
     "apply_envelope",
     "swing_offset",
 ]
@@ -446,6 +447,14 @@ def apply_velocity_histogram(
     return _apply_velocity_histogram_py(part, histogram)
 
 
+def apply_velocity_histogram_profile(part: stream.Part, profile: str = "piano_soft") -> stream.Part:
+    """Apply a named velocity histogram profile."""
+    hist = VELOCITY_HISTOGRAM_PROFILES.get(profile)
+    if hist is None:
+        raise KeyError(f"velocity histogram profile '{profile}' not found")
+    return apply_velocity_histogram(part, hist)
+
+
 def apply_offset_profile(part: stream.Part, profile_name: str | None) -> None:
     """Shift note offsets according to a registered profile."""
     if not profile_name:
@@ -567,6 +576,12 @@ HUMANIZATION_TEMPLATES: dict[str, dict[str, Any]] = {
         "velocity_variation": [-0.2, 0.2],
         "apply_to_elements": ["note"],
     },
+}
+
+# Simple velocity histogram profiles
+VELOCITY_HISTOGRAM_PROFILES: dict[str, dict[int, float]] = {
+    "piano_soft": {50: 0.2, 60: 0.5, 70: 0.3},
+    "piano_hard": {90: 0.3, 100: 0.5, 110: 0.2},
 }
 
 

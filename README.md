@@ -896,6 +896,45 @@ modcompose eval abx loops_human/ loops_ai/ --trials 12
 
 The page relies on Tone.js for MIDI playback and records your score interactively.
 
+## PianoGenerator α: テンプレート伴奏
+
+``PianoTemplateGenerator`` provides a minimal piano backing track generator used for quick demos.
+Invoke it via the CLI:
+
+```bash
+modcompose sample dummy.pkl --backend piano_template
+```
+
+The generator outputs a simple root and shell voicing pattern and boosts velocities
+around provided kick offsets.
+
+## PianoGenerator β
+
+Beta adds guide and drop2 voicing options and pedal information.
+Use the ``--voicing`` flag to select a mode:
+
+```bash
+modcompose sample dummy.pkl --backend piano_template --voicing guide
+```
+
+The JSON output now includes ``hand`` and ``pedal`` fields.
+![voicing demo](docs/img/piano_beta.gif)
+
+## PianoGenerator ML
+
+Phase Δ introduces a transformer-based voicing model. First extract voicings
+from your corpus:
+
+```bash
+python scripts/extract_piano_voicings.py
+```
+
+Sample piano parts with the ML backend:
+
+```bash
+modcompose sample dummy.pkl --backend piano_ml --model-name path/to/model
+```
+
 ## DAW Plugin Prototype
 
 An experimental JUCE plugin bridges the Python engine via ``pybind11``.

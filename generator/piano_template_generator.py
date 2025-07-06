@@ -8,12 +8,18 @@ from music21 import chord, expressions, harmony, note, stream, volume
 from utilities import humanizer
 from utilities.humanizer import apply_swing
 
+from .voicing_density import VoicingDensityEngine
+
 from .base_part_generator import BasePartGenerator
 
 PPQ = 480
 
 class PianoTemplateGenerator(BasePartGenerator):
     """Very simple piano generator for alpha testing."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._density_engine = VoicingDensityEngine()
 
     def _render_part(
         self, section_data: dict[str, Any], next_section_data: dict[str, Any] | None = None
@@ -114,3 +120,22 @@ class PianoTemplateGenerator(BasePartGenerator):
             events.append({"time": min(length_ql, t + measure_len), "cc": 64, "val": 0})
             t += measure_len
         return events
+
+    def _post_process_generated_part(
+        self, part: stream.Part, section: dict[str, Any], ratio: float | None
+    ) -> None:
+        hand = None
+        if part.id and "rh" in part.id.lower():
+            hand = "RH"
+        elif part.id and "lh" in part.id.lower():
+            hand = "LH"
+        if not hand:
+            return
+
+        intensity = section.get("musical_intent", {}).get("intensity", "medium")
+        notes = list(part.recurse().notes)
+        scaled = self._density_engine.scale_density(notes, str(intensity))
+        for n in list(part.recurse().notes):
+            part.remove(n)
+        for n in scaled:
+            part.insert(float(n.offset), copy.deepcopy(n))

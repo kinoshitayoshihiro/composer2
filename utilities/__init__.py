@@ -31,6 +31,7 @@ try:
         extract_to_json,
     )
 except Exception:  # pragma: no cover - optional dependency
+
     class EssentiaUnavailable(RuntimeError):
         """Raised when librosa-based peak extraction is unavailable."""
 
@@ -39,6 +40,8 @@ except Exception:  # pragma: no cover - optional dependency
 
     def extract_to_json(*_args: Any, **_kwargs: Any) -> None:
         raise EssentiaUnavailable("librosa is required for peak detection")
+
+
 from .core_music_utils import (
     MIN_NOTE_DURATION_QL,
     get_time_signature_object,
@@ -78,6 +81,7 @@ from .loudness_meter import RealtimeLoudnessMeter
 from .install_utils import run_with_retry
 from . import mix_profile
 from . import ir_renderer
+from .convolver import load_ir, convolve_ir, render_wav
 
 __all__ = [
     "MIN_NOTE_DURATION_QL",
@@ -122,6 +126,9 @@ __all__ = [
     "groove_sampler_rnn",
     "mix_profile",
     "ir_renderer",
+    "load_ir",
+    "convolve_ir",
+    "render_wav",
 ]
 
 

@@ -50,6 +50,8 @@ def _schema_to_swing(schema: str | None) -> float | None:
         "<shuffle>": 0.75,
     }
     return table.get(schema)
+
+
 from utilities.tempo_utils import beat_to_seconds  # noqa: E402
 from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple  # noqa: E402
 
@@ -64,7 +66,6 @@ def _lazy_import_groove_rnn() -> ModuleType | None:
     if getattr(mod, "pl", None) is None or getattr(mod, "torch", None) is None:
         return None
     return mod
-
 
 
 @click.group()
@@ -129,7 +130,7 @@ def eval_metrics(midi: Path, ref_midi: Path | None) -> None:
     When ``--ref`` is supplied, also compute ``blec`` between the files.
     """
     import pretty_midi
-    
+
     from eval import metrics
 
     pm = pretty_midi.PrettyMIDI(str(midi))
@@ -198,6 +199,8 @@ def plugin_build(format: str, out: Path) -> None:
         cfg.append("-DMODC_CLAP=ON")
     subprocess.check_call(cfg)
     subprocess.check_call(["cmake", "--build", str(out), "--config", "Release"])
+
+
 try:
     __version__ = _md.version("modular_composer")
 except _md.PackageNotFoundError:
@@ -222,6 +225,7 @@ def preset_list() -> None:
 @click.option("--out", type=Path, required=True)
 def preset_export(name: str, out: Path) -> None:
     from utilities import preset_manager
+
     data = preset_manager.load_preset(name)
     if out.suffix.lower() in {".yml", ".yaml"}:
         yaml.safe_dump(data, out.open("w", encoding="utf-8"))
@@ -290,9 +294,7 @@ def fx_cc() -> None:
 
 @cli.command("live")
 @click.argument("model", type=Path)
-@click.option(
-    "--backend", type=click.Choice(["ngram", "rnn", "realtime"]), default="ngram"
-)
+@click.option("--backend", type=click.Choice(["ngram", "rnn", "realtime"]), default="ngram")
 @click.option(
     "--ai-backend",
     type=click.Choice(["ngram", "rnn", "transformer"]),
@@ -374,6 +376,7 @@ def live_cmd(
         part_stream = parsed.parts[0] if hasattr(parsed, "parts") else parsed
         part = cast(m21stream.Part, part_stream)
         if buffer_ahead > 0:
+
             async def _run() -> None:
                 await streamer.play_live(
                     lambda _i: part,
@@ -482,9 +485,7 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--cond-velocity", choices=["soft", "hard"], default=None)
-    ap.add_argument(
-        "--cond-kick", choices=["four_on_floor", "sparse"], default=None
-    )
+    ap.add_argument("--cond-kick", choices=["four_on_floor", "sparse"], default=None)
     ap.add_argument("-o", "--out", type=Path)
     ap.add_argument("--peaks", type=Path)
     ap.add_argument("--lag", type=float, default=10.0)
@@ -627,8 +628,7 @@ def _cmd_render(args: list[str]) -> None:
         for n in inst.notes:
             target = random.choices(choices, weights)[0]
             n.velocity = int(
-                n.velocity * (1 - ns.humanize_velocity)
-                + target * ns.humanize_velocity
+                n.velocity * (1 - ns.humanize_velocity) + target * ns.humanize_velocity
             )
 
     if ns.humanize_timing > 0:
@@ -656,6 +656,19 @@ def _cmd_render(args: list[str]) -> None:
                 target_lufs_map={"chorus": float(ns.normalize_lufs)},
             )
         print(f"Rendered {wav}")
+
+
+def _cmd_ir_render(args: list[str]) -> None:
+    ap = argparse.ArgumentParser(prog="modcompose ir-render")
+    ap.add_argument("midi", type=Path)
+    ap.add_argument("ir", type=Path)
+    ap.add_argument("-o", "--out", type=Path, default=Path("out.wav"))
+    ap.add_argument("--sf2", type=Path, default=None)
+    ns = ap.parse_args(args)
+    from utilities.convolver import render_wav
+
+    render_wav(str(ns.midi), str(ns.ir), str(ns.out), sf2=str(ns.sf2) if ns.sf2 else None)
+    print(f"wrote {ns.out}")
 
 
 def _cmd_meter(args: list[str]) -> None:
@@ -692,28 +705,34 @@ def _cmd_realtime(args: list[str]) -> None:
 
     if ns.model.suffix == ".pt":
         model, meta = groove_sampler_rnn.load(ns.model)
+
         class _WrapR:
             def __init__(self) -> None:
                 self.history: list[State] = []
+
             def feed_history(self, events: list[State]) -> None:
                 self.history.extend(events)
+
             def next_step(self, *, cond: dict[str, object] | None, rng: random.Random) -> Event:
                 return groove_sampler_rnn.sample(model, meta, bars=1, temperature=1.0, rng=rng)[0]
+
         sampler: streaming_sampler.BaseSampler = _WrapR()
     else:
         m = groove_sampler_ngram.load(ns.model)
+
         class _WrapN:
             def __init__(self) -> None:
                 self.hist: list[State] = []
                 self.buf: list[Event] = []
+
             def feed_history(self, events: list[State]) -> None:
                 self.hist.extend(events)
+
             def next_step(self, *, cond: dict[str, object] | None, rng: random.Random) -> Event:
                 if not self.buf:
-                    self.buf, self.hist = groove_sampler_ngram._generate_bar(
-                        self.hist, m, rng=rng
-                    )
+                    self.buf, self.hist = groove_sampler_ngram._generate_bar(self.hist, m, rng=rng)
                 return self.buf.pop(0)
+
         sampler = _WrapN()
 
     player = streaming_sampler.RealtimePlayer(sampler, bpm=ns.bpm)
@@ -737,6 +756,7 @@ def _cmd_interact(args: list[str]) -> None:
     if ns.backend == "transformer":
         from utilities import interactive_engine
         from utilities.interactive_engine import TransformerInteractiveEngine
+
         if interactive_engine.mido is None:
             raise click.ClickException("mido not installed")
 
@@ -801,6 +821,7 @@ def _cmd_gm_test(args: list[str]) -> None:
 def _cmd_gui(args: list[str]) -> None:
     """Launch the Streamlit GUI."""
     import subprocess
+
     script = Path(__file__).resolve().parent.parent / "streamlit_app" / "gui.py"
     subprocess.run(["streamlit", "run", str(script), *args], check=True)
 
@@ -856,6 +877,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_peaks(argv[1:])
     elif cmd == "render":
         _cmd_render(argv[1:])
+    elif cmd == "ir-render":
+        _cmd_ir_render(argv[1:])
     elif cmd == "meter":
         _cmd_meter(argv[1:])
     elif cmd == "realtime":

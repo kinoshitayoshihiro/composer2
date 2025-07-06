@@ -4,7 +4,10 @@ from pathlib import Path
 import logging
 
 import numpy as np
-import soundfile as sf
+try:
+    import soundfile as sf
+except Exception:  # pragma: no cover - optional
+    sf = None  # type: ignore
 from scipy.signal import fftconvolve
 
 try:
@@ -23,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 def _write_gain(data: np.ndarray, sr: int, path: Path, gain_db: float) -> None:
     """Write *data* to *path* applying gain and normalisation."""
+    if sf is None:
+        raise RuntimeError("soundfile is required for WAV rendering")
     if gain_db:
         data = data * (10 ** (gain_db / 20.0))
     peak = np.max(np.abs(data))
@@ -47,6 +52,8 @@ def render_with_ir(
     optionally amplified, and loudness-adjusted toward ``lufs_target``.
     """
 
+    if sf is None:
+        raise RuntimeError("soundfile is required for render_with_ir")
     inp = Path(input_wav)
     irp = Path(ir_wav)
     out = Path(out_wav)
@@ -121,4 +128,67 @@ def render_with_ir(
     )
 
 
-__all__ = ["render_with_ir"]
+def load_ir(path: str) -> tuple[np.ndarray, int]:
+    """Return IR data and sample rate."""
+    if sf is None:
+        raise RuntimeError("soundfile is required for load_ir")
+    data, sr = sf.read(path, dtype="float32")
+    if data.ndim > 1:
+        data = data.mean(axis=1)
+    return data.astype(np.float32), int(sr)
+
+
+def convolve_ir(audio: np.ndarray, ir: np.ndarray, block_size: int = 2**14) -> np.ndarray:
+    """Overlap-add FFT convolution returning the input length."""
+    if audio.ndim == 1:
+        audio = audio[:, None]
+    if ir.ndim == 1:
+        ir = ir[:, None]
+    out_len = audio.shape[0] + ir.shape[0] - 1
+    channels = max(audio.shape[1], ir.shape[1])
+    result = np.zeros((out_len, channels), dtype=np.float64)
+    fft_size = 1 << int(np.ceil(np.log2(block_size + ir.shape[0] - 1)))
+    H = np.fft.rfft(ir, fft_size, axis=0)
+    pos = 0
+    while pos < audio.shape[0]:
+        chunk = audio[pos : pos + block_size]
+        pad = np.zeros((fft_size, audio.shape[1]), dtype=np.float64)
+        pad[: chunk.shape[0]] = chunk
+        X = np.fft.rfft(pad, axis=0)
+        y = np.fft.irfft(X * H, axis=0)[:fft_size]
+        result[pos : pos + fft_size, : audio.shape[1]] += y
+        pos += block_size
+    return result[: audio.shape[0]].astype(np.float32)
+
+
+def render_wav(
+    midi_path: str,
+    ir_path: str,
+    out_path: str,
+    sf2: str | None = None,
+    **mix_opts,
+) -> Path:
+    """Render ``midi_path`` with ``fluidsynth`` and apply ``ir_path``."""
+    from utilities.synth import render_midi
+
+    if sf is None:
+        raise RuntimeError("soundfile is required for render_wav")
+
+    tmp = Path(out_path).with_suffix(".dry.wav")
+    render_midi(midi_path, tmp, sf2_path=sf2)
+    audio, sr = sf.read(tmp, dtype="float32")
+    ir, ir_sr = load_ir(ir_path)
+    if sr != ir_sr:
+        from scipy.signal import resample
+
+        ir = resample(ir, int(len(ir) * sr / ir_sr))
+    out = convolve_ir(audio, ir, block_size=mix_opts.get("block_size", 2**14))
+    peak = np.max(np.abs(out))
+    if peak > 0:
+        out = out / peak
+    sf.write(out_path, (out * 32767).astype(np.int16), sr)
+    tmp.unlink(missing_ok=True)
+    return Path(out_path)
+
+
+__all__ = ["render_with_ir", "load_ir", "convolve_ir", "render_wav"]

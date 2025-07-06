@@ -58,13 +58,14 @@ jobs:
           path: ~/.cache/pip/wheels/**/essentia*.whl
           key: ${{ runner.os }}-essentia-2_1
       - name: Cache SoundFont
+        if: matrix.variant == 'PIANO_ML'
         id: cache-sf2
         uses: actions/cache@v3
         with:
           path: sf2/TimGM6mb.sf2
           key: ${{ runner.os }}-timgm6mb-sf2
       - name: Install SoundFont
-        if: steps.cache-sf2.outputs.cache-hit != 'true'
+        if: matrix.variant == 'PIANO_ML' && steps.cache-sf2.outputs.cache-hit != 'true'
         run: |
           for i in 1 2 3; do
             sudo apt-get update && sudo apt-get install -y fluidsynth timgm6mb-soundfont && break || sleep 5
@@ -72,6 +73,7 @@ jobs:
           mkdir -p sf2
           cp /usr/share/sounds/sf2/TimGM6mb.sf2 sf2/
       - name: Verify SF2 Size
+        if: matrix.variant == 'PIANO_ML'
         run: ls -lh sf2/TimGM6mb.sf2
       - name: Ruff
         run: ruff check . --output-format=github
@@ -91,6 +93,7 @@ jobs:
         env:
           UPDATE_GOLDENS: ${{ github.event.inputs.update_goldens || '0' }}
       - name: Audio Regression Tests
+        if: matrix.variant == 'PIANO_ML'
         run: |
           rm -rf tmp && mkdir tmp
           python - << 'EOF'
@@ -111,12 +114,13 @@ jobs:
           EOF
         timeout-minutes: 10
       - name: Audio Spectrum Regression
+        if: matrix.variant == 'PIANO_ML'
         run: pytest tests/test_audio_spectrum.py
         timeout-minutes: 5
         env:
           SF2_PATH: sf2/TimGM6mb.sf2
       - name: Upload WAVs on failure
-        if: failure()
+        if: matrix.variant == 'PIANO_ML' && failure()
         uses: actions/upload-artifact@v4
         with:
           name: wav-previews

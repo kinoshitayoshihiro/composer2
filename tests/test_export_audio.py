@@ -1,9 +1,13 @@
-import types
 from pathlib import Path
 
 import pytest
 
+from utilities.audio_env import has_fluidsynth
+
 sf = pytest.importorskip("soundfile")
+
+if not has_fluidsynth():
+    pytest.skip("fluidsynth missing", allow_module_level=True)
 
 from generator.guitar_generator import GuitarGenerator
 
@@ -61,8 +65,8 @@ def test_export_audio_ir(tmp_path, monkeypatch):
         Path(ow).write_bytes(b"RIFF1111")
         calls["conv"] = True
 
-    import utilities.synth as synth
     import utilities.convolver as conv
+    import utilities.synth as synth
 
     monkeypatch.setattr(synth, "export_audio", fake_export)
     monkeypatch.setattr(conv, "render_with_ir", fake_conv)
@@ -109,8 +113,8 @@ def test_export_audio_missing_ir(tmp_path, monkeypatch):
         nonlocal called
         called = True
 
-    import utilities.synth as synth
     import utilities.convolver as conv
+    import utilities.synth as synth
 
     monkeypatch.setattr(synth, "export_audio", fake_export)
     monkeypatch.setattr(conv, "render_with_ir", fake_conv)

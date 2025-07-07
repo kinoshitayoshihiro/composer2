@@ -58,7 +58,7 @@ from utilities.core_music_utils import (
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 from pathlib import Path
 from utilities.cc_tools import finalize_cc_events
-from utilities.cc_map import cc_map
+from utilities.cc_map import cc_map, load_cc_map
 
 from .base_part_generator import BasePartGenerator
 

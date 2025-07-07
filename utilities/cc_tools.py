@@ -22,6 +22,24 @@ def _to_tuple_set(events: Iterable[CCEvent] | Iterable[dict]) -> set[CCEvent]:
     return result
 
 
+def _to_tuple_list(events: Iterable[CCEvent] | Iterable[dict]) -> list[CCEvent]:
+    """Normalize iterable of events to a list of ``(time, cc, value)`` tuples."""
+    result: list[CCEvent] = []
+    for e in events:
+        if isinstance(e, dict):
+            result.append(
+                (
+                    float(e.get("time", 0.0)),
+                    int(e.get("cc", 0)),
+                    int(e.get("val", 0)),
+                )
+            )
+        else:
+            t, c, v = e
+            result.append((float(t), int(c), int(v)))
+    return result
+
+
 def merge_cc_events(
     base: Iterable[CCEvent] | Iterable[dict],
     more: Iterable[CCEvent] | Iterable[dict],
@@ -44,11 +62,18 @@ def merge_cc_events(
     return merged
 
 
-def to_sorted_dicts(events: Iterable[CCEvent]) -> list[dict]:
-    """Return sorted list of dicts from CC event tuples."""
+def to_sorted_dicts(events: Iterable[CCEvent] | Iterable[dict]) -> list[dict]:
+    """Return sorted list of dicts from CC events.
+
+    Duplicate events with the same time and controller keep the last value.
+    """
+    tuples = _to_tuple_list(events)
+    latest: dict[tuple[float, int], int] = {}
+    for t, c, v in tuples:
+        latest[(t, c)] = v
     return [
         {"time": t, "cc": c, "val": v}
-        for (t, c, v) in sorted(events, key=lambda x: x[0])
+        for (t, c), v in sorted(latest.items(), key=lambda x: (x[0][0], x[0][1]))
     ]
 
 

@@ -33,7 +33,11 @@ from .piano_template_generator import PianoTemplateGenerator
 from .piano_transformer import PianoTransformer
 from .piano_ml_generator import PianoMLGenerator
 from .sax_generator import SaxGenerator
-from .strings_generator import StringsGenerator
+from .strings_generator import (
+    StringsGenerator,
+    EXEC_STYLE_TRILL,
+    EXEC_STYLE_TREMOLO,
+)
 from .vocal_generator import VocalGenerator
 
 __all__ = [
@@ -49,6 +53,8 @@ __all__ = [
     "VocalGenerator",
     "SaxGenerator",
     "StringsGenerator",
+    "EXEC_STYLE_TRILL",
+    "EXEC_STYLE_TREMOLO",
     "ChordVoicer",
     "ModularComposer",
 ]

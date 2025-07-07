@@ -32,3 +32,12 @@ def test_finalize_cc_events_sort_and_convert() -> None:
         {"time": 0.5, "cc": 11, "val": 70},
     ]
     assert not hasattr(p, "_extra_cc")
+
+def test_to_sorted_dicts_dedup() -> None:
+    events = [(0.0, 11, 60), (0.5, 11, 70), (0.5, 11, 80)]
+    res = cc.to_sorted_dicts(events)
+    assert res == [
+        {"time": 0.0, "cc": 11, "val": 60},
+        {"time": 0.5, "cc": 11, "val": 80},
+    ]
+

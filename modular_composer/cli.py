@@ -505,7 +505,23 @@ def _cmd_sample(args: list[str]) -> None:
         default=False,
         help="Add a simple counter melody",
     )
+    ap.add_argument(
+        "--tone-preset",
+        choices=["grand_clean", "upright_mellow", "ep_phase"],
+        default=None,
+        help="Select piano/bass tone preset",
+    )
+    ap.add_argument(
+        "--enable-articulation",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable gliss/trill tags",
+    )
     ns = ap.parse_args(args)
+    if ns.tone_preset:
+        backends = str(ns.backend).split(",")
+        if any("bass" in b for b in backends):
+            setattr(ns, "tone_preset", ns.tone_preset)
     if ns.ai_backend:
         warnings.warn("--ai-backend is deprecated; use --backend", DeprecationWarning)
         ns.backend = ns.ai_backend
@@ -542,6 +558,8 @@ def _cmd_sample(args: list[str]) -> None:
             global_key_signature_tonic="C",
             global_key_signature_mode="major",
             global_settings={"humanize_profile": ns.humanize_profile},
+            enable_articulation=ns.enable_articulation,
+            tone_preset=ns.tone_preset,
         )
         section = {
             "q_length": float(ns.length) * 4.0,

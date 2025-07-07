@@ -30,9 +30,49 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------
 # Default preset library (name -> metadata)
 # ------------------------------------------------------------
-PRESET_LIBRARY: dict[str, dict] = {}
+# --- utility: externalize-and-reload-preset-library (解決後) ---
 
-# currently loaded preset file path (for reload)
+# プリセットライブラリの初期定義
+PRESET_LIBRARY: dict[str, dict] = {
+    "clean": {
+        "ir_file": "data/ir/clean.wav",
+        "gain_db": 0.0,
+        "cc_map": {31: 20},
+    },
+    "crunch": {
+        "ir_file": "data/ir/crunch.wav",
+        "gain_db": -1.5,
+        "cc_map": {31: 50},
+    },
+    "drive": {
+        "ir_file": "data/ir/drive.wav",
+        "gain_db": -3.0,
+        "cc_map": {31: 90},
+    },
+    "fuzz": {
+        "ir_file": "data/ir/fuzz.wav",
+        "gain_db": -6.0,
+        "cc_map": {31: 110},
+    },
+    # ----- Piano/EP Tone Presets ---------------------------------------
+    "grand_clean": {
+        "ir_file": "data/ir/german_grand.wav",
+        "eq": {200: -1, 3000: 2},
+        "cc_map": {31: 25},
+    },
+    "upright_mellow": {
+        "ir_file": "data/ir/upright_1960.wav",
+        "eq": {"lpf": 8000, 120: 1},
+        "cc_map": {31: 35},
+    },
+    "ep_phase": {
+        "ir_file": "data/ir/dx7_ep.wav",
+        "chorus_depth": 0.3,
+        "cc_map": {31: 55, 94: 30},
+    },
+}
+
+# 現在読み込まれているプリセットファイルのパス（再ロード用）
 _PRESET_PATH: str | None = None
 
 
@@ -94,9 +134,17 @@ class ToneShaper:
         if not self._user_map:
             for name, entry in PRESET_LIBRARY.items():
                 if name not in self.preset_map and isinstance(entry.get("cc_map"), dict):
-                    self.preset_map[name] = {
-                        k: int(v) for k, v in entry.get("cc_map", {}).items()
-                    }
+                    conv: dict[str, int] = {}
+                    for cc, val in entry["cc_map"].items():
+                        if int(cc) == 31:
+                            conv["amp"] = int(val)
+                        elif int(cc) == 91:
+                            conv["reverb"] = int(val)
+                        elif int(cc) == 93:
+                            conv["delay"] = int(val)
+                        elif int(cc) == 94:
+                            conv["chorus"] = int(val)
+                    self.preset_map[name] = conv
 
         self.ir_map: dict[str, Path] = {k: Path(v) for k, v in (ir_map or {}).items()}
         if not self._user_map:
@@ -323,9 +371,17 @@ class ToneShaper:
 
         if chosen not in self.preset_map:
             if chosen in PRESET_LIBRARY and "cc_map" in PRESET_LIBRARY[chosen]:
-                self.preset_map[chosen] = {
-                    k: int(v) for k, v in PRESET_LIBRARY[chosen]["cc_map"].items()
-                }
+                conv: dict[str, int] = {}
+                for cc, val in PRESET_LIBRARY[chosen]["cc_map"].items():
+                    if int(cc) == 31:
+                        conv["amp"] = int(val)
+                    elif int(cc) == 91:
+                        conv["reverb"] = int(val)
+                    elif int(cc) == 93:
+                        conv["delay"] = int(val)
+                    elif int(cc) == 94:
+                        conv["chorus"] = int(val)
+                self.preset_map[chosen] = conv
             else:
                 self.preset_map.setdefault(chosen, {"amp": 80})
 

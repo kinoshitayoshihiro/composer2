@@ -2,26 +2,99 @@ from __future__ import annotations
 
 import copy
 import re
+import statistics
 from typing import Any
 
 from music21 import articulations, chord, expressions, harmony, note, spanner, stream, volume
 
 from utilities import humanizer
-from utilities.cc_tools import merge_cc_events
+from utilities.cc_tools import merge_cc_events, finalize_cc_events
+from utilities.tone_shaper import ToneShaper
 from utilities.humanizer import apply_swing
 from utilities.pedalizer import generate_pedal_cc
 
 from .base_part_generator import BasePartGenerator
 from .voicing_density import VoicingDensityEngine
+from .articulation import ArticulationEngine, QL_32ND
 
 PPQ = 480
 
 class PianoTemplateGenerator(BasePartGenerator):
     """Very simple piano generator for alpha testing."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        *args,
+        enable_articulation: bool = True,
+        tone_preset: str | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._density_engine = VoicingDensityEngine()
+        self._art_engine = ArticulationEngine()
+        self.enable_articulation = enable_articulation
+        self.tone_preset = tone_preset
+
+    def compose(
+        self,
+        *,
+        section_data: dict[str, Any],
+        overrides_root: Any | None = None,
+        groove_profile_path: str | None = None,
+        next_section_data: dict[str, Any] | None = None,
+        part_specific_humanize_params: dict[str, Any] | None = None,
+        shared_tracks: dict[str, Any] | None = None,
+    ) -> stream.Part | dict[str, stream.Part]:
+        result = super().compose(
+            section_data=section_data,
+            overrides_root=overrides_root,
+            groove_profile_path=groove_profile_path,
+            next_section_data=next_section_data,
+            part_specific_humanize_params=part_specific_humanize_params,
+            shared_tracks=shared_tracks,
+        )
+
+        chord_label = section_data.get("chord_symbol_for_voicing", "")
+        tags = str(chord_label).lower().split()
+
+        if self.enable_articulation and isinstance(result, dict) and tags:
+            q_len = float(section_data.get("q_length", self.bar_length))
+            try:
+                start_cs = harmony.ChordSymbol(str(chord_label).split()[0])
+                start_root = start_cs.root() or harmony.ChordSymbol("C").root()
+            except Exception:
+                start_root = harmony.ChordSymbol("C").root()
+            rh = result.get("piano_rh")
+
+            if "gliss" in tags and next_section_data:
+                end_label = next_section_data.get("chord_symbol_for_voicing", "C")
+                try:
+                    end_cs = harmony.ChordSymbol(str(end_label).split()[0])
+                    end_root = end_cs.root() or start_root
+                except Exception:
+                    end_root = start_root
+                notes = self._art_engine.generate_gliss(start_root, end_root, q_len)
+                for n, t in notes:
+                    rh.insert(t, n)
+
+            if "trill" in tags:
+                notes = self._art_engine.generate_trill(start_root, q_len)
+                for n, t in notes:
+                    rh.insert(t, n)
+                if self._art_engine.cc_events:
+                    for p in result.values():
+                        base = getattr(p, "extra_cc", [])
+                        p.extra_cc = base + [
+                            {"time": tt, "cc": cc, "val": vv}
+                            for tt, cc, vv in self._art_engine.cc_events
+                        ]
+
+        if isinstance(result, dict):
+            for p in result.values():
+                finalize_cc_events(p)
+        else:
+            finalize_cc_events(result)
+        return result
 
     def _render_part(
         self, section_data: dict[str, Any], next_section_data: dict[str, Any] | None = None
@@ -167,4 +240,29 @@ class PianoTemplateGenerator(BasePartGenerator):
     def _post_process_generated_part(
         self, part: stream.Part, section: dict[str, Any], ratio: float | None
     ) -> None:
+        from utilities.loudness_normalizer import normalize_velocities
+
+        notes = list(part.recurse().notes)
+        if notes:
+            normalize_velocities(notes)
+            import statistics
+
+            intensity = section.get("musical_intent", {}).get("intensity", "medium")
+            avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
+            shaper = ToneShaper()
+            preset = self.tone_preset or shaper.choose_preset(
+                intensity=intensity,
+                avg_velocity=avg_vel,
+            )
+            existing = [
+                (e["time"], e["cc"], e["val"]) if isinstance(e, dict) else e
+                for e in getattr(part, "extra_cc", [])
+                if (e.get("cc") if isinstance(e, dict) else e[1]) != 31
+            ]
+            tone_events = shaper.to_cc_events(
+                amp_name=preset,
+                intensity=intensity,
+                as_dict=False,
+            )
+            part.extra_cc = merge_cc_events(set(existing), set(tone_events))
         return

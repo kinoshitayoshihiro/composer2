@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional, Tuple
-
 try:
     import torch
     from torch import nn
@@ -10,8 +8,8 @@ except Exception:  # pragma: no cover - optional
     nn = object  # type: ignore
 
 try:
-    from transformers import GPT2Config, GPT2LMHeadModel
     from peft import LoraConfig, TaskType, get_peft_model
+    from transformers import GPT2Config, GPT2LMHeadModel
 except Exception:  # pragma: no cover - optional
     GPT2Config = None  # type: ignore
     GPT2LMHeadModel = None  # type: ignore
@@ -44,7 +42,9 @@ class PianoTransformer(nn.Module if torch is not None else object):
         self.model = get_peft_model(base, lora_cfg)
 
     def forward(
-        self, input_ids: torch.Tensor, past_key_values: Optional[Tuple[Tuple[torch.Tensor, ...], ...]] = None
+        self,
+        input_ids: torch.Tensor,
+        past_key_values: tuple[tuple[torch.Tensor, ...], ...] | None = None,
     ) -> torch.Tensor:
         if torch is None:
             raise RuntimeError("torch not available")

@@ -52,17 +52,17 @@ PRESET_LIBRARY: dict[str, dict] = {
     },
     # ----- Piano/EP Tone Presets ---------------------------------------
     "grand_clean": {
-        "ir_file": "irs/german_grand.wav",
+        "ir_file": "data/ir/german_grand.wav",
         "eq": {200: -1, 3000: 2},
         "cc_map": {31: 25},
     },
     "upright_mellow": {
-        "ir_file": "irs/upright_1960.wav",
+        "ir_file": "data/ir/upright_1960.wav",
         "eq": {"lpf": 8000, 120: 1},
         "cc_map": {31: 35},
     },
     "ep_phase": {
-        "ir_file": "irs/dx7_ep.wav",
+        "ir_file": "data/ir/dx7_ep.wav",
         "chorus_depth": 0.3,
         "cc_map": {31: 55, 94: 30},
     },

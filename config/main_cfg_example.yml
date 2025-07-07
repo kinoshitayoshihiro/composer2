@@ -1,0 +1,4 @@
+part_defaults:
+  piano:
+    tone_preset: grand_clean
+    enable_articulation: true

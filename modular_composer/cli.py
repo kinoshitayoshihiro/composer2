@@ -518,6 +518,10 @@ def _cmd_sample(args: list[str]) -> None:
         help="Enable gliss/trill tags",
     )
     ns = ap.parse_args(args)
+    if ns.tone_preset:
+        backends = str(ns.backend).split(",")
+        if any("bass" in b for b in backends):
+            setattr(ns, "tone_preset", ns.tone_preset)
     if ns.ai_backend:
         warnings.warn("--ai-backend is deprecated; use --backend", DeprecationWarning)
         ns.backend = ns.ai_backend

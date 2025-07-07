@@ -843,6 +843,14 @@ profiles (`grand_clean`, `upright_mellow`, `ep_phase`). Pass
 `--no-enable-articulation` to disable glissando and trill tags. Generated notes
 are normalised with `normalize_velocities()` so that loudness stays consistent.
 See [docs/piano_delta.md](docs/piano_delta.md) for details.
+Add to `main_cfg.yml` to avoid long CLI flags:
+```yaml
+part_defaults:
+  piano:
+    tone_preset: grand_clean
+    enable_articulation: true
+```
+
 
 To emit CC11 and aftertouch for dynamic playback enable the flags programmatically:
 

@@ -56,7 +56,9 @@ from utilities.core_music_utils import (
     get_time_signature_object,
 )
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
+from pathlib import Path
 from utilities.cc_tools import finalize_cc_events
+from utilities.cc_map import cc_map
 
 from .base_part_generator import BasePartGenerator
 
@@ -126,6 +128,7 @@ class StringsGenerator(BasePartGenerator):
         _SectionInfo("violin_i", m21instrument.Violin(), "G3", "D7", 0.8),
     ]
 
+
     def __init__(
         self,
         *,
@@ -137,6 +140,7 @@ class StringsGenerator(BasePartGenerator):
         global_key_signature_mode: str | None = None,
         voice_allocation: dict[str, int] | None = None,
         default_velocity_curve: list[int] | list[float] | str | None = None,
+        expression_maps_path: str | None = None,
         voicing_mode: str = "close",
         divisi: bool | dict[str, str] | None = None,
         avoid_low_open_strings: bool = False,
@@ -196,6 +200,8 @@ class StringsGenerator(BasePartGenerator):
         }
         self._legato_active: dict[str, list[note.NotRest]] = {}
         self._legato_groups: dict[str, list[tuple[note.NotRest, note.NotRest]]] = {}
+        self.expression_maps = self._load_expression_maps(expression_maps_path)
+        self.emotion_map = self._load_emo_map(expression_maps_path)
 
     # ------------------------------------------------------------------
     # Public API
@@ -203,11 +209,41 @@ class StringsGenerator(BasePartGenerator):
     def compose(
         self, *, section_data: dict[str, Any], **kwargs: Any
     ) -> dict[str, stream.Part]:
-        result = super().compose(section_data=section_data, **kwargs)
+        q_len = float(section_data.get("q_length", self.bar_length))
+        mapping = self._select_expression_map(section_data)
+        prev_curve = self._apply_expression_map_pre(section_data, mapping)
+        try:
+            result = super().compose(section_data=section_data, **kwargs)
+        finally:
+            if prev_curve is not None:
+                self.default_velocity_curve = prev_curve
         if not isinstance(result, dict):
             raise RuntimeError(
                 "StringsGenerator expected dict result from _render_part"
             )
+        self._apply_expression_map_post(result, mapping, q_len)
+        dim_start = section_data.get("dim_start")
+        dim_end = section_data.get("dim_end")
+        if dim_start is not None and dim_end is not None:
+            self.crescendo(result, q_len, start_val=int(dim_start), end_val=int(dim_end))
+        elif section_data.get("crescendo", q_len >= self.bar_length):
+            self.crescendo(result, q_len)
+
+        mute_spec = section_data.get("style_params", {}).get("mute")
+        if mute_spec is not None:
+            val = 127 if str(mute_spec).lower() in {"true", "con sord.", "con sord", "con sordino"} else 0
+            factor = float(mapping.get("mute_velocity_factor", 0.85))
+            if val == 127:
+                factor *= 1.0 + self.rng.uniform(-0.03, 0.03)
+            for p in result.values():
+                events = getattr(p, "_extra_cc", set())
+                events.add((0.0, cc_map.get("mute_toggle", 20), int(val)))
+                p._extra_cc = events
+                if val == 127:
+                    for n in p.recurse().notes:
+                        if n.volume and n.volume.velocity is not None:
+                            n.volume.velocity = int(n.volume.velocity * factor)
+
         for part in result.values():
             finalize_cc_events(part)
         self._last_parts = result
@@ -225,6 +261,25 @@ class StringsGenerator(BasePartGenerator):
                 part.insert(0, info.instrument)
             score.insert(0, part)
         score.write("musicxml", fp=path)
+
+    def crescendo(
+        self,
+        parts: dict[str, stream.Part] | stream.Part,
+        length_beats: float,
+        *,
+        start_val: int = 20,
+        end_val: int = 90,
+    ) -> None:
+        """Apply a CC11 ramp from ``start_val`` to ``end_val``."""
+
+        self._apply_expression_cc(
+            parts,
+            crescendo=True,
+            length=length_beats,
+            start_val=start_val,
+            end_val=end_val,
+            cc_num=11,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -294,6 +349,58 @@ class StringsGenerator(BasePartGenerator):
             result.append(int(round(min_v + (max_v - min_v) * frac)))
         return result
 
+    def _load_expression_maps(self, path: str | None) -> dict[str, dict]:
+        """Load expression map definitions merging defaults and overrides."""
+
+        import json, yaml
+        result: dict[str, dict] = {}
+        default_path = Path(__file__).resolve().parents[1] / "data" / "expression_maps.yml"
+        for p in [default_path, Path(path)] if path else [default_path]:
+            try:
+                with open(p, "r", encoding="utf-8") as fh:
+                    if str(p).endswith(".json"):
+                        data = json.load(fh)
+                    else:
+                        data = yaml.safe_load(fh)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.error("Failed to load expression maps: %s", exc)
+                continue
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    if k == "emotion_map" or not isinstance(v, dict):
+                        continue
+                    result[str(k)] = dict(v)
+        return result
+
+    def _load_emo_map(self, path: str | None) -> dict[tuple[str, str], str]:
+        """Load emotion→map lookup merging defaults and overrides."""
+
+        import json, yaml
+        result: dict[tuple[str, str], str] = {}
+        default_path = Path(__file__).resolve().parents[1] / "data" / "expression_maps.yml"
+
+        def _parse(data: dict) -> None:
+            emap = data.get("emotion_map")
+            if isinstance(emap, dict):
+                for emo, sub in emap.items():
+                    if isinstance(sub, dict):
+                        for inten, name in sub.items():
+                            result[(str(emo).lower(), str(inten).lower())] = str(name)
+
+        for p in [default_path, Path(path)] if path else [default_path]:
+            try:
+                with open(p, "r", encoding="utf-8") as fh:
+                    if str(p).endswith(".json"):
+                        data = json.load(fh)
+                    else:
+                        data = yaml.safe_load(fh)
+            except Exception as exc:  # pragma: no cover - optional
+                self.logger.error("Failed to load emotion map: %s", exc)
+                continue
+            if isinstance(data, dict):
+                _parse(data)
+        return result
+
     @staticmethod
     def _fit_pitch(
         p: pitch.Pitch, low: int, high: int, above: int | None
@@ -344,6 +451,64 @@ class StringsGenerator(BasePartGenerator):
             if root is not None and hasattr(root, "midi"):
                 return root.midi
         return None
+
+    # ------------------------------------------------------------------
+    # Expression map helpers
+    # ------------------------------------------------------------------
+    def _select_expression_map(self, section: dict[str, Any]) -> dict[str, Any]:
+        pmap = section.get("part_params", {}).get("strings", {})
+        name = pmap.get("expression_map")
+        if name and name in self.expression_maps:
+            return self.expression_maps[name]
+
+        emotion = str(section.get("musical_intent", {}).get("emotion", "default")).lower()
+        intensity = str(section.get("musical_intent", {}).get("intensity", "default")).lower()
+        key = (emotion, intensity)
+        name = (
+            self.emotion_map.get(key)
+            or self.emotion_map.get((emotion, "default"))
+            or self.emotion_map.get(("default", intensity))
+            or "gentle_legato"
+        )
+        return self.expression_maps.get(name, {})
+
+    def _apply_expression_map_pre(self, section: dict[str, Any], mapping: dict[str, Any]) -> list[int] | None:
+        arts = mapping.get("articulations") or []
+        if arts:
+            pmap = section.setdefault("part_params", {}).setdefault("strings", {})
+            defaults = list(pmap.get("default_articulations", []))
+            for a in arts:
+                if a not in defaults:
+                    defaults.append(a)
+            pmap["default_articulations"] = defaults
+        curve = mapping.get("velocity_curve_name")
+        if curve:
+            new_curve = self._select_velocity_curve(curve)
+            old = self.default_velocity_curve
+            self.default_velocity_curve = new_curve
+            return old
+        return None
+
+    def _apply_expression_map_post(self, parts: dict[str, stream.Part], mapping: dict[str, Any], length: float) -> None:
+        cc_map = mapping.get("cc") or {}
+        for k, val in cc_map.items():
+            try:
+                cc_num = int(k)
+            except Exception:
+                continue
+            if isinstance(val, (list, tuple)) and len(val) == 2:
+                self._apply_expression_cc(
+                    parts,
+                    length=length,
+                    start_val=int(val[0]),
+                    end_val=int(val[1]),
+                    cc_num=cc_num,
+                )
+            else:
+                for p in parts.values():
+                    events = getattr(p, "_extra_cc", set())
+                    events.add((0.0, cc_num, int(val)))
+                    p._extra_cc = events
 
     def _humanize_timing(
         self,
@@ -669,6 +834,7 @@ class StringsGenerator(BasePartGenerator):
                 vel_base, vel_factor = vel_info
             offset = 0.0
             prev_note: note.NotRest | None = None
+            last_bow = None
             for i, dur in enumerate(durations):
                 arts = event_articulations[i] if i < len(event_articulations) else None
                 if not arts:
@@ -691,6 +857,18 @@ class StringsGenerator(BasePartGenerator):
                 if extras_map.get(info.name):
                     pitch_list.extend(extras_map[info.name])
                 base_obj = chord.Chord(pitch_list) if len(pitch_list) > 1 else adj
+                val_map = {
+                    BowPosition.TASTO: 20,
+                    BowPosition.PONTICELLO: 100,
+                    BowPosition.NORMALE: 64,
+                    None: 64,
+                }
+                cc_val = val_map.get(bow_pos, 64)
+                if cc_val != last_bow:
+                    ev = getattr(part, "_extra_cc", set())
+                    ev.add((offset, cc_map.get("bow_position", 71), cc_val))
+                    part._extra_cc = ev
+                    last_bow = cc_val
                 notes_gen = self._create_notes_from_event(
                     base_obj,
                     dur,
@@ -802,19 +980,6 @@ class StringsGenerator(BasePartGenerator):
             parts[info.name] = self._finalize_part(part, info.name)
             if self.voicing_mode == "close":
                 prev_midi = adj.midi
-        dim_start = section_data.get("dim_start")
-        dim_end = section_data.get("dim_end")
-        crescendo_flag = section_data.get("crescendo", q_length >= self.bar_length)
-        if dim_start is not None and dim_end is not None:
-            self._apply_expression_cc(
-                parts,
-                crescendo=bool(crescendo_flag),
-                length=q_length,
-                start_val=int(dim_start),
-                end_val=int(dim_end),
-            )
-        elif q_length >= 0:
-            self._apply_expression_cc(parts, crescendo=bool(crescendo_flag), length=q_length)
         return parts
 
     # ------------------------------------------------------------------
@@ -882,12 +1047,14 @@ class StringsGenerator(BasePartGenerator):
 
     def _apply_expression_cc(
         self,
-        parts: dict[str, stream.Part],
+        parts: dict[str, stream.Part] | stream.Part,
         crescendo: bool = True,
         *,
         length: float | None = None,
         start_val: int | None = None,
         end_val: int | None = None,
+        cc_num: int = cc_map.get("expression", 11),
+        curve_type: str = "ease",
     ) -> None:
         """Add a CC11 envelope across *length* quarter lengths.
 
@@ -913,11 +1080,24 @@ class StringsGenerator(BasePartGenerator):
             start_val = 64 if crescendo else 80
             end_val = 80 if crescendo else 64
 
-        for p in parts.values():
-            events = [
-                (0.0, 11, int(start_val)),
-                (float(length), 11, int(end_val)),
-            ]
+        if isinstance(parts, stream.Part):
+            to_iter = {"part": parts}
+        else:
+            to_iter = parts
+        steps = max(2, int(math.ceil(length)))
+        def _frac(x: float) -> float:
+            if curve_type == "linear":
+                return x
+            if curve_type == "log":
+                return math.log1p(9 * x) / math.log(10)
+            # ease-in-out
+            return 3 * x * x - 2 * x * x * x
+
+        events = [
+            (length * (i / steps), cc_num, int(round(start_val + (end_val - start_val) * _frac(i / steps))))
+            for i in range(steps + 1)
+        ]
+        for p in to_iter.values():
             base_events = getattr(p, "_extra_cc", set())
             merged = merge_cc_events(base_events, events)
             p._extra_cc = set(merged)

@@ -23,7 +23,7 @@ except Exception:  # pragma: no cover - optional
 class PianoTransformer(nn.Module if torch is not None else object):
     """GPT-2 based transformer with LoRA for piano events."""
 
-    def __init__(self, vocab_size: int) -> None:
+    def __init__(self, vocab_size: int, rank: int = 4) -> None:
         if GPT2Config is None or GPT2LMHeadModel is None or get_peft_model is None or torch is None:
             raise RuntimeError("Install torch, transformers and peft to use PianoTransformer")
         super().__init__()
@@ -36,7 +36,7 @@ class PianoTransformer(nn.Module if torch is not None else object):
         base = GPT2LMHeadModel(config)
         lora_cfg = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
-            r=4,
+            r=rank,
             lora_alpha=16,
             target_modules=["c_attn"],
             inference_mode=False,

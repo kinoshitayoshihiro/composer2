@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Dict, List
+import json
+import warnings
 
 
 class PianoTokenizer:
@@ -14,15 +16,21 @@ class PianoTokenizer:
             "<RH>",
             "<REST_d8>",
             "<VELO_80>",
+            "<UNK>",
         ]
         pitches = [f"P{i}" for i in range(60, 97)]
         self.vocab = specials + pitches
         self.token_to_id: Dict[str, int] = {tok: i for i, tok in enumerate(self.vocab)}
         self.id_to_token: Dict[int, str] = {i: tok for i, tok in enumerate(self.vocab)}
 
+    def export_vocab(self, path: str) -> None:
+        """Write ``self.vocab`` to ``path`` as JSON list."""
+        export_vocab(path, self.vocab)
+
     def encode(self, events: List[Dict[str, object]]) -> List[int]:
         tokens: List[int] = [self.token_to_id["<TS_4_4>"]]
         current_bar = -1
+        unk = 0
         for ev in events:
             bar = int(ev.get("bar", 0))
             while bar > current_bar:
@@ -31,8 +39,14 @@ class PianoTokenizer:
             hand = ev.get("hand", "rh")
             tokens.append(self.token_to_id["<LH>" if str(hand).lower() == "lh" else "<RH>"])
             pitch_token = f"P{int(ev.get('note', 60))}"
-            tokens.append(self.token_to_id[pitch_token])
+            if pitch_token in self.token_to_id:
+                tokens.append(self.token_to_id[pitch_token])
+            else:
+                tokens.append(self.token_to_id["<UNK>"])
+                unk += 1
             tokens.append(self.token_to_id["<VELO_80>"])
+        if unk / max(1, len(tokens)) > 0.01:
+            warnings.warn(f"unk token rate {unk/len(tokens):.2%}")
         return tokens
 
     def decode(self, ids: List[int]) -> List[Dict[str, object]]:
@@ -55,6 +69,9 @@ class PianoTokenizer:
                 if i >= len(ids):
                     break
                 pitch_tok = self.id_to_token[ids[i]]
+                if pitch_tok == "<UNK>":
+                    i += 1
+                    continue
                 if not pitch_tok.startswith("P"):
                     i += 1
                     continue
@@ -68,4 +85,12 @@ class PianoTokenizer:
         return events
 
 
-__all__ = ["PianoTokenizer"]
+def export_vocab(path: str, vocab: List[str] | None = None) -> None:
+    """Export ``vocab`` or :class:`PianoTokenizer` vocab to ``path``."""
+    if vocab is None:
+        vocab = PianoTokenizer().vocab
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(vocab, fh)
+
+
+__all__ = ["PianoTokenizer", "export_vocab"]

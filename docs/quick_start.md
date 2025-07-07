@@ -86,4 +86,9 @@ part_params:
     timing_jitter_ms: 20
     timing_jitter_scale_mode: bpm_relative
     bow_position: tasto
+    macro_envelope:
+      type: cresc
+      beats: 4
+      start: 40
+      end: 90
 ```

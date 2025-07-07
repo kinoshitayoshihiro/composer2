@@ -12,6 +12,20 @@ from typing import Any
 
 import music21.articulations as articulations
 import music21.expressions as expressions
+
+if not hasattr(articulations, "Trill"):
+    class Trill(articulations.Articulation):
+        pass
+
+    articulations.Trill = Trill
+
+if not hasattr(articulations, "Tremolo"):
+    class Tremolo(articulations.Articulation):
+        def __init__(self, marks: int = 3) -> None:
+            super().__init__()
+            self.marks = marks
+
+    articulations.Tremolo = Tremolo
 import music21.spanner as m21spanner
 from music21 import (
     chord,
@@ -54,6 +68,10 @@ class BowPosition(enum.StrEnum):
     PONTICELLO = "ponticello"
 
 
+EXEC_STYLE_TRILL = "trill"
+EXEC_STYLE_TREMOLO = "tremolo"
+
+
 def parse_articulation_field(field: Any) -> list[str]:
     """Parse an articulation specification string into a list of names."""
     if field is None:
@@ -72,10 +90,19 @@ def parse_bow_position(value: Any) -> BowPosition | None:
     """Convert *value* into a :class:`BowPosition` or ``None``."""
     if value is None:
         return None
+    text = str(value).lower().strip()
+    aliases = {
+        "sul pont.": BowPosition.PONTICELLO,
+        "sul pont": BowPosition.PONTICELLO,
+        "pont.": BowPosition.PONTICELLO,
+        "sul tasto": BowPosition.TASTO,
+    }
+    if text in aliases:
+        return aliases[text]
     try:
-        return BowPosition(str(value).lower())
+        return BowPosition(text)
     except Exception:
-        return BowPosition.NORMALE
+        return None
 
 
 class StringsGenerator(BasePartGenerator):
@@ -296,6 +323,18 @@ class StringsGenerator(BasePartGenerator):
         val = max(20, min(127, int(round(val))))
         return val
 
+    def _pitch_to_midi(self, obj: Any) -> int | None:
+        """Return MIDI number from ``obj`` if possible."""
+        if obj is None:
+            return None
+        if hasattr(obj, "pitch") and obj.pitch:
+            return obj.pitch.midi
+        if hasattr(obj, "root"):
+            root = obj.root()
+            if root is not None and hasattr(root, "midi"):
+                return root.midi
+        return None
+
     def _humanize_timing(
         self,
         el: note.NotRest,
@@ -317,6 +356,27 @@ class StringsGenerator(BasePartGenerator):
         ql_shift = jitter * reference_bpm / 60000.0
         new_offset = float(el.offset) + ql_shift
         el.offset = max(0.0, new_offset)
+
+    def _apply_vibrato(
+        self,
+        el: note.NotRest | chord.Chord,
+        depth: float,
+        rate_hz: float,
+    ) -> None:
+        """Approximate vibrato by storing a microtone curve."""
+        bpm = float(self.global_tempo or 120.0)
+        dur_sec = float(el.quarterLength) * 60.0 / bpm
+        step = 0.1
+        curve: list[tuple[float, float]] = []
+        t = 0.0
+        while t <= dur_sec + 1e-6:
+            cents = depth * 100.0 * math.sin(2 * math.pi * rate_hz * t)
+            curve.append((t, cents))
+            t += step
+        targets = el.notes if hasattr(el, "notes") else [el]
+        for n in targets:
+            n.pitch.microtone = pitch.Microtone(curve[0][1])
+            n.editorial.vibrato_curve = curve
 
     # ------------------------------------------------------------------
     # Articulation helpers
@@ -361,10 +421,7 @@ class StringsGenerator(BasePartGenerator):
                 elem.expressions.append(trem)
             else:
                 elem.articulations.append(copy.deepcopy(art_obj))
-        self._handle_legato(part_name, elem, legato)
-        if not legato:
-            self._handle_legato(part_name, elem, False)
-        return legato
+        return legato  # legato グループ操作は呼び出し側で
 
     def _create_notes_from_event(
         self,
@@ -375,11 +432,42 @@ class StringsGenerator(BasePartGenerator):
         velocity: int | None,
         velocity_factor: float = 1.0,
         bow_position: BowPosition | None = None,
-    ) -> note.NotRest:
-        if isinstance(base_pitch, chord.Chord):
-            n: note.NotRest = chord.Chord(base_pitch.pitches, quarterLength=duration_ql)
+        event_opts: dict | None = None,
+    ) -> list[note.NotRest]:
+        pattern = (event_opts or {}).get("pattern_type") if event_opts else None
+        pattern = str(pattern).lower() if pattern else ""
+        result: list[note.NotRest] = []
+        if pattern in {EXEC_STYLE_TRILL, EXEC_STYLE_TREMOLO}:
+            rate_hz = float((event_opts or {}).get("rate_hz", 6))
+            spacing = 60.0 / (float(self.global_tempo or 120.0) * rate_hz)
+            interval_val = int((event_opts or {}).get("interval", 1))
+            if isinstance(base_pitch, chord.Chord):
+                if base_pitch.root():
+                    p_base = base_pitch.root().pitch
+                else:
+                    p_base = base_pitch.pitches[0]
+            else:
+                p_base = base_pitch
+            p_alt = p_base.transpose(interval_val) if pattern == EXEC_STYLE_TRILL else p_base
+            t = 0.0
+            toggle = False
+            while t < duration_ql - 1e-6:
+                dur = min(spacing, duration_ql - t)
+                p_sel = p_base if pattern == EXEC_STYLE_TREMOLO or toggle else p_alt
+                n = note.Note(p_sel, quarterLength=dur)
+                n.offset = t
+                n.articulations.append(
+                    articulations.Trill() if pattern == EXEC_STYLE_TRILL else articulations.Tremolo(3)
+                )
+                result.append(n)
+                t += spacing
+                toggle = not toggle
         else:
-            n = note.Note(base_pitch, quarterLength=duration_ql)
+            if isinstance(base_pitch, chord.Chord):
+                n = chord.Chord(base_pitch.pitches, quarterLength=duration_ql)
+            else:
+                n = note.Note(base_pitch, quarterLength=duration_ql)
+            result.append(n)
         if velocity is not None:
             final_vel = max(1, min(127, int(round(velocity * velocity_factor))))
             vol = volume.Volume(velocity=final_vel)
@@ -392,15 +480,17 @@ class StringsGenerator(BasePartGenerator):
                     vol.expressiveDynamic = final_vel / 127.0
                 except Exception:
                     pass
-            n.volume = vol
+            for n_el in result:
+                n_el.volume = vol
         if bow_position:
             value = bow_position.value
-            if hasattr(n.style, "bowPosition"):
-                setattr(n.style, "bowPosition", value)
-            else:
-                setattr(n.style, "other", value)
+            for n_el in result:
+                if hasattr(n_el.style, "bowPosition"):
+                    setattr(n_el.style, "bowPosition", value)
+                else:
+                    setattr(n_el.style, "other", value)
 
-        return n
+        return result
 
     def _finalize_part(self, part: stream.Part, part_name: str) -> stream.Part:
         buf = self._legato_active.pop(part_name, None)
@@ -435,6 +525,8 @@ class StringsGenerator(BasePartGenerator):
         pitches_sorted = sorted(
             {p.pitchClass: p for p in cs.pitches}.values(), key=lambda p: p.midi
         )
+        if pitches_sorted and pitches_sorted[0].octave <= 3:
+            pitches_sorted = [p.transpose(12) for p in pitches_sorted]
         if self.voicing_mode == "open":
             voiced = [p.transpose(12 * (i // 2)) for i, p in enumerate(pitches_sorted)]
         elif self.voicing_mode == "spread":
@@ -481,13 +573,15 @@ class StringsGenerator(BasePartGenerator):
                 parts[info.name] = part
             return parts
 
+        base_orig = list(base_pitches)
         while len(base_pitches) < len(self._SECTIONS):
-            base_pitches.append(base_pitches[len(base_pitches) % len(base_pitches)])
+            base_pitches.append(base_orig[len(base_pitches) % len(base_orig)])
 
         extras_map: dict[str, list[pitch.Pitch]] = {s.name: [] for s in self._SECTIONS}
         if not self.divisi and len(base_pitches) > len(self._SECTIONS):
             extras = base_pitches[len(self._SECTIONS):]
-            target_sections = ["violin_i", "violin_ii", "viola"]
+            target_sections = [s.name for s in self._SECTIONS
+                               if s.name in {"violin_i", "violin_ii", "viola"}]
             t_idx = 0
             for p_extra in extras:
                 for _ in range(len(target_sections)):
@@ -555,16 +649,24 @@ class StringsGenerator(BasePartGenerator):
                 if not arts:
                     arts = default_arts
                 bow_pos = None
+                vib_spec = None
                 if events and i < len(events):
                     bow_pos = parse_bow_position(events[i].get("bow_position"))
+                    vib_spec = events[i].get("vibrato")
                 if bow_pos is None:
                     bow_pos = parse_bow_position(section_data.get("bow_position"))
+                if vib_spec is None:
+                    vib_spec = (
+                        section_data.get("part_params", {})
+                        .get("strings", {})
+                        .get("vibrato")
+                    )
                 base_obj: pitch.Pitch | chord.Chord
                 pitch_list = [adj]
                 if extras_map.get(info.name):
                     pitch_list.extend(extras_map[info.name])
                 base_obj = chord.Chord(pitch_list) if len(pitch_list) > 1 else adj
-                n = self._create_notes_from_event(
+                notes_gen = self._create_notes_from_event(
                     base_obj,
                     dur,
                     info.name,
@@ -572,21 +674,31 @@ class StringsGenerator(BasePartGenerator):
                     vel_base,
                     vel_factor,
                     bow_pos,
+                    events[i] if events and i < len(events) else None,
                 )
-                is_legato = self._apply_articulations(n, arts, info.name)
-                self._humanize_timing(
-                    n,
-                    self.timing_jitter_ms,
-                    scale_mode=self.timing_jitter_scale_mode,
-                )
-                if len(durations) > 1:
-                    if i == 0:
-                        n.tie = tie.Tie("start")
-                    elif i == len(durations) - 1:
-                        n.tie = tie.Tie("stop")
-                    else:
-                        n.tie = tie.Tie("continue")
-                elem: note.NotRest = n
+                for j, n in enumerate(notes_gen):
+                    is_legato = self._apply_articulations(n, arts, info.name)
+                    self._handle_legato(info.name, n, is_legato)
+                    if not is_legato:
+                        self._handle_legato(info.name, n, False)
+                    self._humanize_timing(
+                        n,
+                        self.timing_jitter_ms,
+                        scale_mode=self.timing_jitter_scale_mode,
+                    )
+                    if vib_spec:
+                        depth = float(vib_spec.get("depth", 0.0))
+                        rate = float(vib_spec.get("rate_hz", 5.5))
+                        if depth and rate:
+                            self._apply_vibrato(n, depth, rate)
+                    if len(durations) > 1 and len(notes_gen) == 1 and j == 0:
+                        if i == 0:
+                            n.tie = tie.Tie("start")
+                        elif i == len(durations) - 1:
+                            n.tie = tie.Tie("stop")
+                        else:
+                            n.tie = tie.Tie("continue")
+                    elem: note.NotRest = n
                 if info.name in divisi_map:
                     mode = divisi_map[info.name]
                     if mode == "octave":
@@ -619,6 +731,10 @@ class StringsGenerator(BasePartGenerator):
                                 n.pitch
                             )
                     else:
+                        self.logger.warning(
+                            "Unknown divisi '%s' \u2013 defaulting to +4 semitones",
+                            mode,
+                        )
                         extra_pitch = n.pitch.transpose(4)
                     if extra_pitch:
                         if extra_pitch.midi > high:
@@ -636,24 +752,31 @@ class StringsGenerator(BasePartGenerator):
                             chd.volume = volume.Volume(velocity=int(n.volume.velocity))
                         elem = chd
                 if not is_legato:
+                    m_cur = self._pitch_to_midi(n)
+                    m_prev = self._pitch_to_midi(prev_note)
+                    cond_int = (
+                        m_cur is not None and m_prev is not None
+                        and abs(m_cur - m_prev) <= 2
+                    )
                     if (
                         prev_note
                         and not prev_note.isRest
                         and not n.isRest
                         and prev_note.quarterLength >= 0.5
                         and n.quarterLength >= 0.5
-                        and abs(n.pitch.midi - prev_note.pitch.midi) <= 2
+                        and cond_int
                     ):
                         self._handle_legato(info.name, prev_note, True)
                         self._handle_legato(info.name, n, True)
                         self._handle_legato(info.name, n, False)
                     else:
                         self._handle_legato(info.name, n, False)
-                part.insert(offset + float(n.offset), elem)
+                    part.insert(offset + float(n.offset), elem)
+                    prev_note = n if not n.isRest else prev_note
                 offset += dur
-                prev_note = n if not n.isRest else None
             parts[info.name] = self._finalize_part(part, info.name)
-            prev_midi = adj.midi
+            if self.voicing_mode == "close":
+                prev_midi = adj.midi
         dim_start = section_data.get("dim_start")
         dim_end = section_data.get("dim_end")
         crescendo_flag = section_data.get("crescendo", q_length >= self.bar_length)

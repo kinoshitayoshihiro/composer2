@@ -7,6 +7,8 @@ import soundfile as sf
 
 from utilities import groove_sampler_ngram, loop_ingest
 
+pytestmark = pytest.mark.requires_audio
+
 
 def _make_midi(path: Path) -> None:
     pm = pretty_midi.PrettyMIDI(initial_tempo=120)

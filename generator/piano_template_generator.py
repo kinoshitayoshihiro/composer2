@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import copy
+import re
 import statistics
 from typing import Any
 
-from music21 import chord, expressions, harmony, note, stream, volume
+from music21 import articulations, chord, expressions, harmony, note, spanner, stream, volume
 
 from utilities import humanizer
 from utilities.cc_tools import merge_cc_events, finalize_cc_events
@@ -99,6 +100,8 @@ class PianoTemplateGenerator(BasePartGenerator):
         self, section_data: dict[str, Any], next_section_data: dict[str, Any] | None = None
     ) -> dict[str, stream.Part]:
         chord_label = section_data.get("chord_symbol_for_voicing", "C")
+        tags = set(re.findall(r"<(gliss(?:_up|_down)?|trill)>", chord_label))
+        chord_label = re.sub(r"<[^>]+>", "", chord_label)
         groove_kicks: list[float] = section_data.get("groove_kicks", [])
         musical_intent = section_data.get("musical_intent", {})
         intensity = musical_intent.get("intensity", "medium")
@@ -200,6 +203,26 @@ class PianoTemplateGenerator(BasePartGenerator):
                 humanizer.apply(p, profile)
             if swing_ratio:
                 apply_swing(p, float(swing_ratio), subdiv=8)
+
+        if "trill" in tags:
+            for part in (rh, lh):
+                for n in part.recurse().notes:
+                    n.articulations.append(articulations.Trill())
+        for tag in tags:
+            if tag.startswith("gliss"):
+                direction = None
+                if tag.endswith("_up"):
+                    direction = "up"
+                elif tag.endswith("_down"):
+                    direction = "down"
+                for part in (rh, lh):
+                    notes = list(part.recurse().notes)
+                    for a, b in zip(notes, notes[1:]):
+                        if direction == "up" and b.pitch.midi <= a.pitch.midi:
+                            continue
+                        if direction == "down" and b.pitch.midi >= a.pitch.midi:
+                            continue
+                        part.insert(0, spanner.Glissando(a, b))
 
         return {"piano_rh": rh, "piano_lh": lh}
 

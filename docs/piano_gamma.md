@@ -30,6 +30,17 @@ modcompose sample dummy.pkl --backend piano_ml --model piano_model --temperature
 
 ## Example Screenshot
 
-![training placeholder](docs/img/piano_gamma_demo.png)
+![training placeholder](img/piano_gamma_demo.png)
 
-TODO: replace with training/demo GIF.
+
+## How to fine-tune with your WAV corpus
+
+1. **Collect WAV files** for each piece you want to use as training data.
+2. **Split stems** using a tool like [spleeter](https://github.com/deezer/spleeter)
+   so that piano or vocal parts can be isolated.
+3. **Convert stems to MIDI** with a transcription tool (e.g. `basic-pitch` or
+   `audio_to_midi.py`) and verify the timing in your DAW.
+4. **Export JSONL** using
+   `scripts/extract_piano_voicings.py --midi-dir MIDI_DIR --out piano.jsonl`.
+5. **Train** your LoRA model with
+   `python train_piano_lora.py --data piano.jsonl --out piano_model`.

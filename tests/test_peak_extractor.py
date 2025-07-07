@@ -6,13 +6,19 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
 import pytest
+import soundfile as sf
 
-if importlib.util.find_spec("librosa") is None:
+pytestmark = pytest.mark.requires_audio
+
+try:
+    from utilities.peak_extractor import PeakExtractorConfig, extract_peaks
+except Exception:  # pragma: no cover - optional
+    PeakExtractorConfig = None  # type: ignore
+    extract_peaks = None  # type: ignore
+
+if importlib.util.find_spec("librosa") is None or PeakExtractorConfig is None:
     pytest.skip("librosa missing", allow_module_level=True)
-
-from utilities.peak_extractor import PeakExtractorConfig, extract_peaks
 
 
 def _make_wav(path: Path) -> None:

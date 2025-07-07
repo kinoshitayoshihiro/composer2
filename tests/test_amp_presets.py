@@ -51,6 +51,7 @@ def test_choose_preset_unknown_intensity():
     assert ts.choose_preset(intensity="extreme", avg_velocity=80) == "clean"
 
 
+@pytest.mark.requires_audio
 def test_export_audio_with_ir(tmp_path):
     midi = tmp_path / "in.mid"
     wav = tmp_path / "out.wav"

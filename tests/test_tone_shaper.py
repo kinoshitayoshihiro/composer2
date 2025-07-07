@@ -1,6 +1,6 @@
 import pytest
 
-from utilities.tone_shaper import ToneShaper
+from utilities.tone_shaper import PRESET_LIBRARY, ToneShaper
 
 # ----------------------------------------------------------------------
 # ToneShaper - preset-selection / CC-emit tests
@@ -43,7 +43,7 @@ def test_choose_preset_fallback() -> None:
     # amp_hint が unknown → default へフォールバック
     assert (
         shaper.choose_preset(amp_hint="unknown", intensity="low", avg_velocity=50.0)
-        == "unknown_default"
+        == shaper.default_preset
     )
 
 
@@ -90,3 +90,17 @@ def test_preset_map_no_duplicates() -> None:
     keys = list(ts.preset_map.keys())
     assert len(keys) == len(set(keys))
     assert "drive_default" in ts.preset_map
+
+
+def test_get_ir_file_fallback(tmp_path):
+    ts = ToneShaper({"jam": {"amp": 60}})
+    ts.ir_map["jam"] = tmp_path / "missing.wav"
+    clean = tmp_path / "clean.wav"
+    clean.write_text("x")
+    PRESET_LIBRARY["clean"]["ir_file"] = str(clean)
+    try:
+        ts._selected = "jam"
+        ir = ts.get_ir_file(fallback_ok=True)
+        assert ir == clean
+    finally:
+        PRESET_LIBRARY["clean"]["ir_file"] = "data/ir/clean.wav"

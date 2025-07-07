@@ -1,12 +1,11 @@
 import copy
 import json
-from pathlib import Path
 
 import yaml
 from music21 import stream
 
-from utilities.tone_shaper import PRESET_LIBRARY, ToneShaper
 from utilities.mix_profile import export_mix_json
+from utilities.tone_shaper import PRESET_LIBRARY, ToneShaper
 
 
 def test_load_presets_override(tmp_path):
@@ -17,6 +16,21 @@ def test_load_presets_override(tmp_path):
     try:
         ToneShaper.load_presets(cfg)
         assert PRESET_LIBRARY["clean"]["cc_map"][31] == 10
+    finally:
+        PRESET_LIBRARY.clear()
+        PRESET_LIBRARY.update(original)
+
+
+def test_load_presets_and_style_hint(tmp_path):
+    original = copy.deepcopy(PRESET_LIBRARY)
+    cfg = tmp_path / "presets.yml"
+    data = {"funk": {"cc_map": {31: 40}}}
+    cfg.write_text(yaml.safe_dump(data))
+    try:
+        ToneShaper.load_presets(cfg)
+        ts = ToneShaper()
+        preset = ts.choose_preset(style="funk", avg_velocity=70)
+        assert preset == "funk"
     finally:
         PRESET_LIBRARY.clear()
         PRESET_LIBRARY.update(original)
@@ -46,5 +60,20 @@ def test_export_mix_json_library_ir(tmp_path):
         assert entry["preset"] == "clean"
         assert entry["ir_file"] == str(ir_path)
     finally:
+        PRESET_LIBRARY.clear()
+        PRESET_LIBRARY.update(original)
+
+
+def test_load_presets_env_path(tmp_path, monkeypatch):
+    original = copy.deepcopy(PRESET_LIBRARY)
+    cfg = tmp_path / "envpresets.yml"
+    data = {"env_clean": {"cc_map": {31: 64}}}
+    cfg.write_text(yaml.safe_dump(data))
+    monkeypatch.setenv("PRESET_LIBRARY_PATH", str(cfg))
+    try:
+        ToneShaper.load_presets(None)
+        assert PRESET_LIBRARY["env_clean"]["cc_map"][31] == 64
+    finally:
+        monkeypatch.delenv("PRESET_LIBRARY_PATH", raising=False)
         PRESET_LIBRARY.clear()
         PRESET_LIBRARY.update(original)

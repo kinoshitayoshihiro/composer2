@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 import numpy as np
@@ -10,10 +11,9 @@ from click.testing import CliRunner
 
 from utilities.loop_ingest import cli, load_cache, save_cache, scan_loops
 
-import importlib.util
+pytestmark = pytest.mark.requires_audio
 
 if importlib.util.find_spec("librosa") is not None:
-    import librosa  # type: ignore
     HAVE_LIBROSA = True
 else:
     HAVE_LIBROSA = False

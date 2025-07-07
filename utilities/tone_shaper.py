@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------
 # Default preset library (name -> metadata)
 # ------------------------------------------------------------
+# --- utility: externalize-and-reload-preset-library (解決後) ---
+
+# プリセットライブラリの初期定義
 PRESET_LIBRARY: dict[str, dict] = {
     "clean": {
         "ir_file": "data/ir/clean.wav",
@@ -68,17 +72,32 @@ PRESET_LIBRARY: dict[str, dict] = {
     },
 }
 
+# 現在読み込まれているプリセットファイルのパス（再ロード用）
+_PRESET_PATH: str | None = None
+
 
 def _merge_preset_dict(dest: dict, src: dict) -> None:
     """Helper to merge single preset dictionaries."""
     if "ir_file" in src:
-        dest["ir_file"] = src["ir_file"]
+        p = Path(src["ir_file"])
+        if p.is_file():
+            dest["ir_file"] = str(p)
+        else:
+            logger.warning("IR file missing: %s", p)
+            dest["ir_file"] = None
     if "gain_db" in src:
         dest["gain_db"] = float(src["gain_db"])
-    if "cc" in src:
-        dest.setdefault("cc_map", {}).update({int(k): int(v) for k, v in src["cc"].items()})
-    if "cc_map" in src:
-        dest.setdefault("cc_map", {}).update({int(k): int(v) for k, v in src["cc_map"].items()})
+    for key in ("cc", "cc_map"):
+        if key in src:
+            cc_dict = src[key]
+            for k, v in cc_dict.items():
+                try:
+                    iv = int(v)
+                except Exception as exc:
+                    raise ValueError(f"Invalid CC value for {k}: {v}") from exc
+                if not 0 <= iv <= 127:
+                    raise ValueError(f"CC value for {k} out of range: {iv}")
+                dest.setdefault("cc_map", {})[int(k)] = iv
 
 
 class ToneShaper:
@@ -201,8 +220,14 @@ class ToneShaper:
     # preset registry loader
     # ------------------------------------------------------
     @staticmethod
-    def load_presets(path: str | None) -> None:
-        """Merge presets from ``path`` into :data:`PRESET_LIBRARY`."""
+    def load_presets(path: str | None = None) -> None:
+        """Merge presets from ``path`` into :data:`PRESET_LIBRARY`.
+
+        If ``path`` is ``None`` use the ``PRESET_LIBRARY_PATH`` environment
+        variable. Missing or invalid files are ignored.
+        """
+        if path is None:
+            path = os.environ.get("PRESET_LIBRARY_PATH")
         if not path:
             return
 
@@ -225,6 +250,42 @@ class ToneShaper:
                 raise ValueError(f"Invalid preset entry for {name}")
             dest = PRESET_LIBRARY.setdefault(name, {})
             _merge_preset_dict(dest, cfg)
+
+        global _PRESET_PATH
+        _PRESET_PATH = str(p)
+
+    # ------------------------------------------------------
+    # dynamic reload of preset library
+    # ------------------------------------------------------
+    def reload_presets(self) -> None:
+        """Reload presets from the last loaded library file."""
+        if _PRESET_PATH:
+            try:
+                ToneShaper.load_presets(_PRESET_PATH)
+            except Exception as exc:  # pragma: no cover - optional
+                logger.warning("Failed to reload presets: %s", exc)
+        if not self._user_map:
+            self.preset_map.clear()
+            self.ir_map.clear()
+            for name, entry in PRESET_LIBRARY.items():
+                if "cc_map" in entry:
+                    self.preset_map[name] = {
+                        k: int(v) for k, v in entry["cc_map"].items()
+                    }
+                if entry.get("ir_file"):
+                    self.ir_map[name] = Path(entry["ir_file"])
+        else:
+            for name, entry in PRESET_LIBRARY.items():
+                if "cc_map" in entry and name not in self.preset_map:
+                    self.preset_map[name] = {
+                        k: int(v) for k, v in entry["cc_map"].items()
+                    }
+                if entry.get("ir_file") and name not in self.ir_map:
+                    self.ir_map[name] = Path(entry["ir_file"])
+
+        self.presets = {n: d.get("amp", 0) for n, d in self.preset_map.items()}
+        if self._selected not in self.preset_map:
+            self._selected = self.default_preset
 
     # ------------------------------------------------------
     # choose_preset
@@ -259,14 +320,12 @@ class ToneShaper:
             if amp_hint in self.preset_map or amp_hint in PRESET_LIBRARY:
                 chosen = amp_hint
             else:
-                chosen = f"{amp_hint}_default"
-                if chosen not in self.preset_map:
-                    self.preset_map[chosen] = self.preset_map.get(
-                        self.default_preset, {"amp": 80}
-                    )
+                chosen = self.default_preset
 
         lvl_raw = (intensity or "medium").lower()
         lvl = lvl_raw if lvl_raw in {"low", "medium", "high"} else ""
+        if not lvl:
+            chosen = self.default_preset if chosen is None else chosen
 
         # 2) rule-based
         if not chosen and self.rules:
@@ -430,24 +489,60 @@ class ToneShaper:
             ]
         return sorted(events, key=lambda e: e[0])
 
-    def render_with_ir(self, mix_wav: Path, preset_name: str, out: Path) -> Path:
+    def render_with_ir(
+        self,
+        mix_wav: Path,
+        preset_name: str,
+        out: Path,
+        *,
+        lufs_target: float | None = None,
+        gain_db: float | None = None,
+        **kw: float | int | bool,
+    ) -> Path:
         """Apply impulse response for ``preset_name`` to ``mix_wav``."""
         ir_path = self.ir_map.get(preset_name)
         if ir_path is None:
             raise KeyError(preset_name)
+        entry = PRESET_LIBRARY.get(preset_name, {})
+        if gain_db is None:
+            gain_db = float(entry.get("gain_db", 0.0))
+        if lufs_target is None:
+            lufs_target = float(entry.get("lufs", entry.get("gain_db", -14)))
         from .convolver import render_with_ir as _render
 
-        return _render(mix_wav, ir_path, out)
+        _render(
+            mix_wav,
+            ir_path,
+            out,
+            lufs_target=lufs_target,
+            gain_db=gain_db,
+            **kw,
+        )
+        return out
 
-    def get_ir_file(self, preset_name: str | None = None) -> Path | None:
+    def get_ir_file(
+        self, preset_name: str | None = None, *, fallback_ok: bool = False
+    ) -> Path | None:
         """Return IR file for ``preset_name`` or current selection."""
         name = preset_name or self._selected
         ir = self.ir_map.get(name)
-        if ir is not None:
+        if ir is None:
+            entry = PRESET_LIBRARY.get(name)
+            if entry and entry.get("ir_file"):
+                ir = Path(entry["ir_file"])
+        if ir is None:
+            return None
+        if ir.is_file():
             return ir
-        entry = PRESET_LIBRARY.get(name)
-        if entry and entry.get("ir_file"):
-            return Path(entry["ir_file"])
+        if not fallback_ok:
+            raise FileNotFoundError(str(ir))
+        logger.warning("IR file missing: %s", ir)
+        clean = PRESET_LIBRARY.get("clean", {}).get("ir_file")
+        if clean:
+            p = Path(clean)
+            if p.is_file():
+                logger.warning("Falling back to clean IR: %s", p)
+                return p
         return None
 
     # ------------------------------------------------------
@@ -493,3 +588,11 @@ class ToneShaper:
 
 
 __all__ = ["ToneShaper"]
+
+# load default preset library on import
+_default_path = Path(__file__).resolve().parent.parent / "data" / "preset_library.yml"
+if _default_path.is_file():
+    try:
+        ToneShaper.load_presets(str(_default_path))
+    except Exception as exc:  # pragma: no cover - optional
+        logger.warning("Failed to load default presets: %s", exc)

@@ -249,10 +249,10 @@ levels:
 When you later call `export_audio()` the selected IR file will be used
 automatically if `part.metadata.ir_file` is present.
 
-To convolve the rendered WAV offline run:
+To convolve the rendered WAV offline run the helper script:
 
 ```bash
-python -m generator.guitar_generator --render section.yml --ir irs/blackface.wav
+python cli/ir_render.py dry.wav drive -g 3 -l -14 -b 16384
 ```
 
 See [Effects and Automation](docs/effects.md#オフライン-ir-レンダリング) for details.

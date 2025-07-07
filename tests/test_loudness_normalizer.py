@@ -1,19 +1,20 @@
+import importlib
+import importlib.util
 from pathlib import Path
 
-import importlib.util
 import numpy as np
+import pytest
 import soundfile as sf
 
-import pytest
-import importlib
+from utilities.loudness_normalizer import normalize_wav
+
+pytestmark = pytest.mark.requires_audio
 
 pytest.importorskip("pyloudnorm")
 pytest.importorskip("pydub")
 
 if importlib.util.find_spec("librosa") is None:
     pytest.skip("librosa missing", allow_module_level=True)
-
-from utilities.loudness_normalizer import normalize_wav
 
 
 def test_normalize_wav(tmp_path: Path) -> None:

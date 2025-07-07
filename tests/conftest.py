@@ -2,10 +2,11 @@ import importlib.util
 import warnings
 from pathlib import Path
 
-# Ensure sitecustomize stubs are loaded for environments missing optional tools
-import sitecustomize
-
 import pytest
+
+from utilities.rhythm_library_loader import load_rhythm_library
+
+# Ensure sitecustomize stubs are loaded for environments missing optional tools
 
 REQUIRED_PACKAGES = ["music21", "pretty_midi", "mido"]
 missing = [pkg for pkg in REQUIRED_PACKAGES if importlib.util.find_spec(pkg) is None]
@@ -14,8 +15,6 @@ if missing:
         "Missing packages: {}".format(", ".join(missing)),
         allow_module_level=True,
     )
-
-from utilities.rhythm_library_loader import load_rhythm_library
 
 
 def pytest_configure(config):
@@ -47,6 +46,11 @@ def _opt_dep_available(mod: str) -> bool:
     return importlib.util.find_spec(mod) is not None
 
 
+opt_pkgs_missing = any(
+    importlib.util.find_spec(m) is None for m in ("soundfile", "scipy", "sklearn")
+)
+
+
 @pytest.fixture(scope="session")
 def rhythm_library():
     path = Path(__file__).resolve().parents[1] / "data" / "rhythm_library.yml"
@@ -63,6 +67,8 @@ def _midi_port_available() -> bool:
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item: pytest.Item) -> None:
+    if "requires_audio" in item.keywords and opt_pkgs_missing:
+        pytest.skip("optional audio deps not installed")
     if "no_midi_port" in item.keywords and not _midi_port_available():
         pytest.skip("no midi port")
 
@@ -70,6 +76,7 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 @pytest.fixture
 def _basic_gen():
     from music21 import instrument
+
     from generator.guitar_generator import GuitarGenerator
 
     def factory(**kwargs):

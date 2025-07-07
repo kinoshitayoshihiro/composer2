@@ -30,7 +30,10 @@ jobs:
           for i in 1 2 3; do
             pip install -e .[test] -r requirements-test.txt && break || sleep 5
           done
-          pip install -e .[audio]
+          pip install .[all,audio,ml]
+      - name: Install sox (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sox || true
       - run: python -m build --wheel
       - run: mkdocs build --strict
       - run: pytest tests/test_wheel_import.py tests/test_docs_build.py -q

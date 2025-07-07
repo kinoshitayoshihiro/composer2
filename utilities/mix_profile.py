@@ -1,9 +1,7 @@
 import json
-import os
 import logging
+import os
 from pathlib import Path
-
-
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +14,7 @@ def load_mix_profiles(path: str | None = None) -> None:
     if not path:
         return
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
     except Exception as exc:  # pragma: no cover - optional
         logger.warning("Failed to load mix profiles %s: %s", path, exc)
@@ -41,10 +39,7 @@ def export_mix_json(parts, path: str) -> None:
         if meta is not None:
             ir_file = getattr(meta, "ir_file", None)
             if ir_file is not None:
-                p = Path(ir_file)
-                entry["ir_file"] = str(p)
-                if not p.is_file():
-                    logger.warning("IR file missing: %s", ir_file)
+                entry["ir_file"] = str(Path(ir_file))
             rendered = getattr(meta, "rendered_wav", None)
             if rendered is not None:
                 entry["rendered_wav"] = str(rendered)
@@ -54,8 +49,11 @@ def export_mix_json(parts, path: str) -> None:
         shaper = getattr(part, "tone_shaper", None)
         if shaper is not None and hasattr(shaper, "_selected"):
             entry["preset"] = shaper._selected
-            if "ir_file" not in entry:
-                ir = shaper.get_ir_file()
+            if not entry.get("ir_file"):
+                try:
+                    ir = shaper.get_ir_file(fallback_ok=True)
+                except FileNotFoundError:
+                    ir = None
                 if ir is not None:
                     entry["ir_file"] = str(ir)
             if getattr(shaper, "fx_envelope", None):

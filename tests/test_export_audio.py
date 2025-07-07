@@ -2,14 +2,15 @@ from pathlib import Path
 
 import pytest
 
+from generator.guitar_generator import GuitarGenerator
 from utilities.audio_env import has_fluidsynth
+
+pytestmark = pytest.mark.requires_audio
 
 sf = pytest.importorskip("soundfile")
 
 if not has_fluidsynth():
     pytest.skip("fluidsynth missing", allow_module_level=True)
-
-from generator.guitar_generator import GuitarGenerator
 
 
 def _dummy_gen():

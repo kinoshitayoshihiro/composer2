@@ -3,11 +3,12 @@ import pytest
 import soundfile as sf
 
 from utilities.audio_env import has_fluidsynth
+from utilities.tone_shaper import ToneShaper
+
+pytestmark = pytest.mark.requires_audio
 
 if not has_fluidsynth():
     pytest.skip("fluidsynth missing", allow_module_level=True)
-
-from utilities.tone_shaper import ToneShaper
 
 
 @pytest.mark.fx

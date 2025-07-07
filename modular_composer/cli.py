@@ -294,7 +294,12 @@ def fx_cc() -> None:
 
 @cli.command("live")
 @click.argument("model", type=Path)
-@click.option("--backend", type=click.Choice(["ngram", "rnn", "realtime"]), default="ngram")
+@click.option(
+    "--backend",
+    type=click.Choice(["ngram", "rnn", "realtime", "piano_ml"]),
+    default="ngram",
+)
+@click.option("--stream", type=click.Choice(["rtmidi"]), default="rtmidi", show_default=True)
 @click.option(
     "--ai-backend",
     type=click.Choice(["ngram", "rnn", "transformer"]),
@@ -319,6 +324,7 @@ def fx_cc() -> None:
 def live_cmd(
     model: Path,
     backend: str,
+    stream: str,
     ai_backend: str,
     model_name: str,
     use_history: bool,
@@ -394,6 +400,28 @@ def live_cmd(
                 f"Latency mean {stats.get('mean_ms', 0.0):.1f} ms, "
                 f"jitter {stats.get('stdev_ms', 0.0):.1f} ms"
             )
+        return
+    elif backend == "piano_ml" and stream == "rtmidi":
+        from generator.piano_ml_generator import PianoMLGenerator
+        from realtime import rtmidi_streamer as rtms
+
+        ports = rtms.RtMidiStreamer.list_ports()
+        if port is None:
+            if not ports:
+                raise click.ClickException("No MIDI output ports")
+            click.echo("Available MIDI ports:")
+            for idx, name in enumerate(ports):
+                click.echo(f"{idx}: {name}")
+            return
+        gen = PianoMLGenerator(str(model))
+        streamer = rtms.RtMidiStreamer(port, gen)
+        streamer.start(bpm=bpm, buffer_bars=buffer, callback=None)
+        try:
+            while True:
+                streamer.on_tick()
+        except KeyboardInterrupt:
+            pass
+        streamer.stop()
         return
 
     if RealtimeEngine is None:

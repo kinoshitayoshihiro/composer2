@@ -28,3 +28,6 @@ music21>=7.3
 numpy>=1.26
 click>=8.1
 pretty_midi>=0.2
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27

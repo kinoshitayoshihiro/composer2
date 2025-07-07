@@ -181,6 +181,7 @@ else:
             )
 from .install_utils import run_with_retry
 from . import mix_profile
+from .cc_map import cc_map, load_cc_map
 try:
     importlib.import_module("utilities.ir_renderer")
     from . import ir_renderer
@@ -251,6 +252,8 @@ __all__ = [
     "groove_sampler_ngram",
     "groove_sampler_rnn",
     "mix_profile",
+    "cc_map",
+    "load_cc_map",
     "ir_renderer",
     "load_ir",
     "convolve_ir",

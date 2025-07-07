@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import List
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+try:
+    from sklearn.feature_extraction.text import CountVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+except Exception:  # pragma: no cover - optional dependency
+    CountVectorizer = None  # type: ignore
+    cosine_similarity = None  # type: ignore
 import warnings
 try:  # optional dependency
     import hdbscan
@@ -20,6 +24,11 @@ def cluster_phrases(events_list: Sequence[Sequence[dict]], n: int = 4) -> List[b
     if not events_list:
         return []
     texts = [_phrase_str(ev) for ev in events_list]
+    if CountVectorizer is None or cosine_similarity is None:
+        warnings.warn(
+            "sklearn not installed; using naive dedupe", RuntimeWarning
+        )
+        return [True for _ in texts]
     vec = CountVectorizer(analyzer="word", ngram_range=(3, 3))
     X = vec.fit_transform(texts)
     sim = cosine_similarity(X)

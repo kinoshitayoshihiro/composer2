@@ -9,8 +9,23 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest]
-        variant: [PURE_PY, PIANO_ML, PG_BETA, PG_DELTA, PIANO_ML_HEAVY]
+        include:
+          - os: ubuntu-latest
+            variant: PURE_PY
+          - os: ubuntu-latest
+            variant: PIANO_ML
+          - os: ubuntu-latest
+            variant: PG_BETA
+          - os: ubuntu-latest
+            variant: PG_DELTA
+          - os: ubuntu-latest
+            variant: PIANO_ML_HEAVY
+          - os: ubuntu-latest
+            variant: PG_EPSILON
+          - os: macos-latest
+            variant: PG_EPSILON
+          - os: windows-latest
+            variant: PG_EPSILON
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -26,7 +41,7 @@ jobs:
           path: ~/.cache/pip/wheels/**/cyext*
           key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
       - name: Install dependencies
-        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA' || matrix.variant == 'PG_DELTA'
+        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA' || matrix.variant == 'PG_DELTA' || matrix.variant == 'PG_EPSILON'
         run: pip install -r requirements.txt
       - name: Install dependencies (ML)
         if: matrix.variant == 'PIANO_ML'
@@ -37,7 +52,7 @@ jobs:
       - name: Install test tools
         run: pip install -e .[test] -r requirements-test.txt
       - name: Set ML env (pure)
-        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA' || matrix.variant == 'PG_DELTA'
+        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA' || matrix.variant == 'PG_DELTA' || matrix.variant == 'PG_EPSILON'
         run: echo "ENABLE_ML_TESTS=false" >> $GITHUB_ENV
       - name: Set ML env (ml)
         if: matrix.variant == 'PIANO_ML' || matrix.variant == 'PIANO_ML_HEAVY'
@@ -99,7 +114,7 @@ jobs:
               # 通常 ML ジョブ ― 全テスト実行
               pytest -q
           else
-              # PURE_PY / PG_BETA / PG_DELTA ― ML マークを除外
+              # PURE_PY / PG_BETA / PG_DELTA / PG_EPSILON ― ML マークを除外
               pytest -q -m "not ml"
           fi
       - name: MIDI Regression Tests
@@ -146,6 +161,35 @@ jobs:
           path: coverage.xml
       - name: Build docs
         run: mkdocs build --strict
+      - name: Build plugin (macOS/Windows)
+        if: matrix.variant == 'PG_EPSILON' && runner.os != 'Linux'
+        run: |
+          pip install pybind11 cmake ninja
+          cmake -B build -DMODC_BUILD_PLUGIN=ON
+          cmake --build build --config Release
+      - name: Package AU component
+        if: matrix.variant == 'PG_EPSILON' && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PianoCompanion.component
+          path: build/**/PianoCompanion.component
+      - name: Package VST3
+        if: matrix.variant == 'PG_EPSILON' && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PianoCompanion.vst3
+          path: build/**/PianoCompanion.vst3
+      - name: Build Docker image
+        if: matrix.variant == 'PG_EPSILON' && runner.os == 'Linux'
+        run: |
+          docker build -t modcompose-api .
+          docker save modcompose-api | gzip > modcompose-api.tar.gz
+      - name: Package Docker image
+        if: matrix.variant == 'PG_EPSILON' && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: modcompose-api
+          path: modcompose-api.tar.gz
 
   perf-gate:
     runs-on: ubuntu-latest

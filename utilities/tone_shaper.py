@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -24,6 +25,44 @@ PRESET_TABLE: dict[tuple[str, str], str] = {
 }
 
 logger = logging.getLogger(__name__)
+
+# ------------------------------------------------------------
+# Default preset library (name -> metadata)
+# ------------------------------------------------------------
+PRESET_LIBRARY: dict[str, dict] = {
+    "clean": {
+        "ir_file": "data/ir/clean.wav",
+        "gain_db": 0.0,
+        "cc_map": {31: 20},
+    },
+    "crunch": {
+        "ir_file": "data/ir/crunch.wav",
+        "gain_db": -1.5,
+        "cc_map": {31: 50},
+    },
+    "drive": {
+        "ir_file": "data/ir/drive.wav",
+        "gain_db": -3.0,
+        "cc_map": {31: 90},
+    },
+    "fuzz": {
+        "ir_file": "data/ir/fuzz.wav",
+        "gain_db": -6.0,
+        "cc_map": {31: 110},
+    },
+}
+
+
+def _merge_preset_dict(dest: dict, src: dict) -> None:
+    """Helper to merge single preset dictionaries."""
+    if "ir_file" in src:
+        dest["ir_file"] = src["ir_file"]
+    if "gain_db" in src:
+        dest["gain_db"] = float(src["gain_db"])
+    if "cc" in src:
+        dest.setdefault("cc_map", {}).update({int(k): int(v) for k, v in src["cc"].items()})
+    if "cc_map" in src:
+        dest.setdefault("cc_map", {}).update({int(k): int(v) for k, v in src["cc_map"].items()})
 
 
 class ToneShaper:
@@ -56,7 +95,19 @@ class ToneShaper:
                 else:
                     self.preset_map[name] = {k: int(v) for k, v in data.items()}
 
+        # merge presets from global library if no user map provided
+        if not self._user_map:
+            for name, entry in PRESET_LIBRARY.items():
+                if name not in self.preset_map and isinstance(entry.get("cc_map"), dict):
+                    self.preset_map[name] = {
+                        k: int(v) for k, v in entry.get("cc_map", {}).items()
+                    }
+
         self.ir_map: dict[str, Path] = {k: Path(v) for k, v in (ir_map or {}).items()}
+        if not self._user_map:
+            for name, entry in PRESET_LIBRARY.items():
+                if name not in self.ir_map and entry.get("ir_file"):
+                    self.ir_map[name] = Path(entry["ir_file"])
         self.default_preset: str = default_preset
         self.rules: list[dict[str, str]] = rules or []
 
@@ -123,6 +174,35 @@ class ToneShaper:
         return cls(preset_map=preset_map, ir_map=ir_map, rules=rules)
 
     # ------------------------------------------------------
+    # preset registry loader
+    # ------------------------------------------------------
+    @staticmethod
+    def load_presets(path: str | None) -> None:
+        """Merge presets from ``path`` into :data:`PRESET_LIBRARY`."""
+        if not path:
+            return
+
+        p = Path(path)
+        if not p.is_file():
+            raise FileNotFoundError(str(p))
+
+        if p.suffix.lower() in {".yml", ".yaml"}:
+            import yaml
+
+            data = yaml.safe_load(p.read_text()) or {}
+        else:
+            data = json.loads(p.read_text())
+
+        if not isinstance(data, dict):
+            raise ValueError("Preset file must contain a mapping")
+
+        for name, cfg in data.items():
+            if not isinstance(cfg, dict):
+                raise ValueError(f"Invalid preset entry for {name}")
+            dest = PRESET_LIBRARY.setdefault(name, {})
+            _merge_preset_dict(dest, cfg)
+
+    # ------------------------------------------------------
     # choose_preset
     # ------------------------------------------------------
     def choose_preset(
@@ -130,6 +210,9 @@ class ToneShaper:
         amp_hint: str | None = None,
         intensity: str | None = None,
         avg_velocity: float | None = None,
+        *,
+        style: str | None = None,
+        avg_vel: int | None = None,
     ) -> str:
         """
         Select amp preset based on intensity & velocity.
@@ -139,12 +222,17 @@ class ToneShaper:
         3. PRESET_TABLE (threshold 65)
         4. fallback heuristic
         """
+        if avg_velocity is None and avg_vel is not None:
+            avg_velocity = float(avg_vel)
         avg_velocity = 64.0 if avg_velocity is None else float(avg_velocity)
+
+        if style and not amp_hint:
+            amp_hint = style
 
         # 1) explicit
         chosen: str | None = None
         if amp_hint is not None:
-            if amp_hint in self.preset_map:
+            if amp_hint in self.preset_map or amp_hint in PRESET_LIBRARY:
                 chosen = amp_hint
             else:
                 chosen = f"{amp_hint}_default"
@@ -199,7 +287,12 @@ class ToneShaper:
             chosen = self.default_preset
 
         if chosen not in self.preset_map:
-            self.preset_map.setdefault(chosen, {"amp": 80})
+            if chosen in PRESET_LIBRARY and "cc_map" in PRESET_LIBRARY[chosen]:
+                self.preset_map[chosen] = {
+                    k: int(v) for k, v in PRESET_LIBRARY[chosen]["cc_map"].items()
+                }
+            else:
+                self.preset_map.setdefault(chosen, {"amp": 80})
 
         # ensure legacy preset exists
         self.preset_map.setdefault("drive", {"amp": 80})
@@ -313,6 +406,17 @@ class ToneShaper:
         from .convolver import render_with_ir as _render
 
         return _render(mix_wav, ir_path, out)
+
+    def get_ir_file(self, preset_name: str | None = None) -> Path | None:
+        """Return IR file for ``preset_name`` or current selection."""
+        name = preset_name or self._selected
+        ir = self.ir_map.get(name)
+        if ir is not None:
+            return ir
+        entry = PRESET_LIBRARY.get(name)
+        if entry and entry.get("ir_file"):
+            return Path(entry["ir_file"])
+        return None
 
     # ------------------------------------------------------
     # KNN (MFCC → preset)  optional

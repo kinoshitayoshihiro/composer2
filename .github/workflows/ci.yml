@@ -10,7 +10,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        variant: [PURE_PY, PIANO_ML, PG_BETA, PIANO_ML_HEAVY]
+        variant: [PURE_PY, PIANO_ML, PG_BETA, PG_DELTA, PIANO_ML_HEAVY]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -26,7 +26,7 @@ jobs:
           path: ~/.cache/pip/wheels/**/cyext*
           key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
       - name: Install dependencies
-        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA'
+        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA' || matrix.variant == 'PG_DELTA'
         run: pip install -r requirements.txt
       - name: Install dependencies (ML)
         if: matrix.variant == 'PIANO_ML'
@@ -37,7 +37,7 @@ jobs:
       - name: Install test tools
         run: pip install -e .[test] -r requirements-test.txt
       - name: Set ML env (pure)
-        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA'
+        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA' || matrix.variant == 'PG_DELTA'
         run: echo "ENABLE_ML_TESTS=false" >> $GITHUB_ENV
       - name: Set ML env (ml)
         if: matrix.variant == 'PIANO_ML' || matrix.variant == 'PIANO_ML_HEAVY'
@@ -78,8 +78,8 @@ jobs:
       - name: Verify SF2 Size
         if: matrix.variant == 'PIANO_ML'
         run: ls -lh sf2/TimGM6mb.sf2
-      - name: Ruff
-        run: ruff check . --output-format=github
+      - name: Run ruff lint
+        run: ruff check .
       - name: Mypy
         run: mypy modular_composer utilities tests --strict
       - name: Debug music21
@@ -93,11 +93,13 @@ jobs:
                 tests/test_tokenizer.py \
                 tests/test_piano_transformer.py \
                 tests/test_piano_ml_stub.py
+          elif [ "${{ matrix.variant }}" = "PG_DELTA" ]; then
+              pytest -q tests/test_articulation_cc.py tests/test_loudness_norm.py tests/test_tone_presets.py
           elif [ "$ENABLE_ML_TESTS" = "true" ]; then
               # 通常 ML ジョブ ― 全テスト実行
               pytest -q
           else
-              # PURE_PY / PG_BETA ― ML マークを除外
+              # PURE_PY / PG_BETA / PG_DELTA ― ML マークを除外
               pytest -q -m "not ml"
           fi
       - name: MIDI Regression Tests
@@ -289,8 +291,12 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+      - name: Install test tools
+        run: pip install -e .[test]
       - name: Install dependencies
         run: pip install torch transformers peft
+      - name: Run ruff lint
+        run: ruff check .
       - name: Train tiny model
         run: python train_piano_lora.py --data tests/mini.jsonl --epochs 1 --out tmp_model --auto-hparam
       - uses: actions/upload-artifact@v4

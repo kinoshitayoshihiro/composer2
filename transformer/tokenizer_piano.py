@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Dict, List
 import json
 import warnings
 
@@ -20,15 +19,15 @@ class PianoTokenizer:
         ]
         pitches = [f"P{i}" for i in range(60, 97)]
         self.vocab = specials + pitches
-        self.token_to_id: Dict[str, int] = {tok: i for i, tok in enumerate(self.vocab)}
-        self.id_to_token: Dict[int, str] = {i: tok for i, tok in enumerate(self.vocab)}
+        self.token_to_id: dict[str, int] = {tok: i for i, tok in enumerate(self.vocab)}
+        self.id_to_token: dict[int, str] = {i: tok for i, tok in enumerate(self.vocab)}
 
     def export_vocab(self, path: str) -> None:
         """Write ``self.vocab`` to ``path`` as JSON list."""
         export_vocab(path, self.vocab)
 
-    def encode(self, events: List[Dict[str, object]]) -> List[int]:
-        tokens: List[int] = [self.token_to_id["<TS_4_4>"]]
+    def encode(self, events: list[dict[str, object]]) -> list[int]:
+        tokens: list[int] = [self.token_to_id["<TS_4_4>"]]
         current_bar = -1
         unk = 0
         for ev in events:
@@ -49,8 +48,8 @@ class PianoTokenizer:
             warnings.warn(f"unk token rate {unk/len(tokens):.2%}")
         return tokens
 
-    def decode(self, ids: List[int]) -> List[Dict[str, object]]:
-        events: List[Dict[str, object]] = []
+    def decode(self, ids: list[int]) -> list[dict[str, object]]:
+        events: list[dict[str, object]] = []
         bar = -1
         i = 0
         while i < len(ids):
@@ -85,7 +84,7 @@ class PianoTokenizer:
         return events
 
 
-def export_vocab(path: str, vocab: List[str] | None = None) -> None:
+def export_vocab(path: str, vocab: list[str] | None = None) -> None:
     """Export ``vocab`` or :class:`PianoTokenizer` vocab to ``path``."""
     if vocab is None:
         vocab = PianoTokenizer().vocab

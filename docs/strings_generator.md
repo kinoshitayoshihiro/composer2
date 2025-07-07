@@ -61,3 +61,19 @@ Additional articulation and expression controls:
 - `dim_start` / `dim_end`: numeric CC11 values (1-127) defining a custom
   expression envelope. Values interpolate linearly from start to end across the
   section.
+
+## Bow Position & Divisi
+
+The optional `bow_position` field may be set per event or section. Values like
+`"sul pont."` and `"sul tasto"` are recognized alongside the canonical names.
+When the `divisi` option is enabled, supported modes are `"octave"` and
+`"third"`; unknown strings default to a pitch a third above and emit a warning.
+
+## Trill, Tremolo & Vibrato
+
+Events may set `pattern_type` to `"trill"` or `"tremolo"`. A trill alternates
+the base note with a transposed pitch while a tremolo rapidly repeats the same
+pitch. The note spacing is derived from the specified `rate_hz` using the
+formula ``60 / (tempo * rate_hz)``. Vibrato depth and speed can be provided via
+``vibrato`` dictionaries either per-event or in `part_params`; generated notes
+store the waveform in ``editorial.vibrato_curve``.

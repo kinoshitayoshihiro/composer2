@@ -97,10 +97,19 @@ def finalize_cc_events(part: stream.Part) -> list[dict]:
         delattr(part, "_extra_cc")
     return part.extra_cc
 
+
+def add_cc_events(part: stream.Part, events: TypingIterable[dict] | TypingIterable[CCEvent]) -> None:
+    """Merge CC events into ``part.extra_cc`` preserving order."""
+
+    base = getattr(part, "extra_cc", [])
+    merged = merge_cc_events(base, events)
+    part.extra_cc = to_sorted_dicts(merged)
+
 __all__ = [
     "merge_cc_events",
     "to_sorted_dicts",
     "finalize_cc_events",
+    "add_cc_events",
     "CCEvent",
 ]
 

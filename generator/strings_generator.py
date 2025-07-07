@@ -198,6 +198,9 @@ class StringsGenerator(BasePartGenerator):
             "tremolo": expressions.Tremolo(),
             "pizz": expressions.TextExpression("pizz."),
             "arco": expressions.TextExpression("arco"),
+            "detaché": articulations.DetachedLegato(),
+            "detache": articulations.DetachedLegato(),
+            "spiccato": articulations.Spiccato(),
         }
         self._legato_active: dict[str, list[note.NotRest]] = {}
         self._legato_groups: dict[str, list[tuple[note.NotRest, note.NotRest]]] = {}
@@ -213,7 +216,7 @@ class StringsGenerator(BasePartGenerator):
     ) -> dict[str, stream.Part]:
         q_len = float(section_data.get("q_length", self.bar_length))
         mapping = self._select_expression_map(section_data)
-        prev_curve = None
+        prev_curve = self._apply_expression_map_pre(section_data, mapping)
         try:
             result = super().compose(section_data=section_data, **kwargs)
         finally:
@@ -239,7 +242,11 @@ class StringsGenerator(BasePartGenerator):
         elif section_data.get("crescendo", q_len >= self.bar_length):
             self.crescendo(result, q_len)
 
-        mute_spec = section_data.get("style_params", {}).get("mute")
+        mute_spec = (
+            section_data.get("part_params", {}).get("mute")
+            if "mute" in section_data.get("part_params", {})
+            else section_data.get("style_params", {}).get("mute")
+        )
         if mute_spec is not None:
             val = 127 if str(mute_spec).lower() in {"true", "con sord.", "con sord", "con sordino"} else 0
             factor = float(mapping.get("mute_velocity_factor", 0.85))
@@ -253,6 +260,22 @@ class StringsGenerator(BasePartGenerator):
                     for n in p.recurse().notes:
                         if n.volume and n.volume.velocity is not None:
                             n.volume.velocity = int(n.volume.velocity * factor)
+
+        bow_flags = section_data.get("part_params", {})
+        if bow_flags.get("sul_pont"):
+            cc_num = cc_map.get("sul_pont", 64)
+            for p in result.values():
+                ev = getattr(p, "_extra_cc", set())
+                for n in p.recurse().notes:
+                    ev.add((float(n.offset), cc_num, 127))
+                p._extra_cc = ev
+        if bow_flags.get("sul_tasto"):
+            cc_num = cc_map.get("sul_tasto", 65)
+            for p in result.values():
+                ev = getattr(p, "_extra_cc", set())
+                for n in p.recurse().notes:
+                    ev.add((float(n.offset), cc_num, 127))
+                p._extra_cc = ev
 
         macro = section_data.get("part_params", {}).get("macro_envelope")
         if macro and macro.get("type") in {"cresc", "dim"}:
@@ -331,6 +354,18 @@ class StringsGenerator(BasePartGenerator):
         """Apply a decreasing CC11 ramp."""
 
         self.crescendo(parts, length_beats, start_val=start_val, end_val=end_val)
+
+    def diminuendo(
+        self,
+        parts: dict[str, stream.Part] | stream.Part,
+        length_beats: float,
+        *,
+        start_val: int = 90,
+        end_val: int = 20,
+    ) -> None:
+        """Alias for :meth:`apply_dim`."""
+
+        self.apply_dim(parts, length_beats, start_val=start_val, end_val=end_val)
 
     def _insert_cc(self, part: stream.Part, time_ql: float, cc: int, value: int) -> None:
         """Insert or replace a CC event at ``time_ql``."""
@@ -543,7 +578,9 @@ class StringsGenerator(BasePartGenerator):
             pmap["default_articulations"] = defaults
         curve = mapping.get("velocity_curve_name")
         if curve:
-            return self.default_velocity_curve
+            prev = self.default_velocity_curve
+            self.default_velocity_curve = self._select_velocity_curve(curve)
+            return prev
         return None
 
     def _apply_expression_map_post(self, parts: dict[str, stream.Part], mapping: dict[str, Any], length: float) -> None:
@@ -1077,8 +1114,8 @@ class StringsGenerator(BasePartGenerator):
                         self._handle_legato(info.name, n, False)
                     else:
                         self._handle_legato(info.name, n, False)
-                    part.insert(offset + float(n.offset), elem)
-                    prev_note = n if not n.isRest else prev_note
+                part.insert(offset + float(n.offset), elem)
+                prev_note = n if not n.isRest else prev_note
                 offset += dur
             parts[info.name] = self._finalize_part(part, info.name)
             if self.voicing_mode == "close":

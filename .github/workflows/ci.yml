@@ -278,3 +278,22 @@ jobs:
           else
             pytest -m low_lat -k "not external_sync"
           fi
+
+  PIANO_ML_SMOKE:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dependencies
+        run: pip install torch transformers peft
+      - name: Train tiny model
+        run: python train_piano_lora.py --data tests/mini.jsonl --epochs 1 --out tmp_model --auto-hparam
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smoke-model
+          path: tmp_model/adapter.safetensors

@@ -39,9 +39,6 @@ jobs:
       - name: Set ML env (pure)
         if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA'
         run: echo "ENABLE_ML_TESTS=false" >> $GITHUB_ENV
-      - name: Set ML env (beta)
-        if: matrix.variant == 'PG_BETA'
-        run: echo "ENABLE_ML_TESTS=false" >> $GITHUB_ENV
       - name: Set ML env (ml)
         if: matrix.variant == 'PIANO_ML' || matrix.variant == 'PIANO_ML_HEAVY'
         run: echo "ENABLE_ML_TESTS=true" >> $GITHUB_ENV
@@ -91,11 +88,17 @@ jobs:
         continue-on-error: ${{ matrix.variant == 'PIANO_ML_HEAVY' }}
         run: |
           if [ "${{ matrix.variant }}" = "PIANO_ML_HEAVY" ]; then
-            pytest -q tests/test_tokenizer.py tests/test_piano_transformer.py tests/test_piano_ml_stub.py
+              # Heavy job: 生成系の最小サブセットだけを検証
+              pytest -q \
+                tests/test_tokenizer.py \
+                tests/test_piano_transformer.py \
+                tests/test_piano_ml_stub.py
           elif [ "$ENABLE_ML_TESTS" = "true" ]; then
-            pytest -q
+              # 通常 ML ジョブ ― 全テスト実行
+              pytest -q
           else
-            pytest -q -m "not ml"
+              # PURE_PY / PG_BETA ― ML マークを除外
+              pytest -q -m "not ml"
           fi
       - name: MIDI Regression Tests
         run: pytest tests/test_midi_regression.py

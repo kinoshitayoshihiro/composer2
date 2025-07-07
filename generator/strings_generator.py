@@ -4,6 +4,16 @@ from __future__ import annotations
 
 import copy
 import enum
+
+try:
+    StrEnum = enum.StrEnum  # type: ignore[attr-defined]
+except AttributeError:  # pragma: no cover - fallback for Python < 3.11
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        """Fallback definition for :class:`enum.StrEnum` for Python < 3.11."""
+
+        pass
 import math
 import re
 from collections.abc import Sequence
@@ -46,7 +56,7 @@ class _SectionInfo:
     velocity_pos: float
 
 
-class BowPosition(enum.StrEnum):
+class BowPosition(StrEnum):
     """Bow position enumeration."""
 
     TASTO = "tasto"
@@ -481,8 +491,13 @@ class StringsGenerator(BasePartGenerator):
                 parts[info.name] = part
             return parts
 
+        original_len = len(base_pitches)
         while len(base_pitches) < len(self._SECTIONS):
-            base_pitches.append(base_pitches[len(base_pitches) % len(base_pitches)])
+            if self.voicing_mode == "close":
+                idx = 0
+            else:
+                idx = len(base_pitches) % original_len
+            base_pitches.append(base_pitches[idx])
 
         extras_map: dict[str, list[pitch.Pitch]] = {s.name: [] for s in self._SECTIONS}
         if not self.divisi and len(base_pitches) > len(self._SECTIONS):
@@ -530,7 +545,8 @@ class StringsGenerator(BasePartGenerator):
             src = base_pitches[pitch_idx % len(base_pitches)]
             low = pitch.Pitch(info.range_low).midi
             high = pitch.Pitch(info.range_high).midi
-            adj = self._fit_pitch(src, low, high, prev_midi)
+            ref_pitch = prev_midi if self.voicing_mode == "close" else None
+            adj = self._fit_pitch(src, low, high, ref_pitch)
             if self.avoid_low_open_strings and info.name in {
                 "violin_i",
                 "violin_ii",

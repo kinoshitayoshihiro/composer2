@@ -165,14 +165,14 @@ def sample_transformer_bass(
 logger = logging.getLogger("modular_composer.bass_generator")
 
 
-def _apply_tone(part: stream.Part, intensity: str) -> None:
+def _apply_tone(part: stream.Part, intensity: str, preset: str | None = None) -> None:
     """Insert a single CC31 event based on average velocity."""
     notes = list(part.flat.notes)
     if not notes:
         return
     avg_vel = float(np.mean([n.volume.velocity or 0 for n in notes]))
     shaper = ToneShaper()
-    preset = shaper.choose_preset(
+    chosen = preset or shaper.choose_preset(
         amp_hint=None,
         intensity=intensity,
         avg_velocity=avg_vel,
@@ -183,7 +183,7 @@ def _apply_tone(part: stream.Part, intensity: str) -> None:
         if (e.get("cc") if isinstance(e, dict) else e[1]) != 31
     ]
     new_events = shaper.to_cc_events(
-        amp_name=preset, intensity=intensity, as_dict=False
+        amp_name=chosen, intensity=intensity, as_dict=False
     )
     part.extra_cc = merge_cc_events(set(existing), set(new_events))
 
@@ -242,6 +242,7 @@ class BassGenerator(BasePartGenerator):
         mirror_melody: bool = False,
         main_cfg=None,
         emotion_profile_path: str | Path | None = None,
+        tone_preset: str | None = None,
         **kwargs,
     ):
         """Create a bass part generator.
@@ -311,6 +312,7 @@ class BassGenerator(BasePartGenerator):
 
         self.kick_offsets: list[float] = []
         self.base_velocity = 70
+        self.tone_preset = tone_preset
 
         if emotion_profile_path is None:
             default_prof = Path("data/emotion_profile.yaml")
@@ -395,7 +397,7 @@ class BassGenerator(BasePartGenerator):
             for p in result.values():
                 apply_shift(p)
                 if shared_preset is None:
-                    shared_preset = self._apply_tone(p, intensity_label)
+                    shared_preset = self._apply_tone(p, intensity_label, self.tone_preset)
                 else:
                     self._apply_tone(p, intensity_label, shared_preset)
                 finalize_cc_events(p)
@@ -408,7 +410,7 @@ class BassGenerator(BasePartGenerator):
             return result
         else:
             part = apply_shift(result)
-            self._apply_tone(part, intensity_label)
+            self._apply_tone(part, intensity_label, self.tone_preset)
             finalize_cc_events(part)
             label = section_data.get("section_name")
             if label in self.phrase_insertions:
@@ -2027,6 +2029,15 @@ class BassGenerator(BasePartGenerator):
             n.duration = m21duration.Duration(float(dur))
             n.volume = m21volume.Volume(velocity=vel)
             part.insert(float(off), n)
+
+    def _post_process_generated_part(
+        self, part: stream.Part, section: dict[str, Any], ratio: float | None
+    ) -> None:
+        from utilities.loudness_normalizer import normalize_velocities
+
+        notes = list(part.recurse().notes)
+        if notes:
+            normalize_velocities(notes)
 
     # ------------------------------------------------------------------
     # Kick-Lock → Mirror-Melody simplified rendering

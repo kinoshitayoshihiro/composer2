@@ -28,6 +28,7 @@ nav:
       - Overview: effects.md
       - Offline IR Convolution: offline_ir.md
   - Tone & Dynamics: tone.md
+  - Piano Delta: piano_delta.md
   - Humanizer Reference: humanizer.md
   - Live Tips: live_tips.md
   - API Reference:

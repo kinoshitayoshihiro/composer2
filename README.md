@@ -838,6 +838,12 @@ Run with automatic tone shaping:
 modcompose render spec.yml --tone-auto
 ```
 
+`modcompose sample` accepts `--tone-preset` to select one of the built-in piano
+profiles (`grand_clean`, `upright_mellow`, `ep_phase`). Pass
+`--no-enable-articulation` to disable glissando and trill tags. Generated notes
+are normalised with `normalize_velocities()` so that loudness stays consistent.
+See [docs/piano_delta.md](docs/piano_delta.md) for details.
+
 To emit CC11 and aftertouch for dynamic playback enable the flags programmatically:
 
 ```python
@@ -951,6 +957,8 @@ python train_piano_lora.py --data piano.jsonl --out piano_model --auto-hparam
 # sample with the ML backend
 modcompose sample dummy.pkl --backend piano_ml --model piano_model --temperature 0.9
 ```
+![training](docs/img/piano_gamma_demo.png)
+
 
 ### Tokenizer export
 

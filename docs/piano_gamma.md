@@ -30,7 +30,7 @@ modcompose sample dummy.pkl --backend piano_ml --model piano_model --temperature
 
 ## Example Screenshot
 
-![training placeholder](docs/img/piano_gamma_demo.png)
+![training](docs/img/piano_gamma_demo.png)
 
 
 ## How to fine-tune with your WAV corpus

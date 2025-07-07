@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 import numpy as np
 import soundfile as sf
+from music21 import note, volume
 
 try:
     import pyloudnorm as pyln  # type: ignore
@@ -62,4 +63,40 @@ def normalize_wav(
     y_norm = _apply_gain(y, gain)
     sf.write(wav_path, y_norm, sr)
 
-__all__ = ["normalize_wav"]
+
+def normalize_velocities(
+    notes: Sequence[note.Note], target_lufs: float = -16.0
+) -> float:
+    """Scale note velocities toward ``target_lufs``.
+
+    Parameters
+    ----------
+    notes:
+        Sequence of :class:`~music21.note.Note` objects whose velocities will be
+        modified in place.
+    target_lufs:
+        Desired loudness level in LUFS. Default is ``-16``.
+
+    Returns
+    -------
+    float
+        Loudness after normalization (LUFS).
+    """
+    if not notes:
+        return target_lufs
+
+    vels = np.array([float(n.volume.velocity or 0) for n in notes])
+    rms = np.sqrt(np.mean(vels**2)) or 1e-9
+    current = 20 * np.log10(rms / 127.0)
+    gain_db = target_lufs - current
+    scale = 10 ** (gain_db / 20)
+    for n in notes:
+        v = int(round((n.volume.velocity or 0) * scale))
+        if n.volume is None:
+            n.volume = volume.Volume()
+        n.volume.velocity = max(1, min(127, v))
+
+    new_rms = np.sqrt(np.mean([(n.volume.velocity or 0) ** 2 for n in notes])) or 1e-9
+    return 20 * np.log10(new_rms / 127.0)
+
+__all__ = ["normalize_wav", "normalize_velocities"]

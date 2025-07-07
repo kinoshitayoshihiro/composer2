@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from typing import Any, List
+from typing import Any
 
 try:
     import websockets
@@ -35,7 +35,7 @@ class WarmModel:
         with self._lock:
             self._generator = gen
 
-    def step(self, chord: List[int], bars_context: int) -> List[int]:
+    def step(self, chord: list[int], bars_context: int) -> list[int]:
         with self._lock:
             gen = self._generator
         if gen is None:

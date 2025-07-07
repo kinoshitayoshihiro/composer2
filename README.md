@@ -952,6 +952,16 @@ python train_piano_lora.py --data piano.jsonl --out piano_model --auto-hparam
 modcompose sample dummy.pkl --backend piano_ml --model piano_model --temperature 0.9
 ```
 
+### Tokenizer export
+
+```bash
+python - <<'PY'
+from transformer.tokenizer_piano import PianoTokenizer
+tok = PianoTokenizer()
+tok.export_vocab("models/vocab.json")
+PY
+```
+
 ## DAW Plugin Prototype
 
 An experimental JUCE plugin bridges the Python engine via ``pybind11``.

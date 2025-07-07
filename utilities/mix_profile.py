@@ -3,6 +3,8 @@ import os
 import logging
 from pathlib import Path
 
+
+
 logger = logging.getLogger(__name__)
 
 _MIX_MAP: dict[str, dict] = {}
@@ -52,6 +54,10 @@ def export_mix_json(parts, path: str) -> None:
         shaper = getattr(part, "tone_shaper", None)
         if shaper is not None and hasattr(shaper, "_selected"):
             entry["preset"] = shaper._selected
+            if "ir_file" not in entry:
+                ir = shaper.get_ir_file()
+                if ir is not None:
+                    entry["ir_file"] = str(ir)
             if getattr(shaper, "fx_envelope", None):
                 entry["fx_cc"] = shaper.fx_envelope
         data[name] = entry

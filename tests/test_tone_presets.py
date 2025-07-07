@@ -6,6 +6,7 @@ from utilities.tone_shaper import ToneShaper
 def test_tone_presets_ir_mapping() -> None:
     ts = ToneShaper()
     assert ts.get_ir_file("grand_clean").name == "german_grand.wav"
+    assert ts.get_ir_file("grand_clean").exists()
     assert ts.get_ir_file("upright_mellow").name == "upright_1960.wav"
     assert ts.get_ir_file("ep_phase").name == "dx7_ep.wav"
 

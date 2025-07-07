@@ -3,11 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import List
 
 try:
     import torch
-    from torch.utils.data import Dataset, DataLoader
+    from torch.utils.data import DataLoader, Dataset
     from transformers import Trainer, TrainingArguments
 except Exception:  # pragma: no cover - optional
     torch = None  # type: ignore
@@ -22,7 +21,7 @@ from transformer.tokenizer_piano import PianoTokenizer
 
 class JsonlDataset(Dataset):
     def __init__(self, path: Path) -> None:
-        self.items: List[List[int]] = []
+        self.items: list[list[int]] = []
         for line in path.read_text().splitlines():
             obj = json.loads(line)
             tokens = obj.get("ids") or obj.get("tokens")
@@ -36,7 +35,7 @@ class JsonlDataset(Dataset):
         return {"input_ids": torch.tensor(self.items[idx], dtype=torch.long)}
 
 
-def collate_fn(batch: List[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
+def collate_fn(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
     lengths = [len(x["input_ids"]) for x in batch]
     max_len = max(lengths)
     pad_id = 0
@@ -55,20 +54,48 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train PianoTransformer with LoRA")
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--rank", type=int, default=4, help="LoRA rank")
+    parser.add_argument("--steps", type=int, default=800, help="Training steps")
+    parser.add_argument("--epochs", type=int, default=None, help="Training epochs")
+    parser.add_argument(
+        "--auto-hparam",
+        action="store_true",
+        help="auto scale LoRA rank and steps based on dataset size",
+    )
     args = parser.parse_args()
+
+    n_samples = sum(1 for _ in open(args.data))
+    if args.auto_hparam:
+        if n_samples < 10_000:
+            args.rank = 4
+            args.steps = 800
+        elif n_samples < 30_000:
+            args.rank = 8
+            args.steps = 1_200
+        else:
+            args.rank = 16
+            args.steps = 2_000
+
+    if args.epochs is not None:
+        args.steps = args.epochs * n_samples
 
     dataset = JsonlDataset(args.data)
     tokenizer = PianoTokenizer()
-    model = PianoTransformer(vocab_size=len(tokenizer.vocab))
+    model = PianoTransformer(vocab_size=len(tokenizer.vocab), rank=args.rank)
 
     training_args = TrainingArguments(
         output_dir=str(args.out),
         per_device_train_batch_size=1,
-        num_train_epochs=1,
+        max_steps=args.steps,
         logging_steps=10,
         save_steps=50,
     )
-    trainer = Trainer(model=model, args=training_args, train_dataset=dataset, data_collator=collate_fn)
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset,
+        data_collator=collate_fn,
+    )
     trainer.train()
     model.model.save_pretrained(str(args.out))
 

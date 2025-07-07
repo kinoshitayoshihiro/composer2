@@ -923,7 +923,7 @@ modcompose sample dummy.pkl --backend piano_template \
 ```
 
 The JSON output now includes ``hand`` and ``pedal`` fields.
-![voicing demo placeholder](docs/img/piano_beta_counter.gif)
+<!-- TODO: replace with actual GIF -->
 
 #### Intensity & Density
 
@@ -933,21 +933,23 @@ The JSON output now includes ``hand`` and ``pedal`` fields.
 | medium    | 100 % (default)    |
 | high      | 110 % + anticipation|
 
-Adjust density with ``--intensity``. See the [test gif](docs/img/piano_beta_quick.gif).
+Adjust density with ``--intensity``. <!-- TODO: replace with actual GIF -->
 
 ## PianoGenerator ML
 
-Phase Δ introduces a transformer-based voicing model. First extract voicings
-from your corpus:
+Phase γ introduces a transformer-based voicing model.
+Follow the quickstart below or see
+[docs/piano_gamma.md](docs/piano_gamma.md) for details.
 
 ```bash
-python scripts/extract_piano_voicings.py
-```
+# extract events
+python scripts/extract_piano_voicings.py --midi-dir midi/ --out piano.jsonl
 
-Sample piano parts with the ML backend:
+# train the LoRA model
+python train_piano_lora.py --data piano.jsonl --out piano_model
 
-```bash
-modcompose sample dummy.pkl --backend piano_ml --model-name path/to/model
+# sample with the ML backend
+modcompose sample dummy.pkl --backend piano_ml --model piano_model --temperature 0.9
 ```
 
 ## DAW Plugin Prototype

@@ -67,6 +67,16 @@ def test_crescendo_curve():
     assert vals == sorted(vals)
 
 
+def test_diminuendo_macro():
+    gen = _gen()
+    sec = _basic_section(4.0)
+    parts = gen.compose(section_data=sec)
+    gen.diminuendo(parts, 4.0, start_val=90, end_val=30)
+    vals = [e["val"] for e in parts["violin_i"].extra_cc if e["cc"] == cc_map["expression"]]
+    assert vals[0] == 90 and vals[-1] == 30
+    assert vals == sorted(vals, reverse=True)
+
+
 def test_mute_cc_from_map():
     path = ROOT / "tests" / "data" / "expression_map.yml"
     gen = _gen(expression_maps_path=str(path))

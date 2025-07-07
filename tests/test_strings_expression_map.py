@@ -50,3 +50,12 @@ def test_expression_map_soft_legato():
     parts = gen.compose(section_data=sec)
     cc_vals = [e["val"] for e in parts["violin_i"].extra_cc if e["cc"] == 1]
     assert cc_vals and cc_vals[0] == 20
+
+
+def test_emotion_map_selection():
+    gen = _gen(expression_maps_path=str(ROOT / "tests" / "data" / "ex_maps.yml"))
+    sec = _basic_section()
+    sec["musical_intent"] = {"emotion": "default", "intensity": "high"}
+    parts = gen.compose(section_data=sec)
+    vals = [e["val"] for e in parts["violin_i"].extra_cc if e["cc"] == 1]
+    assert vals and vals[0] == 80

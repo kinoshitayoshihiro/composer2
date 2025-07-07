@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Dict, List
 import json
 import warnings
+from typing import Dict, List
 
 
 class PianoTokenizer:

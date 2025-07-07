@@ -78,8 +78,8 @@ jobs:
       - name: Verify SF2 Size
         if: matrix.variant == 'PIANO_ML'
         run: ls -lh sf2/TimGM6mb.sf2
-      - name: Ruff
-        run: ruff check . --output-format=github
+      - name: Run ruff lint
+        run: ruff check .
       - name: Mypy
         run: mypy modular_composer utilities tests --strict
       - name: Debug music21
@@ -289,8 +289,12 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+      - name: Install test tools
+        run: pip install -e .[test]
       - name: Install dependencies
         run: pip install torch transformers peft
+      - name: Run ruff lint
+        run: ruff check .
       - name: Train tiny model
         run: python train_piano_lora.py --data tests/mini.jsonl --epochs 1 --out tmp_model --auto-hparam
       - uses: actions/upload-artifact@v4

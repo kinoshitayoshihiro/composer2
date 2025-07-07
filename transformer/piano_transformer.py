@@ -10,8 +10,8 @@ except Exception:  # pragma: no cover - optional
     nn = object  # type: ignore
 
 try:
-    from transformers import GPT2Config, GPT2LMHeadModel
     from peft import LoraConfig, TaskType, get_peft_model
+    from transformers import GPT2Config, GPT2LMHeadModel
 except Exception:  # pragma: no cover - optional
     GPT2Config = None  # type: ignore
     GPT2LMHeadModel = None  # type: ignore

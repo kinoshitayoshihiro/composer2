@@ -743,7 +743,6 @@ part = gen.render_part(section)
 
 The first beat snaps to the nearest kick within the opening eighth note, then
 the bass mirrors the lead melody around the chord root.
-TODO: add GIF demo
 
 ### ii–V Build-up
 
@@ -923,7 +922,6 @@ modcompose sample dummy.pkl --backend piano_template \
 ```
 
 The JSON output now includes ``hand`` and ``pedal`` fields.
-<!-- TODO: replace with actual GIF -->
 
 #### Intensity & Density
 
@@ -933,7 +931,7 @@ The JSON output now includes ``hand`` and ``pedal`` fields.
 | medium    | 100 % (default)    |
 | high      | 110 % + anticipation|
 
-Adjust density with ``--intensity``. <!-- TODO: replace with actual GIF -->
+Adjust density with ``--intensity``.
 
 ## PianoGenerator ML
 
@@ -947,6 +945,8 @@ python scripts/extract_piano_voicings.py --midi-dir midi/ --out piano.jsonl
 
 # train the LoRA model
 python train_piano_lora.py --data piano.jsonl --out piano_model
+# auto scale hyperparams based on dataset size
+python train_piano_lora.py --data piano.jsonl --out piano_model --auto-hparam
 
 # sample with the ML backend
 modcompose sample dummy.pkl --backend piano_ml --model piano_model --temperature 0.9
@@ -963,6 +963,28 @@ modcompose plugin build --format vst3 --out build/
 
 The plugin forwards host tempo to Python and streams the generated bar via a ring buffer.
 CI builds the plugin on Linux and macOS; Windows builds are optional.
+
+## WebSocket Bridge
+
+Run a lightweight server that keeps the piano model warm and replies with the
+next bar of tokens:
+
+```bash
+python -m realtime.ws_bridge
+```
+
+Send a JSON payload to `ws://localhost:8765` and receive the token list back:
+
+```python
+import asyncio, json, websockets
+
+async def main():
+    async with websockets.connect("ws://localhost:8765") as ws:
+        await ws.send(json.dumps({"chord": [60, 64, 67], "bars_context": 2}))
+        print(json.loads(await ws.recv()))
+
+asyncio.run(main())
+```
 
 ## License
 This project is licensed under the [MIT License](LICENSE).

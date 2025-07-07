@@ -1,0 +1,14 @@
+ballad_soft:
+  base_dynamic: "p"
+  crescendo: false
+  default_artic: "legato"
+  vibrato:
+    depth: 12
+    rate: 6.5
+    delay: 0.3
+  mute: true
+  bow_position: "ordinario"
+dramatic_high:
+  base_dynamic: "mf"
+  crescendo: false
+  default_artic: "spiccato"

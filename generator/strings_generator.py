@@ -58,7 +58,8 @@ from utilities.core_music_utils import (
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 from pathlib import Path
 from utilities.cc_tools import finalize_cc_events
-from utilities.cc_map import cc_map
+from utilities.cc_map import cc_map, load_cc_map
+from utilities.expression_map import load_expression_map, resolve_expression
 
 from .base_part_generator import BasePartGenerator
 
@@ -202,6 +203,7 @@ class StringsGenerator(BasePartGenerator):
         self._legato_groups: dict[str, list[tuple[note.NotRest, note.NotRest]]] = {}
         self.expression_maps = self._load_expression_maps(expression_maps_path)
         self.emotion_map = self._load_emo_map(expression_maps_path)
+        self.expression_map = load_expression_map(expression_maps_path)
 
     # ------------------------------------------------------------------
     # Public API
@@ -211,7 +213,7 @@ class StringsGenerator(BasePartGenerator):
     ) -> dict[str, stream.Part]:
         q_len = float(section_data.get("q_length", self.bar_length))
         mapping = self._select_expression_map(section_data)
-        prev_curve = self._apply_expression_map_pre(section_data, mapping)
+        prev_curve = None
         try:
             result = super().compose(section_data=section_data, **kwargs)
         finally:
@@ -222,6 +224,14 @@ class StringsGenerator(BasePartGenerator):
                 "StringsGenerator expected dict result from _render_part"
             )
         self._apply_expression_map_post(result, mapping, q_len)
+        intent = section_data.get("musical_intent", {})
+        style = intent.get("style")
+        intensity = intent.get("intensity")
+        resolved = resolve_expression(
+            section_data.get("section_name"), intensity, style, self.expression_map
+        )
+        for p in result.values():
+            self._apply_expression(p, resolved)
         dim_start = section_data.get("dim_start")
         dim_end = section_data.get("dim_end")
         if dim_start is not None and dim_end is not None:
@@ -243,6 +253,24 @@ class StringsGenerator(BasePartGenerator):
                     for n in p.recurse().notes:
                         if n.volume and n.volume.velocity is not None:
                             n.volume.velocity = int(n.volume.velocity * factor)
+
+        macro = section_data.get("part_params", {}).get("macro_envelope")
+        if macro and macro.get("type") in {"cresc", "dim"}:
+            beats = float(macro.get("beats", q_len))
+            if macro["type"] == "cresc":
+                self.crescendo(
+                    result,
+                    beats,
+                    start_val=int(macro.get("start", 20)),
+                    end_val=int(macro.get("end", 90)),
+                )
+            else:
+                self.apply_dim(
+                    result,
+                    beats,
+                    start_val=int(macro.get("start", 90)),
+                    end_val=int(macro.get("end", 20)),
+                )
 
         for part in result.values():
             finalize_cc_events(part)
@@ -271,15 +299,47 @@ class StringsGenerator(BasePartGenerator):
         end_val: int = 90,
     ) -> None:
         """Apply a CC11 ramp from ``start_val`` to ``end_val``."""
+        from utilities.cc_tools import add_cc_events
 
-        self._apply_expression_cc(
-            parts,
-            crescendo=True,
-            length=length_beats,
-            start_val=start_val,
-            end_val=end_val,
-            cc_num=11,
-        )
+        cc_num = cc_map.get("expression", 11)
+        steps = max(2, int(math.ceil(length_beats)))
+
+        def _frac(x: float) -> float:
+            return 3 * x * x - 2 * x * x * x
+
+        events = [
+            {
+                "time": length_beats * (i / steps),
+                "cc": cc_num,
+                "val": int(round(start_val + (end_val - start_val) * _frac(i / steps))),
+            }
+            for i in range(steps + 1)
+        ]
+
+        target_parts = parts.values() if isinstance(parts, dict) else [parts]
+        for p in target_parts:
+            add_cc_events(p, events)
+
+    def apply_dim(
+        self,
+        parts: dict[str, stream.Part] | stream.Part,
+        length_beats: float,
+        *,
+        start_val: int = 90,
+        end_val: int = 20,
+    ) -> None:
+        """Apply a decreasing CC11 ramp."""
+
+        self.crescendo(parts, length_beats, start_val=start_val, end_val=end_val)
+
+    def _insert_cc(self, part: stream.Part, time_ql: float, cc: int, value: int) -> None:
+        """Insert or replace a CC event at ``time_ql``."""
+
+        from utilities.cc_tools import merge_cc_events, to_sorted_dicts
+
+        base = getattr(part, "extra_cc", [])
+        merged = merge_cc_events(base, [(time_ql, cc, value)])
+        part.extra_cc = to_sorted_dicts(merged)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -483,10 +543,7 @@ class StringsGenerator(BasePartGenerator):
             pmap["default_articulations"] = defaults
         curve = mapping.get("velocity_curve_name")
         if curve:
-            new_curve = self._select_velocity_curve(curve)
-            old = self.default_velocity_curve
-            self.default_velocity_curve = new_curve
-            return old
+            return self.default_velocity_curve
         return None
 
     def _apply_expression_map_post(self, parts: dict[str, stream.Part], mapping: dict[str, Any], length: float) -> None:
@@ -552,6 +609,52 @@ class StringsGenerator(BasePartGenerator):
         for n in targets:
             n.pitch.microtone = pitch.Microtone(curve[0][1])
             n.editorial.vibrato_curve = curve
+
+    def _apply_expression(self, part: stream.Part, mapping: dict[str, Any]) -> None:
+        """Apply expression map to *part*."""
+
+        dyn_map = {"p": 40, "mp": 55, "mf": 70, "f": 90, "ff": 110}
+        base_dyn = mapping.get("base_dynamic")
+        if base_dyn:
+            val = dyn_map.get(str(base_dyn).lower(), 64)
+            self._insert_cc(part, 0.0, cc_map.get("expression", 11), val)
+            for n in part.recurse().notes:
+                if n.volume is None:
+                    n.volume = volume.Volume(velocity=val)
+                else:
+                    n.volume.velocity = val
+
+        artic = mapping.get("default_artic")
+        if artic:
+            art_obj = self._articulation_map.get(str(artic))
+            if art_obj:
+                for n in part.recurse().notes:
+                    n.articulations = [copy.deepcopy(art_obj)]
+
+        if mapping.get("crescendo"):
+            length = float(part.duration.quarterLength)
+            self.crescendo(part, length)
+
+        vib = mapping.get("vibrato") or {}
+        depth = vib.get("depth")
+        rate = vib.get("rate") or vib.get("rate_hz")
+        delay = float(vib.get("delay", 0.0))
+        if depth and rate:
+            depth_val = float(depth) / 100.0
+            rate_val = float(rate)
+            for n in part.recurse().notes:
+                if n.offset >= delay:
+                    self._apply_vibrato(n, depth_val, rate_val)
+
+        if mapping.get("mute"):
+            self._insert_cc(part, 0.0, cc_map.get("mute_toggle", 20), 64)
+            for n in part.recurse().notes:
+                n.expressions.append(expressions.TextExpression("con sord."))
+
+        bow = mapping.get("bow_position")
+        if bow:
+            val = {"pont": 90, "tasto": 40, "ordinario": 64}.get(str(bow), 64)
+            self._insert_cc(part, 0.0, cc_map.get("bow_position", 71), val)
 
     # ------------------------------------------------------------------
     # Articulation helpers

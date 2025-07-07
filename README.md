@@ -43,6 +43,11 @@ Install AI and audio extras for transformer-based generation:
 ```bash
 pip install 'modular-composer[ai,audio]'
 ```
+Run the REST API demo with Docker Compose:
+
+```bash
+docker compose up
+```
 ML 機能は PyTorch が必須です。
 
 ### フル機能を使うには

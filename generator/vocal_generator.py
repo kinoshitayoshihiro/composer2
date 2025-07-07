@@ -14,13 +14,16 @@ import music21.tempo as tempo
 # import music21.key as key # このファイルでは直接使用していないためコメントアウト
 # import music21.expressions as expressions # このファイルでは直接使用していないためコメントアウト
 import music21.volume as m21volume
+import music21.expressions as expressions
 
-# import music21.articulations as articulations # このファイルでは直接使用していないためコメントアウト
+import music21.articulations as articulations
 # import music21.dynamics as dynamics # このファイルでは直接使用していないためコメントアウト
 from music21 import exceptions21
+from utilities.vibrato_engine import generate_vibrato
 
 import logging
 import json
+from pathlib import Path
 
 # import re # 正規表現は歌詞処理で主に使用していたため不要に
 import copy
@@ -44,6 +47,30 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+PHONEME_DICT_PATH = Path(__file__).resolve().parents[1] / "utilities" / "phoneme_dict.json"
+try:
+    with PHONEME_DICT_PATH.open("r", encoding="utf-8") as f:
+        PHONEME_DICT: Dict[str, str] = json.load(f)
+except FileNotFoundError:
+    logger.warning(f"Phoneme dictionary not found at {PHONEME_DICT_PATH}")
+    PHONEME_DICT = {}
+
+
+def text_to_phonemes(text: str) -> List[str]:
+    """Convert Japanese characters to phoneme strings."""
+    return [PHONEME_DICT.get(ch, ch) for ch in text]
+
+
+class PhonemeArticulation(articulations.Articulation):
+    """Simple articulation storing a phoneme string."""
+
+    def __init__(self, phoneme: str, **keywords):
+        super().__init__(**keywords)
+        self.phoneme = phoneme
+
+    def _reprInternal(self):  # type: ignore[override]
+        return self.phoneme
 
 MIN_NOTE_DURATION_QL = 0.125
 # DEFAULT_BREATH_DURATION_QL: float = 0.25 # 歌詞ベースのブレス挿入削除のため不要
@@ -161,6 +188,36 @@ class VocalGenerator:
         logger.info(f"Parsed {len(parsed_notes)} valid notes from midivocal_data.")
         return parsed_notes
 
+    def _split_into_syllables(self, lyric_words: List[str]) -> List[str]:
+        """Naively split words into syllables. Japanese characters are treated as syllables."""
+        syllables: List[str] = []
+        for word in lyric_words:
+            syllables.extend(list(word))
+        return syllables
+
+    def _assign_syllables_to_part(self, part: stream.Stream, syllables: List[str]) -> None:
+        """Assign syllables sequentially to notes of the part via ``note.lyric``."""
+        notes = list(part.flatten().notes)
+        for n, syl in zip(notes, syllables):
+            n.lyric = syl
+
+    def _assign_phonemes_to_part(self, part: stream.Stream, phonemes: List[str]) -> None:
+        """Attach phoneme articulations sequentially to notes of the part."""
+        notes = list(part.flatten().notes)
+        for n, ph in zip(notes, phonemes):
+            n.articulations.append(PhonemeArticulation(ph))
+
+    def _apply_vibrato_to_part(self, part: stream.Stream, phonemes: List[str]) -> None:
+        """Embed vibrato events into each note's expressions based on phoneme."""
+        notes = list(part.flatten().notes)
+        for n, ph in zip(notes, phonemes):
+            if n.quarterLength < 0.5:
+                continue
+            depth = 0.5 if ph and ph[0].lower() in "aeiou" else 0.25
+            events = generate_vibrato(n.quarterLength, depth, 5.0)
+            n.expressions.append(expressions.TextExpression("vibrato"))
+            n.editorial.vibrato_events = events
+
     def _get_section_for_note_offset(
         self, note_offset: float, processed_stream: List[Dict]
     ) -> Optional[str]:
@@ -189,6 +246,7 @@ class VocalGenerator:
         humanize_opt: bool = True,
         humanize_template_name: Optional[str] = "vocal_ballad_smooth",
         humanize_custom_params: Optional[Dict[str, Any]] = None,
+        lyrics_words: Optional[List[str]] = None,
     ) -> stream.Part:
 
         vocal_part = stream.Part(id="Vocal")
@@ -267,10 +325,34 @@ class VocalGenerator:
         for el_item_final in final_elements:
             vocal_part.insert(el_item_final.offset, el_item_final)
 
+        if lyrics_words:
+            syllables = self._split_into_syllables(lyrics_words)
+            self._assign_syllables_to_part(vocal_part, syllables)
+            phonemes = [PHONEME_DICT.get(ch, ch) for ch in syllables]
+            self._assign_phonemes_to_part(vocal_part, phonemes)
+            self._apply_vibrato_to_part(vocal_part, phonemes)
+
         logger.info(
             f"VocalGen: Finished. Final part has {len(list(vocal_part.flatten().notesAndRests))} elements."
-        )  # .flat -> .flatten()
+        )
         return vocal_part
+
+    def extract_phonemes(self, part: stream.Part) -> List[str]:
+        """Return phoneme articulations found on ``part``."""
+        phonemes: List[str] = []
+        for n in part.flatten().notes:
+            for a in n.articulations:
+                if isinstance(a, PhonemeArticulation):
+                    phonemes.append(a.phoneme)
+        return phonemes
+
+    def synthesize_with_tts(self, midi_file: Path, phoneme_file: Path) -> bytes:
+        """Load phonemes from ``phoneme_file`` and pass along with ``midi_file`` to ``tts_model.synthesize``."""
+        from tts_model import synthesize
+
+        with phoneme_file.open("r", encoding="utf-8") as f:
+            phonemes = json.load(f)
+        return synthesize(midi_file, phonemes)
 
 
 from .base_part_generator import BasePartGenerator

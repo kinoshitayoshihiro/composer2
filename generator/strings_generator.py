@@ -4,6 +4,16 @@ from __future__ import annotations
 
 import copy
 import enum
+
+try:
+    StrEnum = enum.StrEnum  # type: ignore[attr-defined]
+except AttributeError:  # pragma: no cover - fallback for Python < 3.11
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        """Fallback definition for :class:`enum.StrEnum` for Python < 3.11."""
+
+        pass
 import math
 import re
 from collections.abc import Sequence
@@ -60,7 +70,7 @@ class _SectionInfo:
     velocity_pos: float
 
 
-class BowPosition(enum.StrEnum):
+class BowPosition(StrEnum):
     """Bow position enumeration."""
 
     TASTO = "tasto"
@@ -573,9 +583,23 @@ class StringsGenerator(BasePartGenerator):
                 parts[info.name] = part
             return parts
 
-        base_orig = list(base_pitches)
+# ── after: unified implementation ──
+        # 元の音高列を保持しておく
+        if not base_pitches:
+            raise ValueError("base_pitches must contain at least one pitch")
+
+        original_len = len(base_pitches)
+        base_orig = list(base_pitches)          # 参照用コピー
+
+        # _SECTIONS の数に合わせて必要分を追加
         while len(base_pitches) < len(self._SECTIONS):
-            base_pitches.append(base_orig[len(base_pitches) % len(base_orig)])
+            if self.voicing_mode == "close":
+                # クローズ Voicing：常に最低音を複製して密集配置
+                idx = 0
+            else:
+                # オープン／その他：元配列を循環参照
+                idx = len(base_pitches) % original_len
+            base_pitches.append(base_orig[idx])
 
         extras_map: dict[str, list[pitch.Pitch]] = {s.name: [] for s in self._SECTIONS}
         if not self.divisi and len(base_pitches) > len(self._SECTIONS):
@@ -624,7 +648,8 @@ class StringsGenerator(BasePartGenerator):
             src = base_pitches[pitch_idx % len(base_pitches)]
             low = pitch.Pitch(info.range_low).midi
             high = pitch.Pitch(info.range_high).midi
-            adj = self._fit_pitch(src, low, high, prev_midi)
+            ref_pitch = prev_midi if self.voicing_mode == "close" else None
+            adj = self._fit_pitch(src, low, high, ref_pitch)
             if self.avoid_low_open_strings and info.name in {
                 "violin_i",
                 "violin_ii",

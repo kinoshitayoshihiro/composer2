@@ -592,19 +592,10 @@ def _cmd_sample(args: list[str]) -> None:
             events.extend(_events(parts, "RH"))
         events.sort(key=lambda e: e["offset"])
     elif ns.backend == "piano_ml":
-        from generator.piano_transformer import PianoTransformer
+        from generator.piano_ml_generator import PianoMLGenerator
 
-        model = PianoTransformer(ns.model_name)
-        chords = ["Cmaj7" for _ in range(int(ns.length))]
-        events = []
-        prev: list[list[int]] = []
-        off = 0.0
-        for label in chords:
-            notes = model.sample_voicing(label, prev)
-            for p in notes:
-                events.append({"pitch": int(p), "velocity": 100, "offset": off, "duration": 1.0})
-            off += 1.0
-            prev.append(notes)
+        gen = PianoMLGenerator(str(ns.model), temperature=ns.temperature)
+        events = gen.generate(max_bars=ns.length)
     else:
         model = load(ns.model)
         events = cast(

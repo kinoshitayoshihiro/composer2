@@ -53,3 +53,14 @@ def test_mute_and_bow_cc():
     cc_vals = {(e["cc"], e["val"]) for e in parts["violin_i"].extra_cc}
     assert (20, 127) in cc_vals
     assert any(e["cc"] == 71 and e["val"] >= 99 for e in parts["violin_i"].extra_cc)
+
+
+def test_part_param_flags():
+    gen = _gen()
+    sec = _basic_section()
+    sec["part_params"] = {"mute": True, "sul_pont": True}
+    parts = gen.compose(section_data=sec)
+    vals = {(e["cc"], e["val"]) for e in parts["violin_i"].extra_cc}
+    assert (20, 127) in vals
+    assert any(e["cc"] == 64 for e in parts["violin_i"].extra_cc)
+

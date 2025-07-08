@@ -86,16 +86,19 @@ class SaxGenerator(MelodyGenerator):
     def _apply_articulation_cc(self, part: stream.Part) -> None:
         """Add CC1/CC2 events based on articulations."""
         events: list[tuple[float, int, int]] = []
-        notes = list(part.recurse().notes)
-        slurs = list(part.recurse().getElementsByClass(spanner.Slur))
+        notes = sorted(part.recurse().notes, key=lambda n: float(n.offset))
+        slur_notes: set[note.Note] = set()
+        for sl in part.recurse().getElementsByClass(spanner.Slur):
+            for el in sl.getSpannedElements():
+                if isinstance(el, note.Note):
+                    slur_notes.add(el)
+
         prev_end: float | None = None
 
         for n in notes:
             off = float(n.offset)
-            is_stacc = any(
-                isinstance(a, articulations.Staccato) for a in n.articulations
-            )
-            in_slur = any(n in s for s in slurs)
+            is_stacc = any(isinstance(a, articulations.Staccato) for a in n.articulations)
+            in_slur = n in slur_notes
             near_prev_end = prev_end is not None and abs(off - prev_end) < 1e-3
 
             if is_stacc:

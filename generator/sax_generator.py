@@ -89,9 +89,12 @@ class SaxGenerator(MelodyGenerator):
         notes = list(part.recurse().notes)
         slurs = list(part.recurse().getElementsByClass(spanner.Slur))
         prev_end: float | None = None
+
         for n in notes:
             off = float(n.offset)
-            is_stacc = any(isinstance(a, articulations.Staccato) for a in n.articulations)
+            is_stacc = any(
+                isinstance(a, articulations.Staccato) for a in n.articulations
+            )
             in_slur = any(n in s for s in slurs)
             near_prev_end = prev_end is not None and abs(off - prev_end) < 1e-3
 
@@ -105,7 +108,9 @@ class SaxGenerator(MelodyGenerator):
             prev_end = off + float(n.quarterLength)
 
         add_cc_events(part, events)
-        part.extra_cc = [{"time": t, "cc": c, "value": v} for t, c, v in events]
+        part.__dict__["extra_cc"] = [
+            {"time": t, "cc": c, "value": v} for t, c, v in events
+        ]
 
     def _apply_vibrato(self, part: stream.Part, depth: float = 200.0, rate_hz: float = 5.0) -> None:
         """Approximate vibrato using pitch wheel events."""

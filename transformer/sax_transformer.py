@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""GPT-2 based transformer with LoRA for saxophone events."""
+"""GPT-2 + LoRA for saxophone token generation."""
 
 try:
     import torch

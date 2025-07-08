@@ -181,7 +181,15 @@ else:
             )
 from .install_utils import run_with_retry
 from . import mix_profile
-from .cc_map import cc_map, load_cc_map
+try:
+    from .cc_map import cc_map, load_cc_map
+except Exception:
+    cc_map = {}
+
+    def load_cc_map(*_a: Any, **_k: Any) -> None:
+        raise ModuleNotFoundError(
+            "PyYAML is required. Please run 'pip install -r requirements.txt'."
+        )
 try:
     importlib.import_module("utilities.ir_renderer")
     from . import ir_renderer

@@ -1024,6 +1024,12 @@ Lyrics can be supplied to `VocalGenerator.compose` via the `lyrics_words` option
 python scripts/synthesize_vocal.py --mid vocal.mid --phonemes phon.json --out audio/
 ```
 
+Specify a custom phoneme mapping when sampling vocals:
+
+```bash
+modcompose sample --backend vocal --phoneme-dict custom_dict.json
+```
+
 
 ## License
 This project is licensed under the [MIT License](LICENSE).

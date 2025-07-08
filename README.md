@@ -1024,6 +1024,17 @@ Lyrics can be supplied to `VocalGenerator.compose` via the `lyrics_words` option
 python scripts/synthesize_vocal.py --mid vocal.mid --phonemes phon.json --out audio/
 ```
 
+## TTS ONNX Integration
+You can run the synthesizer with an ONNX model instead of the default TTS backend.
+Enable verbose logging with `--log-level`:
+
+```bash
+python scripts/synthesize_vocal.py --mid vocal.mid --phonemes phon.json \
+    --out audio/ --onnx-model model.onnx --log-level DEBUG
+```
+
+The script exits with code `0` on success and `1` on error.
+
 Specify a custom phoneme mapping when sampling vocals:
 
 ```bash

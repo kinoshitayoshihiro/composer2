@@ -60,3 +60,15 @@ def test_vocal_lyrics_mismatch(caplog):
     assert lyrics == ["あ", "い"]
     assert any("syllables" in r.getMessage() for r in caplog.records)
 
+
+def test_vocal_lyrics_none(caplog):
+    gen = VocalGenerator()
+    midivocal_data = [
+        {"offset": 0.0, "pitch": "C4", "length": 1.0, "velocity": 80},
+        {"offset": 1.0, "pitch": "D4", "length": 1.0, "velocity": 80},
+    ]
+    with caplog.at_level(logging.WARNING):
+        part = gen.compose(midivocal_data, processed_chord_stream=[], humanize_opt=False)
+    assert all(n.lyric is None for n in part.flatten().notes)
+    assert any("lyrics_words not provided" in r.getMessage() for r in caplog.records)
+

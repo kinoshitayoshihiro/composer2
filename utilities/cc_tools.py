@@ -15,7 +15,10 @@ def _to_tuple_set(events: Iterable[CCEvent] | Iterable[dict]) -> set[CCEvent]:
     result: set[CCEvent] = set()
     for e in events:
         if isinstance(e, dict):
-            result.add((float(e.get("time", 0.0)), int(e.get("cc", 0)), int(e.get("val", 0))))
+            val = e.get("val")
+            if val is None:
+                val = e.get("value", 0)
+            result.add((float(e.get("time", 0.0)), int(e.get("cc", 0)), int(val)))
         else:
             t, c, v = e
             result.add((float(t), int(c), int(v)))
@@ -27,11 +30,14 @@ def _to_tuple_list(events: Iterable[CCEvent] | Iterable[dict]) -> list[CCEvent]:
     result: list[CCEvent] = []
     for e in events:
         if isinstance(e, dict):
+            val = e.get("val")
+            if val is None:
+                val = e.get("value", 0)
             result.append(
                 (
                     float(e.get("time", 0.0)),
                     int(e.get("cc", 0)),
-                    int(e.get("val", 0)),
+                    int(val),
                 )
             )
         else:

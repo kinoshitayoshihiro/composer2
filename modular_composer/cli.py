@@ -498,7 +498,14 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("-l", "--length", type=int, default=4)
     ap.add_argument(
         "--backend",
-        choices=["ngram", "rnn", "transformer", "piano_template", "piano_ml"],
+        choices=[
+            "ngram",
+            "rnn",
+            "transformer",
+            "piano_template",
+            "piano_ml",
+            "vocal",
+        ],
         default="ngram",
     )
     ap.add_argument(
@@ -518,6 +525,7 @@ def _cmd_sample(args: list[str]) -> None:
     ap.add_argument("--peaks", type=Path)
     ap.add_argument("--lag", type=float, default=10.0)
     ap.add_argument("--tempo-curve", type=Path)
+    ap.add_argument("--phoneme-dict", type=Path, default=None)
     ap.add_argument("--rhythm-schema", type=str, default=None)
     ap.add_argument("--humanize-profile", type=str, default=None)
     ap.add_argument("--voicing", choices=["shell", "guide", "drop2"], default="shell")
@@ -642,6 +650,24 @@ def _cmd_sample(args: list[str]) -> None:
 
         gen = PianoMLGenerator(str(ns.model), temperature=ns.temperature)
         events = gen.generate(max_bars=ns.length)
+    elif ns.backend == "vocal":
+        from generator.vocal_generator import VocalGenerator
+
+        gen = VocalGenerator(phoneme_dict_path=ns.phoneme_dict)
+        part = gen.compose(
+            [
+                {
+                    "offset": 0.0,
+                    "pitch": "C4",
+                    "length": 1.0,
+                    "velocity": 80,
+                }
+            ],
+            processed_chord_stream=[],
+            humanize_opt=False,
+            lyrics_words=["あ"],
+        )
+        events = gen.extract_phonemes(part)
     else:
         model = load(ns.model)
         events = cast(

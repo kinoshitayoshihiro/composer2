@@ -68,7 +68,16 @@ SLUR_VAL = 80
 class SaxGenerator(MelodyGenerator):
     """Melody generator preset for alto saxophone."""
 
-    def __init__(self, seed: int | None = None, **kwargs):
+    def __init__(
+        self,
+        seed: int | None = None,
+        *,
+        staccato_prob: float = 0.3,
+        slur_prob: float = 0.5,
+        vibrato_depth: float = 200.0,
+        vibrato_rate: float = 5.0,
+        **kwargs,
+    ):
         kwargs.setdefault("instrument_name", "Alto Saxophone")
         kwargs["default_instrument"] = instrument.AltoSaxophone()
         rh_lib = kwargs.setdefault("rhythm_library", {})
@@ -79,6 +88,10 @@ class SaxGenerator(MelodyGenerator):
             kwargs["rng"] = random.Random(seed)
 
         super().__init__(**kwargs)
+        self.staccato_prob = float(staccato_prob)
+        self.slur_prob = float(slur_prob)
+        self.vibrato_depth = float(vibrato_depth)
+        self.vibrato_rate = float(vibrato_rate)
 
     # ------------------------------------------------------------------
     # CC Helpers
@@ -87,18 +100,22 @@ class SaxGenerator(MelodyGenerator):
         """Add CC1/CC2 events based on articulations."""
         events: list[tuple[float, int, int]] = []
         notes = sorted(part.recurse().notes, key=lambda n: float(n.offset))
-        slur_notes: set[note.Note] = set()
+
+        # collect note ids belonging to slur spanners
+        slur_notes: set[int] = set()
         for sl in part.recurse().getElementsByClass(spanner.Slur):
             for el in sl.getSpannedElements():
                 if isinstance(el, note.Note):
-                    slur_notes.add(el)
+                    slur_notes.add(id(el))
 
         prev_end: float | None = None
-
         for n in notes:
             off = float(n.offset)
+
             is_stacc = any(isinstance(a, articulations.Staccato) for a in n.articulations)
-            in_slur = n in slur_notes
+            in_slur = id(n) in slur_notes or any(
+                isinstance(a, articulations.Tenuto) for a in n.articulations
+            )
             near_prev_end = prev_end is not None and abs(off - prev_end) < 1e-3
 
             if is_stacc:
@@ -110,24 +127,77 @@ class SaxGenerator(MelodyGenerator):
 
             prev_end = off + float(n.quarterLength)
 
+        # merge events and remove duplicates using cc_tools
         add_cc_events(part, events)
-        part.__dict__["extra_cc"] = [
-            {"time": t, "cc": c, "value": v} for t, c, v in events
-        ]
 
-    def _apply_vibrato(self, part: stream.Part, depth: float = 200.0, rate_hz: float = 5.0) -> None:
-        """Approximate vibrato using pitch wheel events."""
-        events = []
+    def _apply_vibrato(
+        self,
+        part: stream.Part,
+        depth: float | None = None,
+        rate_hz: float | None = None,
+        *,
+        step_ql: float = 0.1,
+    ) -> None:
+        """Approximate vibrato using pitch wheel events.
+
+        Parameters
+        ----------
+        part:
+            Target part.
+        depth:
+            Pitch wheel offset in integer units. ``None`` uses
+            :attr:`vibrato_depth`.
+        rate_hz:
+            Vibrato rate in Hertz. ``None`` uses :attr:`vibrato_rate`.
+        step_ql:
+            Step width in quarterLength for waveform generation.
+        """
+
+        depth = self.vibrato_depth if depth is None else depth
+        rate_hz = self.vibrato_rate if rate_hz is None else rate_hz
+
+        events: list[tuple[float, int, int]] = []
         bpm = float(self.global_tempo or 120.0)
         for n in part.recurse().notes:
-            dur_sec = float(n.quarterLength) * 60.0 / bpm
-            step = 0.1
+            dur_ql = float(n.quarterLength)
             t = 0.0
-            while t <= dur_sec + 1e-6:
-                val = int(8192 + depth * math.sin(2 * math.pi * rate_hz * t))
-                events.append((float(n.offset) + t * bpm / 60.0, PITCHWHEEL, val))
-                t += step
+            while t <= dur_ql + 1e-6:
+                sec = t * 60.0 / bpm
+                raw = 8192 + depth * math.sin(2 * math.pi * rate_hz * sec)
+                val = max(0, min(16383, int(raw)))
+                events.append((float(n.offset) + t, PITCHWHEEL, val))
+                t += step_ql
+
+        # merge and sort events
         add_cc_events(part, events)
+
+    def _apply_velocity_curve(self, part: stream.Part, intensity: str) -> None:
+        """Add CC11 dynamics across the phrase based on intensity."""
+        curve_map = {
+            "low": (50, 70),
+            "medium": (60, 90),
+            "high": (80, 110),
+        }
+        start_val, end_val = curve_map.get(intensity.lower(), (60, 90))
+
+        notes = sorted(part.recurse().notes, key=lambda n: float(n.offset))
+        if not notes:
+            return
+
+        events: list[tuple[float, int, int]] = []
+        for idx, n in enumerate(notes):
+            frac = idx / max(1, len(notes) - 1)
+            val = int(round(start_val + (end_val - start_val) * frac))
+            events.append((float(n.offset), 11, val))
+
+        dedup: list[tuple[float, int, int]] = []
+        prev: tuple[int, int] | None = None
+        for t, c, v in events:
+            if prev is None or prev != (c, v):
+                dedup.append((t, c, v))
+            prev = (c, v)
+
+        add_cc_events(part, dedup)
 
     # ------------------------------------------------------------------
     # Pattern Selection Helpers
@@ -162,6 +232,7 @@ class SaxGenerator(MelodyGenerator):
         part = stream.Part(id=self.part_name or "sax")
         part.insert(0, self.default_instrument)
 
+        prev_note: note.Note | None = None
         for off in pat.get("pattern", []):
             if not scale_pitches:
                 continue
@@ -170,6 +241,14 @@ class SaxGenerator(MelodyGenerator):
             n.quarterLength = pat.get("note_duration_ql", 0.5)
             n.volume.velocity = 90
             part.insert(float(off), n)
+
+            if self.rng.random() < self.staccato_prob:
+                n.articulations.append(articulations.Staccato())
+            elif prev_note is not None and self.rng.random() < self.slur_prob:
+                sl = spanner.Slur([prev_note, n])
+                part.insert(float(prev_note.offset), sl)
+
+            prev_note = n
 
         return part
 
@@ -200,6 +279,8 @@ class SaxGenerator(MelodyGenerator):
         for n in list(part.recurse().notes):
             if n.pitch.pitchClass not in pcs:
                 part.remove(n)
+        intensity = section_data.get("musical_intent", {}).get("intensity", "medium") if section_data else "medium"
         self._apply_articulation_cc(part)
         self._apply_vibrato(part)
+        self._apply_velocity_curve(part, intensity)
         return part

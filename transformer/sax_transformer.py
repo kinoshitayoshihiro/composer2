@@ -32,10 +32,20 @@ class SaxTransformer(nn.Module if torch is not None else object):
         lora_cfg = LoraConfig(task_type=TaskType.CAUSAL_LM, r=rank, lora_alpha=16, target_modules=["c_attn"], inference_mode=False)
         self.model = get_peft_model(base, lora_cfg)
 
-    def forward(self, input_ids: torch.Tensor, past_key_values: tuple[tuple[torch.Tensor, ...], ...] | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        past_key_values: tuple[tuple[torch.Tensor, ...], ...] | None = None,
+    ) -> torch.Tensor:
         if torch is None:
             raise RuntimeError("torch not available")
-        outputs = self.model(input_ids=input_ids, past_key_values=past_key_values, use_cache=True)
+        outputs = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            use_cache=True,
+        )
         return outputs.logits
 
 

@@ -215,19 +215,28 @@ class VocalGenerator:
 
     def _assign_syllables_to_part(self, part: stream.Stream, syllables: List[str]) -> None:
         """Assign syllables sequentially to notes of the part via ``note.lyric``."""
-        notes = list(part.flatten().notes)
+        notes = sorted(part.flatten().notes, key=lambda n: n.offset)
+        if not syllables:
+            logger.warning("VocalGen: lyrics_words is empty. Skipping lyric assignment.")
+            return
+        if len(syllables) != len(notes):
+            logger.warning(
+                "VocalGen: Number of syllables (%d) does not match number of notes (%d).",
+                len(syllables),
+                len(notes),
+            )
         for n, syl in zip(notes, syllables):
             n.lyric = syl
 
     def _assign_phonemes_to_part(self, part: stream.Stream, phonemes: List[str]) -> None:
         """Attach phoneme articulations sequentially to notes of the part."""
-        notes = list(part.flatten().notes)
+        notes = sorted(part.flatten().notes, key=lambda n: n.offset)
         for n, ph in zip(notes, phonemes):
             n.articulations.append(PhonemeArticulation(ph))
 
     def _apply_vibrato_to_part(self, part: stream.Stream, phonemes: List[str]) -> None:
         """Embed vibrato events into each note's expressions based on phoneme."""
-        notes = list(part.flatten().notes)
+        notes = sorted(part.flatten().notes, key=lambda n: n.offset)
         for n, ph in zip(notes, phonemes):
             if n.quarterLength < 0.5:
                 continue
@@ -264,7 +273,7 @@ class VocalGenerator:
         humanize_opt: bool = True,
         humanize_template_name: Optional[str] = "vocal_ballad_smooth",
         humanize_custom_params: Optional[Dict[str, Any]] = None,
-        lyrics_words: Optional[List[str]] = None,
+        lyrics_words: List[str] | None = None,
     ) -> stream.Part:
 
         vocal_part = stream.Part(id="Vocal")
@@ -349,6 +358,10 @@ class VocalGenerator:
             self._assign_syllables_to_part(vocal_part, syllables)
             self._assign_phonemes_to_part(vocal_part, phonemes)
             self._apply_vibrato_to_part(vocal_part, phonemes)
+        else:
+            logger.warning(
+                "VocalGen compose: lyrics_words not provided. Skipping lyric assignment."
+            )
 
         logger.info(
             f"VocalGen: Finished. Final part has {len(list(vocal_part.flatten().notesAndRests))} elements."

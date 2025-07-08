@@ -319,7 +319,7 @@ class StringsGenerator(BasePartGenerator):
         length_beats: float,
         *,
         start_val: int = 20,
-        end_val: int = 90,
+        end_val: int = 80,
     ) -> None:
         """Apply a CC11 ramp from ``start_val`` to ``end_val``."""
         from utilities.cc_tools import add_cc_events

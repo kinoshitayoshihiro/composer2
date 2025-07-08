@@ -70,6 +70,7 @@ class SaxGenerator(MelodyGenerator):
 
     def __init__(self, seed: int | None = None, **kwargs):
         kwargs.setdefault("instrument_name", "Alto Saxophone")
+        kwargs["default_instrument"] = instrument.AltoSaxophone()
         rh_lib = kwargs.setdefault("rhythm_library", {})
         for k, v in DEFAULT_PHRASE_PATTERNS.items():
             rh_lib.setdefault(k, v)

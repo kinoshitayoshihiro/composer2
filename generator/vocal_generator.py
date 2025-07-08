@@ -19,7 +19,12 @@ import music21.expressions as expressions
 import music21.articulations as articulations
 # import music21.dynamics as dynamics # このファイルでは直接使用していないためコメントアウト
 from music21 import exceptions21
-from utilities.vibrato_engine import generate_vibrato
+from utilities.vibrato_engine import (
+    generate_vibrato,
+    generate_gliss,
+    generate_trill,
+)
+from utilities.cc_tools import merge_cc_events
 
 import logging
 import json
@@ -177,12 +182,20 @@ class VocalGenerator:
         global_tempo: int = 120,
         global_time_signature: str = "4/4",
         phoneme_dict_path: Optional[Path] = None,
+        *,
+        vibrato_depth: float = 0.5,
+        vibrato_rate: float = 5.0,
+        enable_articulation: bool = True,
     ):
 
         self.default_instrument = default_instrument
         self.global_tempo = global_tempo
         self.global_time_signature_str = global_time_signature
         self.phoneme_dict_path = phoneme_dict_path or PHONEME_DICT_PATH
+        self.vibrato_depth = float(vibrato_depth)
+        self.vibrato_rate = float(vibrato_rate)
+        self.enable_articulation = bool(enable_articulation)
+
         try:
             with self.phoneme_dict_path.open("r", encoding="utf-8") as fh:
                 self.phoneme_dict = json.load(fh)
@@ -257,10 +270,17 @@ class VocalGenerator:
         return parsed_notes
 
     def _split_into_syllables(self, lyric_words: List[str]) -> List[str]:
-        """Naively split words into syllables. Japanese characters are treated as syllables."""
+        """Naively split words into syllables.
+
+        Special markers like ``"[gliss]"`` or ``"[trill]"`` are kept intact.
+        Japanese characters are treated as individual syllables.
+        """
         syllables: List[str] = []
         for word in lyric_words:
-            syllables.extend(list(word))
+            if word in {"[gliss]", "[trill]"}:
+                syllables.append(word)
+            else:
+                syllables.extend(list(word))
         return syllables
 
     def _assign_syllables_to_part(self, part: stream.Stream, syllables: List[str]) -> None:
@@ -291,15 +311,50 @@ class VocalGenerator:
     def _apply_vibrato_to_part(
         self, part: stream.Stream, phonemes: List[Tuple[str, str, float]]
     ) -> None:
-        """Embed vibrato events into each note's expressions based on phoneme."""
+        """Embed vibrato events and store CC/pitch bend messages."""
+        if not self.enable_articulation:
+            return
+
         notes = sorted(part.flatten().notes, key=lambda n: n.offset)
+        cc_events: list[tuple[float, int, int]] = []
+        bends: list[tuple[float, int]] = []
         for n, (ph, _accent, _dur) in zip(notes, phonemes):
             if n.quarterLength < 0.5:
                 continue
-            depth = 0.5 if ph and ph[0].lower() in "aeiou" else 0.25
-            events = generate_vibrato(n.quarterLength, depth, 5.0)
+            depth = (
+                self.vibrato_depth
+                if ph and ph[0].lower() in "aeiou"
+                else self.vibrato_depth * 0.5
+            )
+            events = generate_vibrato(
+                n.quarterLength, depth, self.vibrato_rate
+            )
             n.expressions.append(expressions.TextExpression("vibrato"))
             n.editorial.vibrato_events = events
+            for kind, t, val in events:
+                abs_t = float(n.offset) + t
+                if kind == "aftertouch":
+                    cc_events.append((abs_t, 74, val))
+                else:
+                    bends.append((abs_t, val))
+        if cc_events:
+            existing = [
+                (e["time"], e["cc"], e["val"]) if isinstance(e, dict) else e
+                for e in getattr(part, "extra_cc", [])
+            ]
+            part.extra_cc = merge_cc_events(set(existing), set(cc_events))
+        if bends:
+            data = getattr(part, "pitch_bends", [])
+            if data and isinstance(data[0], dict):
+                base = [(d["time"], d["pitch"]) for d in data]
+            else:
+                base = data
+            merged: dict[float, int] = {float(t): int(v) for t, v in base}
+            for t, v in bends:
+                merged[float(t)] = int(v)
+            part.pitch_bends = [
+                {"time": t, "pitch": v} for t, v in sorted(merged.items())
+            ]
 
     def _get_section_for_note_offset(
         self, note_offset: float, processed_stream: List[Dict]
@@ -414,6 +469,36 @@ class VocalGenerator:
             self._assign_syllables_to_part(vocal_part, syllables)
             self._assign_phonemes_to_part(vocal_part, phonemes)
             self._apply_vibrato_to_part(vocal_part, phonemes)
+
+            # articulation markers
+            if self.enable_articulation:
+                notes = sorted(vocal_part.flatten().notes, key=lambda n: n.offset)
+                for idx, n in enumerate(notes):
+                    lyr = n.lyric
+                    if lyr == "[gliss]" and idx + 1 < len(notes):
+                        nxt = notes[idx + 1]
+                        events = generate_gliss(
+                            int(n.pitch.midi), int(nxt.pitch.midi), n.quarterLength
+                        )
+                        bends = [
+                            (float(n.offset) + t, (p - n.pitch.midi) * 64)
+                            for p, t in events
+                        ]
+                        data = getattr(vocal_part, "pitch_bends", [])
+                        for t, v in bends:
+                            data.append({"time": t, "pitch": int(v)})
+                        vocal_part.pitch_bends = sorted(data, key=lambda x: x["time"])
+                    elif lyr == "[trill]":
+                        events = generate_trill(int(n.pitch.midi), n.quarterLength)
+                        data = getattr(vocal_part, "pitch_bends", [])
+                        cc_events = getattr(vocal_part, "extra_cc", [])
+                        for p, t, vel in events:
+                            data.append({"time": float(n.offset) + t, "pitch": 0})
+                            cc_events.append(
+                                {"time": float(n.offset) + t, "cc": 74, "val": vel}
+                            )
+                        vocal_part.pitch_bends = sorted(data, key=lambda x: x["time"])
+                        vocal_part.extra_cc = merge_cc_events(cc_events, [])
         else:
             logger.warning(
                 "VocalGen compose: lyrics_words not provided. Skipping lyric assignment."

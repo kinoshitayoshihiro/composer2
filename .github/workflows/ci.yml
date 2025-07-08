@@ -19,6 +19,8 @@ jobs:
           - os: ubuntu-latest
             variant: PG_DELTA
           - os: ubuntu-latest
+            variant: PG_DELTA_VOCAL
+          - os: ubuntu-latest
             variant: PIANO_ML_HEAVY
           - os: ubuntu-latest
             variant: PG_EPSILON
@@ -41,7 +43,7 @@ jobs:
           path: ~/.cache/pip/wheels/**/cyext*
           key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
       - name: Install dependencies
-        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA' || matrix.variant == 'PG_DELTA' || matrix.variant == 'PG_EPSILON'
+        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA' || matrix.variant == 'PG_DELTA' || matrix.variant == 'PG_DELTA_VOCAL' || matrix.variant == 'PG_EPSILON'
         run: pip install -r requirements.txt
       - name: Install dependencies (ML)
         if: matrix.variant == 'PIANO_ML'
@@ -52,7 +54,7 @@ jobs:
       - name: Install test tools
         run: pip install -e .[test] -r requirements-test.txt
       - name: Set ML env (pure)
-        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA' || matrix.variant == 'PG_DELTA' || matrix.variant == 'PG_EPSILON'
+        if: matrix.variant == 'PURE_PY' || matrix.variant == 'PG_BETA' || matrix.variant == 'PG_DELTA' || matrix.variant == 'PG_DELTA_VOCAL' || matrix.variant == 'PG_EPSILON'
         run: echo "ENABLE_ML_TESTS=false" >> $GITHUB_ENV
       - name: Set ML env (ml)
         if: matrix.variant == 'PIANO_ML' || matrix.variant == 'PIANO_ML_HEAVY'
@@ -110,11 +112,13 @@ jobs:
                 tests/test_piano_ml_stub.py
           elif [ "${{ matrix.variant }}" = "PG_DELTA" ]; then
               pytest -q tests/test_articulation_cc.py tests/test_loudness_norm.py tests/test_tone_presets.py
+          elif [ "${{ matrix.variant }}" = "PG_DELTA_VOCAL" ]; then
+              pytest -q tests/test_vibrato_engine.py tests/test_vocal_articulation_integration.py
           elif [ "$ENABLE_ML_TESTS" = "true" ]; then
               # 通常 ML ジョブ ― 全テスト実行
               pytest -q
           else
-              # PURE_PY / PG_BETA / PG_DELTA / PG_EPSILON ― ML マークを除外
+              # PURE_PY / PG_BETA / PG_DELTA / PG_DELTA_VOCAL / PG_EPSILON ― ML マークを除外
               pytest -q -m "not ml"
           fi
       - name: MIDI Regression Tests

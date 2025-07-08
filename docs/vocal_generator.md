@@ -29,4 +29,10 @@ Invoke it as follows:
 python scripts/synthesize_vocal.py --mid vocal.mid --phonemes phonemes.json --out audio/
 ```
 
+To use a custom phoneme mapping when sampling from the CLI:
+
+```bash
+modcompose sample --backend vocal --phoneme-dict custom_dict.json
+```
+
 The output file is written under the directory specified by `--out`.

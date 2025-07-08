@@ -57,38 +57,53 @@ except FileNotFoundError:
     PHONEME_DICT = {}
 
 
-def text_to_phonemes(text: str) -> List[str]:
-    """Convert Japanese characters to phoneme strings with multi-character support."""
-    phonemes: List[str] = []
+def text_to_phonemes(
+    text: str, phoneme_dict: Optional[Dict[str, str]] = None
+) -> List[Tuple[str, str, float]]:
+    """Convert Japanese characters to phoneme tuples.
+
+    Accent alternates ``"H"`` and ``"L"`` for demonstration purposes. Duration
+    defaults to ``MIN_NOTE_DURATION_QL``; ``compose`` updates this with each
+    note's real length.
+    """
+    mapping = phoneme_dict or PHONEME_DICT
+    phonemes: List[Tuple[str, str, float]] = []
     if not text:
         return phonemes
 
     # Sort keys by length in descending order for greedy matching of longer keys
-    keys = sorted(PHONEME_DICT.keys(), key=len, reverse=True)
+    keys = sorted(mapping.keys(), key=len, reverse=True)
     i = 0
+    toggle_high = True
     while i < len(text):
         matched = False
         for k in keys:
             if text.startswith(k, i):
-                phonemes.append(PHONEME_DICT.get(k, k))
+                accent = "H" if toggle_high else "L"
+                phonemes.append((mapping.get(k, k), accent, MIN_NOTE_DURATION_QL))
+                toggle_high = not toggle_high
                 i += len(k)
                 matched = True
                 break
         if not matched:
-            phonemes.append(text[i])
+            accent = "H" if toggle_high else "L"
+            phonemes.append((text[i], accent, MIN_NOTE_DURATION_QL))
+            toggle_high = not toggle_high
             i += 1
     return phonemes
 
 
 class PhonemeArticulation(articulations.Articulation):
-    """Simple articulation storing a phoneme string."""
+    """Articulation storing phoneme, accent and note duration."""
 
-    def __init__(self, phoneme: str, **keywords):
+    def __init__(self, phoneme: str, accent: str = "L", duration_qL: float = 0.0, **keywords):
         super().__init__(**keywords)
         self.phoneme = phoneme
+        self.accent = accent
+        self.duration_qL = duration_qL
 
     def _reprInternal(self):  # type: ignore[override]
-        return self.phoneme
+        return f"{self.phoneme}:{self.accent}:{self.duration_qL}"
 
 MIN_NOTE_DURATION_QL = 0.125
 # DEFAULT_BREATH_DURATION_QL: float = 0.25 # 歌詞ベースのブレス挿入削除のため不要
@@ -134,11 +149,19 @@ class VocalGenerator:
         default_instrument=m21instrument.Vocalist(),
         global_tempo: int = 120,
         global_time_signature: str = "4/4",
+        phoneme_dict_path: Optional[Path] = None,
     ):
 
         self.default_instrument = default_instrument
         self.global_tempo = global_tempo
         self.global_time_signature_str = global_time_signature
+        self.phoneme_dict_path = phoneme_dict_path or PHONEME_DICT_PATH
+        try:
+            with self.phoneme_dict_path.open("r", encoding="utf-8") as fh:
+                self.phoneme_dict = json.load(fh)
+        except FileNotFoundError:
+            logger.warning(f"Phoneme dictionary not found at {self.phoneme_dict_path}")
+            self.phoneme_dict = PHONEME_DICT
         try:
             self.global_time_signature_obj = get_time_signature_object(
                 global_time_signature
@@ -228,16 +251,22 @@ class VocalGenerator:
         for n, syl in zip(notes, syllables):
             n.lyric = syl
 
-    def _assign_phonemes_to_part(self, part: stream.Stream, phonemes: List[str]) -> None:
+    def _assign_phonemes_to_part(
+        self, part: stream.Stream, phonemes: List[Tuple[str, str, float]]
+    ) -> None:
         """Attach phoneme articulations sequentially to notes of the part."""
         notes = sorted(part.flatten().notes, key=lambda n: n.offset)
-        for n, ph in zip(notes, phonemes):
-            n.articulations.append(PhonemeArticulation(ph))
+        for n, (ph, accent, _dur) in zip(notes, phonemes):
+            n.articulations.append(
+                PhonemeArticulation(ph, accent=accent, duration_qL=n.quarterLength)
+            )
 
-    def _apply_vibrato_to_part(self, part: stream.Stream, phonemes: List[str]) -> None:
+    def _apply_vibrato_to_part(
+        self, part: stream.Stream, phonemes: List[Tuple[str, str, float]]
+    ) -> None:
         """Embed vibrato events into each note's expressions based on phoneme."""
         notes = sorted(part.flatten().notes, key=lambda n: n.offset)
-        for n, ph in zip(notes, phonemes):
+        for n, (ph, _accent, _dur) in zip(notes, phonemes):
             if n.quarterLength < 0.5:
                 continue
             depth = 0.5 if ph and ph[0].lower() in "aeiou" else 0.25
@@ -354,7 +383,7 @@ class VocalGenerator:
 
         if lyrics_words:
             syllables = self._split_into_syllables(lyrics_words)
-            phonemes = text_to_phonemes("".join(syllables))
+            phonemes = text_to_phonemes("".join(syllables), self.phoneme_dict)
             self._assign_syllables_to_part(vocal_part, syllables)
             self._assign_phonemes_to_part(vocal_part, phonemes)
             self._apply_vibrato_to_part(vocal_part, phonemes)
@@ -368,13 +397,13 @@ class VocalGenerator:
         )
         return vocal_part
 
-    def extract_phonemes(self, part: stream.Part) -> List[str]:
-        """Return phoneme articulations found on ``part``."""
-        phonemes: List[str] = []
+    def extract_phonemes(self, part: stream.Part) -> List[Tuple[str, str, float]]:
+        """Return phoneme tuples found on ``part``."""
+        phonemes: List[Tuple[str, str, float]] = []
         for n in part.flatten().notes:
             for a in n.articulations:
                 if isinstance(a, PhonemeArticulation):
-                    phonemes.append(a.phoneme)
+                    phonemes.append((a.phoneme, a.accent, a.duration_qL))
         return phonemes
 
     def synthesize_with_tts(self, midi_file: Path, phoneme_file: Path) -> bytes:

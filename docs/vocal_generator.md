@@ -13,12 +13,24 @@ and rate in cycles per quarter note.
 The events are attached to each note in
 `_apply_vibrato_to_part`.
 
+
 ```python
 from utilities.vibrato_engine import generate_vibrato
 
 # example: 1 qL note with 0.5 semitone depth at 5 Hz
 events = generate_vibrato(1.0, 0.5, 5.0)
 ```
+
+## Expression & Vibrato
+
+`VocalGenerator` exposes articulation parameters so that vibrato and special
+markers can be toggled from the CLI or config file.  Pass
+`--vibrato-depth` and `--vibrato-rate` on the command line, or set them under
+`part_defaults.vocal` in `main_cfg.yml`.
+
+Use `--no-enable-articulation` to disable vibrato, glissando and trill events.
+The values are passed directly to `generate_vibrato`,
+`generate_gliss`, and `generate_trill`.
 
 ## TTS Integration
 `scripts/synthesize_vocal.py` reads a MIDI file and a JSON list of
@@ -43,6 +55,13 @@ To use a custom phoneme mapping when sampling from the CLI:
 
 ```bash
 modcompose sample --backend vocal --phoneme-dict custom_dict.json
+```
+
+Adjust vibrato behaviour with `--vibrato-depth` and `--vibrato-rate`:
+
+```bash
+modcompose sample model.pt --backend vocal \
+    --vibrato-depth 0.6 --vibrato-rate 6
 ```
 
 The output file is written under the directory specified by `--out`.

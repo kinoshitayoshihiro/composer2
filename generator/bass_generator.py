@@ -243,6 +243,7 @@ class BassGenerator(BasePartGenerator):
         main_cfg=None,
         emotion_profile_path: str | Path | None = None,
         tone_preset: str | None = None,
+        normalize_loudness: bool = False,
         **kwargs,
     ):
         """Create a bass part generator.
@@ -313,6 +314,7 @@ class BassGenerator(BasePartGenerator):
         self.kick_offsets: list[float] = []
         self.base_velocity = 70
         self.tone_preset = tone_preset
+        self.normalize_loudness = normalize_loudness
 
         if emotion_profile_path is None:
             default_prof = Path("data/emotion_profile.yaml")
@@ -2036,7 +2038,7 @@ class BassGenerator(BasePartGenerator):
         from utilities.loudness_normalizer import normalize_velocities
 
         notes = list(part.recurse().notes)
-        if notes:
+        if notes and self.normalize_loudness:
             normalize_velocities(notes)
 
     # ------------------------------------------------------------------

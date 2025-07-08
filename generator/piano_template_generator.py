@@ -27,6 +27,7 @@ class PianoTemplateGenerator(BasePartGenerator):
         *args,
         enable_articulation: bool = True,
         tone_preset: str | None = None,
+        normalize_loudness: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -34,6 +35,7 @@ class PianoTemplateGenerator(BasePartGenerator):
         self._art_engine = ArticulationEngine()
         self.enable_articulation = enable_articulation
         self.tone_preset = tone_preset
+        self.normalize_loudness = normalize_loudness
 
     def compose(
         self,
@@ -243,7 +245,7 @@ class PianoTemplateGenerator(BasePartGenerator):
         from utilities.loudness_normalizer import normalize_velocities
 
         notes = list(part.recurse().notes)
-        if notes:
+        if notes and self.normalize_loudness:
             normalize_velocities(notes)
             import statistics
 

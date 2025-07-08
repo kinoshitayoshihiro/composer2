@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-"""Train :class:`SaxTransformer` on a MIDI corpus using LoRA."""
+"""Train :class:`SaxTransformer` on a JSONL corpus with LoRA.
+
+This script supports automatic hyper-parameter scaling via ``--auto-hparam``
+and pads variable-length sequences in ``collate_fn``.
+"""
 
 import argparse
 import json
@@ -42,11 +46,13 @@ def collate_fn(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
     max_len = max(lengths)
     pad_id = 0
     input_ids = torch.full((len(batch), max_len), pad_id, dtype=torch.long)
+    attention_mask = torch.zeros_like(input_ids)
     for i, x in enumerate(batch):
         seq = x["input_ids"]
         input_ids[i, : len(seq)] = seq
+        attention_mask[i, : len(seq)] = 1
     labels = input_ids.clone()
-    return {"input_ids": input_ids, "labels": labels}
+    return {"input_ids": input_ids, "labels": labels, "attention_mask": attention_mask}
 
 
 def main() -> None:

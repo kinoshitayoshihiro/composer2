@@ -29,6 +29,16 @@ Invoke it as follows:
 python scripts/synthesize_vocal.py --mid vocal.mid --phonemes phonemes.json --out audio/
 ```
 
+## TTS ONNX Integration
+To run synthesis through an ONNX model pass the `--onnx-model` option and specify a log level:
+
+```bash
+python scripts/synthesize_vocal.py --mid vocal.mid --phonemes phonemes.json \
+    --out audio/ --onnx-model model.onnx --log-level DEBUG
+```
+
+Exit status is `0` when the WAV is created successfully and `1` if synthesis fails.
+
 To use a custom phoneme mapping when sampling from the CLI:
 
 ```bash

@@ -548,6 +548,18 @@ def _cmd_sample(args: list[str]) -> None:
         help="Select piano/bass tone preset",
     )
     ap.add_argument(
+        "--vibrato-depth",
+        type=float,
+        default=0.5,
+        help="Vocal vibrato depth in semitones",
+    )
+    ap.add_argument(
+        "--vibrato-rate",
+        type=float,
+        default=5.0,
+        help="Vocal vibrato rate in Hz",
+    )
+    ap.add_argument(
         "--enable-articulation",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -653,7 +665,12 @@ def _cmd_sample(args: list[str]) -> None:
     elif ns.backend == "vocal":
         from generator.vocal_generator import VocalGenerator
 
-        gen = VocalGenerator(phoneme_dict_path=ns.phoneme_dict)
+        gen = VocalGenerator(
+            phoneme_dict_path=ns.phoneme_dict,
+            vibrato_depth=ns.vibrato_depth,
+            vibrato_rate=ns.vibrato_rate,
+            enable_articulation=ns.enable_articulation,
+        )
         part = gen.compose(
             [
                 {

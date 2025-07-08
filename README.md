@@ -849,11 +849,20 @@ profiles (`grand_clean`, `upright_mellow`, `ep_phase`). Pass
 `--no-enable-articulation` to disable glissando and trill tags. Generated notes
 are normalised with `normalize_velocities()` so that loudness stays consistent.
 See [docs/piano_delta.md](docs/piano_delta.md) for details.
+Vocal vibrato may be tweaked via `--vibrato-depth` and `--vibrato-rate`:
+
+```bash
+modcompose sample model.pt --backend vocal --vibrato-depth 0.7 --vibrato-rate 6
+```
 Add to `main_cfg.yml` to avoid long CLI flags:
 ```yaml
 part_defaults:
   piano:
     tone_preset: grand_clean
+    enable_articulation: true
+  vocal:
+    vibrato_depth: 0.5
+    vibrato_rate: 5.0
     enable_articulation: true
 ```
 

@@ -17,6 +17,7 @@ if(MODC_BUILD_PLUGIN)
   )
   target_link_libraries(SaxCompanion PRIVATE pybind11::embed)
 else()
+  # When MODC_BUILD_PLUGIN is OFF, build a lightweight Python module for tests.
   pybind11_add_module(sax_companion_plugin plugin.cpp)
   set_target_properties(sax_companion_plugin PROPERTIES PREFIX "" OUTPUT_NAME "sax_companion_plugin")
 endif()

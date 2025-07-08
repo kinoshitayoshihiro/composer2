@@ -32,6 +32,7 @@ nav:
   - Piano Epsilon: piano_epsilon.md
   - Humanizer Reference: humanizer.md
   - Live Tips: live_tips.md
+  - Vocal Generator: vocal_generator.md
   - API Reference:
       - modular_composer: api/modular_composer.md
 plugins:

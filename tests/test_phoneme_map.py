@@ -20,3 +20,19 @@ def test_text_to_phonemes_roundtrip():
             if isinstance(a, PhonemeArticulation):
                 phonemes.append(a.phoneme)
     assert phonemes == expected
+
+
+def test_text_to_phonemes_multichar():
+    assert text_to_phonemes("きゃきゅ") == ["kya", "kyu"]
+
+
+def test_text_to_phonemes_multichar_full():
+    # verify all multi-char entries map correctly
+    assert text_to_phonemes("きゃきゅきょ") == ["kya", "kyu", "kyo"]
+
+
+def test_text_to_phonemes_empty_and_unknown():
+    # empty input returns empty list
+    assert text_to_phonemes("") == []
+    # unknown characters are returned as-is
+    assert text_to_phonemes("♪ABC") == ["♪", "A", "B", "C"]

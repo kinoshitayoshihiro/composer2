@@ -6,8 +6,9 @@ from typing import Any
 
 from utilities.scale_registry import ScaleRegistry
 from utilities.cc_tools import add_cc_events
+import random
 
-from music21 import instrument, articulations, spanner, stream
+from music21 import instrument, articulations, spanner, stream, note
 import math
 
 from .melody_generator import MelodyGenerator
@@ -67,11 +68,15 @@ SLUR_VAL = 80
 class SaxGenerator(MelodyGenerator):
     """Melody generator preset for alto saxophone."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, seed: int | None = None, **kwargs):
         kwargs.setdefault("instrument_name", "Alto Saxophone")
         rh_lib = kwargs.setdefault("rhythm_library", {})
         for k, v in DEFAULT_PHRASE_PATTERNS.items():
             rh_lib.setdefault(k, v)
+
+        if "rng" not in kwargs:
+            kwargs["rng"] = random.Random(seed)
+
         super().__init__(**kwargs)
 
     # ------------------------------------------------------------------
@@ -81,20 +86,23 @@ class SaxGenerator(MelodyGenerator):
         """Add CC1/CC2 events based on articulations."""
         events = []
         notes = sorted(part.recurse().notes, key=lambda n: n.offset)
+        slurs = list(part.recurse().getElementsByClass(spanner.Slur))
         prev_end = None
         for n in notes:
             off = float(n.offset)
             is_stacc = any(isinstance(a, articulations.Staccato) for a in n.articulations)
-            has_slur = any(isinstance(s, spanner.Slur) and n in s for s in part.recurse().getElementsByClass(spanner.Slur))
+            in_slur = any(n in s for s in slurs)
+            is_tied = n.tie is not None or (prev_end is not None and abs(off - prev_end) < 1e-3)
+
             if is_stacc:
-                val = STACCATO_VAL
-                events.append((off, MOD_CC, val))
-            elif has_slur or (prev_end is not None and abs(off - prev_end) < 1e-3):
-                val = LEGATO_VAL
-                events.append((off, BREATH_CC, val))
+                events.append((off, MOD_CC, STACCATO_VAL))
+            elif in_slur or is_tied:
+                events.append((off, BREATH_CC, LEGATO_VAL))
             else:
                 events.append((off, BREATH_CC, SLUR_VAL))
+
             prev_end = off + float(n.quarterLength)
+
         add_cc_events(part, events)
 
     def _apply_vibrato(self, part: stream.Part, depth: float = 200.0, rate_hz: float = 5.0) -> None:
@@ -125,6 +133,36 @@ class SaxGenerator(MelodyGenerator):
         bucket = EMOTION_TO_BUCKET.get(emo, "basic")
         return BUCKET_TO_PATTERN.get((bucket, inten), "sax_basic_swing")
 
+    def _render_part(
+        self,
+        section_data: dict[str, Any],
+        next_section_data: dict[str, Any] | None = None,
+    ) -> stream.Part:
+        pattern_key = (
+            section_data.get("part_params", {})
+            .get("melody", {})
+            .get("rhythm_key", "sax_basic_swing")
+        )
+        pat = DEFAULT_PHRASE_PATTERNS.get(pattern_key, DEFAULT_PHRASE_PATTERNS["sax_basic_swing"])
+
+        tonic = section_data.get("tonic_of_section", self.global_key_signature_tonic)
+        mode = section_data.get("mode", self.global_key_signature_mode)
+        scale_pitches = ScaleRegistry.get(tonic or "C", mode or "major").getPitches("C3", "C5")
+
+        part = stream.Part(id=self.part_name or "sax")
+        part.insert(0, self.default_instrument)
+
+        for off in pat.get("pattern", []):
+            if not scale_pitches:
+                continue
+            pitch_obj = self.rng.choice(scale_pitches)
+            n = note.Note(pitch_obj)
+            n.quarterLength = pat.get("note_duration_ql", 0.5)
+            n.volume.velocity = 90
+            part.insert(float(off), n)
+
+        return part
+
     def compose(self, section_data=None):  # type: ignore[override]
         if section_data:
             mi = section_data.get("musical_intent", {})
@@ -134,7 +172,7 @@ class SaxGenerator(MelodyGenerator):
             section_data.setdefault("part_params", {}).setdefault("melody", {})[
                 "rhythm_key"
             ] = pat_key
-        part = super().compose(section_data)
+        part = self._render_part(section_data)
         tonic = (
             section_data.get("tonic_of_section")
             if section_data else self.global_key_signature_tonic

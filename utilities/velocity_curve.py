@@ -47,7 +47,9 @@ def _interpolate_7pt_cached(curve_tuple, mode: str) -> list[float]:
             cs = CubicSpline(x, curve7, bc_type="natural")
             x_new = np.linspace(0.0, 1.0, 128)
             y_new = cs(x_new)
-            return [float(v) for v in y_new]
+            result = [float(v) for v in y_new]
+            result[-1] = float(curve7[-1])
+            return result
         except Exception:
             pass
 
@@ -55,7 +57,9 @@ def _interpolate_7pt_cached(curve_tuple, mode: str) -> list[float]:
         x = np.array(x_points)
         x_new = np.linspace(0.0, 1.0, 128)
         y_new = np.interp(x_new, x, curve7)
-        return [float(v) for v in y_new]
+        result = [float(v) for v in y_new]
+        result[-1] = float(curve7[-1])
+        return result
 
     def lin_interp(x0, y0, x1, y1, x):
         return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
@@ -77,6 +81,8 @@ def _interpolate_7pt_cached(curve_tuple, mode: str) -> list[float]:
                 break
     if len(result) < 128:
         result.extend([float(curve7[-1])] * (128 - len(result)))
+    if result:
+        result[-1] = float(curve7[-1])
     return [float(v) for v in result]
 
 

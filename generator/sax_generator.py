@@ -84,6 +84,14 @@ class SaxGenerator(MelodyGenerator):
         for k, v in DEFAULT_PHRASE_PATTERNS.items():
             rh_lib.setdefault(k, v)
 
+        if seed is not None:
+            random.seed(seed)
+            try:
+                import numpy as _np  # type: ignore
+                _np.random.seed(seed)
+            except Exception:
+                pass
+
         if "rng" not in kwargs:
             kwargs["rng"] = random.Random(seed)
 

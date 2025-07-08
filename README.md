@@ -21,6 +21,7 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Strings Articulations](docs/strings_generator.md)
 - [Effects & Automation](docs/effects.md)
 - [Vocal Generator](docs/vocal_generator.md)
+- [Sax Generator](docs/sax_generator.md)
 
 
 ## Setup
@@ -927,6 +928,20 @@ modcompose eval abx loops_human/ loops_ai/ --trials 12
 ```
 
 The page relies on Tone.js for MIDI playback and records your score interactively.
+
+## Advanced Generators
+
+### Sax Generator
+
+The sax backend improvises short solo phrases. Enable it by adding a `Sax Solo`
+section in your configuration and run:
+
+```bash
+python modular_composer.py --main-cfg config/main_cfg.yml --dry-run
+```
+
+Important keys under `part_params.melody` include `seed`, `rhythm_key`, `growl`
+and `altissimo`.
 
 ## PianoGenerator α: テンプレート伴奏
 

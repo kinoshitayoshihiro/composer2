@@ -97,6 +97,7 @@ def main() -> None:
         max_steps=args.steps,
         logging_steps=10,
         save_steps=50,
+        remove_unused_columns=False,
     )
     trainer = Trainer(
         model=model,

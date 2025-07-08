@@ -30,7 +30,7 @@ import logging
 import json
 from pathlib import Path
 
-# import re # 正規表現は歌詞処理で主に使用していたため不要に
+import re
 import copy
 import random
 
@@ -270,17 +270,27 @@ class VocalGenerator:
         return parsed_notes
 
     def _split_into_syllables(self, lyric_words: List[str]) -> List[str]:
-        """Naively split words into syllables.
+        """Split lyric words into syllables handling contracted sounds.
 
         Special markers like ``"[gliss]"`` or ``"[trill]"`` are kept intact.
-        Japanese characters are treated as individual syllables.
+        Contracted sounds such as ``"きゃ"`` or ``"ぎょ"`` are treated as one
+        syllable using the regex ``(?:[か-ん]|[が-ぽ])(?:ゃ|ゅ|ょ)?``.
         """
         syllables: List[str] = []
+        pattern = re.compile(r"(?:[か-ん]|[が-ぽ])(?:ゃ|ゅ|ょ)?")
         for word in lyric_words:
             if word in {"[gliss]", "[trill]"}:
                 syllables.append(word)
             else:
-                syllables.extend(list(word))
+                i = 0
+                while i < len(word):
+                    match = pattern.match(word, i)
+                    if match:
+                        syllables.append(match.group(0))
+                        i += len(match.group(0))
+                    else:
+                        syllables.append(word[i])
+                        i += 1
         return syllables
 
     def _assign_syllables_to_part(self, part: stream.Stream, syllables: List[str]) -> None:
@@ -465,10 +475,27 @@ class VocalGenerator:
 
         if lyrics_words:
             syllables = self._split_into_syllables(lyrics_words)
-            phonemes = text_to_phonemes("".join(syllables), self.phoneme_dict)
-            self._assign_syllables_to_part(vocal_part, syllables)
-            self._assign_phonemes_to_part(vocal_part, phonemes)
-            self._apply_vibrato_to_part(vocal_part, phonemes)
+            notes = sorted(vocal_part.flatten().notes, key=lambda n: n.offset)
+            if len(syllables) != len(notes):
+                logger.warning(
+                    "VocalGen: Number of syllables (%d) does not match number of notes (%d).",
+                    len(syllables),
+                    len(notes),
+                )
+                if syllables and notes:
+                    ph_list = text_to_phonemes(syllables[0], self.phoneme_dict)
+                    notes[0].lyric = syllables[0]
+                    for ph, accent, _dur in ph_list:
+                        notes[0].articulations.append(
+                            PhonemeArticulation(ph, accent=accent, duration_qL=notes[0].quarterLength)
+                        )
+                else:
+                    logger.warning("VocalGen: Empty syllables or notes; cannot assign fallback.")
+            else:
+                phonemes = text_to_phonemes("".join(syllables), self.phoneme_dict)
+                self._assign_syllables_to_part(vocal_part, syllables)
+                self._assign_phonemes_to_part(vocal_part, phonemes)
+                self._apply_vibrato_to_part(vocal_part, phonemes)
 
             # articulation markers
             if self.enable_articulation:

@@ -1,38 +1,54 @@
 import pytest
 from music21 import note
-from generator.vocal_generator import VocalGenerator, PhonemeArticulation, text_to_phonemes
+from generator.vocal_generator import (
+    VocalGenerator,
+    PhonemeArticulation,
+    text_to_phonemes,
+    PHONEME_DICT,
+)
 
 
-def test_text_to_phonemes_roundtrip():
-    text = "かきくけこ"
-    expected = ["ka", "ki", "ku", "ke", "ko"]
-    assert text_to_phonemes(text) == expected
+@pytest.mark.parametrize("text,expected", PHONEME_DICT.items())
+def test_text_to_phonemes_roundtrip(text, expected):
+    res = text_to_phonemes(text)
+    assert [p for p, _, _ in res] == [expected]
 
     gen = VocalGenerator()
-    midivocal_data = [
-        {"offset": float(i), "pitch": "C4", "length": 1.0, "velocity": 80}
-        for i in range(len(expected))
+    midivocal_data = [{"offset": 0.0, "pitch": "C4", "length": 1.0, "velocity": 80}]
+    part = gen.compose(
+        midivocal_data,
+        processed_chord_stream=[],
+        humanize_opt=False,
+        lyrics_words=[text],
+    )
+    phonemes = [
+        a.phoneme
+        for n in part.flatten().notes
+        for a in n.articulations
+        if isinstance(a, PhonemeArticulation)
     ]
-    part = gen.compose(midivocal_data, processed_chord_stream=[], humanize_opt=False, lyrics_words=[text])
-    phonemes = []
-    for n in part.flatten().notes:
-        for a in n.articulations:
-            if isinstance(a, PhonemeArticulation):
-                phonemes.append(a.phoneme)
-    assert phonemes == expected
+    assert phonemes == [expected]
 
 
 def test_text_to_phonemes_multichar():
-    assert text_to_phonemes("きゃきゅ") == ["kya", "kyu"]
+    res = text_to_phonemes("きゃきゅ")
+    assert [p for p, _, _ in res] == ["kya", "kyu"]
 
 
 def test_text_to_phonemes_multichar_full():
     # verify all multi-char entries map correctly
-    assert text_to_phonemes("きゃきゅきょ") == ["kya", "kyu", "kyo"]
+    res = text_to_phonemes("きゃきゅきょ")
+    assert [p for p, _, _ in res] == ["kya", "kyu", "kyo"]
+
+
+def test_phoneme_map_full():
+    res = text_to_phonemes("がぎゃ")
+    assert [p for p, _, _ in res] == ["ga", "gya"]
 
 
 def test_text_to_phonemes_empty_and_unknown():
     # empty input returns empty list
     assert text_to_phonemes("") == []
     # unknown characters are returned as-is
-    assert text_to_phonemes("♪ABC") == ["♪", "A", "B", "C"]
+    res = text_to_phonemes("♪ABC")
+    assert [p for p, _, _ in res] == ["♪", "A", "B", "C"]

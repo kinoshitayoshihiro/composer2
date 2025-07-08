@@ -24,3 +24,46 @@ def test_synthesize_cli(tmp_path, monkeypatch):
     out_file = out_dir / "test.wav"
     assert out_file.read_bytes() == b"Hello"
     assert calls['args'] == (midi, ["H", "e", "l", "l", "o"])
+
+
+def test_synthesize_with_missing_tts(monkeypatch, tmp_path):
+    from generator.vocal_generator import VocalGenerator
+    import builtins
+
+    midi = tmp_path / "dummy.mid"
+    midi.write_bytes(b"MThd")
+    phon = tmp_path / "phon.json"
+    phon.write_text(json.dumps(["a"]))
+
+    orig_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "tts_model":
+            raise ImportError("missing")
+        return orig_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    gen = VocalGenerator()
+    result = gen.synthesize_with_tts(midi, phon)
+    assert result == b""
+
+
+def test_synthesize_failure(monkeypatch, tmp_path):
+    from generator.vocal_generator import VocalGenerator
+    import types
+    import sys
+
+    midi = tmp_path / "dummy.mid"
+    midi.write_bytes(b"MThd")
+    phon = tmp_path / "phon.json"
+    phon.write_text(json.dumps(["a"]))
+
+    def fake_synth(m, p):
+        raise RuntimeError("boom")
+
+    monkeypatch.setitem(sys.modules, "tts_model", types.SimpleNamespace(synthesize=fake_synth))
+
+    gen = VocalGenerator()
+    result = gen.synthesize_with_tts(midi, phon)
+    assert result == b""

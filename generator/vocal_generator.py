@@ -274,10 +274,13 @@ class VocalGenerator:
 
         Special markers like ``"[gliss]"`` or ``"[trill]"`` are kept intact.
         Contracted sounds such as ``"きゃ"`` or ``"ぎょ"`` are treated as one
-        syllable using the regex ``(?:[か-ん]|[が-ぽ])(?:ゃ|ゅ|ょ)?``.
+        syllable. The regex ``(?:[ぁ-ん]|[が-ぽ])(?:[ゃゅょぁぃぅぇぉ])?`` groups
+        small vowels and ``ゃ/ゅ/ょ`` with the preceding character so that they
+        count as a single syllable.
         """
+
         syllables: List[str] = []
-        pattern = re.compile(r"(?:[か-ん]|[が-ぽ])(?:ゃ|ゅ|ょ)?")
+        pattern = re.compile(r"(?:[ぁ-ん]|[が-ぽ])(?:[ゃゅょぁぃぅぇぉ])?")
         for word in lyric_words:
             if word in {"[gliss]", "[trill]"}:
                 syllables.append(word)
@@ -483,12 +486,20 @@ class VocalGenerator:
                     len(notes),
                 )
                 if syllables and notes:
-                    ph_list = text_to_phonemes(syllables[0], self.phoneme_dict)
-                    notes[0].lyric = syllables[0]
-                    for ph, accent, _dur in ph_list:
-                        notes[0].articulations.append(
-                            PhonemeArticulation(ph, accent=accent, duration_qL=notes[0].quarterLength)
-                        )
+                    limit = min(len(syllables), len(notes))
+                    for idx in range(limit):
+                        notes[idx].lyric = syllables[idx]
+                        ph_list = text_to_phonemes(syllables[idx], self.phoneme_dict)
+                        for ph, accent, _dur in ph_list:
+                            notes[idx].articulations.append(
+                                PhonemeArticulation(ph, accent=accent, duration_qL=notes[idx].quarterLength)
+                            )
+                    fallback_ph = [
+                        ph
+                        for i in range(limit)
+                        for ph in text_to_phonemes(syllables[i], self.phoneme_dict)
+                    ]
+                    self._apply_vibrato_to_part(vocal_part, fallback_ph)
                 else:
                     logger.warning("VocalGen: Empty syllables or notes; cannot assign fallback.")
             else:

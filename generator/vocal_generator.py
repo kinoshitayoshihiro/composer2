@@ -57,6 +57,33 @@ except FileNotFoundError:
     PHONEME_DICT = {}
 
 
+def synthesize_with_onnx(model_path: Path, midi: Path, phonemes: List[str]) -> bytes:
+    """Synthesize *phonemes* using an ONNX TTS model.
+
+    Always returns ``bytes`` and logs failures instead of raising.
+    """
+
+    logger.info("Starting ONNX synthesis using %s", model_path)
+    try:
+        import numpy as np
+        import onnxruntime as ort  # type: ignore
+    except Exception as exc:  # pragma: no cover - optional
+        logger.error("Failed to import onnxruntime: %s", exc, exc_info=True)
+        return b""
+
+    try:
+        session = ort.InferenceSession(str(model_path))
+        tokens = np.fromiter((ord(p[0]) for p in phonemes), dtype=np.float32)
+        output = session.run(None, {"input": tokens})[0]
+        if not isinstance(output, (bytes, bytearray)):
+            output = bytes(output)
+        logger.info("Finished ONNX synthesis")
+        return bytes(output)
+    except Exception as exc:  # pragma: no cover - runtime
+        logger.error("ONNX synthesis failed: %s", exc, exc_info=True)
+        return b""
+
+
 def text_to_phonemes(
     text: str, phoneme_dict: Optional[Dict[str, str]] = None
 ) -> List[Tuple[str, str, float]]:
@@ -406,21 +433,29 @@ class VocalGenerator:
                     phonemes.append((a.phoneme, a.accent, a.duration_qL))
         return phonemes
 
-    def synthesize_with_tts(self, midi_file: Path, phoneme_file: Path) -> bytes:
-        """Load phonemes from ``phoneme_file`` and synthesize audio with a TTS model.
+    def synthesize_with_tts(
+        self, midi_file: Path, phoneme_file: Path, onnx_model: Optional[Path] = None
+    ) -> bytes:
+        """Load phonemes from ``phoneme_file`` and synthesize audio.
 
-        Returns empty bytes if ``tts_model`` cannot be imported or if synthesis fails.
+        If ``onnx_model`` is provided, :func:`synthesize_with_onnx` is used.
+        Returns empty bytes on failure.
         """
-        try:
-            from tts_model import synthesize  # type: ignore
-        except ImportError as e:
-            logger.error("Failed to import tts_model: %s", e, exc_info=True)
-            return b""
-
+        logger.info("Starting TTS synthesis for %s", midi_file)
         try:
             with phoneme_file.open("r", encoding="utf-8") as f:
                 phonemes = json.load(f)
-            return synthesize(midi_file, phonemes)
+            if onnx_model:
+                audio = synthesize_with_onnx(onnx_model, midi_file, phonemes)
+            else:
+                from tts_model import synthesize  # type: ignore
+
+                audio = synthesize(midi_file, phonemes)
+            logger.info("Finished TTS synthesis")
+            return audio
+        except ImportError as e:
+            logger.error("Failed to import tts_model: %s", e, exc_info=True)
+            return b""
         except Exception as e:
             logger.error("TTS synthesis failed: %s", e, exc_info=True)
             return b""

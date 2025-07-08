@@ -26,7 +26,7 @@ def test_synthesize_cli(tmp_path, monkeypatch):
     assert calls['args'] == (midi, ["H", "e", "l", "l", "o"])
 
 
-def test_synthesize_with_missing_tts(monkeypatch, tmp_path):
+def test_synthesize_with_missing_tts(monkeypatch, tmp_path, caplog):
     from generator.vocal_generator import VocalGenerator
     import builtins
 
@@ -45,11 +45,13 @@ def test_synthesize_with_missing_tts(monkeypatch, tmp_path):
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
     gen = VocalGenerator()
-    result = gen.synthesize_with_tts(midi, phon)
+    with caplog.at_level("ERROR"):
+        result = gen.synthesize_with_tts(midi, phon)
     assert result == b""
+    assert "Failed to import tts_model" in caplog.text
 
 
-def test_synthesize_failure(monkeypatch, tmp_path):
+def test_synthesize_failure(monkeypatch, tmp_path, caplog):
     from generator.vocal_generator import VocalGenerator
     import types
     import sys
@@ -65,5 +67,34 @@ def test_synthesize_failure(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "tts_model", types.SimpleNamespace(synthesize=fake_synth))
 
     gen = VocalGenerator()
-    result = gen.synthesize_with_tts(midi, phon)
+    with caplog.at_level("ERROR"):
+        result = gen.synthesize_with_tts(midi, phon)
     assert result == b""
+    assert "TTS synthesis failed" in caplog.text
+
+def test_synthesize_with_tts_onnx(monkeypatch, tmp_path, caplog):
+    from generator import vocal_generator
+    from generator.vocal_generator import VocalGenerator
+
+    midi = tmp_path / "dummy.mid"
+    midi.write_bytes(b"MThd")
+    phon = tmp_path / "phon.json"
+    phon.write_text(json.dumps(["a"]))
+    model = tmp_path / "model.onnx"
+
+    calls = {}
+
+    def fake_onnx(m_path, midi_path, phonemes):
+        calls["args"] = (Path(m_path), Path(midi_path), phonemes)
+        return b"Y"
+
+    monkeypatch.setattr(vocal_generator, "synthesize_with_onnx", fake_onnx)
+
+    gen = VocalGenerator()
+    with caplog.at_level("INFO"):
+        result = gen.synthesize_with_tts(midi, phon, onnx_model=model)
+    assert result == b"Y"
+    assert calls["args"] == (model, midi, ["a"])
+    assert "Starting TTS synthesis" in caplog.text
+    assert "Finished TTS synthesis" in caplog.text
+

@@ -1,0 +1,11 @@
+# Minimal configuration for a short sax demo
+sections_to_generate:
+  - "Sax Solo"
+
+part_defaults:
+  melody:
+    generator: sax
+    seed: 123
+    rhythm_key: sax_basic_swing
+    growl: true
+    altissimo: false

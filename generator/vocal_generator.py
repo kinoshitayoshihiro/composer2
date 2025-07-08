@@ -58,8 +58,26 @@ except FileNotFoundError:
 
 
 def text_to_phonemes(text: str) -> List[str]:
-    """Convert Japanese characters to phoneme strings."""
-    return [PHONEME_DICT.get(ch, ch) for ch in text]
+    """Convert Japanese characters to phoneme strings with multi-character support."""
+    phonemes: List[str] = []
+    if not text:
+        return phonemes
+
+    # Sort keys by length in descending order for greedy matching of longer keys
+    keys = sorted(PHONEME_DICT.keys(), key=len, reverse=True)
+    i = 0
+    while i < len(text):
+        matched = False
+        for k in keys:
+            if text.startswith(k, i):
+                phonemes.append(PHONEME_DICT.get(k, k))
+                i += len(k)
+                matched = True
+                break
+        if not matched:
+            phonemes.append(text[i])
+            i += 1
+    return phonemes
 
 
 class PhonemeArticulation(articulations.Articulation):
@@ -327,8 +345,8 @@ class VocalGenerator:
 
         if lyrics_words:
             syllables = self._split_into_syllables(lyrics_words)
+            phonemes = text_to_phonemes("".join(syllables))
             self._assign_syllables_to_part(vocal_part, syllables)
-            phonemes = [PHONEME_DICT.get(ch, ch) for ch in syllables]
             self._assign_phonemes_to_part(vocal_part, phonemes)
             self._apply_vibrato_to_part(vocal_part, phonemes)
 
@@ -347,12 +365,23 @@ class VocalGenerator:
         return phonemes
 
     def synthesize_with_tts(self, midi_file: Path, phoneme_file: Path) -> bytes:
-        """Load phonemes from ``phoneme_file`` and pass along with ``midi_file`` to ``tts_model.synthesize``."""
-        from tts_model import synthesize
+        """Load phonemes from ``phoneme_file`` and synthesize audio with a TTS model.
 
-        with phoneme_file.open("r", encoding="utf-8") as f:
-            phonemes = json.load(f)
-        return synthesize(midi_file, phonemes)
+        Returns empty bytes if ``tts_model`` cannot be imported or if synthesis fails.
+        """
+        try:
+            from tts_model import synthesize  # type: ignore
+        except ImportError as e:
+            logger.error("Failed to import tts_model: %s", e, exc_info=True)
+            return b""
+
+        try:
+            with phoneme_file.open("r", encoding="utf-8") as f:
+                phonemes = json.load(f)
+            return synthesize(midi_file, phonemes)
+        except Exception as e:
+            logger.error("TTS synthesis failed: %s", e, exc_info=True)
+            return b""
 
 
 from .base_part_generator import BasePartGenerator

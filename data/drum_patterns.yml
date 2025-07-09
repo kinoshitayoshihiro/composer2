@@ -280,7 +280,7 @@ drum_patterns:
         offset: 3.75
         duration: 1.0
       - instrument: crash
-      offset: 3.75
+        offset: 3.875
         duration: 1.0
 
   tom_run_short:
@@ -604,18 +604,6 @@ snare_roll_fill:
       offset: 3.875
     - instrument: crash
       offset: 3.75
-
-cymbal_swell_fill:
-  description: "盛り上げ用のクラッシュ連打"
-  pattern_type: "fill"
-  pattern:
-    - instrument: crash
-      offset: 3.5
-    - instrument: crash
-      offset: 3.75
-    - instrument: crash
-      offset: 3.75
-
 
 # --- ゴーストノート多用型 ---
 ghost_hat_ballad:

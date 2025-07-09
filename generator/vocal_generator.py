@@ -125,7 +125,7 @@ def text_to_phonemes(
     return phonemes
 
 
-SYLLABLE_UNIT_RE = re.compile(r"(?:[か-ん]|[が-ぽ])(?:ゃ|ゅ|ょ)?|.")
+SYLLABLE_UNIT_RE = re.compile(r"(?:[か-ん]|[が-ぢ-ぽ])(?:ゃ|ゅ|ょ)?|.")
 
 
 def text_to_syllables(text: str) -> List[str]:
@@ -487,12 +487,12 @@ class VocalGenerator:
 
         if lyrics_words:
             syllables: List[str] = []
+            phoneme_seq: List[Tuple[str, str, float]] = []
             for word in lyrics_words:
-                if word in {"[gliss]", "[trill]"}:
-                    syllables.append(word)
-                else:
-                    for unit in SYLLABLE_UNIT_RE.findall(word):
-                        syllables.extend(text_to_syllables(unit))
+                units = [word] if word in {"[gliss]", "[trill]"} else SYLLABLE_UNIT_RE.findall(word)
+                for unit in units:
+                    syllables.extend(text_to_syllables(unit))
+                    phoneme_seq.extend(text_to_phonemes(unit, self.phoneme_dict))
 
             notes = sorted(vocal_part.flatten().notes, key=lambda n: n.offset)
             if len(syllables) != len(notes):
@@ -503,7 +503,6 @@ class VocalGenerator:
                 )
 
             N = min(len(syllables), len(notes))
-            phoneme_seq = text_to_phonemes("".join(syllables[:N]), self.phoneme_dict)
             for idx in range(N):
                 n = notes[idx]
                 syl = syllables[idx]

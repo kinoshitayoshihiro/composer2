@@ -6,7 +6,10 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     env:
       MODC_BUILD_PLUGIN: OFF
     steps:
@@ -15,14 +18,30 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
+        shell: bash
         run: |
           pip install -r requirements.txt
           pip install -e .[test]
+          pip install mkdocs mkdocs-material mkdocstrings[python]
+      - name: Build SaxPlugin
+        shell: bash
+        run: |
+          pip install pybind11 cmake ninja
+          cmake -S plugins/sax_companion -B sax_build -DMODC_BUILD_PLUGIN=ON
+          cmake --build sax_build --config Release
+      - name: Verify docs
+        shell: bash
+        run: mkdocs build --strict
       - name: Run tests
+        id: run_tests
+        shell: bash
         run: make test
       - name: Generate demo MIDI
+        if: ${{ always() }}
+        shell: bash
         run: make demo-sax
       - uses: actions/upload-artifact@v4
+        if: ${{ steps.run_tests.outcome == 'failure' }}
         with:
-          name: demo-mid
+          name: demo-mid-${{ matrix.os }}
           path: demos/*.mid

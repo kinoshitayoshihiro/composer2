@@ -32,6 +32,7 @@ from music21 import (
 
 import utilities.humanizer as humanizer  # type: ignore
 from utilities.config_loader import load_chordmap_yaml, load_main_cfg
+from utilities import sanitize_chord_label
 
 # --- project utilities ----------------------------------------------------
 from utilities.generator_factory import GenFactory  # type: ignore
@@ -137,6 +138,17 @@ def compose(
         section_start_q = chords_abs[0]["absolute_offset_beats"]
         kick_map: dict[str, list[float]] = {}
         for idx, ch_ev in enumerate(chords_abs):
+            chord_label_raw = ch_ev.get("chord_symbol_for_voicing") or ch_ev.get(
+                "original_chord_label"
+            )
+            sanitized = sanitize_chord_label(chord_label_raw)
+            if sanitized is None or sanitized.lower() == "rest":
+                logger.debug(
+                    "compose: skipping Rest event at %.2f beats",
+                    ch_ev.get("absolute_offset_beats", 0.0),
+                )
+                continue
+
             next_ev = chords_abs[idx + 1] if idx + 1 < len(chords_abs) else None
             block_start = ch_ev["absolute_offset_beats"] - section_start_q
             block_length = ch_ev.get(

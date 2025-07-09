@@ -33,6 +33,7 @@ nav:
   - Humanizer Reference: humanizer.md
   - Live Tips: live_tips.md
   - Vocal Generator: vocal_generator.md
+  - Sax Generator: sax_generator.md
   - API Reference:
       - modular_composer: api/modular_composer.md
 plugins:

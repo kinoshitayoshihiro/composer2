@@ -7,7 +7,7 @@ phonemes via `text_to_phonemes`.  The mapping dictionary is applied
 in greedy order so multi-character keys such as "きゃ" resolve correctly.
 
 ## Vibrato
-`generate_vibrato(duration_qL, depth, rate, step=0.05)` returns a list
+`generate_vibrato(duration_qL, depth, rate, step=0.0625)` returns a list
 of pitch-wheel and aftertouch events.  Depth is specified in semitones
 and rate in cycles per quarter note.
 The events are attached to each note in
@@ -17,7 +17,7 @@ The events are attached to each note in
 ```python
 from utilities.vibrato_engine import generate_vibrato
 
-# example: 1 qL note with 0.5 semitone depth at 5 Hz
+# example: 1 qL note with 0.5 semitone depth at 5 cycles per quarter note
 events = generate_vibrato(1.0, 0.5, 5.0)
 ```
 

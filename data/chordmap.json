@@ -861,6 +861,68 @@
         "tempo_feel_adjust_bpm": 1.5,
         "humanize_profile": "emotional_arc"
       }
+    },
+    "Sax Solo": {
+      "order": 14,
+      "length_in_measures": 8,
+      "tonic": "F",
+      "mode": "mixolydian",
+      "musical_intent": {
+        "emotion": "soaring_passion",
+        "intensity": "high"
+      },
+      "part_settings": {
+        "piano_rh_style_keyword": "piano_solo_support_rh",
+        "piano_lh_style_keyword": "piano_simple_pedal_bass_lh",
+        "piano_velocity_rh": 70,
+        "piano_velocity_lh": 60,
+        "piano_apply_pedal": true,
+        "drum_style_key": "light_cymbal_swell"
+      },
+      "part_specific_hints": {
+        "lyrics_end_actual_beats_from_section_start": 16.0
+      },
+      "chord_progression": [
+        {
+          "label": "F13",
+          "duration_beats": 4
+        },
+        {
+          "label": "Bbmaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "F7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Emaj7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Bbmaj7/D",
+          "duration_beats": 4
+        },
+        {
+          "label": "Gm7",
+          "duration_beats": 4
+        },
+        {
+          "label": "C7",
+          "duration_beats": 4
+        },
+        {
+          "label": "Fmaj7",
+          "duration_beats": 4,
+          "nuance": "final_flourish"
+        }
+      ],
+      "adjusted_start_beat": 420.0,
+      "expression_details": {
+        "dynamics_profile": "f",
+        "base_articulation": "legato",
+        "tempo_feel_adjust_bpm": 0.0,
+        "humanize_profile": "expressive_solo"
+      }
     }
-  }
-}
+  }}

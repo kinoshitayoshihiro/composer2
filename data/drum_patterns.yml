@@ -234,7 +234,7 @@ drum_patterns:
         offset: 3.5
         duration: 1.0
       - instrument: crash
-        offset: 4.0
+        offset: 3.75
         duration: 1.0
 
   snare_roll_fill:
@@ -266,7 +266,7 @@ drum_patterns:
         offset: 3.875
         duration: 1.0
       - instrument: crash
-        offset: 4.0
+        offset: 3.75
         duration: 1.0
 
   cymbal_swell_fill:
@@ -280,7 +280,7 @@ drum_patterns:
         offset: 3.75
         duration: 1.0
       - instrument: crash
-        offset: 4.0
+      offset: 3.75
         duration: 1.0
 
   tom_run_short:
@@ -580,7 +580,7 @@ tom_triplet_fill:
     - instrument: tom3
       offset: 3.5
     - instrument: crash
-      offset: 4.0
+      offset: 3.75
 
 snare_roll_fill:
   description: "サビ前やブレイクで使えるスネアロール"
@@ -603,7 +603,7 @@ snare_roll_fill:
     - instrument: snare
       offset: 3.875
     - instrument: crash
-      offset: 4.0
+      offset: 3.75
 
 cymbal_swell_fill:
   description: "盛り上げ用のクラッシュ連打"
@@ -614,7 +614,7 @@ cymbal_swell_fill:
     - instrument: crash
       offset: 3.75
     - instrument: crash
-      offset: 4.0
+      offset: 3.75
 
 
 # --- ゴーストノート多用型 ---

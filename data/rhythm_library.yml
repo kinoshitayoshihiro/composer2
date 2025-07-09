@@ -1047,7 +1047,7 @@ drum_patterns:
       - {offset: 3.25, duration: 0.25, instrument: tom2}
       - {offset: 3.50, duration: 0.25, instrument: tom3}
       - {offset: 3.75, duration: 0.25, instrument: tom2}
-      - {offset: 4.00, duration: 0.25, instrument: crash}
+      - {offset: 3.75, duration: 0.25, instrument: crash}
 
   fill_8th_crash:
     description: "Crash hits on 8ths"
@@ -1056,7 +1056,7 @@ drum_patterns:
     pattern:
       - {offset: 3.00, duration: 0.5, instrument: crash}
       - {offset: 3.50, duration: 0.5, instrument: crash}
-      - {offset: 4.00, duration: 0.5, instrument: crash}
+      - {offset: 3.75, duration: 0.5, instrument: crash}
 
   # --- 基本グルーヴパターン ---
   calm_backbeat:
@@ -1295,7 +1295,7 @@ drum_patterns:
         offset: 3.5
         duration: 1.0
       - instrument: crash
-        offset: 4.0
+        offset: 3.75
         duration: 1.0
   
   snare_roll_fill:
@@ -1327,7 +1327,7 @@ drum_patterns:
         offset: 3.875
         duration: 1.0
       - instrument: crash
-        offset: 4.0
+        offset: 3.75
         duration: 1.0
   
   cymbal_swell_fill:
@@ -1341,7 +1341,7 @@ drum_patterns:
         offset: 3.75
         duration: 1.0
       - instrument: crash
-        offset: 4.0
+        offset: 3.75
         duration: 1.0
 
   chorus_end_fill:
@@ -1362,7 +1362,7 @@ drum_patterns:
         velocity_factor: 1.1
         duration: 1.0
       - instrument: crash
-        offset: 4.0
+        offset: 3.75
         velocity_factor: 1.2
         duration: 1.0
   

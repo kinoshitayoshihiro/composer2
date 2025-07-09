@@ -557,7 +557,7 @@ def _cmd_sample(args: list[str]) -> None:
         "--vibrato-rate",
         type=float,
         default=5.0,
-        help="Vocal vibrato rate in Hz",
+        help="Vocal vibrato rate in cycles per quarter note",
     )
     ap.add_argument(
         "--enable-articulation",

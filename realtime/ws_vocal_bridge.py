@@ -56,7 +56,12 @@ async def serve(model: WarmModel, host: str = "localhost", port: int = 8765):
         raise RuntimeError("websockets library required")
 
     async def handler(ws):
-        if getattr(ws, "path", "/") != "/vocal":
+        # ``path`` attribute was removed in websockets>=15.  Use
+        # ``ws.request.path`` when available and fall back to ``ws.path`` for
+        # older versions to keep backward compatibility.
+        req = getattr(ws, "request", None)
+        path = getattr(req, "path", getattr(ws, "path", "/"))
+        if path != "/vocal":
             await ws.close()
             return
         async for message in ws:

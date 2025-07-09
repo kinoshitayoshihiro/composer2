@@ -1,7 +1,15 @@
 import argparse
 import subprocess
+import sys
 from pathlib import Path
 import yaml
+
+
+def normalize_section(name: str) -> str:
+    """Normalize section name for matching."""
+    return " ".join(
+        name.replace("_", " ").replace("\u2011", "-").strip().split()
+    )
 
 
 def load_cfg(path: str) -> dict:
@@ -11,25 +19,35 @@ def load_cfg(path: str) -> dict:
 
 def main(cfg_path: str, sections: list[str] | None = None) -> None:
     cfg = load_cfg(cfg_path)
-    target_sections = sections or cfg.get("sections_to_generate", [])
-    if not target_sections and "Sax Solo" in cfg.get("sections_to_generate", []):
+    available = {normalize_section(s): s for s in cfg.get("sections_to_generate", [])}
+
+    target_sections = sections or list(available.keys())
+    if not target_sections and "Sax Solo" in available:
         target_sections = ["Sax Solo"]
+
     for section in target_sections:
-        out_name = f"demo_{section.replace(' ', '_')}.mid"
-        subprocess.run(
-            [
-                "python3",
-                "modular_composer.py",
-                "-m",
-                cfg_path,
-                "--dry-run",
-                "--output-dir",
-                "demos",
-                "--output-filename",
-                out_name,
-            ],
-            check=True,
-        )
+        normalized = normalize_section(section)
+        if normalized not in available:
+            print(f"[warn] unknown section: {section}", file=sys.stderr)
+            continue
+        out_name = f"demo_{normalized.replace(' ', '_')}.mid"
+        try:
+            subprocess.run(
+                [
+                    "python3",
+                    "modular_composer.py",
+                    "-m",
+                    cfg_path,
+                    "--dry-run",
+                    "--output-dir",
+                    "demos",
+                    "--output-filename",
+                    out_name,
+                ],
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            print(f"failed to generate {section}: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":

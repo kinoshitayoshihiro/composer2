@@ -24,13 +24,17 @@ events = generate_vibrato(1.0, 0.5, 5.0)
 ## Expression & Vibrato
 
 `VocalGenerator` exposes articulation parameters so that vibrato and special
-markers can be toggled from the CLI or config file.  Pass
-`--vibrato-depth` and `--vibrato-rate` on the command line, or set them under
-`part_defaults.vocal` in `main_cfg.yml`.
+markers can be toggled from the CLI or config file.  These options are passed to
+the helper functions `generate_vibrato`, `generate_gliss` and
+`generate_trill`:
 
-Use `--no-enable-articulation` to disable vibrato, glissando and trill events.
-The values are passed directly to `generate_vibrato`,
-`generate_gliss`, and `generate_trill`.
+* `--vibrato-depth` – vibrato depth in semitones (default `0.5`)
+* `--vibrato-rate` – oscillation rate in cycles per quarter note (default `5.0`)
+* `--enable-articulation` / `--no-enable-articulation` – toggle vibrato,
+  glissando and trill generation (enabled by default)
+
+The same keys may be placed under `part_defaults.vocal` in `main_cfg.yml` to
+avoid long command-line flags.
 
 ## TTS Integration
 `scripts/synthesize_vocal.py` reads a MIDI file and a JSON list of

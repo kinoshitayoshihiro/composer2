@@ -24,6 +24,7 @@ def test_generate_trill_velocity_range() -> None:
     events = generate_trill(60, 0.5, rate=8.0)
     assert len(events) == 5
     pitches = [p for p, _, _ in events]
+    assert all(p in (59, 61) for p in pitches)
     for i in range(len(pitches) - 1):
         assert pitches[i] != pitches[i + 1]
     velocities = [v for _, _, v in events]

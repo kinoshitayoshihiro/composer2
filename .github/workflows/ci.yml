@@ -49,3 +49,25 @@ jobs:
         with:
           name: demo-mid-${{ matrix.os }}
           path: demos/*.mid
+
+  delta-vocal:
+    runs-on: ubuntu-latest
+    env:
+      PG_DELTA_VOCAL: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -e .[test]
+          pip install mkdocs mkdocs-material mkdocstrings[python]
+      - name: Verify docs
+        run: mkdocs build --strict
+      - name: Run vocal delta tests
+        run: pytest \
+          tests/test_vibrato_engine.py \
+          tests/test_vocal_articulation_integration.py \
+          tests/test_cli_vocal_articulation.py -q

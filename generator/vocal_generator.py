@@ -485,28 +485,14 @@ class VocalGenerator:
                     len(syllables),
                     len(notes),
                 )
-                if syllables and notes:
-                    limit = min(len(syllables), len(notes))
-                    for idx in range(limit):
-                        notes[idx].lyric = syllables[idx]
-                        ph_list = text_to_phonemes(syllables[idx], self.phoneme_dict)
-                        for ph, accent, _dur in ph_list:
-                            notes[idx].articulations.append(
-                                PhonemeArticulation(ph, accent=accent, duration_qL=notes[idx].quarterLength)
-                            )
-                    fallback_ph = [
-                        ph
-                        for i in range(limit)
-                        for ph in text_to_phonemes(syllables[i], self.phoneme_dict)
-                    ]
-                    self._apply_vibrato_to_part(vocal_part, fallback_ph)
-                else:
-                    logger.warning("VocalGen: Empty syllables or notes; cannot assign fallback.")
-            else:
-                phonemes = text_to_phonemes("".join(syllables), self.phoneme_dict)
-                self._assign_syllables_to_part(vocal_part, syllables)
-                self._assign_phonemes_to_part(vocal_part, phonemes)
-                self._apply_vibrato_to_part(vocal_part, phonemes)
+            phoneme_seq = text_to_phonemes("".join(syllables), self.phoneme_dict)
+            for n, syl, (ph, accent, _dur) in zip(notes, syllables, phoneme_seq):
+                n.lyric = syl
+                n.articulations.append(
+                    PhonemeArticulation(ph, accent=accent, duration_qL=n.quarterLength)
+                )
+            if phoneme_seq:
+                self._apply_vibrato_to_part(vocal_part, phoneme_seq)
 
             # articulation markers
             if self.enable_articulation:

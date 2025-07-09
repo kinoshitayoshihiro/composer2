@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from statistics import median
-from typing import List, Dict
+from typing import List, Dict, Iterable
 from collections import deque
 import math
 
@@ -148,6 +148,11 @@ class TempoMap:
         if not cleaned:
             cleaned = [{"beat": 0.0, "bpm": 120.0}]
         self.events = cleaned
+
+    def __iter__(self) -> Iterable[tuple[float, float]]:
+        """Iterate over (beat, bpm) pairs in chronological order."""
+        for ev in self.events:
+            yield ev["beat"], ev["bpm"]
 
     def get_bpm(self, beat: float) -> float:
         curve = self.events

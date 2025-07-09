@@ -723,11 +723,13 @@ class GuitarGenerator(BasePartGenerator):
         result: list[int] = []
         for i in range(128):
             pos = i / 127 * (len(curve) - 1)
-            idx0 = int(math.floor(pos))
+            idx0 = int(round(pos))
             idx1 = min(len(curve) - 1, idx0 + 1)
             frac = pos - idx0
             val = curve[idx0] * (1 - frac) + curve[idx1] * frac
-            result.append(max(0, min(127, int(round(val)))))
+            rounded = round(val)
+            clipped = min(curve[-1] - 1, rounded)
+            result.append(max(0, min(127, int(clipped))))
         return result
 
     def _load_velocity_presets(self) -> None:

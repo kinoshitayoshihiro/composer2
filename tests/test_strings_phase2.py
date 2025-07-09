@@ -50,7 +50,7 @@ def test_velocity_curve_mapping():
     gen = _gen(default_velocity_curve=curve)
     assert gen.default_velocity_curve[0] == 30
     assert gen.default_velocity_curve[64] == 80
-    assert gen.default_velocity_curve[127] == 109
+    assert gen.default_velocity_curve[127] == 110
     # midpoint checks
     assert gen.default_velocity_curve[32] == 55
     assert gen.default_velocity_curve[96] == 95

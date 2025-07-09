@@ -489,10 +489,8 @@ class VocalGenerator:
             syllables: List[str] = []
             phoneme_seq: List[Tuple[str, str, float]] = []
             for word in lyrics_words:
-                units = [word] if word in {"[gliss]", "[trill]"} else SYLLABLE_UNIT_RE.findall(word)
-                for unit in units:
-                    syllables.extend(text_to_syllables(unit))
-                    phoneme_seq.extend(text_to_phonemes(unit, self.phoneme_dict))
+                syllables.extend(text_to_syllables(word))
+                phoneme_seq.extend(text_to_phonemes(word, self.phoneme_dict))
 
             notes = sorted(vocal_part.flatten().notes, key=lambda n: n.offset)
             if len(syllables) != len(notes):

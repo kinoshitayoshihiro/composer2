@@ -62,7 +62,10 @@ def merge_cc_events(
     for t, c, v in more_set:
         result[(float(t), int(c))] = int(v)
 
-    merged = [(t, c, v) for (t, c), v in sorted(result.items())]
+    merged = [
+        (t, c, v)
+        for (t, c), v in sorted(result.items(), key=lambda x: (x[0][0], x[0][1]))
+    ]
     if as_dict:
         return [{"time": t, "cc": c, "val": v} for (t, c, v) in merged]
     return merged

@@ -15,6 +15,11 @@ def generate_vibrato(
 ) -> List[Event]:
     """Return vibrato pitch bend and aftertouch events.
 
+    Pitch bend (``"pitch_wheel"``) and CC74 aftertouch events are produced
+    alternately starting at ``time=0`` with ``step_qL`` spacing.  ``depth`` is
+    interpreted in semitones assuming a ±2 range for pitch bends and is also
+    mapped to the CC74 value.
+
     Parameters
     ----------
     duration_qL:
@@ -24,8 +29,8 @@ def generate_vibrato(
     rate:
         Oscillation rate in cycles per quarter note.
     step_qL:
-        Spacing for the waveform in quarterLength. Defaults to one 64th note
-        (0.0625).
+        Spacing for the vibrato waveform in quarterLength. Defaults to one 64th
+        note (0.0625).
     """
     events: List[Event] = []
     if duration_qL <= 0 or step_qL <= 0:
@@ -49,7 +54,11 @@ def generate_vibrato(
 def generate_gliss(
     start_pitch: int, end_pitch: int, duration_qL: float
 ) -> List[Tuple[int, float]]:
-    """Return pitch values for a glissando linearly spaced every 32nd note."""
+    """Return pitch values for a glissando.
+
+    Values are linearly interpolated from ``start_pitch`` to ``end_pitch`` at
+    32nd-note spacing.
+    """
 
     step = 0.125
     if duration_qL <= 0 or start_pitch == end_pitch:
@@ -68,7 +77,12 @@ def generate_gliss(
 def generate_trill(
     pitch: int, duration_qL: float, rate: float = 10.0
 ) -> List[Tuple[int, float, int]]:
-    """Return a sequence of trilled notes as (pitch, time, velocity)."""
+    """Return a sequence of trilled notes.
+
+    Notes alternate one semitone above and below ``pitch`` at the given ``rate``
+    in cycles per quarter note. Velocities are randomized by ±5 around 64 for a
+    slightly human feel.  Each tuple in the result is ``(pitch, time, velocity)``.
+    """
 
     if duration_qL <= 0 or rate <= 0:
         return []
@@ -77,9 +91,9 @@ def generate_trill(
     rng = random.Random(0)
     events: List[Tuple[int, float, int]] = []
     t = 0.0
-    use_upper = False
+    use_upper = True
     while t <= duration_qL + 1e-9:
-        p = pitch + (1 if use_upper else 0)
+        p = pitch + (1 if use_upper else -1)
         vel = max(1, min(127, 64 + rng.randint(-5, 5)))
         events.append((p, round(t, 6), vel))
         use_upper = not use_upper

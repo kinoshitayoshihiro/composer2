@@ -2358,40 +2358,27 @@ class GuitarGenerator(BasePartGenerator):
         """Render and convolve the last composed part."""
         from tempfile import NamedTemporaryFile
 
+        from utilities.audio_render import render_part_audio
         from utilities import mix_profile
-        from utilities.convolver import render_wav
 
         part = getattr(self, "_last_part", None)
         if part is None:
             part = self.compose(section_data=getattr(self, "_last_section", {}))
 
-        tmp_mid = NamedTemporaryFile(suffix=".mid", delete=False)
-        part.write("midi", fp=tmp_mid.name)
-
         if realtime:
-            self.export_audio_old(tmp_mid.name, out_path or "out.wav", realtime=True, **synth_opts)
-            Path(tmp_mid.name).unlink(missing_ok=True)
+            with NamedTemporaryFile(suffix=".mid", delete=False) as t:
+                part.write("midi", fp=t.name)
+                self.export_audio_old(t.name, out_path or "out.wav", realtime=True, **synth_opts)
+                Path(t.name).unlink(missing_ok=True)
             return None
 
-        if ir_name is None:
-            ir_file = getattr(part.metadata, "ir_file", None)
-        else:
-            p = Path(ir_name)
-            if p.is_file():
-                ir_file = str(p)
-            else:
-                ir_file = self.tone_shaper.ir_map.get(ir_name)
-                if ir_file is None:
-                    chain = mix_profile.get_mix_chain(ir_name, {}) or {}
-                    ir_file = chain.get("ir_file")
-
-        if out_path is None:
-            out_path = "guitar.wav"
-
-        out = render_wav(tmp_mid.name, ir_file or "", str(out_path), sf2=sf2, **synth_opts)
-        if part.metadata is not None and out is not None:
-            setattr(part.metadata, "rendered_wav", str(out))
-        Path(tmp_mid.name).unlink(missing_ok=True)
+        out = render_part_audio(
+            part,
+            ir_name=ir_name,
+            out_path=out_path or "guitar.wav",
+            sf2=sf2,
+            **synth_opts,
+        )
         return out
 
 

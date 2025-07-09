@@ -83,7 +83,8 @@ def _merge_preset_dict(dest: dict, src: dict) -> None:
         if p.is_file():
             dest["ir_file"] = str(p)
         else:
-            logger.warning("IR file missing: %s", p)
+            if os.getenv("IGNORE_MISSING_IR", "0") != "1":
+                logger.warning("IR file missing: %s", p)
             dest["ir_file"] = None
     if "gain_db" in src:
         dest["gain_db"] = float(src["gain_db"])
@@ -211,7 +212,8 @@ class ToneShaper:
         for name, path_str in ir_raw.items():
             p = Path(path_str)
             if not p.is_file():
-                logger.warning("IR file missing: %s", path_str)
+                if os.getenv("IGNORE_MISSING_IR", "0") != "1":
+                    logger.warning("IR file missing: %s", path_str)
             ir_map[name] = p
 
         return cls(preset_map=preset_map, ir_map=ir_map, rules=rules)
@@ -534,6 +536,8 @@ class ToneShaper:
             return None
         if ir.is_file():
             return ir
+        if os.getenv("IGNORE_MISSING_IR", "0") == "1":
+            return None
         if not fallback_ok:
             raise FileNotFoundError(str(ir))
         logger.warning("IR file missing: %s", ir)

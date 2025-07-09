@@ -23,6 +23,7 @@ def test_export_mix_json(tmp_path):
     assert set(entry).issuperset({"extra_cc", "ir_file", "preset", "fx_cc"})
     assert entry["ir_file"] == str(tmp_path / "ir.wav")
     assert "fx_envelope" not in entry
+    assert "rendered_wav" not in entry
     times = [e["time"] for e in entry["fx_cc"]]
     assert times == sorted(times)
 
@@ -39,3 +40,20 @@ def test_export_mix_json_fx_env(tmp_path):
     export_mix_json(part, out)
     data = json.loads(out.read_text())
     assert data["x"]["fx_envelope"] == {"0": {"cc": 91}}
+
+
+def test_export_mix_json_strings_rendered(tmp_path):
+    part = stream.Part()
+    part.id = "violin_i"
+    from music21 import metadata
+    part.metadata = metadata.Metadata()
+    part.metadata.ir_file = tmp_path / "ir.wav"
+    part.metadata.rendered_wav = tmp_path / "out.wav"
+    (tmp_path / "ir.wav").write_text("dummy")
+    (tmp_path / "out.wav").write_text("dummy")
+    out = tmp_path / "mix3.json"
+    export_mix_json(part, out)
+    data = json.loads(out.read_text())
+    entry = data["violin_i"]
+    assert entry["ir_file"] == str(tmp_path / "ir.wav")
+    assert entry["rendered_wav"] == str(tmp_path / "out.wav")

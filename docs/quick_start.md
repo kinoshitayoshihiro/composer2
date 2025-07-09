@@ -92,3 +92,12 @@ part_params:
       start: 40
       end: 90
 ```
+
+### Strings IR レンダリング例
+
+```python
+from generator.strings_generator import StringsGenerator
+gen = StringsGenerator()
+parts = gen.compose(section_data={"section_name": "A", "q_length": 1.0})
+gen.export_audio(ir_name="hall", out_path="out/strings_A.wav")
+```

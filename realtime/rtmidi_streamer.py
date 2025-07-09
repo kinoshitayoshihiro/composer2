@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import statistics
 import time
+import threading
 from collections.abc import Callable
 from typing import Any, List
 
@@ -28,17 +29,15 @@ class RtMidiStreamer:
             raise RuntimeError("python-rtmidi required")
         self.port_name = port_name
         self.generator = generator
-        self._midi = rtmidi.MidiOut()
-        ports = self._midi.get_ports()
-        if port_name not in ports:
-            raise RuntimeError(f"Port '{port_name}' not found")
-        self._midi.open_port(ports.index(port_name))
         self.logger = logging.getLogger(__name__)
         self.bpm = 120.0
+        self._midi: Any | None = None
         self._buf: LiveBuffer | None = None
         self._context: List[dict[str, Any]] = []
         self._latencies: List[float] = []
         self._last_log = time.perf_counter()
+        self._running = False
+        self._thread: threading.Thread | None = None
 
     @staticmethod
     def list_ports() -> list[str]:
@@ -46,18 +45,50 @@ class RtMidiStreamer:
             return []
         return rtmidi.MidiOut().get_ports()
 
-    def start(self, bpm: float, buffer_bars: int, callback: Callable[[int], None] | None = None) -> None:
+    def start(
+        self,
+        bpm: float,
+        buffer_bars: int,
+        callback: Callable[[int], None] | None = None,
+    ) -> None:
+        """Open MIDI port and begin background streaming."""
+        if self._running:
+            return
         self.bpm = float(bpm)
         self._callback = callback
         self._buf = LiveBuffer(self._next_bar, buffer_ahead=max(1, int(buffer_bars)))
         self._bar = 0
         self._latencies.clear()
         self._last_log = time.perf_counter()
+        self._midi = rtmidi.MidiOut()
+        ports = self._midi.get_ports()
+        if self.port_name not in ports:
+            raise RuntimeError(f"Port '{self.port_name}' not found")
+        self._midi.open_port(ports.index(self.port_name))
+        self._running = True
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
 
     def stop(self) -> None:
+        """Stop streaming and close the MIDI port."""
+        self._running = False
+        if self._thread is not None:
+            self._thread.join()
+            self._thread = None
         if self._buf is not None:
             self._buf.shutdown()
             self._buf = None
+        if self._midi is not None:
+            try:
+                self._midi.close_port()
+            except Exception:
+                pass
+            self._midi = None
+        if self._latencies:
+            std_ms = statistics.pstdev(self._latencies) * 1000.0
+            max_ms = max(self._latencies) * 1000.0
+            self.logger.info("jitter stddev %.1f ms max %.1f ms", std_ms, max_ms)
+            self._latencies.clear()
 
     def _next_bar(self, _idx: int) -> list[dict[str, Any]]:
         events = self.generator.step(self._context)
@@ -95,3 +126,15 @@ class RtMidiStreamer:
             self.logger.info("jitter %.1f ms", std_ms)
             self._latencies.clear()
             self._last_log = now
+
+    # --------------------------------------------------------------
+    # Internal helpers
+    # --------------------------------------------------------------
+    def _run_loop(self) -> None:
+        beat_sec = 60.0 / self.bpm
+        bar_len = beat_sec * 4.0
+        while self._running:
+            start = time.perf_counter()
+            self.on_tick()
+            delay = bar_len - (time.perf_counter() - start)
+            time.sleep(max(0.0, delay))

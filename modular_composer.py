@@ -94,6 +94,8 @@ def compose(
     use_processes: bool = False,
     buffer_ahead: int = 0,
     parallel_bars: int = 1,
+    expr_curve: str = "cubic-in",
+    kick_leak_jitter: int = 0,
 ) -> tuple[stream.Score, list[dict[str, Any]]]:
     if tempo_map is None:
         part_gens = GenFactory.build_from_config(main_cfg, rhythm_lib)
@@ -287,8 +289,8 @@ def compose(
                 p_stream,
                 prof,
                 global_settings={
-                    "expr_curve": args.expr_curve,
-                    "kick_leak_jitter": args.kick_leak_jitter,
+                    "expr_curve": expr_curve,
+                    "kick_leak_jitter": kick_leak_jitter,
                 },
             )
 
@@ -299,8 +301,8 @@ def compose(
             score,
             global_prof,
             global_settings={
-                "expr_curve": args.expr_curve,
-                "kick_leak_jitter": args.kick_leak_jitter,
+                "expr_curve": expr_curve,
+                "kick_leak_jitter": kick_leak_jitter,
             },
         )
 
@@ -562,6 +564,8 @@ def main_cli() -> None:
         use_processes=args.process_pool,
         buffer_ahead=args.buffer_ahead,
         parallel_bars=args.parallel_bars,
+        expr_curve=args.expr_curve,
+        kick_leak_jitter=args.kick_leak_jitter,
     )
 
     if args.counterline:

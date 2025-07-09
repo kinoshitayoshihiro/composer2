@@ -125,6 +125,15 @@ def text_to_phonemes(
     return phonemes
 
 
+SYLLABLE_UNIT_RE = re.compile(r"(?:[か-ん]|[が-ぽ])(?:ゃ|ゅ|ょ)?|.")
+
+
+def text_to_syllables(text: str) -> List[str]:
+    """Return syllable units for *text* using :data:`SYLLABLE_UNIT_RE`."""
+
+    return SYLLABLE_UNIT_RE.findall(text)
+
+
 class PhonemeArticulation(articulations.Articulation):
     """Articulation storing phoneme, accent and note duration."""
 
@@ -477,7 +486,14 @@ class VocalGenerator:
             vocal_part.insert(el_item_final.offset, el_item_final)
 
         if lyrics_words:
-            syllables = self._split_into_syllables(lyrics_words)
+            syllables: List[str] = []
+            for word in lyrics_words:
+                if word in {"[gliss]", "[trill]"}:
+                    syllables.append(word)
+                else:
+                    for unit in SYLLABLE_UNIT_RE.findall(word):
+                        syllables.extend(text_to_syllables(unit))
+
             notes = sorted(vocal_part.flatten().notes, key=lambda n: n.offset)
             if len(syllables) != len(notes):
                 logger.warning(
@@ -485,14 +501,22 @@ class VocalGenerator:
                     len(syllables),
                     len(notes),
                 )
-            phoneme_seq = text_to_phonemes("".join(syllables), self.phoneme_dict)
-            for n, syl, (ph, accent, _dur) in zip(notes, syllables, phoneme_seq):
+
+            N = min(len(syllables), len(notes))
+            phoneme_seq = text_to_phonemes("".join(syllables[:N]), self.phoneme_dict)
+            for idx in range(N):
+                n = notes[idx]
+                syl = syllables[idx]
                 n.lyric = syl
+                if idx < len(phoneme_seq):
+                    ph, accent, _dur = phoneme_seq[idx]
+                else:
+                    ph, accent = syl, "L"
                 n.articulations.append(
                     PhonemeArticulation(ph, accent=accent, duration_qL=n.quarterLength)
                 )
             if phoneme_seq:
-                self._apply_vibrato_to_part(vocal_part, phoneme_seq)
+                self._apply_vibrato_to_part(vocal_part, phoneme_seq[:N])
 
             # articulation markers
             if self.enable_articulation:

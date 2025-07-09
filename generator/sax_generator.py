@@ -84,11 +84,12 @@ class SaxGenerator(MelodyGenerator):
         for k, v in DEFAULT_PHRASE_PATTERNS.items():
             rh_lib.setdefault(k, v)
 
+        self.seed = seed
         if seed is not None:
             random.seed(seed)
             try:
-                import numpy as _np  # type: ignore
-                _np.random.seed(seed)
+                import numpy as np  # type: ignore
+                np.random.seed(seed)
             except Exception:
                 pass
 
@@ -261,6 +262,14 @@ class SaxGenerator(MelodyGenerator):
         return part
 
     def compose(self, section_data=None):  # type: ignore[override]
+        if self.seed is not None:
+            random.seed(self.seed)
+            try:
+                import numpy as np  # type: ignore
+                np.random.seed(self.seed)
+            except Exception:
+                pass
+
         if section_data:
             mi = section_data.get("musical_intent", {})
             pat_key = self._choose_pattern_key(

@@ -1957,3 +1957,26 @@ sections:
         articulation: tenuto
       original_chord_label: F/A
       absolute_offset_beats: 416.0
+  Sax Solo:
+    order: 14
+    length_in_measures: 8
+    musical_intent:
+      emotion: soaring_passion
+      intensity: high
+    expression_details:
+      section_tonic: F
+      section_mode: mixolydian
+      humanize_profile: expressive_solo
+      dynamics_profile: f
+      tempo_feel_adjust_bpm: 0.0
+      base_articulation: legato
+    part_settings:
+      piano_rh_style_keyword: piano_solo_support_rh
+      piano_lh_style_keyword: piano_simple_pedal_bass_lh
+      piano_velocity_rh: 70
+      piano_velocity_lh: 60
+      piano_apply_pedal: true
+      drum_style_key: light_cymbal_swell
+    part_specific_hints:
+      lyrics_end_actual_beats_from_section_start: 16.0
+    processed_chord_events: []

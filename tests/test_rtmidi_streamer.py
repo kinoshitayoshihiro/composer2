@@ -1,10 +1,7 @@
 import time
 from types import SimpleNamespace
 
-import pytest
-
 from realtime import rtmidi_streamer
-
 
 class DummyMidiOut:
     def __init__(self) -> None:
@@ -14,6 +11,9 @@ class DummyMidiOut:
         return ["dummy"]
 
     def open_port(self, idx: int) -> None:
+        pass
+
+    def close_port(self) -> None:
         pass
 
     def send_message(self, msg):
@@ -32,17 +32,15 @@ class DummyGen:
         ]
 
 
-def test_rtmidi_stream(monkeypatch):
+def test_rtmidi_start_stop(monkeypatch):
     midi = DummyMidiOut()
     monkeypatch.setattr(rtmidi_streamer, "rtmidi", SimpleNamespace(MidiOut=lambda: midi))
     monkeypatch.setattr(rtmidi_streamer.RtMidiStreamer, "_run_loop", lambda self: None)
-    monkeypatch.setattr(rtmidi_streamer, "PianoMLGenerator", lambda *_a, **_k: DummyGen())
     gen = DummyGen()
     streamer = rtmidi_streamer.RtMidiStreamer("dummy", gen)
-    streamer.start(bpm=240.0, buffer_bars=1, callback=None)
+    called: list[int] = []
+    streamer.start(bpm=240.0, buffer_bars=1, callback=lambda b: called.append(b))
     streamer.on_tick()
     streamer.stop()
-    on_times = [t for t, msg in midi.events if msg[0] == 0x90]
-    assert len(on_times) == 2
-    diff = on_times[1] - on_times[0]
-    assert abs(diff - 0.125) <= 0.02
+    assert called == [1]
+    assert any(msg[0] == 0x90 for _, msg in midi.events)

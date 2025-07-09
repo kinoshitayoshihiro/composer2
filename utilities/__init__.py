@@ -197,6 +197,8 @@ except ModuleNotFoundError:
     ir_renderer = None  # type: ignore
 if importlib_util.find_spec("numpy") is not None:
     from .convolver import load_ir, convolve_ir, render_wav
+    from .audio_render import render_part_audio
+    from .effect_preset_loader import EffectPresetLoader
 else:
     import types, sys
 
@@ -216,6 +218,9 @@ else:
     load_ir = convolver_stub.load_ir
     convolve_ir = convolver_stub.convolve_ir
     render_wav = convolver_stub.render_wav
+    def render_part_audio(*_a: Any, **_k: Any) -> None:
+        _missing()
+    EffectPresetLoader = None  # type: ignore
 
 __all__ = [
     "MIN_NOTE_DURATION_QL",
@@ -266,6 +271,8 @@ __all__ = [
     "load_ir",
     "convolve_ir",
     "render_wav",
+    "render_part_audio",
+    "EffectPresetLoader",
 ]
 
 

@@ -41,7 +41,10 @@ def export_mix_json(parts, path: str) -> None:
             if ir_file is not None:
                 entry["ir_file"] = str(Path(ir_file))
             rendered = getattr(meta, "rendered_wav", None)
-            if rendered is not None:
+            is_strings = any(
+                kw in name.lower() for kw in ["violin", "cello", "viola", "bass", "strings"]
+            )
+            if rendered is not None and is_strings:
                 entry["rendered_wav"] = str(rendered)
             fx_env = getattr(meta, "fx_envelope", None)
             if fx_env:

@@ -832,10 +832,38 @@ def _cmd_ir_render(args: list[str]) -> None:
     ap.add_argument("ir", type=Path)
     ap.add_argument("-o", "--out", type=Path, default=Path("out.wav"))
     ap.add_argument("--sf2", type=Path, default=None)
+    ap.add_argument("--part", choices=["auto", "guitar", "strings"], default="auto")
     ns = ap.parse_args(args)
-    from utilities.convolver import render_wav
+    import importlib.util
+    import sys
+    from utilities.audio_env import has_fluidsynth
 
-    render_wav(str(ns.midi), str(ns.ir), str(ns.out), sf2=str(ns.sf2) if ns.sf2 else None)
+    if not has_fluidsynth() or importlib.util.find_spec("soxr") is None:
+        print("fluidsynth and soxr are required for IR rendering", file=sys.stderr)
+        raise SystemExit(78)
+
+    part_type = ns.part
+    if part_type == "auto":
+        name = ns.midi.stem.lower()
+        if any(k in name for k in ["violin", "cello", "viola", "bass", "strings"]):
+            part_type = "strings"
+        else:
+            part_type = "guitar"
+
+    if part_type == "strings":
+        from generator.strings_generator import StringsGenerator
+        from music21 import converter
+
+        gen = StringsGenerator(global_settings={}, part_name="strings")
+        score = converter.parse(ns.midi)
+        parts = {p.id or f"p{i}": p for i, p in enumerate(score.parts)}
+        gen._last_parts = parts  # type: ignore[attr-defined]
+        gen._last_section = {"section_name": ns.midi.stem}  # type: ignore[attr-defined]
+        gen.export_audio(ir_name=str(ns.ir), out_path=ns.out, sf2=str(ns.sf2) if ns.sf2 else None)
+    else:
+        from utilities.convolver import render_wav
+
+        render_wav(str(ns.midi), str(ns.ir), str(ns.out), sf2=str(ns.sf2) if ns.sf2 else None)
     print(f"wrote {ns.out}")
 
 

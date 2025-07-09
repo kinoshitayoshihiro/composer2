@@ -57,7 +57,8 @@ from utilities.core_music_utils import (
 )
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 from pathlib import Path
-from utilities.cc_tools import finalize_cc_events
+from utilities.cc_tools import finalize_cc_events, merge_cc_events
+from utilities.effect_preset_loader import EffectPresetLoader
 from utilities.cc_map import cc_map, load_cc_map
 from utilities.expression_map import load_expression_map, resolve_expression
 
@@ -207,6 +208,35 @@ class StringsGenerator(BasePartGenerator):
         self.expression_maps = self._load_expression_maps(expression_maps_path)
         self.emotion_map = self._load_emo_map(expression_maps_path)
         self.expression_map = load_expression_map(expression_maps_path)
+
+    # ------------------------------------------------------------------
+    # Effect utilities
+    # ------------------------------------------------------------------
+    def apply_effect_preset(self, part: stream.Part, name: str) -> None:
+        """Apply effect preset ``name`` to *part*."""
+        preset = EffectPresetLoader.get(name)
+        if not preset:
+            return
+        meta = getattr(part, "metadata", None)
+        if meta is None:
+            from music21 import metadata as m21metadata
+
+            part.metadata = m21metadata.Metadata()
+            meta = part.metadata
+        ir_path = preset.get("ir_file")
+        if ir_path:
+            meta.ir_file = str(ir_path)
+        cc_map_p = preset.get("cc") or {}
+        new_events = set()
+        for k, v in cc_map_p.items():
+            try:
+                cc_num = int(k)
+                val = int(v)
+            except Exception:
+                continue
+            new_events.add((0.0, cc_num, val))
+        base = getattr(part, "extra_cc", [])
+        part.extra_cc = merge_cc_events(base, new_events)
 
     # ------------------------------------------------------------------
     # Public API
@@ -1244,3 +1274,67 @@ class StringsGenerator(BasePartGenerator):
             base_events = getattr(p, "_extra_cc", set())
             merged = merge_cc_events(base_events, events)
             p._extra_cc = set(merged)
+
+    def export_audio(
+        self,
+        ir_name: str | None = None,
+        out_path: str | Path | None = None,
+        *,
+        sf2: str | None = None,
+        **mix_opts,
+    ) -> Path:
+        """Render the last composed parts to WAV applying ``ir_name``."""
+
+        from utilities.audio_render import render_part_audio
+
+        if self._last_parts is None:
+            self.compose(section_data=getattr(self, "_last_section", {}))
+        parts = self._last_parts or {}
+        if not parts:
+            raise ValueError("No parts to render")
+
+        sec = getattr(self, "_last_section", {})
+        if out_path is None:
+            name = sec.get("section_name", "section")
+            out_path = Path("out") / f"strings_{name}.wav"
+
+        return render_part_audio(parts, ir_name=ir_name, out_path=out_path, sf2=sf2, **mix_opts)
+
+
+def generate_cc_automation(
+    part: stream.Part,
+    length_ql: float,
+    curve: str,
+    cc: int = 11,
+) -> None:
+    """Add controller automation curve to ``part``."""
+
+    steps = max(2, int(math.ceil(length_ql)))
+    curve = str(curve)
+    if curve == "cresc_linear":
+        start_val, end_val = 40, 90
+        shape = "linear"
+    elif curve == "dim_exp":
+        start_val, end_val = 90, 40
+        shape = "exp"
+    elif curve == "vibrato_sine":
+        start_val, end_val = 60, 100
+        shape = "sine"
+    else:
+        return
+
+    def _interp(x: float) -> float:
+        if shape == "linear":
+            return x
+        if shape == "exp":
+            return x * x
+        if shape == "sine":
+            return (1 - math.cos(math.pi * x)) / 2
+        return x
+
+    events = [
+        (length_ql * (i / steps), cc, int(round(start_val + (end_val - start_val) * _interp(i / steps))))
+        for i in range(steps + 1)
+    ]
+    base = getattr(part, "extra_cc", set())
+    part.extra_cc = merge_cc_events(base, events)

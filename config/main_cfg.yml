@@ -132,6 +132,13 @@ section_overrides:
     humanize_profile: "soft_reflective"
   "Outro":
     humanize_profile: "gentle_push"
+  "Sax Solo":
+    time_signature: "4/4"
+    tempo_bpm: 96
+    humanize_profile: "gentle_push"
+    melody:
+      generator: sax
+      rhythm_key: sax_basic_swing
 
 # ---------------- 2. Sections to Generate ----------------
 sections_to_generate:
@@ -148,6 +155,7 @@ sections_to_generate:
   - "Bridge 2"
   - "Verse 4"
   - "Chorus 4"
+  - "Sax Solo"
 
 # ------ 5. Humanize Profiles (central registry) ------
 # humanizer.py で参照される辞書キーと対応。ここにまとめて記述しておくと

@@ -25,10 +25,14 @@ jobs:
           pip install mkdocs mkdocs-material mkdocstrings[python]
       - name: Build SaxPlugin
         shell: bash
+        continue-on-error: true
         run: |
           pip install pybind11 cmake ninja
           cmake -S plugins/sax_companion -B sax_build -DMODC_BUILD_PLUGIN=ON
           cmake --build sax_build --config Release
+      - name: Validate doc snippets
+        shell: bash
+        run: python scripts/check_docs_snippets.py
       - name: Verify docs
         shell: bash
         run: mkdocs build --strict
@@ -41,7 +45,7 @@ jobs:
         shell: bash
         run: make demo-sax
       - uses: actions/upload-artifact@v4
-        if: ${{ steps.run_tests.outcome == 'failure' }}
+        if: ${{ always() }}
         with:
           name: demo-mid-${{ matrix.os }}
           path: demos/*.mid

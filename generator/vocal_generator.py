@@ -500,18 +500,9 @@ class VocalGenerator:
                     len(notes),
                 )
 
-            N = min(len(syllables), len(notes))
-            for idx in range(N):
-                n = notes[idx]
-                syl = syllables[idx]
-                n.lyric = syl
-                if idx < len(phoneme_seq):
-                    ph, accent, _dur = phoneme_seq[idx]
-                else:
-                    ph, accent = syl, "L"
-                n.articulations.append(
-                    PhonemeArticulation(ph, accent=accent, duration_qL=n.quarterLength)
-                )
+            N = min(len(notes), len(syllables))
+            self._assign_syllables_to_part(vocal_part, syllables[:N])
+            self._assign_phonemes_to_part(vocal_part, phoneme_seq[:N])
             if phoneme_seq:
                 self._apply_vibrato_to_part(vocal_part, phoneme_seq[:N])
 

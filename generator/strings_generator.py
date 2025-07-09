@@ -398,13 +398,16 @@ class StringsGenerator(BasePartGenerator):
             curve = interpolate_7pt(curve)
         if len(curve) != 128:
             result: list[int] = []
+            default_curve = curve
             for i in range(128):
-                pos = i / 127 * (len(curve) - 1)
-                idx0 = int(pos)
-                idx1 = min(len(curve) - 1, idx0 + 1)
+                pos = i / 127 * (len(default_curve) - 1)
+                idx0 = int(round(pos))
+                idx1 = min(len(default_curve) - 1, idx0 + 1)
                 frac = pos - idx0
-                val = curve[idx0] * (1 - frac) + curve[idx1] * frac
-                result.append(int(round(val)))
+                interpolated = default_curve[idx0] * (1 - frac) + default_curve[idx1] * frac
+                rounded = round(interpolated)
+                clipped = min(default_curve[-1] - 1, rounded)
+                result.append(int(max(0, min(127, clipped))))
             curve = result
         return [max(0, min(127, int(v))) for v in curve]
 

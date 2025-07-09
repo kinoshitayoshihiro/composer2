@@ -7,6 +7,7 @@ from typing import Any
 from utilities.scale_registry import ScaleRegistry
 from utilities.cc_tools import add_cc_events
 import random
+import numpy as np
 
 from music21 import instrument, articulations, spanner, stream, note
 import math
@@ -87,11 +88,7 @@ class SaxGenerator(MelodyGenerator):
         self.seed = seed
         if seed is not None:
             random.seed(seed)
-            try:
-                import numpy as np  # type: ignore
-                np.random.seed(seed)
-            except Exception:
-                pass
+            np.random.seed(seed)
 
         if "rng" not in kwargs:
             kwargs["rng"] = random.Random(seed)
@@ -264,11 +261,7 @@ class SaxGenerator(MelodyGenerator):
     def compose(self, section_data=None):  # type: ignore[override]
         if self.seed is not None:
             random.seed(self.seed)
-            try:
-                import numpy as np  # type: ignore
-                np.random.seed(self.seed)
-            except Exception:
-                pass
+            np.random.seed(self.seed)
 
         if section_data:
             mi = section_data.get("musical_intent", {})

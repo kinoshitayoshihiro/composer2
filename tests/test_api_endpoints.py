@@ -2,6 +2,8 @@ import base64
 import asyncio
 
 import pytest
+
+pytest.importorskip("pytest_asyncio")
 import httpx
 from httpx import AsyncClient
 from fastapi.testclient import TestClient

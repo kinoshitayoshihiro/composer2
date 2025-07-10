@@ -134,13 +134,22 @@ def _apply_tpdf_dither(data: np.ndarray, bit_depth: int) -> np.ndarray:
         return data
     if bit_depth not in (16, 24):
         return data
-    lsb = 1.0 / (2 ** (bit_depth - 1))
+    if bit_depth == 24:
+        # soundfile expects 24-bit PCM data in an int32 container
+        lsb = 1.0 / (2**31)
+    else:
+        lsb = 1.0 / (2**15)
     noise = (np.random.random(data.shape) - 0.5) + (np.random.random(data.shape) - 0.5)
     return data + noise * lsb
 
 
 def _fade_tail(
-    data: np.ndarray, drop_db: float, sr: int, ms: float = 10.0
+    data: np.ndarray,
+    drop_db: float,
+    sr: int,
+    ms: float = 10.0,
+    *,
+    max_len: int | None = None,
 ) -> np.ndarray:
     if data.ndim > 1:
         mag = np.max(np.abs(data), axis=1)
@@ -164,14 +173,20 @@ def _fade_tail(
         fade = fade[:, None]
     out = data.copy()
     out[start : start + fade_len] *= fade
-    return out[: start + fade_len]
+    end = start + fade_len
+    if max_len is not None:
+        end = min(end, max_len)
+    return out[:end]
 
 
 def _quantize_pcm(data: np.ndarray, bit_depth: int) -> tuple[np.ndarray, str]:
     """Return integer PCM array and subtype."""
     if bit_depth == 32:
         return data.astype(np.float32), "FLOAT"
-    max_val = float(2 ** (bit_depth - 1) - 1)
+    if bit_depth == 24:
+        max_val = float(2**31 - 1)
+    else:
+        max_val = float(2 ** (bit_depth - 1) - 1)
     min_val = -max_val - 1
     q = np.clip(np.round(data * max_val), min_val, max_val)
     if bit_depth == 24:
@@ -241,22 +256,23 @@ def render_with_ir(
     if y.shape[1] == 1 and ir.shape[1] > 1:
         y = np.broadcast_to(y, (y.shape[0], ir.shape[1]))
 
+    orig_len = y.shape[0]
     data = convolve_ir(y, ir, block_size=block_size, progress=progress)
     if oversample > 1:
         data = _resample(data, sr, sr // oversample, quality=quality)
         sr //= oversample
 
-    data = _fade_tail(data, tail_db_drop, sr)
-
-    if normalize:
-        peak = float(np.max(np.abs(data)))
-        if peak > 0:
-            data = data / peak
-    else:
-        dither = False
+    data = _fade_tail(data, tail_db_drop, sr, max_len=orig_len)
 
     if gain_db:
         data = data * (10 ** (gain_db / 20.0))
+
+    if normalize:
+        peak = float(np.max(np.abs(data)))
+        if peak > 1.0:
+            data = data / peak
+    else:
+        dither = False
 
     if lufs_target is not None:
         if pyln is None:

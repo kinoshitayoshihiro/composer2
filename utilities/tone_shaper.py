@@ -214,6 +214,8 @@ class ToneShaper:
             if not p.is_file():
                 if os.getenv("IGNORE_MISSING_IR", "0") != "1":
                     logger.warning("IR file missing: %s", path_str)
+                if os.getenv("IGNORE_MISSING_IR", "0") == "1":
+                    continue
             ir_map[name] = p
 
         return cls(preset_map=preset_map, ir_map=ir_map, rules=rules)

@@ -1,4 +1,5 @@
 from pathlib import Path
+import warnings
 import pretty_midi
 
 from utilities import groove_sampler_ngram as gs
@@ -16,6 +17,8 @@ def test_unknown_aux_fallback(tmp_path: Path) -> None:
     _make_loop(tmp_path / "verse.mid")
     aux_map = {"verse.mid": {"section": "verse", "heat_bin": 0, "intensity": "mid"}}
     model = gs.train(tmp_path, aux_map=aux_map, order=1)
-    events = gs.sample(model, bars=1, cond={"section": "bridge"})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        events = gs.sample(model, bars=1, cond={"section": "bridge"})
     assert events
 

@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest import mock
 
 from utilities import groove_sampler_ngram
+import warnings
 from tests.test_hash_collision import _make_loop
 
 
@@ -14,6 +15,8 @@ def test_hash_collision_fail(monkeypatch: mock.MagicMock, tmp_path: Path) -> Non
         return 1
 
     monkeypatch.setattr(groove_sampler_ngram, "_hash_bytes", const_hash)
-    with pytest.raises(RuntimeError):
-        groove_sampler_ngram.train(tmp_path, order=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(RuntimeError):
+            groove_sampler_ngram.train(tmp_path, order=1)
 

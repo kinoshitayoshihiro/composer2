@@ -1714,12 +1714,10 @@ class DrumGenerator(BasePartGenerator):
             mapped_name_for_history = getattr(
                 drum_hit_note.editorial, "mapped_name", inst_name
             )
-            step_idx = int(round(rel_offset_in_pattern * RESOLUTION / current_bar_actual_len_ql))
-            if step_idx >= RESOLUTION or step_idx < 0:
-                logger.warning(
-                    "%s: step %s >= RESOLUTION; clamping", log_apply_prefix, step_idx
-                )
-                step_idx = step_idx % RESOLUTION
+            step_ratio = (
+                rel_offset_in_pattern / current_bar_actual_len_ql
+            ) * RESOLUTION
+            step_idx = int(math.floor(step_ratio)) % RESOLUTION
             step_idx = max(0, step_idx)
             self._groove_history.append((step_idx, mapped_name_for_history))
 

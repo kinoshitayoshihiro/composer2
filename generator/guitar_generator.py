@@ -2359,7 +2359,6 @@ class GuitarGenerator(BasePartGenerator):
         from tempfile import NamedTemporaryFile
 
         from utilities.audio_render import render_part_audio
-        from utilities import mix_profile
 
         part = getattr(self, "_last_part", None)
         if part is None:

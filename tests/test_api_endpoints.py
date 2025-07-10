@@ -1,7 +1,9 @@
 import base64
 import asyncio
+import io
 
 import pytest
+import pretty_midi
 
 pytest.importorskip("pytest_asyncio")
 import httpx
@@ -20,6 +22,8 @@ async def test_generate_endpoint():
         data = resp.json()
         midi = base64.b64decode(data["midi"])
         assert midi.startswith(b"MThd")
+        pm = pretty_midi.PrettyMIDI(io.BytesIO(midi))
+        assert len(pm.instruments) == 1
 
 
 @pytest.mark.asyncio
@@ -34,3 +38,5 @@ async def test_websocket_broadcast():
     data = await asyncio.to_thread(run_ws)
     midi = base64.b64decode(data["midi"])
     assert midi.startswith(b"MThd")
+    pm = pretty_midi.PrettyMIDI(io.BytesIO(midi))
+    assert len(pm.instruments) == 1

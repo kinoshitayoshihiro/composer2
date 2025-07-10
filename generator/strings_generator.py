@@ -1298,7 +1298,13 @@ class StringsGenerator(BasePartGenerator):
             name = sec.get("section_name", "section")
             out_path = Path("out") / f"strings_{name}.wav"
 
-        return render_part_audio(parts, ir_name=ir_name, out_path=out_path, sf2=sf2, **mix_opts)
+        return render_part_audio(
+            parts,
+            ir_name=ir_name,
+            out_path=out_path,
+            sf2=sf2,
+            **mix_opts,
+        )
 
 
 def generate_cc_automation(

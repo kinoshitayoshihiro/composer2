@@ -68,7 +68,8 @@ gen.export_musicxml_tab("out_tab.xml")
 MIDI から直接 WAV を生成し、インパルス応答を適用するには `modcompose ir-render` を使用します。
 
 ```bash
-modcompose ir-render part.mid irs/room.wav -o rendered.wav
+modcompose ir-render part.mid irs/room.wav -o rendered.wav \
+  --quality high --bit-depth 32 --oversample 2 --no-dither
 ```
 
 Python からは ``GuitarGenerator.export_audio`` を使って IR 名を指定できます。

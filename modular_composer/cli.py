@@ -820,13 +820,21 @@ def _cmd_render(args: list[str]) -> None:
         wav = ns.out.with_suffix(".wav")
         synth.render_midi(ns.out, wav, ns.soundfont)
         if ns.normalize_lufs is not None:
-            from utilities.loudness_normalizer import normalize_wav
+            import importlib.util
+            import sys
+            if importlib.util.find_spec("pyloudnorm") is None:
+                print(
+                    "pyloudnorm not installed; skipping LUFS normalization",
+                    file=sys.stderr,
+                )
+            else:
+                from utilities.loudness_normalizer import normalize_wav
 
-            normalize_wav(
-                wav,
-                section="chorus",
-                target_lufs_map={"chorus": float(ns.normalize_lufs)},
-            )
+                normalize_wav(
+                    wav,
+                    section="chorus",
+                    target_lufs_map={"chorus": float(ns.normalize_lufs)},
+                )
         print(f"Rendered {wav}")
 
 
@@ -840,6 +848,12 @@ def _cmd_ir_render(args: list[str]) -> None:
     ap.add_argument("--quality", choices=["fast", "high", "ultra"], default="fast")
     ap.add_argument("--bit-depth", type=int, choices=[16, 24, 32], default=24)
     ap.add_argument("--oversample", type=int, choices=[1, 2, 4], default=1)
+    ap.add_argument(
+        "--downmix",
+        choices=["auto", "stereo", "none"],
+        default="auto",
+        help="multi-channel IR handling",
+    )
     ap.add_argument(
         "--normalize",
         action=argparse.BooleanOptionalAction,
@@ -857,6 +871,9 @@ def _cmd_ir_render(args: list[str]) -> None:
     ns = ap.parse_args(args)
     import importlib.util
     import sys
+
+    if not ns.normalize and ns.dither and "--dither" in args:
+        print("Dither disabled because normalization is off", file=sys.stderr)
 
     if not has_fluidsynth() or importlib.util.find_spec("soxr") is None:
         print("fluidsynth and soxr are required for IR rendering", file=sys.stderr)
@@ -889,6 +906,7 @@ def _cmd_ir_render(args: list[str]) -> None:
             oversample=ns.oversample,
             normalize=ns.normalize,
             dither=ns.dither,
+            downmix=ns.downmix,
             tail_db_drop=ns.tail_db_drop,
         )
     else:
@@ -902,6 +920,7 @@ def _cmd_ir_render(args: list[str]) -> None:
             oversample=ns.oversample,
             normalize=ns.normalize,
             dither=ns.dither,
+            downmix=ns.downmix,
             tail_db_drop=ns.tail_db_drop,
         )
     print(f"wrote {ns.out}")

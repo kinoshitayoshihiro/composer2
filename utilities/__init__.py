@@ -92,6 +92,19 @@ else:
         )
 
 if _HAS_MUSIC21:
+    from .arrangement_builder import build_arrangement, score_to_pretty_midi
+else:
+    def build_arrangement(*_args: Any, **_kwargs: Any) -> tuple[Any, list[str]]:
+        raise ModuleNotFoundError(
+            "music21 is required. Please run 'pip install -r requirements.txt'."
+        )
+
+    def score_to_pretty_midi(*_args: Any, **_kwargs: Any) -> Any:
+        raise ModuleNotFoundError(
+            "music21 is required. Please run 'pip install -r requirements.txt'."
+        )
+
+if _HAS_MUSIC21:
     from .scale_registry import ScaleRegistry, build_scale_object
 else:
     class ScaleRegistry:  # type: ignore[misc]
@@ -273,6 +286,8 @@ __all__ = [
     "render_wav",
     "render_part_audio",
     "EffectPresetLoader",
+    "build_arrangement",
+    "score_to_pretty_midi",
 ]
 
 

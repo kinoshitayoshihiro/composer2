@@ -106,7 +106,6 @@ def compose(
         )
 
     part_streams: dict[str, stream.Part] = {}
-    used_ids: set[str] = set()
 
     sections_to_gen: list[str] = main_cfg["sections_to_generate"]
     raw_sections: dict[str, dict[str, Any]] = chordmap.get("sections", {})
@@ -234,19 +233,7 @@ def compose(
 
                 fixed_items = []
                 for base_pid, sub_stream in items:
-                    pid = base_pid
-                    if pid in used_ids or pid == "":
-                        base = pid if pid else f"{part_name}_0"
-                        suffix = ""
-                        count = 0
-                        while True:
-                            candidate = base + suffix
-                            if candidate not in used_ids:
-                                pid = candidate
-                                break
-                            count += 1
-                            suffix = "_dup" if count == 1 else f"_dup{count}"
-                    used_ids.add(pid)
+                    pid = base_pid or f"{part_name}_0"
                     try:
                         if getattr(sub_stream, "id", None) in (None, ""):
                             sub_stream.id = pid

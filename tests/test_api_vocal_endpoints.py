@@ -1,5 +1,6 @@
 import base64
 import asyncio
+import io
 
 import pytest
 
@@ -9,6 +10,7 @@ from httpx import AsyncClient
 from fastapi.testclient import TestClient
 
 from api import vocal_server as server
+import pretty_midi
 
 
 @pytest.mark.asyncio
@@ -23,6 +25,8 @@ async def test_generate_vocal_endpoint():
         data = resp.json()
         midi = base64.b64decode(data["midi"])
         assert midi.startswith(b"MThd")
+        pm = pretty_midi.PrettyMIDI(io.BytesIO(midi))
+        assert len(pm.instruments) == 1
 
 
 @pytest.mark.asyncio
@@ -37,3 +41,5 @@ async def test_ws_vocal_session_broadcast():
     data = await asyncio.to_thread(run_ws)
     midi = base64.b64decode(data["midi"])
     assert midi.startswith(b"MThd")
+    pm = pretty_midi.PrettyMIDI(io.BytesIO(midi))
+    assert len(pm.instruments) == 1

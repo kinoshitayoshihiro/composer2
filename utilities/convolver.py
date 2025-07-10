@@ -18,6 +18,9 @@ except Exception:  # pragma: no cover - optional
     soxr = None  # type: ignore
 
 from scipy.signal import resample_poly
+from functools import lru_cache
+from typing import Literal
+import os
 
 try:
     import pyloudnorm as pyln  # type: ignore
@@ -56,17 +59,41 @@ def _resample(data: np.ndarray, src: int, dst: int, *, quality: str) -> np.ndarr
         qmap = {"fast": soxr.QQ, "high": soxr.HQ, "ultra": soxr.VHQ}
         return soxr.resample(data, src, dst, quality=qmap.get(quality, soxr.QQ))
     window = ("kaiser", 16.0) if quality == "ultra" else ("kaiser", 8.0)
-    from math import gcd
+    from fractions import Fraction
 
-    up, down = dst, src
-    g = gcd(up, down)
-    up //= g
-    down //= g
+    frac = Fraction(dst, src).limit_denominator(1000)
+    up, down = frac.numerator, frac.denominator
     try:
         res = resample_poly(data.astype(np.float64), up, down, axis=0, window=window)
     except TypeError:  # pragma: no cover - older SciPy
         res = resample_poly(data.astype(np.float64), up, down, axis=0)
     return res.astype(data.dtype, copy=False)
+
+
+def _mix_to_stereo(ir: np.ndarray) -> np.ndarray:
+    """Average channels into a stereo pair."""
+    if ir.ndim == 1:
+        return np.stack([ir, ir], axis=1)
+    if ir.shape[1] == 1:
+        return np.repeat(ir, 2, axis=1)
+    mid = ir.shape[1] // 2
+    left = ir[:, :mid].mean(axis=1)
+    right = ir[:, mid:].mean(axis=1)
+    return np.stack([left, right], axis=1)
+
+
+def _downmix_ir(
+    ir: np.ndarray, mode: Literal["auto", "stereo", "none"] = "auto"
+) -> np.ndarray:
+    """Return IR down-mixed according to ``mode``."""
+    if mode == "none":
+        return ir
+    if mode == "stereo":
+        return _mix_to_stereo(ir)
+    # auto
+    if ir.ndim == 1 or ir.shape[1] <= 2:
+        return ir
+    return _mix_to_stereo(ir)
 
 
 def _fft_convolve(sig: np.ndarray, ir: np.ndarray) -> np.ndarray:
@@ -119,13 +146,14 @@ def convolve_ir(
     return result[:out_len].astype(np.float32)
 
 
+_IR_CACHE_SIZE = int(os.environ.get("CONVOLVER_IR_CACHE", "8"))
+
+@lru_cache(maxsize=_IR_CACHE_SIZE)
 def load_ir(path: str) -> tuple[np.ndarray, int]:
-    """Return IR data and sample rate."""
+    """Return IR data and sample rate from ``path``."""
     if sf is None:
         raise RuntimeError("soundfile is required for load_ir")
-    data, sr = sf.read(path, dtype="float32")
-    if data.ndim > 1:
-        data = data.mean(axis=1)
+    data, sr = sf.read(path, dtype="float32", always_2d=True)
     return data.astype(np.float32), int(sr)
 
 
@@ -207,18 +235,27 @@ def render_with_ir(
     oversample: int = 1,
     normalize: bool = True,
     dither: bool = True,
+    downmix: Literal["auto", "stereo", "none"] = "auto",
     tail_db_drop: float = -60.0,
     progress: bool = False,
 ) -> Path:
-    """Convolve ``input_wav`` with ``ir_wav`` and write to ``out_wav``."""
+    """Convolve ``input_wav`` with ``ir_wav`` and write to ``out_wav``.
+
+    ``downmix`` controls handling of multi-channel impulse responses.
+    """
 
     if sf is None:
-        raise RuntimeError("soundfile is required for render_with_ir")
+        logger.warning("soundfile not installed; skipping convolution")
+        return Path(out_wav)
 
     inp = Path(input_wav)
     irp = Path(ir_wav)
     out = Path(out_wav)
     gain_db = gain_db or 0.0
+
+    dither = bool(dither)
+    if not normalize:
+        dither = False
 
     try:
         y, sr = sf.read(inp, always_2d=True)
@@ -230,21 +267,18 @@ def render_with_ir(
         logger.warning("IR file missing: %s", ir_wav)
         if y.shape[1] == 1:
             y = np.broadcast_to(y, (y.shape[0], 2))
-        pcm, subtype = _quantize_pcm(_apply_tpdf_dither(y, bit_depth), bit_depth)
+        if dither:
+            y = _apply_tpdf_dither(y, bit_depth)
+        pcm, subtype = _quantize_pcm(y, bit_depth)
         sf.write(out, pcm, sr, subtype=subtype)
         return out
 
-    ir, ir_sr = sf.read(irp, always_2d=True)
+    ir, ir_sr = load_ir(str(irp))
     target_sr = 44100
     y = _resample(y, sr, target_sr, quality=quality)
     ir = _resample(ir, ir_sr, target_sr, quality=quality)
+    ir = _downmix_ir(ir, downmix)
     sr = target_sr
-
-    if ir.shape[1] > 2:
-        mid = ir.shape[1] // 2
-        left = ir[:, :mid].mean(axis=1)
-        right = ir[:, mid:].mean(axis=1)
-        ir = np.stack([left, right], axis=1)
 
     if oversample > 1:
         y = _resample(y, sr, sr * oversample, quality=quality)
@@ -271,8 +305,6 @@ def render_with_ir(
         peak = float(np.max(np.abs(data)))
         if peak > 1.0:
             data = data / peak
-    else:
-        dither = False
 
     if lufs_target is not None:
         if pyln is None:
@@ -336,6 +368,7 @@ def render_wav(
     oversample: int = 1,
     normalize: bool = True,
     dither: bool = True,
+    downmix: Literal["auto", "stereo", "none"] = "auto",
     tail_db_drop: float = -60.0,
     **mix_opts,
 ) -> Path:
@@ -361,6 +394,7 @@ def render_wav(
 
     tmp = Path(out_path).with_suffix(".dry.wav")
     render_midi(midi_in, tmp, sf2_path=sf2)
+    mix_opts.pop("downmix", None)
     render_with_ir(
         tmp,
         ir_path,
@@ -370,6 +404,7 @@ def render_wav(
         oversample=oversample,
         normalize=normalize,
         dither=dither,
+        downmix=downmix,
         tail_db_drop=tail_db_drop,
         **mix_opts,
     )

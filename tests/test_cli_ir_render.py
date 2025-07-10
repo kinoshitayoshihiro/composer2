@@ -52,3 +52,27 @@ def test_cli_ir_render_modes(tmp_path, monkeypatch):
         assert out.is_file()
         out.unlink()
     assert captured == ["fast", "high", "ultra"]
+
+
+def test_cli_ir_render_dither_warning(tmp_path, monkeypatch, capsys):
+    midi = tmp_path / "a.mid"
+    _write_midi(midi)
+    ir = tmp_path / "ir.wav"
+    sf.write(ir, [1.0], 44100)
+    out = tmp_path / "out.wav"
+
+    monkeypatch.setattr(cli, "has_fluidsynth", lambda: True)
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: True)
+    monkeypatch.setattr(cli, "render_wav", lambda *a, **k: Path(out).write_text("ok"))
+
+    cli.main([
+        "ir-render",
+        str(midi),
+        str(ir),
+        "-o",
+        str(out),
+        "--no-normalize",
+        "--dither",
+    ])
+    captured = capsys.readouterr()
+    assert "Dither disabled because normalization is off" in captured.err

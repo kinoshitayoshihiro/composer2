@@ -8,6 +8,10 @@ import importlib.metadata as _md
 import json
 import pickle
 import random
+
+from utilities.convolver import render_wav
+
+from utilities.audio_env import has_fluidsynth
 import tempfile
 import warnings
 from pathlib import Path
@@ -833,10 +837,26 @@ def _cmd_ir_render(args: list[str]) -> None:
     ap.add_argument("-o", "--out", type=Path, default=Path("out.wav"))
     ap.add_argument("--sf2", type=Path, default=None)
     ap.add_argument("--part", choices=["auto", "guitar", "strings"], default="auto")
+    ap.add_argument("--quality", choices=["fast", "high", "ultra"], default="fast")
+    ap.add_argument("--bit-depth", type=int, choices=[16, 24, 32], default=24)
+    ap.add_argument("--oversample", type=int, choices=[1, 2, 4], default=1)
+    ap.add_argument(
+        "--normalize",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="normalize output",
+    )
+    ap.add_argument(
+        "--dither",
+        dest="dither",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="apply TPDF dither",
+    )
+    ap.add_argument("--tail-db-drop", type=float, default=-60.0)
     ns = ap.parse_args(args)
     import importlib.util
     import sys
-    from utilities.audio_env import has_fluidsynth
 
     if not has_fluidsynth() or importlib.util.find_spec("soxr") is None:
         print("fluidsynth and soxr are required for IR rendering", file=sys.stderr)
@@ -851,19 +871,39 @@ def _cmd_ir_render(args: list[str]) -> None:
             part_type = "guitar"
 
     if part_type == "strings":
-        from generator.strings_generator import StringsGenerator
         from music21 import converter
+
+        from generator.strings_generator import StringsGenerator
 
         gen = StringsGenerator(global_settings={}, part_name="strings")
         score = converter.parse(ns.midi)
         parts = {p.id or f"p{i}": p for i, p in enumerate(score.parts)}
         gen._last_parts = parts  # type: ignore[attr-defined]
         gen._last_section = {"section_name": ns.midi.stem}  # type: ignore[attr-defined]
-        gen.export_audio(ir_name=str(ns.ir), out_path=ns.out, sf2=str(ns.sf2) if ns.sf2 else None)
+        gen.export_audio(
+            ir_name=str(ns.ir),
+            out_path=ns.out,
+            sf2=str(ns.sf2) if ns.sf2 else None,
+            quality=ns.quality,
+            bit_depth=ns.bit_depth,
+            oversample=ns.oversample,
+            normalize=ns.normalize,
+            dither=ns.dither,
+            tail_db_drop=ns.tail_db_drop,
+        )
     else:
-        from utilities.convolver import render_wav
-
-        render_wav(str(ns.midi), str(ns.ir), str(ns.out), sf2=str(ns.sf2) if ns.sf2 else None)
+        render_wav(
+            str(ns.midi),
+            str(ns.ir),
+            str(ns.out),
+            sf2=str(ns.sf2) if ns.sf2 else None,
+            quality=ns.quality,
+            bit_depth=ns.bit_depth,
+            oversample=ns.oversample,
+            normalize=ns.normalize,
+            dither=ns.dither,
+            tail_db_drop=ns.tail_db_drop,
+        )
     print(f"wrote {ns.out}")
 
 

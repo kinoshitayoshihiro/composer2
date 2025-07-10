@@ -12,10 +12,16 @@ from .mix_profile import get_mix_chain
 
 def render_part_audio(
     part: stream.Part | Mapping[str, stream.Part],
-    ir_name: str | None = None,
-    out_path: str | Path | None = None,
     *,
+    ir_name: str | None = None,
+    out_path: str | Path | None = "out.wav",
     sf2: str | None = None,
+    quality: str = "fast",
+    bit_depth: int = 24,
+    oversample: int = 1,
+    normalize: bool = True,
+    dither: bool = True,
+    tail_db_drop: float = -60.0,
     **mix_opts,
 ) -> Path:
     """Render ``part`` to ``out_path`` applying ``ir_name`` if given."""
@@ -45,7 +51,23 @@ def render_part_audio(
     if out_path is None:
         out_path = "out.wav"
 
-    out = render_wav(tmp_mid.name, ir_file or "", str(out_path), sf2=sf2, parts=parts, **mix_opts)
+    if bit_depth not in (16, 24, 32):
+        raise ValueError("bit_depth must be 16, 24, or 32")
+
+    out = render_wav(
+        tmp_mid.name,
+        ir_file or "",
+        str(out_path),
+        sf2=sf2,
+        parts=parts,
+        quality=quality,
+        bit_depth=bit_depth,
+        oversample=oversample,
+        normalize=normalize,
+        dither=dither,
+        tail_db_drop=tail_db_drop,
+        **mix_opts,
+    )
 
     Path(tmp_mid.name).unlink(missing_ok=True)
     for p in parts.values():

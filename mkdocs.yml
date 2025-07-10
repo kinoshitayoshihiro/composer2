@@ -27,6 +27,7 @@ nav:
   - Effects & Automation:
       - Overview: effects.md
       - Offline IR Convolution: offline_ir.md
+      - Audio Pipeline: audio_pipeline.md
   - Tone & Dynamics: tone.md
   - Piano Delta: piano_delta.md
   - Piano Epsilon: piano_epsilon.md

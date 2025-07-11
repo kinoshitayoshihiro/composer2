@@ -1384,25 +1384,20 @@ def sample_cmd(
     pm = events_to_midi(ev)
     buf = io.BytesIO()
     pm.write(buf)
+    data = buf.getvalue()
     if play:
-        data = buf.getvalue()
         player = cli_playback.find_player()
         if player:
             try:
                 player(data)
             except Exception as exc:  # pragma: no cover - best effort fallback
                 logger.warning("MIDI player failed: %s; writing to stdout", exc)
-                sys.stdout.buffer.write(data)
+                cli_playback.write_stdout(data)
         else:
             logger.warning("no MIDI player found; writing to stdout")
-            sys.stdout.buffer.write(data)
-            sys.stdout.buffer.flush()
+            cli_playback.write_stdout(data)
     else:
-        sys.stdout.buffer.write(buf.getvalue())
-        sys.stdout.buffer.flush()
         cli_playback.write_stdout(data)
-    else:
-        cli_playback.write_stdout(buf.getvalue())
 
 
 @cli.command(name="info")

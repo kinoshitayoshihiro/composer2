@@ -450,6 +450,7 @@ def save(model: NGramModel, path: Path) -> None:
         "ctx_maps": model.ctx_maps,
         "prob_paths": model.prob_paths,
     }
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as fh:
         pickle.dump(data, fh)
 

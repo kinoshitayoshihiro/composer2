@@ -1388,7 +1388,11 @@ def sample_cmd(
         data = buf.getvalue()
         player = cli_playback.find_player()
         if player:
-            player(data)
+            try:
+                player(data)
+            except Exception as exc:  # pragma: no cover - best effort fallback
+                logger.warning("MIDI player failed: %s; writing to stdout", exc)
+                sys.stdout.buffer.write(data)
         else:
             logger.warning("no MIDI player found; writing to stdout")
             sys.stdout.buffer.write(data)

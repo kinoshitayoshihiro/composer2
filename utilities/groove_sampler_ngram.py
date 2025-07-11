@@ -1161,7 +1161,7 @@ def cli() -> None:
     """Groove sampler commands."""
 
 
-@cli.command()
+@cli.command(name="train")
 @click.argument("loop_dir", type=Path)
 @click.option("--ext", default="wav,midi", help="Comma separated extensions")
 @click.option(
@@ -1255,7 +1255,7 @@ def train_cmd(
     click.echo(f"saved model to {out_path}")
 
 
-@cli.command()
+@cli.command(name="sample")
 @click.argument("model_path", type=Path)
 @click.option(
     "--list-aux",
@@ -1396,7 +1396,7 @@ def sample_cmd(
         sys.stdout.buffer.write(buf.getvalue())
 
 
-@cli.command()
+@cli.command(name="info")
 @click.argument("model_path", type=Path)
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON summary")
 @click.option("--stats", is_flag=True, help="Include perplexity and token count")

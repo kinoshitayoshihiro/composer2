@@ -1396,7 +1396,7 @@ def sample_cmd(
         sys.stdout.buffer.write(buf.getvalue())
 
 
-@cli.command()
+@cli.command(name="info")
 @click.argument("model_path", type=Path)
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON summary")
 @click.option("--stats", is_flag=True, help="Include perplexity and token count")

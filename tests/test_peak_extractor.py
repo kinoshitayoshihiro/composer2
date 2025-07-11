@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -51,7 +52,15 @@ def test_cli_creates_json(tmp_path: Path) -> None:
     _make_wav(wav)
     out_json = tmp_path / "p.json"
     subprocess.run(
-        ["python", "-m", "modular_composer.cli", "peaks", str(wav), "-o", str(out_json)],
+        [
+            sys.executable,
+            "-m",
+            "modular_composer.cli",
+            "peaks",
+            str(wav),
+            "-o",
+            str(out_json),
+        ],
         check=True,
     )
     assert out_json.exists()

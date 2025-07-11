@@ -17,10 +17,11 @@ try:
 except Exception:  # pragma: no cover - optional
     soxr = None  # type: ignore
 
-from scipy.signal import resample_poly
+import os
 from functools import lru_cache
 from typing import Literal
-import os
+
+from scipy.signal import resample_poly
 
 try:
     import pyloudnorm as pyln  # type: ignore
@@ -70,16 +71,42 @@ def _resample(data: np.ndarray, src: int, dst: int, *, quality: str) -> np.ndarr
     return res.astype(data.dtype, copy=False)
 
 
-def _mix_to_stereo(ir: np.ndarray) -> np.ndarray:
-    """Average channels into a stereo pair."""
+def _rms(arr: np.ndarray) -> float:
+    """Return root-mean-square of ``arr``."""
+
+    return float(np.sqrt(np.mean(np.square(arr, dtype=np.float64))))
+
+
+def _mix_to_stereo(ir: np.ndarray, method: str = "rms") -> np.ndarray:
+    """Return ``ir`` mixed down to stereo."""
+
     if ir.ndim == 1:
-        return np.stack([ir, ir], axis=1)
+        ir = ir[:, None]
     if ir.shape[1] == 1:
-        return np.repeat(ir, 2, axis=1)
+        return np.repeat(ir, 2, axis=1).astype(np.float32, copy=False)
+
+    if ir.shape[1] == 2:
+        left = ir[:, 0]
+        right = ir[:, 1]
+        return np.stack([left, right], axis=1).astype(np.float32, copy=False)
+
+    if method == "rms":
+        weights = np.array([_rms(ir[:, i]) for i in range(ir.shape[1])], dtype=np.float64)
+        if np.all(weights == 0):
+            weights = np.ones_like(weights)
+        weights = weights / np.sum(weights)
+        mix = np.sum(ir * weights[None, :], axis=1)
+        orig_pow = float(np.sum(np.square(ir, dtype=np.float64)))
+        pre_pow = float(np.sum(np.square(mix, dtype=np.float64)))
+        if pre_pow > 0:
+            mix = mix * np.sqrt(orig_pow / (pre_pow * 2.0))
+        stereo = np.stack([mix, mix], axis=1)
+        return stereo.astype(np.float32, copy=False)
+
     mid = ir.shape[1] // 2
     left = ir[:, :mid].mean(axis=1)
     right = ir[:, mid:].mean(axis=1)
-    return np.stack([left, right], axis=1)
+    return np.stack([left, right], axis=1).astype(np.float32, copy=False)
 
 
 def _downmix_ir(

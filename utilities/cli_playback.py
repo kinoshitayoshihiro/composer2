@@ -120,3 +120,9 @@ def find_player() -> Optional[PlayFunc]:
         return _windows_player()
     return None
 
+
+def write_stdout(data: bytes) -> None:
+    """Write ``data`` to ``stdout`` in a Python-version agnostic way."""
+    out = getattr(sys.stdout, "buffer", sys.stdout)
+    out.write(data)
+

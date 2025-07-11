@@ -19,6 +19,7 @@ def _mk_loop(path: Path) -> None:
 
 @pytest.mark.data_ops
 def test_auto_tag_train(tmp_path: Path) -> None:
+    pytest.importorskip("sklearn", reason="scikit-learn not installed")
     _mk_loop(tmp_path / "a.mid")
     runner = CliRunner()
     out = tmp_path / "m.pkl"

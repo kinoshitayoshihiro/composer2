@@ -1,8 +1,14 @@
 import pathlib
 import subprocess
+import sys
+import pytest
+
+try:
+    import torch  # noqa: F401
+except Exception as exc:  # pragma: no cover - optional dependency
+    pytest.skip(f"torch unavailable: {exc}", allow_module_level=True)
 
 import mido
-import pytest
 
 
 def _read_events(path: pathlib.Path) -> list[tuple[str, int, int | None, int | None, int | None]]:
@@ -21,7 +27,7 @@ def test_golden_demo(tmp_path: pathlib.Path, request: pytest.FixtureRequest) -> 
     out = tmp_path / "demo.mid"
     subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "modular_composer.cli",
             "demo",

@@ -20,7 +20,12 @@ from random import Random
 import numpy as np
 from joblib import Parallel, delayed
 
-from .groove_sampler import _PITCH_TO_LABEL, _iter_drum_notes, infer_resolution
+try:
+    from .groove_sampler import _PITCH_TO_LABEL, _iter_drum_notes, infer_resolution
+except ImportError:  # fallback when executed as a script
+    import os
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    from utilities.groove_sampler import _PITCH_TO_LABEL, _iter_drum_notes, infer_resolution
 
 State = tuple[int, int, str]
 """Model state encoded as ``(bar_mod2, bin_in_bar, drum_label)``."""

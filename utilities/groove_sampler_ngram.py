@@ -1391,7 +1391,12 @@ def sample_cmd(
             player(data)
         else:
             logger.warning("no MIDI player found; writing to stdout")
-            cli_playback.write_stdout(data)
+            sys.stdout.buffer.write(data)
+            sys.stdout.buffer.flush()
+    else:
+        sys.stdout.buffer.write(buf.getvalue())
+        sys.stdout.buffer.flush()
+        cli_playback.write_stdout(data)
     else:
         cli_playback.write_stdout(buf.getvalue())
 

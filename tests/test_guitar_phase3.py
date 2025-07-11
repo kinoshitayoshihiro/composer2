@@ -57,7 +57,7 @@ def test_export_tab_enhanced(_basic_gen, tmp_path):
 
 
 def test_export_musicxml_tab(_basic_gen, tmp_path):
-    gen = _basic_gen()
+    gen = _basic_gen(enable_harmonics=True, prob_harmonic=1.0, rng_seed=1)
     gen.compose(section_data={
         "section_name": "A",
         "q_length": 1.0,
@@ -74,7 +74,9 @@ def test_export_musicxml_tab(_basic_gen, tmp_path):
     root = tree.getroot()
     strings = root.findall(".//string")
     frets = root.findall(".//fret")
+    harm = root.findall(".//harmonic")
     assert len(strings) == len(frets) > 0
+    assert harm
 
 
 def test_hybrid_pattern_types(_basic_gen):

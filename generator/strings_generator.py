@@ -36,6 +36,8 @@ if not hasattr(articulations, "Tremolo"):
             self.marks = marks
 
     articulations.Tremolo = Tremolo
+from pathlib import Path
+
 import music21.spanner as m21spanner
 from music21 import (
     chord,
@@ -51,16 +53,16 @@ from music21 import (
     instrument as m21instrument,
 )
 
+from utilities.cc_map import cc_map
+from utilities.cc_tools import finalize_cc_events, merge_cc_events
 from utilities.core_music_utils import (
     get_key_signature_object,
     get_time_signature_object,
 )
-from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
-from pathlib import Path
-from utilities.cc_tools import finalize_cc_events, merge_cc_events
 from utilities.effect_preset_loader import EffectPresetLoader
-from utilities.cc_map import cc_map, load_cc_map
 from utilities.expression_map import load_expression_map, resolve_expression
+from utilities.harmonic_utils import apply_harmonic_notation, choose_harmonic
+from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 
 from .base_part_generator import BasePartGenerator
 
@@ -72,6 +74,7 @@ class _SectionInfo:
     range_low: str
     range_high: str
     velocity_pos: float
+    open_string_midi: list[int]
 
 
 class BowPosition(StrEnum):
@@ -119,15 +122,55 @@ def parse_bow_position(value: Any) -> BowPosition | None:
         return None
 
 
+def _clamp_velocity(value: float) -> int:
+    """Clamp *value* into MIDI velocity range."""
+    return max(1, min(127, int(round(value))))
+
+
 class StringsGenerator(BasePartGenerator):
     """Generate very simple block-chord lines for a standard string section."""
 
     _SECTIONS = [
-        _SectionInfo("contrabass", m21instrument.Contrabass(), "C1", "C3", 0.4),
-        _SectionInfo("violoncello", m21instrument.Violoncello(), "C2", "E4", 0.4),
-        _SectionInfo("viola", m21instrument.Viola(), "C3", "A5", 0.6),
-        _SectionInfo("violin_ii", m21instrument.Violin(), "G3", "D7", 0.6),
-        _SectionInfo("violin_i", m21instrument.Violin(), "G3", "D7", 0.8),
+        _SectionInfo(
+            "contrabass",
+            m21instrument.Contrabass(),
+            "C1",
+            "C3",
+            0.4,
+            [43, 38, 33, 28],
+        ),
+        _SectionInfo(
+            "violoncello",
+            m21instrument.Violoncello(),
+            "C2",
+            "E4",
+            0.4,
+            [36, 43, 50, 57],
+        ),
+        _SectionInfo(
+            "viola",
+            m21instrument.Viola(),
+            "C3",
+            "A5",
+            0.6,
+            [48, 55, 62, 69],
+        ),
+        _SectionInfo(
+            "violin_ii",
+            m21instrument.Violin(),
+            "G3",
+            "D7",
+            0.6,
+            [55, 62, 69, 76],
+        ),
+        _SectionInfo(
+            "violin_i",
+            m21instrument.Violin(),
+            "G3",
+            "D7",
+            0.8,
+            [55, 62, 69, 76],
+        ),
     ]
 
 
@@ -150,6 +193,12 @@ class StringsGenerator(BasePartGenerator):
         timing_jitter_mode: str = "uniform",
         timing_jitter_scale_mode: str = "absolute",
         balance_scale: float = 1.0,
+        enable_harmonics: bool = False,
+        prob_harmonic: float = 0.15,
+        harmonic_types: list[str] | None = None,
+        harmonic_volume_factor: float = 0.85,
+        max_harmonic_fret: int = 19,
+        rng_seed: int | None = None,
         rng=None,
         **kwargs: Any,
     ) -> None:
@@ -189,6 +238,16 @@ class StringsGenerator(BasePartGenerator):
         self.timing_jitter_mode = str(timing_jitter_mode or "uniform").lower()
         self.timing_jitter_scale_mode = str(timing_jitter_scale_mode or "absolute").lower()
         self.balance_scale = float(balance_scale)
+        if rng_seed is not None:
+            try:
+                self.rng.seed(int(rng_seed))
+            except Exception:
+                pass
+        self.enable_harmonics = bool(enable_harmonics)
+        self.prob_harmonic = float(prob_harmonic)
+        self.harmonic_types = harmonic_types or ["natural", "artificial"]
+        self.harmonic_volume_factor = float(harmonic_volume_factor)
+        self.max_harmonic_fret = int(max_harmonic_fret)
         self._last_parts: dict[str, stream.Part] | None = None
         self._articulation_map = {
             "sustain": None,
@@ -480,12 +539,14 @@ class StringsGenerator(BasePartGenerator):
     def _load_expression_maps(self, path: str | None) -> dict[str, dict]:
         """Load expression map definitions merging defaults and overrides."""
 
-        import json, yaml
+        import json
+
+        import yaml
         result: dict[str, dict] = {}
         default_path = Path(__file__).resolve().parents[1] / "data" / "expression_maps.yml"
         for p in [default_path, Path(path)] if path else [default_path]:
             try:
-                with open(p, "r", encoding="utf-8") as fh:
+                with open(p, encoding="utf-8") as fh:
                     if str(p).endswith(".json"):
                         data = json.load(fh)
                     else:
@@ -503,7 +564,9 @@ class StringsGenerator(BasePartGenerator):
     def _load_emo_map(self, path: str | None) -> dict[tuple[str, str], str]:
         """Load emotion→map lookup merging defaults and overrides."""
 
-        import json, yaml
+        import json
+
+        import yaml
         result: dict[tuple[str, str], str] = {}
         default_path = Path(__file__).resolve().parents[1] / "data" / "expression_maps.yml"
 
@@ -517,7 +580,7 @@ class StringsGenerator(BasePartGenerator):
 
         for p in [default_path, Path(path)] if path else [default_path]:
             try:
-                with open(p, "r", encoding="utf-8") as fh:
+                with open(p, encoding="utf-8") as fh:
                     if str(p).endswith(".json"):
                         data = json.load(fh)
                     else:
@@ -680,6 +743,59 @@ class StringsGenerator(BasePartGenerator):
             n.pitch.microtone = pitch.Microtone(curve[0][1])
             n.editorial.vibrato_curve = curve
 
+    def _maybe_harmonic(
+        self,
+        p: pitch.Pitch,
+        chord_pitches: Sequence[pitch.Pitch],
+        base_midis: Sequence[int] | None = None,
+    ) -> tuple[pitch.Pitch, list[articulations.Articulation], float, dict | None]:
+        if not self.enable_harmonics:
+            return p, [], 1.0, None
+        if self.rng.random() >= self.prob_harmonic:
+            return p, [], 1.0, None
+        result = choose_harmonic(
+            p,
+            tuning_offsets=[0, 0, 0, 0],
+            chord_pitches=list(chord_pitches),
+            max_fret=self.max_harmonic_fret,
+            base_midis=list(base_midis or [55, 50, 45, 40]),
+        )
+        if result is None:
+            return p, [], 1.0, None
+        new_pitch, meta = result
+        if meta.get("type") not in self.harmonic_types:
+            if "artificial" in self.harmonic_types:
+                base_midi = int(round(p.midi))
+                open_midis = [55, 50, 45, 40]
+                for idx, open_m in enumerate(open_midis):
+                    fret = base_midi - open_m
+                    if 0 <= fret <= self.max_harmonic_fret and fret + 12 <= self.max_harmonic_fret:
+                        new_pitch = pitch.Pitch()
+                        new_pitch.midi = base_midi + 12
+                        meta = {
+                            "type": "artificial",
+                            "string_idx": idx,
+                            "touch_fret": fret + 12,
+                            "sounding_pitch": int(new_pitch.midi),
+                        }
+                        break
+                else:
+                    return p, [], 1.0, None
+            else:
+                return p, [], 1.0, None
+        arts: list[articulations.Articulation] = [articulations.Harmonic()]
+        typ = meta.get("type")
+        if typ == "natural" and hasattr(articulations, "NaturalHarmonic"):
+            arts.append(articulations.NaturalHarmonic())
+        elif typ != "natural" and hasattr(articulations, "ArtificialHarmonic"):
+            arts.append(articulations.ArtificialHarmonic())
+        if typ != "natural" and hasattr(articulations, "TouchingPitch"):
+            arts.append(articulations.TouchingPitch())
+        factor = self.harmonic_volume_factor
+        if typ == "artificial":
+            factor *= 0.8
+        return new_pitch, arts, factor, meta
+
     def _apply_expression(self, part: stream.Part, mapping: dict[str, Any]) -> None:
         """Apply expression map to *part*."""
 
@@ -837,6 +953,42 @@ class StringsGenerator(BasePartGenerator):
                     setattr(n_el.style, "bowPosition", value)
                 else:
                     setattr(n_el.style, "other", value)
+
+        if self.enable_harmonics:
+            for elem in result:
+                if isinstance(elem, chord.Chord):
+                    info = next((s for s in self._SECTIONS if s.name == part_name), None)
+                    base_midis = info.open_string_midi if info else None
+                    for idx, n_el in enumerate(elem.notes):
+                        new_p, arts, factor, meta = self._maybe_harmonic(
+                            n_el.pitch,
+                            elem.pitches,
+                            base_midis=base_midis,
+                        )
+                        if arts:
+                            for art in arts:
+                                n_el.articulations.append(art)
+                            if n_el.volume and n_el.volume.velocity is not None:
+                                n_el.volume.velocity = _clamp_velocity(n_el.volume.velocity * factor)
+                            if meta:
+                                apply_harmonic_notation(n_el, meta)
+                        n_el.pitch = new_p
+                else:
+                    info = next((s for s in self._SECTIONS if s.name == part_name), None)
+                    base_midis = info.open_string_midi if info else None
+                    new_p, arts, factor, meta = self._maybe_harmonic(
+                        elem.pitch,
+                        [elem.pitch],
+                        base_midis=base_midis,
+                    )
+                    if arts:
+                        for art in arts:
+                            elem.articulations.append(art)
+                        if elem.volume and elem.volume.velocity is not None:
+                            elem.volume.velocity = _clamp_velocity(elem.volume.velocity * factor)
+                        if meta:
+                            apply_harmonic_notation(elem, meta)
+                    elem.pitch = new_p
 
         return result
 

@@ -63,6 +63,32 @@ You can also export a MusicXML file containing the tablature markings:
 gen.export_musicxml_tab("out_tab.xml")
 ```
 
+### Harmonics (Guitar)
+
+```python
+gen = GuitarGenerator(enable_harmonics=True, prob_harmonic=0.25)
+```
+
+Set ``prob_harmonic`` to ``1.0`` to force harmonics for testing.  Use
+``harmonic_types`` to filter between natural or artificial nodes.
+
+### Harmonics (Strings)
+
+```python
+from generator.strings_generator import StringsGenerator
+str_gen = StringsGenerator(enable_harmonics=True, max_harmonic_fret=15)
+```
+
+Both generators share the following loudness controls:
+
+| Param | Usage |
+|-------|-------|
+| ``harmonic_volume_factor`` | Multiply velocity (0-1 range) |
+| ``harmonic_gain_db`` | Override with dB adjustment |
+
+``max_harmonic_fret`` sets the highest allowed touching fret.  MusicXML output
+may require a notation program that understands harmonic notation.
+
 ### IR レンダリング
 
 MIDI から直接 WAV を生成し、インパルス応答を適用するには `modcompose ir-render` を使用します。

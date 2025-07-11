@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
+import warnings
 
 import numpy as np
 from music21 import stream
@@ -405,7 +407,7 @@ def render_wav(
     dither: bool = True,
     downmix: Literal["auto", "stereo", "none"] = "auto",
     tail_db_drop: float = -60.0,
-    **mix_opts,
+    **kw: Any,
 ) -> Path:
     """Render ``midi_path`` with ``fluidsynth`` and apply ``ir_path``."""
     from utilities.synth import render_midi
@@ -434,7 +436,15 @@ def render_wav(
 
     tmp = Path(out_path).with_suffix(".dry.wav")
     render_midi(midi_in, tmp, sf2_path=sf2)
-    mix_opts.pop("downmix", None)
+    if "mix_opts" in kw:
+        warnings.warn(
+            "'mix_opts' dict is deprecated; pass options as keyword arguments",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        mo = kw.pop("mix_opts") or {}
+        if isinstance(mo, Mapping):
+            kw.update(mo)
     render_with_ir(
         tmp,
         ir_path,
@@ -446,7 +456,7 @@ def render_wav(
         dither=dither,
         downmix=downmix,
         tail_db_drop=tail_db_drop,
-        **mix_opts,
+        **kw,
     )
     tmp.unlink(missing_ok=True)
     if tmp_midi is not None:

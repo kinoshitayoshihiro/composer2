@@ -19,6 +19,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
+import numpy as np
 
 import music21.articulations as articulations
 import music21.expressions as expressions
@@ -216,6 +217,7 @@ class StringsGenerator(BasePartGenerator):
             rng=rng,
             **kwargs,
         )
+        self.cfg: dict = kwargs.copy()
         ts_obj = get_time_signature_object(global_time_signature)
         self.measure_duration = (
             ts_obj.barDuration.quarterLength if ts_obj else self.bar_length
@@ -391,6 +393,19 @@ class StringsGenerator(BasePartGenerator):
         for part in result.values():
             finalize_cc_events(part)
         self._last_parts = result
+
+        score = stream.Score()
+        for info in self._SECTIONS:
+            p = result.get(info.name)
+            if p is not None:
+                score.insert(0, p)
+
+        try:
+            self.last_audio = self.export_audio(score, **self.cfg.get("ir_options", {}))
+        except Exception:  # pragma: no cover - best effort
+            self.logger.debug("export_audio failed", exc_info=True)
+            self.last_audio = None
+
         return result
 
     def export_musicxml(self, path: str) -> None:
@@ -1399,34 +1414,95 @@ class StringsGenerator(BasePartGenerator):
 
     def export_audio(
         self,
-        ir_name: str | None = None,
-        out_path: str | Path | None = None,
+        score: stream.Score,
         *,
-        sf2: str | None = None,
-        **mix_opts,
-    ) -> Path:
-        """Render the last composed parts to WAV applying ``ir_name``."""
+        ir_set: str = "room",
+        sample_rate: int = 48_000,
+        normalize: bool = True,
+        outfile: Path | str | None = None,
+    ) -> np.ndarray:
+        """Render ``score`` to audio applying impulse responses."""
 
-        from utilities.audio_render import render_part_audio
+        import soundfile as sf
+        from utilities import convolver as conv
 
-        if self._last_parts is None:
-            self.compose(section_data=getattr(self, "_last_section", {}))
-        parts = self._last_parts or {}
-        if not parts:
-            raise ValueError("No parts to render")
+        audio_mix: np.ndarray | None = None
+        for part in score.parts:
+            sec_name = getattr(part, "id", "") or ""
+            try:
+                ir_path = self._select_ir_path(ir_set, sec_name)
+            except Exception as exc:
+                self.logger.debug("%s", exc)
+                continue
 
-        sec = getattr(self, "_last_section", {})
-        if out_path is None:
-            name = sec.get("section_name", "section")
-            out_path = Path("out") / f"strings_{name}.wav"
+            sec_audio = self._render_section(part, ir_path, sample_rate=sample_rate)
 
-        return render_part_audio(
-            parts,
-            ir_name=ir_name,
-            out_path=out_path,
-            sf2=sf2,
-            **mix_opts,
-        )
+            if audio_mix is None:
+                audio_mix = sec_audio
+            else:
+                max_len = max(len(audio_mix), len(sec_audio))
+                if audio_mix.ndim == 1:
+                    audio_mix = audio_mix[:, None]
+                if sec_audio.ndim == 1:
+                    sec_audio = sec_audio[:, None]
+                if audio_mix.shape[0] < max_len:
+                    audio_mix = np.pad(audio_mix, ((0, max_len - audio_mix.shape[0]), (0, 0)))
+                if sec_audio.shape[0] < max_len:
+                    sec_audio = np.pad(sec_audio, ((0, max_len - sec_audio.shape[0]), (0, 0)))
+                audio_mix += sec_audio
+
+        if audio_mix is None:
+            raise ValueError("No parts rendered")
+
+        if normalize:
+            peak = float(np.max(np.abs(audio_mix)))
+            if peak > 0:
+                audio_mix = audio_mix / peak
+
+        if outfile is not None:
+            sf.write(outfile, audio_mix, sample_rate)
+
+        return audio_mix
+
+    def _select_ir_path(self, ir_set: str, section_name: str) -> Path:
+        """Return IR path for given set and section."""
+
+        base = Path(__file__).resolve().parents[1] / "data" / "irs"
+        ir_set = str(ir_set).lower()
+        name = section_name.lower()
+        group_a = {"violin_i", "violin_ii", "viola"}
+        group_b = {"violoncello", "contrabass"}
+        if ir_set not in {"room", "hall"}:
+            raise ValueError(f"Unknown IR set: {ir_set}")
+        if name in group_a:
+            fname = f"strings_{ir_set}_a.wav"
+        elif name in group_b:
+            fname = f"strings_{ir_set}_b.wav"
+        else:
+            raise ValueError("Unsupported string section")
+        path = base / fname
+        if not path.is_file():
+            raise FileNotFoundError(str(path))
+        return path
+
+    def _render_section(
+        self, section_stream: stream.Part, ir_path: Path, *, sample_rate: int
+    ) -> np.ndarray:
+        """Render one section and apply ``ir_path``."""
+
+        from utilities import convolver as conv
+        from utilities.arrangement_builder import score_to_pretty_midi
+
+        pm = score_to_pretty_midi(stream.Score([section_stream]))
+        dry = pm.fluidsynth(fs=sample_rate)
+        ir_data, ir_sr = conv.load_ir(str(ir_path))
+        if ir_sr != sample_rate:
+            from fractions import Fraction
+            from scipy.signal import resample_poly
+
+            frac = Fraction(sample_rate, ir_sr).limit_denominator(1000)
+            ir_data = resample_poly(ir_data, frac.numerator, frac.denominator, axis=0)
+        return conv.convolve_ir(dry, ir_data)
 
 
 def generate_cc_automation(
@@ -1466,3 +1542,26 @@ def generate_cc_automation(
     ]
     base = getattr(part, "extra_cc", set())
     part.extra_cc = merge_cc_events(base, events)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Render strings with IR")
+    ap.add_argument("--ir-set", default="room", help="IR set name")
+    ap.add_argument("--wav-out", type=Path, default=None, help="Output WAV file")
+    ns = ap.parse_args()
+
+    gen = StringsGenerator()
+    sec = {
+        "section_name": "demo",
+        "q_length": 1.0,
+        "humanized_duration_beats": 1.0,
+        "original_chord_label": "C",
+        "chord_symbol_for_voicing": "C",
+    }
+    parts = gen.compose(section_data=sec)
+    score = stream.Score()
+    for p in parts.values():
+        score.insert(0, p)
+    gen.export_audio(score, ir_set=ns.ir_set, outfile=ns.wav_out)

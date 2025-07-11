@@ -2,16 +2,13 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
-import pytest
-from music21 import instrument
-from utilities.audio_env import has_fluidsynth
 
-pytestmark = pytest.mark.requires_audio
-sf = pytest.importorskip("soundfile")
-if not has_fluidsynth():
-    pytest.skip("fluidsynth missing", allow_module_level=True)
+import numpy as np
+import pytest
+import soundfile as sf
 
 ROOT = Path(__file__).resolve().parents[1]
+
 pkg = types.ModuleType("generator")
 pkg.__path__ = [str(ROOT / "generator")]
 sys.modules.setdefault("generator", pkg)
@@ -26,7 +23,6 @@ StringsGenerator = strings_module.StringsGenerator
 def _gen():
     return StringsGenerator(
         global_settings={},
-        default_instrument=instrument.Violin(),
         part_name="strings",
         global_tempo=120,
         global_time_signature="4/4",
@@ -35,8 +31,7 @@ def _gen():
     )
 
 
-def test_export_audio(tmp_path):
-    gen = _gen()
+def _basic_score(gen):
     sec = {
         "section_name": "A",
         "q_length": 1.0,
@@ -45,11 +40,28 @@ def test_export_audio(tmp_path):
         "chord_symbol_for_voicing": "C",
     }
     parts = gen.compose(section_data=sec)
-    score = strings_module.stream.Score()
+    sc = strings_module.stream.Score()
     for p in parts.values():
-        score.insert(0, p)
+        sc.insert(0, p)
+    return sc
+
+
+@pytest.mark.requires_audio
+def test_room_norm(tmp_path):
+    gen = _gen()
+    score = _basic_score(gen)
+    audio = gen.export_audio(score, ir_set="room", outfile=None)
+    assert audio.shape[0] > 0
+    assert np.max(np.abs(audio)) == 1.0
+
+
+@pytest.mark.requires_audio
+def test_hall_outfile(tmp_path):
+    gen = _gen()
+    score = _basic_score(gen)
     out = tmp_path / "out.wav"
-    audio = gen.export_audio(score, ir_set="room", outfile=out)
-    assert out.is_file()
-    data, _ = sf.read(out)
-    assert len(data) > 0 and audio.shape[0] > 0
+    audio = gen.export_audio(score, ir_set="hall", outfile=out)
+    assert out.exists()
+    info = sf.info(out)
+    assert info.samplerate == 48000
+    assert audio.shape[0] > 0

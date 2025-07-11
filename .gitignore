@@ -22,3 +22,4 @@ site/
 
 docs/examples/loops/*.mid
 docs/assets/*.mp4
+data/irs/*.wav

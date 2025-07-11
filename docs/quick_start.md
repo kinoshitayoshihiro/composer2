@@ -69,6 +69,8 @@ gen.export_musicxml_tab("out_tab.xml")
 gen = GuitarGenerator(enable_harmonics=True, prob_harmonic=0.25)
 ```
 
+You can disable harmonic generation from the CLI with `--no-harmonics`.
+
 Set ``prob_harmonic`` to ``1.0`` to force harmonics for testing.  Use
 ``harmonic_types`` to filter between natural or artificial nodes.
 

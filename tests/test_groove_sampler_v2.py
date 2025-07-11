@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -42,7 +43,7 @@ def test_sample_cli_json_sorted(tmp_path: Path) -> None:
     groove_sampler_v2.save(model, model_path)
     result = subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "utilities.groove_sampler_v2",
             "sample",

@@ -81,6 +81,17 @@ gen.export_audio(ir_name="mesa412")
 Tips: You can disable automatic down-mix with `downmix="none"` or keep the
 default `"auto"`.
 
+## Rendering quality matrix 📝
+
+| Oversample factor | Bit-depth 16-bit | Bit-depth 24-bit | Bit-depth 32-float |
+| :-- | :-- | :-- | :-- |
+| 1× (Real-time) | ✔ 軽量 | — | — |
+| 2× | ◎ 推奨 | ✔ | — |
+| 4× | ◎ High-end | ◎ 推奨 | ✔ 研究用 |
+| 8× | — | ◎ Audiophile | ✔ Mastering |
+
+> **Tips:** Disable *dither* when `--no-normalize` is set, because dithering tries to mask quantization noise that would otherwise be inaudible. Without normalization, the added noise becomes unnecessary and may degrade the headroom.
+
 ### StringsGenerator Phase 2 Example
 
 ```yaml

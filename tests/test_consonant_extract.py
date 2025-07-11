@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 import tempfile
 import wave
 from pathlib import Path
@@ -54,7 +55,15 @@ def test_cli_outputs_json(tmp_path: Path) -> None:
     write_wav(wav, sig)
     out_json = tmp_path / "p.json"
     subprocess.run(
-        ["python", "-m", "modular_composer.cli", "peaks", str(wav), "-o", str(out_json)],
+        [
+            sys.executable,
+            "-m",
+            "modular_composer.cli",
+            "peaks",
+            str(wav),
+            "-o",
+            str(out_json),
+        ],
         check=True,
     )
     assert out_json.exists()

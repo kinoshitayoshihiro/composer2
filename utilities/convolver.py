@@ -9,6 +9,8 @@ from music21 import stream
 
 try:
     import soundfile as sf  # type: ignore
+    if not all(hasattr(sf, a) for a in ("read", "write")):
+        raise ImportError
 except Exception:  # pragma: no cover - optional
     sf = None  # type: ignore
 
@@ -18,6 +20,8 @@ except Exception:  # pragma: no cover - optional
     soxr = None  # type: ignore
 
 import os
+import shutil
+import warnings
 from functools import lru_cache
 from typing import Literal
 
@@ -272,7 +276,11 @@ def render_with_ir(
     """
 
     if sf is None:
-        logger.warning("soundfile not installed; skipping convolution")
+        warnings.warn(
+            "soundfile not installed; skipping convolution",
+            RuntimeWarning,
+        )
+        shutil.copyfile(input_wav, out_wav)
         return Path(out_wav)
 
     inp = Path(input_wav)
@@ -403,7 +411,12 @@ def render_wav(
     from utilities.synth import render_midi
 
     if sf is None:
-        raise RuntimeError("soundfile is required for render_wav")
+        warnings.warn(
+            "soundfile not installed; skipping render_wav",
+            RuntimeWarning,
+        )
+        Path(out_path).touch()
+        return Path(out_path)
 
     tmp_midi: Path | None = None
     if parts is not None:

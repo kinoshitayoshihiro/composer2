@@ -1,4 +1,6 @@
-from music21.stream import Part
+from typing import Any
+
+Part = Any
 
 def humanize_velocities(
     part_stream: Part,

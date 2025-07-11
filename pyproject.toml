@@ -41,6 +41,7 @@ test = [
   "mido",
   "python-rtmidi",
   "hdbscan>=0.8",
+  "PyYAML>=6.0",
 ]
 audio = [
   "soundfile>=0.12",

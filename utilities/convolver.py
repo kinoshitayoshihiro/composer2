@@ -17,10 +17,11 @@ try:
 except Exception:  # pragma: no cover - optional
     soxr = None  # type: ignore
 
-from scipy.signal import resample_poly
-from functools import lru_cache
-from typing import Literal
 import os
+from functools import lru_cache
+from typing import Final, Literal
+
+from scipy.signal import resample_poly
 
 try:
     import pyloudnorm as pyln  # type: ignore
@@ -70,15 +71,26 @@ def _resample(data: np.ndarray, src: int, dst: int, *, quality: str) -> np.ndarr
     return res.astype(data.dtype, copy=False)
 
 
-def _mix_to_stereo(ir: np.ndarray) -> np.ndarray:
-    """Average channels into a stereo pair."""
+_STEREO_METHODS: Final = frozenset({"mean", "rms"})
+
+
+def _mix_to_stereo(ir: np.ndarray, method: str = "rms") -> np.ndarray:  # (2, N)
+    """Reduce multi-channel IR to stereo."""
+    if method not in _STEREO_METHODS:
+        raise ValueError(f"method must be one of {_STEREO_METHODS}")
     if ir.ndim == 1:
         return np.stack([ir, ir], axis=1)
     if ir.shape[1] == 1:
         return np.repeat(ir, 2, axis=1)
     mid = ir.shape[1] // 2
-    left = ir[:, :mid].mean(axis=1)
-    right = ir[:, mid:].mean(axis=1)
+    left_chunk = ir[:, :mid]
+    right_chunk = ir[:, mid:]
+    if method == "rms":
+        left = np.sqrt(np.mean(left_chunk ** 2, axis=1))
+        right = np.sqrt(np.mean(right_chunk ** 2, axis=1))
+    else:
+        left = left_chunk.mean(axis=1)
+        right = right_chunk.mean(axis=1)
     return np.stack([left, right], axis=1)
 
 

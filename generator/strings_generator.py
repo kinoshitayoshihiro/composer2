@@ -53,7 +53,7 @@ from music21 import (
     instrument as m21instrument,
 )
 
-from utilities.cc_map import cc_map
+from utilities.cc_map import cc_map, load_cc_map
 from utilities.cc_tools import finalize_cc_events, merge_cc_events
 from utilities.core_music_utils import (
     get_key_signature_object,

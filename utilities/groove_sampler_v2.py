@@ -24,8 +24,13 @@ try:
     from .groove_sampler import _PITCH_TO_LABEL, _iter_drum_notes, infer_resolution
 except ImportError:  # fallback when executed as a script
     import os
+
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-    from utilities.groove_sampler import _PITCH_TO_LABEL, _iter_drum_notes, infer_resolution
+    from utilities.groove_sampler import (
+        _PITCH_TO_LABEL,
+        _iter_drum_notes,
+        infer_resolution,
+    )
 
 State = tuple[int, int, str]
 """Model state encoded as ``(bar_mod2, bin_in_bar, drum_label)``."""
@@ -46,7 +51,7 @@ def _murmurhash3(data: bytes, seed: int = 0) -> int:
 
     length = len(data)
     h = seed & 0xFFFFFFFF
-    rounded_end = (length & 0xFFFFFFFC)  # round down to 4 byte block
+    rounded_end = length & 0xFFFFFFFC  # round down to 4 byte block
 
     for i in range(0, rounded_end, 4):
         k = int.from_bytes(data[i : i + 4], "little")
@@ -72,11 +77,11 @@ def _murmurhash3(data: bytes, seed: int = 0) -> int:
         h ^= k1
 
     h ^= length
-    h ^= (h >> 16)
+    h ^= h >> 16
     h = (h * 0x85EBCA6B) & 0xFFFFFFFF
-    h ^= (h >> 13)
+    h ^= h >> 13
     h = (h * 0xC2B2AE35) & 0xFFFFFFFF
-    h ^= (h >> 16)
+    h ^= h >> 16
     return h & 0xFFFFFFFF
 
 
@@ -417,7 +422,8 @@ def generate_events(
         if lbl == "ohh":
             choke_off = offset + (4 / model.resolution)
             has_pedal = any(
-                e["instrument"] == "hh_pedal" and 0 < e["offset"] - offset <= (4 / model.resolution)
+                e["instrument"] == "hh_pedal"
+                and 0 < e["offset"] - offset <= (4 / model.resolution)
                 for e in events
             )
             if not has_pedal and rng.random() < 0.3:
@@ -481,6 +487,11 @@ def _cmd_train(args: list[str]) -> None:
     parser.add_argument("--coarse", action="store_true")
     parser.add_argument("--jobs", type=int, default=-1)
     parser.add_argument("--memmap-dir", type=Path)
+    parser.add_argument(
+        "--print-model",
+        action="store_true",
+        help="print model parameters after training",
+    )
     ns = parser.parse_args(args)
 
     t0 = time.perf_counter()
@@ -495,6 +506,15 @@ def _cmd_train(args: list[str]) -> None:
     elapsed = time.perf_counter() - t0
     save(model, ns.output)
     print(f"model saved to {ns.output} ({elapsed:.2f}s)")
+    if ns.print_model:
+        try:
+            print(
+                json.dumps(
+                    model, default=lambda o: getattr(o, "__dict__", str(o)), indent=2
+                )
+            )
+        except Exception:
+            print(model)
 
 
 def _cmd_sample(args: list[str]) -> None:
@@ -555,4 +575,3 @@ if __name__ == "__main__":  # pragma: no cover
     import sys
 
     main(sys.argv[1:])
-

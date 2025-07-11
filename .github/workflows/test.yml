@@ -16,7 +16,7 @@ jobs:
       - name: Install dependencies
         run: |
           for i in 1 2 3; do
-            pip install -e .[test] -r requirements-test.txt && break || sleep 5
+            pip install -e .[dev,audio] -r requirements-test.txt && break || sleep 5
           done
       - run: pip install .[all,audio,ml]
       - run: bash scripts/ci_groove.sh

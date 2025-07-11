@@ -81,3 +81,19 @@ def test_resample_poly_fallback(monkeypatch, tmp_path):
     out = tmp_path / "out.wav"
     conv.render_with_ir(inp, ir, out)
     assert called["ok"]
+
+
+def test_downmix_ir_noop():
+    from utilities.convolver import _downmix_ir
+
+    mono = np.ones((10, 1), dtype=np.float32)
+    stereo = np.ones((10, 2), dtype=np.float32)
+
+    assert _downmix_ir(mono).shape[1] == 1
+    assert _downmix_ir(stereo).shape[1] == 2
+
+
+def test_load_ir_cache_env(monkeypatch):
+    monkeypatch.setenv("CONVOLVER_IR_CACHE", "32")
+    conv = importlib.reload(importlib.import_module("utilities.convolver"))
+    assert conv.load_ir.cache_info().maxsize == 32

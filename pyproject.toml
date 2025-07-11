@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "mypy", "ruff"]
+dev = ["pytest", "mypy", "ruff", "PyYAML>=6.0"]
 test = [
   "music21>=9.1",
   "scikit-learn>=1.3.0",

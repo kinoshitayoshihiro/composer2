@@ -46,9 +46,7 @@ def _opt_dep_available(mod: str) -> bool:
     return importlib.util.find_spec(mod) is not None
 
 
-opt_pkgs_missing = any(
-    importlib.util.find_spec(m) is None for m in ("soundfile", "scipy", "sklearn")
-)
+opt_pkgs_missing = importlib.util.find_spec("soundfile") is None
 
 
 @pytest.fixture(scope="session")

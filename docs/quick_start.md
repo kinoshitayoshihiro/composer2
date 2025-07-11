@@ -78,6 +78,9 @@ Python からは ``GuitarGenerator.export_audio`` を使って IR 名を指定�
 gen.export_audio(ir_name="mesa412")
 ```
 
+Tips: You can disable automatic down-mix with `downmix="none"` or keep the
+default `"auto"`.
+
 ### StringsGenerator Phase 2 Example
 
 ```yaml

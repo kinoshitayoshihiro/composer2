@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Mapping
+from typing import Mapping, Literal
 
 from music21 import stream
 
@@ -21,6 +21,7 @@ def render_part_audio(
     oversample: int = 1,
     normalize: bool = True,
     dither: bool = True,
+    downmix: Literal["auto", "stereo", "none"] = "auto",
     tail_db_drop: float = -60.0,
     **mix_opts,
 ) -> Path:
@@ -54,6 +55,7 @@ def render_part_audio(
     if bit_depth not in (16, 24, 32):
         raise ValueError("bit_depth must be 16, 24, or 32")
 
+    mix_opts.pop("downmix", None)
     out = render_wav(
         tmp_mid.name,
         ir_file or "",
@@ -65,6 +67,7 @@ def render_part_audio(
         oversample=oversample,
         normalize=normalize,
         dither=dither,
+        downmix=downmix,
         tail_db_drop=tail_db_drop,
         **mix_opts,
     )

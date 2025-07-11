@@ -1,42 +1,42 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
-from pathlib import Path
-from typing import Any
+import os
+import shutil
 import warnings
+from collections.abc import Iterable, Mapping
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Final, Literal
 
 import numpy as np
 from music21 import stream
+from scipy.signal import resample_poly
 
+# ---------------------------------------------------------------------------#
+# Optional native-deps (失敗しても graceful-degradation)
+# ---------------------------------------------------------------------------#
 try:
     import soundfile as sf  # type: ignore
+
     if not all(hasattr(sf, a) for a in ("read", "write")):
         raise ImportError
-except Exception:  # pragma: no cover - optional
+except Exception:  # pragma: no cover
     sf = None  # type: ignore
 
 try:
     import soxr  # type: ignore
-except Exception:  # pragma: no cover - optional
+except Exception:  # pragma: no cover
     soxr = None  # type: ignore
-
-import os
-import shutil
-import warnings
-from functools import lru_cache
-from typing import Literal
-
-from scipy.signal import resample_poly
 
 try:
     import pyloudnorm as pyln  # type: ignore
-except Exception:  # pragma: no cover - optional
+except Exception:  # pragma: no cover
     pyln = None  # type: ignore
 
 try:
     from tqdm import tqdm  # type: ignore
-except Exception:  # pragma: no cover - optional
+except Exception:  # pragma: no cover
 
     class _NoTqdm:
         def __init__(self, *a: object, **k: object) -> None: ...
@@ -49,22 +49,31 @@ except Exception:  # pragma: no cover - optional
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------#
 # Utility helpers
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------#
 
 
 def _next_pow2(n: int) -> int:
+    """Return the next power-of-two ≥ *n*."""
     return 1 << (n - 1).bit_length()
 
 
-def _resample(data: np.ndarray, src: int, dst: int, *, quality: str) -> np.ndarray:
+def _resample(
+    data: np.ndarray,
+    src: int,
+    dst: int,
+    *,
+    quality: str = "fast",
+) -> np.ndarray:
+    """Resample *data* from *src* Hz → *dst* Hz with optional quality."""
     if src == dst:
         return data
-    if soxr is not None:
+    if soxr is not None:  # fast/high/ultra ⇄ soxr quality map
         qmap = {"fast": soxr.QQ, "high": soxr.HQ, "ultra": soxr.VHQ}
         return soxr.resample(data, src, dst, quality=qmap.get(quality, soxr.QQ))
+
+    # Fallback: scipy polyphase resampler
     window = ("kaiser", 16.0) if quality == "ultra" else ("kaiser", 8.0)
     from fractions import Fraction
 
@@ -72,53 +81,77 @@ def _resample(data: np.ndarray, src: int, dst: int, *, quality: str) -> np.ndarr
     up, down = frac.numerator, frac.denominator
     try:
         res = resample_poly(data.astype(np.float64), up, down, axis=0, window=window)
-    except TypeError:  # pragma: no cover - older SciPy
+    except TypeError:  # older SciPy
         res = resample_poly(data.astype(np.float64), up, down, axis=0)
     return res.astype(data.dtype, copy=False)
 
 
 def _rms(arr: np.ndarray) -> float:
-    """Return root-mean-square of ``arr``."""
-
+    """Root-mean-square utility."""
     return float(np.sqrt(np.mean(np.square(arr, dtype=np.float64))))
 
 
+_STEREO_METHODS: Final = frozenset({"mean", "rms"})
+
+
 def _mix_to_stereo(ir: np.ndarray, method: str = "rms") -> np.ndarray:
-    """Return ``ir`` mixed down to stereo."""
+    """
+    Down-mix multi-channel IR → stereo.
+
+    Parameters
+    ----------
+    ir
+        (N, C) IR array.
+    method
+        ``"rms"`` – RMS weighted mix (energy preserving).  
+        ``"mean"`` – Simple arithmetic mean.
+    """
+    if method not in _STEREO_METHODS:
+        raise ValueError(f"`method` must be one of {_STEREO_METHODS}")
 
     if ir.ndim == 1:
         ir = ir[:, None]
+
+    # Mono → duplicate
     if ir.shape[1] == 1:
         return np.repeat(ir, 2, axis=1).astype(np.float32, copy=False)
 
+    # Already stereo
     if ir.shape[1] == 2:
-        left = ir[:, 0]
-        right = ir[:, 1]
-        return np.stack([left, right], axis=1).astype(np.float32, copy=False)
+        return ir.astype(np.float32, copy=False)
 
+    # >2ch
     if method == "rms":
         weights = np.array([_rms(ir[:, i]) for i in range(ir.shape[1])], dtype=np.float64)
-        if np.all(weights == 0):
-            weights = np.ones_like(weights)
-        weights = weights / np.sum(weights)
+        if np.allclose(weights, 0):
+            weights[:] = 1.0
+        weights /= weights.sum()
         mix = np.sum(ir * weights[None, :], axis=1)
+
+        # Normalize to preserve power split to 2 ch
         orig_pow = float(np.sum(np.square(ir, dtype=np.float64)))
         pre_pow = float(np.sum(np.square(mix, dtype=np.float64)))
         if pre_pow > 0:
-            mix = mix * np.sqrt(orig_pow / (pre_pow * 2.0))
+            mix *= np.sqrt(orig_pow / (pre_pow * 2.0))
         stereo = np.stack([mix, mix], axis=1)
         return stereo.astype(np.float32, copy=False)
 
+    # mean – split in half to L/R then average
     mid = ir.shape[1] // 2
-    left = ir[:, :mid].mean(axis=1)
-    right = ir[:, mid:].mean(axis=1)
-    return np.stack([left, right], axis=1).astype(np.float32, copy=False)
+    l_chunk, r_chunk = ir[:, :mid], ir[:, mid:]
+    l_mix = l_chunk.mean(axis=1)
+    r_mix = r_chunk.mean(axis=1)
+    return np.stack([l_mix, r_mix], axis=1).astype(np.float32, copy=False)
 
 
-def _downmix_ir(
-    ir: np.ndarray, mode: Literal["auto", "stereo", "none"] = "auto"
-) -> np.ndarray:
-    """Return IR down-mixed according to ``mode``."""
+def _downmix_ir(ir: np.ndarray, mode: Literal["auto", "stereo", "none"] = "auto") -> np.ndarray:
+    """
+    Down-mix IR according to *mode*.
+
+    * ``"none"``   – no change.  
+    * ``"stereo"`` – force stereo.  
+    * ``"auto"``   – <=2 ch keep, else stereo mix.
+    """
     if mode == "none":
         return ir
     if mode == "stereo":
@@ -130,12 +163,12 @@ def _downmix_ir(
 
 
 def _fft_convolve(sig: np.ndarray, ir: np.ndarray) -> np.ndarray:
+    """Single-channel FFT convolution."""
     n = len(sig) + len(ir) - 1
     nfft = _next_pow2(n)
     S = np.fft.rfft(sig, nfft)
     H = np.fft.rfft(ir, nfft)
-    y = np.fft.irfft(S * H, nfft)[:n]
-    return y
+    return np.fft.irfft(S * H, nfft)[:n]
 
 
 def convolve_ir(
@@ -145,25 +178,32 @@ def convolve_ir(
     *,
     progress: bool = False,
 ) -> np.ndarray:
-    """Overlap-add FFT convolution returning ``len(audio)+len(ir)-1`` samples."""
+    """Overlap-add FFT convolution (handles multi-channel)."""
     if audio.ndim == 1:
         audio = audio[:, None]
     if ir.ndim == 1:
         ir = ir[:, None]
+
     out_len = audio.shape[0] + ir.shape[0] - 1
     channels = max(audio.shape[1], ir.shape[1])
-    if ir.shape[0] < 2**14:
-        result = []
-        for ch in range(channels):
-            s = audio[:, ch] if audio.shape[1] > 1 else audio[:, 0]
-            h = ir[:, ch] if ir.shape[1] > 1 else ir[:, 0]
-            result.append(_fft_convolve(s, h))
-        return np.stack(result, axis=1)[:out_len]
 
+    # Small IR → simple mode
+    if ir.shape[0] < 2**14:
+        res = [
+            _fft_convolve(
+                audio[:, ch] if audio.shape[1] > 1 else audio[:, 0],
+                ir[:, ch] if ir.shape[1] > 1 else ir[:, 0],
+            )
+            for ch in range(channels)
+        ]
+        return np.stack(res, axis=1)[:out_len]
+
+    # Large IR → block FFT
     fft_size = _next_pow2(ir.shape[0] * 2)
     hop = fft_size - ir.shape[0] + 1
     H = np.fft.rfft(ir, fft_size, axis=0)
     result = np.zeros((out_len + hop, channels), dtype=np.float64)
+
     pos = 0
     bar = tqdm(total=audio.shape[0], disable=not progress, desc="IR", leave=False)
     while pos < audio.shape[0]:
@@ -179,27 +219,30 @@ def convolve_ir(
     return result[:out_len].astype(np.float32)
 
 
+# ---------------------------------------------------------------------------#
+# IR cache
+# ---------------------------------------------------------------------------#
 _IR_CACHE_SIZE = int(os.environ.get("CONVOLVER_IR_CACHE", "8"))
+
 
 @lru_cache(maxsize=_IR_CACHE_SIZE)
 def load_ir(path: str) -> tuple[np.ndarray, int]:
-    """Return IR data and sample rate from ``path``."""
+    """Load IR WAV → (data, sr)."""
     if sf is None:
         raise RuntimeError("soundfile is required for load_ir")
     data, sr = sf.read(path, dtype="float32", always_2d=True)
     return data.astype(np.float32), int(sr)
 
 
+# ---------------------------------------------------------------------------#
+# Rendering helpers
+# ---------------------------------------------------------------------------#
 def _apply_tpdf_dither(data: np.ndarray, bit_depth: int) -> np.ndarray:
     if bit_depth == 32:
         return data
     if bit_depth not in (16, 24):
         return data
-    if bit_depth == 24:
-        # soundfile expects 24-bit PCM data in an int32 container
-        lsb = 1.0 / (2**31)
-    else:
-        lsb = 1.0 / (2**15)
+    lsb = 1.0 / (2**31) if bit_depth == 24 else 1.0 / (2**15)
     noise = (np.random.random(data.shape) - 0.5) + (np.random.random(data.shape) - 0.5)
     return data + noise * lsb
 
@@ -212,42 +255,28 @@ def _fade_tail(
     *,
     max_len: int | None = None,
 ) -> np.ndarray:
-    if data.ndim > 1:
-        mag = np.max(np.abs(data), axis=1)
-    else:
-        mag = np.abs(data)
+    """Quick tail-fade to avoid clicks."""
+    mag = np.max(np.abs(data), axis=1) if data.ndim > 1 else np.abs(data)
     peak = float(np.max(mag))
     if peak == 0:
         return data
     thresh = peak * (10 ** (drop_db / 20.0))
     idx = np.where(mag > thresh)[0]
-    if idx.size == 0:
-        start = 0
-        fade_len = len(data)
-    else:
-        start = idx[-1]
-        fade_len = min(len(data) - start, int(sr * ms / 1000.0))
+    start = idx[-1] if idx.size else 0
+    fade_len = min(len(data) - start, int(sr * ms / 1000.0))
     if fade_len <= 0:
         return data
-    fade = np.linspace(1.0, 0.0, fade_len)
-    if data.ndim > 1:
-        fade = fade[:, None]
+    fade = np.linspace(1.0, 0.0, fade_len)[:, None] if data.ndim > 1 else np.linspace(1.0, 0.0, fade_len)
     out = data.copy()
     out[start : start + fade_len] *= fade
-    end = start + fade_len
-    if max_len is not None:
-        end = min(end, max_len)
+    end = min(start + fade_len, max_len) if max_len is not None else start + fade_len
     return out[:end]
 
 
 def _quantize_pcm(data: np.ndarray, bit_depth: int) -> tuple[np.ndarray, str]:
-    """Return integer PCM array and subtype."""
     if bit_depth == 32:
         return data.astype(np.float32), "FLOAT"
-    if bit_depth == 24:
-        max_val = float(2**31 - 1)
-    else:
-        max_val = float(2 ** (bit_depth - 1) - 1)
+    max_val = float(2**31 - 1) if bit_depth == 24 else float(2 ** (bit_depth - 1) - 1)
     min_val = -max_val - 1
     q = np.clip(np.round(data * max_val), min_val, max_val)
     if bit_depth == 24:
@@ -272,36 +301,29 @@ def render_with_ir(
     tail_db_drop: float = -60.0,
     progress: bool = False,
 ) -> Path:
-    """Convolve ``input_wav`` with ``ir_wav`` and write to ``out_wav``.
-
-    ``downmix`` controls handling of multi-channel impulse responses.
     """
+    Convolve *input_wav* with *ir_wav* and write *out_wav*.
 
-    if sf is None:
-        warnings.warn(
-            "soundfile not installed; skipping convolution",
-            RuntimeWarning,
-        )
+    Fallbacks gracefully if optional libs are missing.
+    """
+    if sf is None:  # pragma: no cover
+        warnings.warn("soundfile not installed – skipping convolution", RuntimeWarning)
         shutil.copyfile(input_wav, out_wav)
         return Path(out_wav)
 
-    inp = Path(input_wav)
-    irp = Path(ir_wav)
-    out = Path(out_wav)
+    inp, irp, out = Path(input_wav), Path(ir_wav), Path(out_wav)
     gain_db = gain_db or 0.0
+    dither = bool(dither and normalize)
 
-    dither = bool(dither)
-    if not normalize:
-        dither = False
-
+    # ------------------------------------------------------------------- load
     try:
         y, sr = sf.read(inp, always_2d=True)
-    except Exception as exc:  # pragma: no cover - best effort
+    except Exception as exc:  # pragma: no cover
         logger.warning("Failed to read WAV: %s", exc)
         return out
 
     if not irp.is_file():
-        logger.warning("IR file missing: %s", ir_wav)
+        logger.warning("IR file missing: %s – dry render", ir_wav)
         if y.shape[1] == 1:
             y = np.broadcast_to(y, (y.shape[0], 2))
         if dither:
@@ -311,6 +333,8 @@ def render_with_ir(
         return out
 
     ir, ir_sr = load_ir(str(irp))
+
+    # ---------------------------------------------------------------- resample
     target_sr = 44100
     y = _resample(y, sr, target_sr, quality=quality)
     ir = _resample(ir, ir_sr, target_sr, quality=quality)
@@ -322,6 +346,7 @@ def render_with_ir(
         ir = _resample(ir, sr, sr * oversample, quality=quality)
         sr *= oversample
 
+    # ---------------------------------------------------------------- convo
     if ir.shape[1] == 1 and y.shape[1] > 1:
         ir = np.broadcast_to(ir, (ir.shape[0], y.shape[1]))
     if y.shape[1] == 1 and ir.shape[1] > 1:
@@ -329,32 +354,34 @@ def render_with_ir(
 
     orig_len = y.shape[0]
     data = convolve_ir(y, ir, block_size=block_size, progress=progress)
+
     if oversample > 1:
         data = _resample(data, sr, sr // oversample, quality=quality)
         sr //= oversample
 
     data = _fade_tail(data, tail_db_drop, sr, max_len=orig_len)
 
+    # ---------------------------------------------------------------- gain / LUFS
     if gain_db:
-        data = data * (10 ** (gain_db / 20.0))
+        data *= 10 ** (gain_db / 20.0)
 
     if normalize:
         peak = float(np.max(np.abs(data)))
         if peak > 1.0:
-            data = data / peak
+            data /= peak
 
-    if lufs_target is not None:
-        if pyln is None:
-            logger.warning("pyloudnorm not installed; skipping LUFS normalization")
-        else:
-            try:
-                meter = pyln.Meter(sr)
-                diff = lufs_target - float(meter.integrated_loudness(data))
-                diff = max(-3.0, min(3.0, diff))
-                data = data * (10 ** (diff / 20.0))
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.debug("pyloudnorm failed: %s", exc)
+    if lufs_target is not None and pyln is not None:
+        try:
+            meter = pyln.Meter(sr)
+            diff = lufs_target - float(meter.integrated_loudness(data))
+            diff = max(-3.0, min(3.0, diff))
+            data *= 10 ** (diff / 20.0)
+        except Exception as exc:  # pragma: no cover
+            logger.debug("pyloudnorm failed: %s", exc)
+    elif lufs_target is not None:
+        logger.warning("pyloudnorm not installed; LUFS normalization skipped")
 
+    # ---------------------------------------------------------------- dither / write
     if dither:
         data = _apply_tpdf_dither(data, bit_depth)
     pcm, subtype = _quantize_pcm(data, bit_depth)
@@ -362,14 +389,15 @@ def render_with_ir(
     return out
 
 
+# ---------------------------------------------------------------------------#
+# External helpers
+# ---------------------------------------------------------------------------#
 def normalize_velocities(parts: list[stream.Part] | dict[str, stream.Part]) -> None:
-    """Scale note velocities of ``parts`` so averages match."""
-    if isinstance(parts, dict):
-        all_parts = list(parts.values())
-    else:
-        all_parts = list(parts)
+    """Normalize average note velocities across parts."""
+    all_parts = list(parts.values()) if isinstance(parts, dict) else list(parts)
     if not all_parts:
         return
+
     avgs = []
     for p in all_parts:
         vals = [n.volume.velocity or 0 for n in p.recurse().notes if n.volume]
@@ -377,6 +405,7 @@ def normalize_velocities(parts: list[stream.Part] | dict[str, stream.Part]) -> N
             avgs.append(sum(vals) / len(vals))
     if not avgs:
         return
+
     target = sum(avgs) / len(avgs)
     for p in all_parts:
         vals = [n.volume.velocity or 0 for n in p.recurse().notes if n.volume]
@@ -389,8 +418,7 @@ def normalize_velocities(parts: list[stream.Part] | dict[str, stream.Part]) -> N
         for n in p.recurse().notes:
             if n.volume is None:
                 continue
-            val = int(max(1, min(127, round(n.volume.velocity * scale))))
-            n.volume.velocity = val
+            n.volume.velocity = int(max(1, min(127, round(n.volume.velocity * scale))))  # type: ignore[arg-type]
 
 
 def render_wav(
@@ -409,24 +437,24 @@ def render_wav(
     tail_db_drop: float = -60.0,
     **kw: Any,
 ) -> Path:
-    """Render ``midi_path`` with ``fluidsynth`` and apply ``ir_path``."""
-    from utilities.synth import render_midi
+    """
+    Render *midi_path* with Fluidsynth then apply IR.
 
-    if sf is None:
-        warnings.warn(
-            "soundfile not installed; skipping render_wav",
-            RuntimeWarning,
-        )
+    If *parts* is supplied, velocities are normalized and a temporary MIDI
+    is rendered instead.
+    """
+    from utilities.synth import render_midi  # lazy import
+
+    if sf is None:  # pragma: no cover
+        warnings.warn("soundfile not installed – skipping render_wav", RuntimeWarning)
         Path(out_path).touch()
         return Path(out_path)
 
     tmp_midi: Path | None = None
     if parts is not None:
-        normalize_velocities(
-            list(parts.values()) if isinstance(parts, dict) else list(parts)
-        )
+        normalize_velocities(parts)
         score = stream.Score()
-        for p in parts.values() if isinstance(parts, dict) else parts:
+        for p in parts.values() if isinstance(parts, Mapping) else parts:
             score.insert(0, p)
         tmp_midi = Path(out_path).with_suffix(".norm.mid")
         score.write("midi", fp=str(tmp_midi))
@@ -434,19 +462,17 @@ def render_wav(
     else:
         midi_in = Path(midi_path)
 
-    tmp = Path(out_path).with_suffix(".dry.wav")
-    render_midi(midi_in, tmp, sf2_path=sf2)
+    dry_wav = Path(out_path).with_suffix(".dry.wav")
+    render_midi(midi_in, dry_wav, sf2_path=sf2)
+
+    # legacy 'mix_opts' shim
     if "mix_opts" in kw:
-        warnings.warn(
-            "'mix_opts' dict is deprecated; pass options as keyword arguments",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        mo = kw.pop("mix_opts") or {}
-        if isinstance(mo, Mapping):
-            kw.update(mo)
+        warnings.warn("'mix_opts' dict is deprecated; pass keyword args instead", DeprecationWarning)
+        if isinstance(kw["mix_opts"], Mapping):
+            kw.update(kw.pop("mix_opts"))
+
     render_with_ir(
-        tmp,
+        dry_wav,
         ir_path,
         out_path,
         quality=quality,
@@ -458,7 +484,7 @@ def render_wav(
         tail_db_drop=tail_db_drop,
         **kw,
     )
-    tmp.unlink(missing_ok=True)
+    dry_wav.unlink(missing_ok=True)
     if tmp_midi is not None:
         tmp_midi.unlink(missing_ok=True)
     return Path(out_path)

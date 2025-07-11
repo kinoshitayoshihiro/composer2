@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Mapping, Literal
+from typing import Mapping, Literal, Any
+import warnings
 
 from music21 import stream
 
@@ -13,19 +14,30 @@ from .mix_profile import get_mix_chain
 def render_part_audio(
     part: stream.Part | Mapping[str, stream.Part],
     *,
-    ir_name: str | None = None,
-    out_path: str | Path | None = "out.wav",
-    sf2: str | None = None,
-    quality: str = "fast",
-    bit_depth: int = 24,
-    oversample: int = 1,
+    downmix: Literal["auto", "stereo", "none"] = "auto",
     normalize: bool = True,
     dither: bool = True,
-    downmix: Literal["auto", "stereo", "none"] = "auto",
-    tail_db_drop: float = -60.0,
-    **mix_opts,
+    **kw: Any,
 ) -> Path:
     """Render ``part`` to ``out_path`` applying ``ir_name`` if given."""
+
+    if "mix_opts" in kw:
+        warnings.warn(
+            "'mix_opts' dict is deprecated; pass options as keyword arguments",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        mix_opts = kw.pop("mix_opts") or {}
+        if isinstance(mix_opts, Mapping):
+            kw.update(mix_opts)
+
+    ir_name = kw.pop("ir_name", None)
+    out_path = kw.pop("out_path", "out.wav")
+    sf2 = kw.pop("sf2", None)
+    quality = kw.pop("quality", "fast")
+    bit_depth = kw.pop("bit_depth", 24)
+    oversample = kw.pop("oversample", 1)
+    tail_db_drop = kw.pop("tail_db_drop", -60.0)
 
     if isinstance(part, dict):
         parts = part
@@ -55,7 +67,6 @@ def render_part_audio(
     if bit_depth not in (16, 24, 32):
         raise ValueError("bit_depth must be 16, 24, or 32")
 
-    mix_opts.pop("downmix", None)
     out = render_wav(
         tmp_mid.name,
         ir_file or "",
@@ -69,7 +80,7 @@ def render_part_audio(
         dither=dither,
         downmix=downmix,
         tail_db_drop=tail_db_drop,
-        **mix_opts,
+        **kw,
     )
 
     Path(tmp_mid.name).unlink(missing_ok=True)

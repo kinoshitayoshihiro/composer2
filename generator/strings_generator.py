@@ -61,8 +61,12 @@ from utilities.core_music_utils import (
 )
 from utilities.effect_preset_loader import EffectPresetLoader
 from utilities.expression_map import load_expression_map, resolve_expression
-from utilities.harmonic_utils import apply_harmonic_notation, choose_harmonic
+from utilities.harmonic_utils import (
+    apply_harmonic_notation,
+    apply_harmonic_to_pitch,
+)
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
+from utilities.velocity_utils import scale_velocity  # noqa: E402
 
 from .base_part_generator import BasePartGenerator
 
@@ -743,58 +747,6 @@ class StringsGenerator(BasePartGenerator):
             n.pitch.microtone = pitch.Microtone(curve[0][1])
             n.editorial.vibrato_curve = curve
 
-    def _maybe_harmonic(
-        self,
-        p: pitch.Pitch,
-        chord_pitches: Sequence[pitch.Pitch],
-        base_midis: Sequence[int] | None = None,
-    ) -> tuple[pitch.Pitch, list[articulations.Articulation], float, dict | None]:
-        if not self.enable_harmonics:
-            return p, [], 1.0, None
-        if self.rng.random() >= self.prob_harmonic:
-            return p, [], 1.0, None
-        result = choose_harmonic(
-            p,
-            tuning_offsets=[0, 0, 0, 0],
-            chord_pitches=list(chord_pitches),
-            max_fret=self.max_harmonic_fret,
-            base_midis=list(base_midis or [55, 50, 45, 40]),
-        )
-        if result is None:
-            return p, [], 1.0, None
-        new_pitch, meta = result
-        if meta.get("type") not in self.harmonic_types:
-            if "artificial" in self.harmonic_types:
-                base_midi = int(round(p.midi))
-                open_midis = [55, 50, 45, 40]
-                for idx, open_m in enumerate(open_midis):
-                    fret = base_midi - open_m
-                    if 0 <= fret <= self.max_harmonic_fret and fret + 12 <= self.max_harmonic_fret:
-                        new_pitch = pitch.Pitch()
-                        new_pitch.midi = base_midi + 12
-                        meta = {
-                            "type": "artificial",
-                            "string_idx": idx,
-                            "touch_fret": fret + 12,
-                            "sounding_pitch": int(new_pitch.midi),
-                        }
-                        break
-                else:
-                    return p, [], 1.0, None
-            else:
-                return p, [], 1.0, None
-        arts: list[articulations.Articulation] = [articulations.Harmonic()]
-        typ = meta.get("type")
-        if typ == "natural" and hasattr(articulations, "NaturalHarmonic"):
-            arts.append(articulations.NaturalHarmonic())
-        elif typ != "natural" and hasattr(articulations, "ArtificialHarmonic"):
-            arts.append(articulations.ArtificialHarmonic())
-        if typ != "natural" and hasattr(articulations, "TouchingPitch"):
-            arts.append(articulations.TouchingPitch())
-        factor = self.harmonic_volume_factor
-        if typ == "artificial":
-            factor *= 0.8
-        return new_pitch, arts, factor, meta
 
     def _apply_expression(self, part: stream.Part, mapping: dict[str, Any]) -> None:
         """Apply expression map to *part*."""
@@ -960,32 +912,50 @@ class StringsGenerator(BasePartGenerator):
                     info = next((s for s in self._SECTIONS if s.name == part_name), None)
                     base_midis = info.open_string_midi if info else None
                     for idx, n_el in enumerate(elem.notes):
-                        new_p, arts, factor, meta = self._maybe_harmonic(
+                        new_p, arts, factor, meta = apply_harmonic_to_pitch(
                             n_el.pitch,
-                            elem.pitches,
+                            chord_pitches=elem.pitches,
+                            tuning_offsets=[0, 0, 0, 0],
                             base_midis=base_midis,
+                            max_fret=self.max_harmonic_fret,
+                            allowed_types=self.harmonic_types,
+                            rng=self.rng,
+                            prob=self.prob_harmonic,
+                            volume_factor=self.harmonic_volume_factor,
                         )
                         if arts:
                             for art in arts:
                                 n_el.articulations.append(art)
                             if n_el.volume and n_el.volume.velocity is not None:
-                                n_el.volume.velocity = _clamp_velocity(n_el.volume.velocity * factor)
+                                n_el.volume.velocity = scale_velocity(
+                                    n_el.volume.velocity,
+                                    factor,
+                                )
                             if meta:
                                 apply_harmonic_notation(n_el, meta)
                         n_el.pitch = new_p
                 else:
                     info = next((s for s in self._SECTIONS if s.name == part_name), None)
                     base_midis = info.open_string_midi if info else None
-                    new_p, arts, factor, meta = self._maybe_harmonic(
+                    new_p, arts, factor, meta = apply_harmonic_to_pitch(
                         elem.pitch,
-                        [elem.pitch],
+                        chord_pitches=[elem.pitch],
+                        tuning_offsets=[0, 0, 0, 0],
                         base_midis=base_midis,
+                        max_fret=self.max_harmonic_fret,
+                        allowed_types=self.harmonic_types,
+                        rng=self.rng,
+                        prob=self.prob_harmonic,
+                        volume_factor=self.harmonic_volume_factor,
                     )
                     if arts:
                         for art in arts:
                             elem.articulations.append(art)
                         if elem.volume and elem.volume.velocity is not None:
-                            elem.volume.velocity = _clamp_velocity(elem.volume.velocity * factor)
+                            elem.volume.velocity = scale_velocity(
+                                elem.volume.velocity,
+                                factor,
+                            )
                         if meta:
                             apply_harmonic_notation(elem, meta)
                     elem.pitch = new_p

@@ -31,14 +31,14 @@ from music21 import (
 )
 
 import utilities.humanizer as humanizer  # type: ignore
-from utilities.config_loader import load_chordmap_yaml, load_main_cfg
+from generator.guitar_generator import TUNING_PRESETS
 from utilities import sanitize_chord_label
+from utilities.config_loader import load_chordmap_yaml, load_main_cfg
 
 # --- project utilities ----------------------------------------------------
 from utilities.generator_factory import GenFactory  # type: ignore
 from utilities.rhythm_library_loader import load_rhythm_library
 from utilities.tempo_utils import load_tempo_map
-from generator.guitar_generator import TUNING_PRESETS
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -97,6 +97,7 @@ def compose(
     parallel_bars: int = 1,
     expr_curve: str = "cubic-in",
     kick_leak_jitter: int = 0,
+    disable_harmonics: bool = False,
 ) -> tuple[stream.Score, list[dict[str, Any]]]:
     if tempo_map is None:
         part_gens = GenFactory.build_from_config(main_cfg, rhythm_lib)
@@ -104,6 +105,11 @@ def compose(
         part_gens = GenFactory.build_from_config(
             main_cfg, rhythm_lib, tempo_map=tempo_map
         )
+
+    if disable_harmonics:
+        for g in part_gens.values():
+            if hasattr(g, "enable_harmonics"):
+                g.enable_harmonics = False
 
     part_streams: dict[str, stream.Part] = {}
 
@@ -456,6 +462,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Generate a simple counter melody above the vocal part",
     )
+    p.add_argument(
+        "--no-harmonics",
+        action="store_true",
+        help="Disable harmonic generation in all generators",
+    )
     return p
 
 
@@ -565,6 +576,7 @@ def main_cli() -> None:
         parallel_bars=args.parallel_bars,
         expr_curve=args.expr_curve,
         kick_leak_jitter=args.kick_leak_jitter,
+        disable_harmonics=args.no_harmonics,
     )
 
     if args.counterline:

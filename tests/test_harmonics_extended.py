@@ -1,7 +1,7 @@
 from music21 import pitch
 
 from generator.guitar_generator import GuitarGenerator
-from utilities.harmonic_utils import choose_harmonic
+from utilities.harmonic_utils import apply_harmonic_to_pitch, choose_harmonic
 
 
 def test_natural_5f_harmonic():
@@ -28,7 +28,18 @@ def test_artificial_harmonic():
         rng_seed=2,
     )
     p = pitch.Pitch("C4")
-    new, arts, _, _ = gen._maybe_harmonic(p, [p])
+    new, arts, _, _ = apply_harmonic_to_pitch(
+        p,
+        chord_pitches=[p],
+        tuning_offsets=gen.tuning,
+        base_midis=None,
+        max_fret=gen.max_harmonic_fret,
+        allowed_types=gen.harmonic_types,
+        rng=gen.rng,
+        prob=gen.prob_harmonic,
+        volume_factor=gen.harmonic_volume_factor,
+        gain_db=gen.harmonic_gain_db,
+    )
     assert int(round(new.midi)) == int(round(p.midi)) + 12
 
 
@@ -38,7 +49,7 @@ def test_base_midis_override():
         p,
         tuning_offsets=None,
         chord_pitches=[p],
-        base_midis=[60, 65, 70],
+        open_string_midis=[60, 65, 70],
     )
     assert result is not None
     _, meta = result

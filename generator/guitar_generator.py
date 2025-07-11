@@ -67,12 +67,17 @@ def _get_fret_indicator_cls():
     return None
 
 
-import math
+import math  # noqa: E402
 
-from utilities import humanizer
-from utilities.humanizer import apply_swing
+from utilities import humanizer  # noqa: E402
+from utilities.harmonic_utils import (  # noqa: E402
+    _BASE_MIDIS,
+    apply_harmonic_notation,
+    choose_harmonic,
+)
+from utilities.humanizer import apply_swing  # noqa: E402
 
-from .base_part_generator import BasePartGenerator
+from .base_part_generator import BasePartGenerator  # noqa: E402
 
 # Minimum note duration for generated notes (quarterLength)
 MIN_NOTE_DURATION_QL = 0.0125  # minimum quarterLength for strum notes
@@ -288,6 +293,13 @@ class GuitarGenerator(BasePartGenerator):
         fingering_costs: dict[str, int] | None = None,
         amp_preset_file: str | Path | None = None,
         tone_shaper: ToneShaper | None = None,
+        enable_harmonics: bool = False,
+        prob_harmonic: float = 0.15,
+        harmonic_types: Sequence[str] | None = None,
+        max_harmonic_fret: int = 19,
+        harmonic_volume_factor: float = 0.85,
+        harmonic_gain_db: float | None = None,
+        rng_seed: int | None = None,
         **kwargs,
     ):
         """Create a guitar part generator.
@@ -339,6 +351,17 @@ class GuitarGenerator(BasePartGenerator):
                 style_db.load_style_db(style_db_path)
             except Exception:
                 pass
+        if rng_seed is not None:
+            try:
+                self.rng.seed(int(rng_seed))
+            except Exception:
+                pass
+        self.enable_harmonics = bool(enable_harmonics)
+        self.prob_harmonic = float(prob_harmonic)
+        self.harmonic_types = list(harmonic_types or ["natural", "artificial"])
+        self.max_harmonic_fret = int(max_harmonic_fret)
+        self.harmonic_volume_factor = float(harmonic_volume_factor)
+        self.harmonic_gain_db = float(harmonic_gain_db) if harmonic_gain_db is not None else None
         self.tuning_name = "standard"
         if self.tuning == TUNING_PRESETS.get("drop_d"):
             self.tuning_name = "drop_d"
@@ -822,6 +845,57 @@ class GuitarGenerator(BasePartGenerator):
                 offset = 0.0
         return offset
 
+    def _maybe_harmonic(
+        self, p: pitch.Pitch, chord_pitches: Sequence[pitch.Pitch]
+    ) -> tuple[pitch.Pitch, list[articulations.Articulation], float, dict | None]:
+        if not self.enable_harmonics:
+            return p, [], 1.0, None
+        if self.rng.random() >= self.prob_harmonic:
+            return p, [], 1.0, None
+        result = choose_harmonic(p, list(self.tuning), list(chord_pitches), self.max_harmonic_fret)
+        if result is None:
+            return p, [], 1.0, None
+        new_pitch, meta = result
+        if meta.get("type") not in self.harmonic_types:
+            if "artificial" in self.harmonic_types:
+                base_midi = int(round(p.midi))
+                open_midis = [
+                    m + (self.tuning[i] if i < len(self.tuning) else 0)
+                    for i, m in enumerate(_BASE_MIDIS)
+                ]
+                for idx, open_m in enumerate(open_midis):
+                    fret = base_midi - open_m
+                    if 0 <= fret <= self.max_harmonic_fret and fret + 12 <= self.max_harmonic_fret:
+                        new_pitch = pitch.Pitch()
+                        new_pitch.midi = base_midi + 12
+                        meta = {
+                            "type": "artificial",
+                            "string_idx": idx,
+                            "touch_fret": fret + 12,
+                            "sounding_pitch": int(new_pitch.midi),
+                        }
+                        break
+                else:
+                    return p, [], 1.0, None
+            else:
+                return p, [], 1.0, None
+        arts: list[articulations.Articulation] = [articulations.Harmonic()]
+        typ = meta.get("type")
+        if typ == "natural" and hasattr(articulations, "NaturalHarmonic"):
+            arts.append(articulations.NaturalHarmonic())
+        elif typ != "natural" and hasattr(articulations, "ArtificialHarmonic"):
+            arts.append(articulations.ArtificialHarmonic())
+        if typ != "natural" and hasattr(articulations, "TouchingPitch"):
+            arts.append(articulations.TouchingPitch())
+        factor = (
+            10 ** (self.harmonic_gain_db / 20)
+            if self.harmonic_gain_db is not None
+            else self.harmonic_volume_factor
+        )
+        if typ == "artificial":
+            factor *= 0.8
+        return new_pitch, arts, factor, meta
+
     def _humanize_timing(self, el: note.NotRest, jitter_ms: float) -> None:
         if not jitter_ms:
             return
@@ -1095,6 +1169,16 @@ class GuitarGenerator(BasePartGenerator):
         chord_pitches = self._get_guitar_friendly_voicing(cs, num_strings, preferred_octave_bottom)
         if not chord_pitches:
             return []
+        harmonic_marks: list[tuple[list[articulations.Articulation], float, dict | None]] = []
+        if self.enable_harmonics:
+            new_list: list[pitch.Pitch] = []
+            for p_obj in chord_pitches:
+                new_p, arts, factor, meta = self._maybe_harmonic(p_obj, chord_pitches)
+                new_list.append(new_p)
+                harmonic_marks.append((arts, factor, meta))
+            chord_pitches = new_list
+        else:
+            harmonic_marks = [([], 1.0, None) for _ in chord_pitches]
 
         is_palm_muted = guitar_block_params.get("palm_mute", False)
         stroke_dir = guitar_block_params.get("current_event_stroke") or guitar_block_params.get(
@@ -1178,11 +1262,21 @@ class GuitarGenerator(BasePartGenerator):
                 chord_pitches,
                 quarterLength=max(MIN_NOTE_DURATION_QL, base_dur),
             )
-            for n_in_ch_note in ch.notes:
+            for idx, n_in_ch_note in enumerate(ch.notes):
                 n_in_ch_note.volume.velocity = self._apply_stroke_velocity(
                     event_final_velocity,
                     stroke_dir,
                 )
+                if harmonic_marks and idx < len(harmonic_marks):
+                    arts, factor, meta = harmonic_marks[idx]
+                    for art in arts:
+                        n_in_ch_note.articulations.append(copy.deepcopy(art))
+                    if arts:
+                        n_in_ch_note.volume.velocity = _clamp_velocity(
+                            n_in_ch_note.volume.velocity * factor
+                        )
+                        if meta:
+                            apply_harmonic_notation(n_in_ch_note, meta)
                 if is_palm_muted:
                     n_in_ch_note.articulations.append(articulations.Staccatissimo())
             ch.offset = self._jitter(0.0)
@@ -1925,6 +2019,9 @@ class GuitarGenerator(BasePartGenerator):
                     n_new = note.Note(n_in.pitch, quarterLength=el.quarterLength)
                     n_new.offset = el.offset
                     n_new.volume = copy.deepcopy(el.volume)
+                    n_new.articulations = [copy.deepcopy(a) for a in n_in.articulations]
+                    if hasattr(n_in, "notations"):
+                        n_new.notations = copy.deepcopy(n_in.notations)
                     s = getattr(n_in, "string", None)
                     f = getattr(n_in, "fret", None)
                     if s is not None and f is not None:

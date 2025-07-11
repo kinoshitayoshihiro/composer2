@@ -90,3 +90,24 @@ def _basic_gen():
         )
 
     return factory
+
+
+@pytest.fixture
+def _strings_gen():
+    from music21 import instrument
+
+    from generator.strings_generator import StringsGenerator
+
+    def factory(**kwargs):
+        return StringsGenerator(
+            global_settings={},
+            default_instrument=instrument.Violin(),
+            part_name="strings",
+            global_tempo=120,
+            global_time_signature="4/4",
+            global_key_signature_tonic="C",
+            global_key_signature_mode="major",
+            **kwargs,
+        )
+
+    return factory

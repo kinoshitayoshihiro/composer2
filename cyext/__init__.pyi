@@ -1,6 +1,7 @@
 from collections.abc import Callable
+from typing import Any
 
-from music21.stream import Part
+Part = Any
 
 apply_swing: Callable[[Part, float, int], None] | None
 humanize_velocities: Callable[[Part, int, bool, bool, str, int], None] | None

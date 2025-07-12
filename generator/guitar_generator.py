@@ -300,6 +300,7 @@ class GuitarGenerator(BasePartGenerator):
         harmonic_volume_factor: float = 0.85,
         harmonic_gain_db: float | None = None,
         rng_seed: int | None = None,
+        ml_velocity_model_path: str | None = None,
         **kwargs,
     ):
         """Create a guitar part generator.
@@ -314,7 +315,7 @@ class GuitarGenerator(BasePartGenerator):
             ``"linear"`` or ``"spline"``.
         """
 
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, ml_velocity_model_path=ml_velocity_model_path, **kwargs)
         self.external_patterns_path = external_patterns_path
         if isinstance(tuning, str):
             self.tuning = TUNING_PRESETS.get(tuning.lower(), STANDARD_TUNING_OFFSETS)

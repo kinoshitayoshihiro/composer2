@@ -364,6 +364,7 @@ class DrumGenerator(BasePartGenerator):
         main_cfg=None,
         drum_map=None,
         tempo_map=None,
+        ml_velocity_model_path: str | None = None,
         **kwargs,
     ):
         self.main_cfg = main_cfg
@@ -375,6 +376,7 @@ class DrumGenerator(BasePartGenerator):
             global_time_signature=global_time_signature,
             global_key_signature_tonic=global_key_signature_tonic,
             global_key_signature_mode=global_key_signature_mode,
+            ml_velocity_model_path=ml_velocity_model_path,
             **kwargs,
         )
         # keep a reference for later use

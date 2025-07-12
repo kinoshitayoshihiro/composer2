@@ -131,4 +131,3 @@ jobs:
             -H 'Content-Type: application/json' \
             -H "Authorization: $RUNPOD_API" \
             -d "{\"query\":\"mutation{podTerminate(podId:\\"$POD_ID\\")}\"}"
-

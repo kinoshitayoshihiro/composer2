@@ -1,0 +1,135 @@
+name: Train Velocity on A100
+on:
+  workflow_dispatch:
+    inputs:
+      epochs:
+        description: "Number of epochs"
+        default: 30
+        required: false
+concurrency:
+  group: train-velocity
+  cancel-in-progress: true
+env:
+  RUNPOD_API: ${{ secrets.RUNPOD_API }}
+jobs:
+  spawn-runner:
+    runs-on: ubuntu-latest
+    outputs:
+      pod_id: ${{ steps.spawn.outputs.pod_id }}
+      ip: ${{ steps.info.outputs.ip }}
+    steps:
+      - name: gh auth
+        env:
+          GH_PAT_RUNNER: ${{ secrets.GH_PAT_RUNNER }}
+        run: |
+          set -euo pipefail
+          echo "$GH_PAT_RUNNER" | gh auth login --with-token
+      - id: spawn
+        run: |
+          set -euo pipefail
+          query='mutation{podFindAndDeployOnDemand(templateId:"a100-40gb-ubuntu"){id}}'
+          for i in 1 2 3; do
+            resp=$(curl -sf https://api.runpod.io/graphql \
+              -H 'Content-Type: application/json' \
+              -H "Authorization: $RUNPOD_API" \
+              -d "{\"query\":\"$query\"}") && break || sleep 5
+          done
+          echo "pod_id=$(echo $resp | jq -r '.data.podFindAndDeployOnDemand.id')" >> $GITHUB_OUTPUT
+      - id: info
+        run: |
+          set -euo pipefail
+          pid=${{ steps.spawn.outputs.pod_id }}
+          ip=null
+          until [[ "$ip" != "null" ]]; do
+            resp=$(curl -s https://api.runpod.io/graphql \
+              -H 'Content-Type: application/json' \
+              -H "Authorization: $RUNPOD_API" \
+              -d "{\"query\":\"{pod(podId:\\"$pid\\"){ipAddress}}\"}")
+            ip=$(echo "$resp" | jq -r '.data.pod.ipAddress')
+            [[ "$ip" == "null" ]] && sleep 5
+          done
+          echo "ip=$ip" >> $GITHUB_OUTPUT
+      - id: token
+        run: |
+          set -euo pipefail
+          t=$(gh api -X POST repos/${{ github.repository }}/actions/runners/registration-token -q .token)
+          echo "token=$t" >> $GITHUB_OUTPUT
+      - name: install-runner
+        env:
+          POD_ID: ${{ steps.spawn.outputs.pod_id }}
+          POD_IP: ${{ steps.info.outputs.ip }}
+          RUNNER_TOKEN: ${{ steps.token.outputs.token }}
+          RP_SSH_KEY: ${{ secrets.RP_SSH_KEY }}
+          GITHUB_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          RUNNER_VERSION=${RUNNER_VERSION:-2.317.0}
+          wait_runner_ready() {
+            for i in {1..36}; do
+              gh api repos/${{ github.repository }}/actions/runners \
+                | jq -e ".runners[]|select(.name==\"$POD_ID\" && .status==\"online\")" && return 0
+              sleep 5
+            done
+            return 1
+          }
+          install_runner() {
+            mkdir -p ~/.ssh
+            echo "$RP_SSH_KEY" > ~/.ssh/runpod_key
+            chmod 600 ~/.ssh/runpod_key
+            ssh -i ~/.ssh/runpod_key -o StrictHostKeyChecking=no root@$POD_IP <<EOSSH
+            set -euo pipefail
+            apt-get update
+            apt-get install -y docker.io curl gpg
+            url="https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/actions-runner-linux-x64-$RUNNER_VERSION.tar.gz"
+            curl -L "$url" -o actions-runner.tar.gz
+            mkdir actions-runner
+            tar xzf actions-runner.tar.gz -C actions-runner
+            cd actions-runner
+            ./bin/installdependencies.sh
+            ./config.sh --url "$GITHUB_URL" \
+              --token "$RUNNER_TOKEN" --labels self-hosted,gpu,a100 \
+              --name "$POD_ID" --unattended
+            curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit.gpg
+            distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+            curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list \
+              | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+            apt-get update
+            apt-get install -y nvidia-container-toolkit
+            systemctl restart docker
+            ./run.sh &
+EOSSH
+          }
+          install_runner
+          wait_runner_ready
+  train:
+    needs: spawn-runner
+    runs-on: [self-hosted, gpu, a100]
+    container:
+      image: pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
+      options: --gpus all
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euo pipefail
+          pip install -e ".[ml]"
+      - run: |
+          set -euo pipefail
+          python scripts/train_velocity.py --epochs ${{ inputs.epochs }} --out ckpt.pt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: velocity-ckpt
+          path: ckpt.pt
+  teardown:
+    if: always()
+    needs: [spawn-runner, train]
+    runs-on: ubuntu-latest
+    env:
+      POD_ID: ${{ needs.spawn-runner.outputs.pod_id }}
+    steps:
+      - run: |
+          set -euo pipefail
+          curl -s https://api.runpod.io/graphql \
+            -H 'Content-Type: application/json' \
+            -H "Authorization: $RUNPOD_API" \
+            -d "{\"query\":\"mutation{podTerminate(podId:\\"$POD_ID\\")}\"}"
+

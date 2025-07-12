@@ -14,16 +14,13 @@ env:
 jobs:
   spawn-runner:
     runs-on: ubuntu-latest
+    env:
+      RUNPOD_API: ${{ secrets.RUNPOD_API }}
+      GH_TOKEN: ${{ secrets.GH_PAT_RUNNER }}
     outputs:
       pod_id: ${{ steps.spawn.outputs.pod_id }}
       ip: ${{ steps.info.outputs.ip }}
     steps:
-      - name: gh auth
-        env:
-          GH_PAT_RUNNER: ${{ secrets.GH_PAT_RUNNER }}
-        run: |
-          set -euo pipefail
-          echo "$GH_PAT_RUNNER" | gh auth login --with-token
       - id: spawn
         run: |
           set -euo pipefail
@@ -49,11 +46,13 @@ jobs:
             [[ "$ip" == "null" ]] && sleep 5
           done
           echo "ip=$ip" >> $GITHUB_OUTPUT
-      - id: token
+      - name: Get runner registration token
+        id: token
         run: |
-          set -euo pipefail
-          t=$(gh api -X POST repos/${{ github.repository }}/actions/runners/registration-token -q .token)
-          echo "token=$t" >> $GITHUB_OUTPUT
+          echo "token=$(gh api \
+            -X POST \
+            /repos/${{ github.repository }}/actions/runners/registration-token \
+            -q .token)" >> $GITHUB_OUTPUT
       - name: install-runner
         env:
           POD_ID: ${{ steps.spawn.outputs.pod_id }}

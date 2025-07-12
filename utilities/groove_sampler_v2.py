@@ -9,13 +9,16 @@ positions into four buckets.
 from __future__ import annotations
 
 import json
+import logging
 import pickle
 import sys
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from random import Random
+
+log = logging.getLogger(__name__)
 
 import numpy as np
 from joblib import Parallel, delayed
@@ -110,6 +113,60 @@ def _hash_ctx(ctx: Iterable[int]) -> int:
     return _murmurhash3(arr.tobytes())
 
 
+def collect_midi_files(root: Path, include_audio: bool = True) -> Iterator[Path]:
+    """Yield MIDI or audio files recursively under ``root``."""
+    midi_exts = {".mid", ".midi"}
+    audio_exts = {".wav", ".wave"}
+    for p in root.rglob("*"):
+        suf = p.suffix.lower()
+        if suf in midi_exts:
+            yield p
+        elif include_audio and suf in audio_exts:
+            yield p
+
+
+def midi_to_events(pm: "pretty_midi.PrettyMIDI") -> list[tuple[float, int]]:
+    """Return drum notes from a PrettyMIDI object as ``(beat, pitch)``."""
+    tempo_arr = pm.get_tempo_changes()[1]
+    tempo = float(tempo_arr[0]) if tempo_arr.size else 120.0
+    sec_per_beat = 60.0 / tempo
+    notes: list[tuple[float, int]] = []
+    for inst in pm.instruments:
+        if not inst.is_drum:
+            continue
+        for n in inst.notes:
+            beat = n.start / sec_per_beat
+            notes.append((beat, n.pitch))
+    notes.sort(key=lambda x: x[0])
+    return notes
+
+
+def convert_wav_to_midi(path: Path) -> "pretty_midi.PrettyMIDI":
+    """Convert a WAV file to a single-drum PrettyMIDI object."""
+    import librosa
+    import numpy as np
+    import pretty_midi
+
+    y, sr = librosa.load(path, sr=None, mono=True)
+    tempo, _ = librosa.beat.beat_track(y=y, sr=sr, trim=False)
+    if hasattr(tempo, "__len__"):
+        tempo_val = float(tempo[0]) if len(tempo) else 0.0
+    else:
+        tempo_val = float(tempo)
+    bpm = tempo_val or 120.0
+    onset_times = librosa.onset.onset_detect(y=y, sr=sr, hop_length=512, units="time")
+
+    pm = pretty_midi.PrettyMIDI(initial_tempo=bpm)
+    drum = pretty_midi.Instrument(program=0, is_drum=True)
+    for t in onset_times:
+        note = pretty_midi.Note(
+            velocity=100, pitch=36, start=float(t), end=float(t) + 0.10
+        )
+        drum.notes.append(note)
+    pm.instruments.append(drum)
+    return pm
+
+
 def train(
     loop_dir: Path,
     *,
@@ -118,13 +175,30 @@ def train(
     coarse: bool = False,
     n_jobs: int = -1,
     memmap_dir: Path | None = None,
+    include_audio: bool = True,
 ) -> NGramModel:
-    """Build a hashed n-gram model from ``loop_dir``."""
+    """Build a hashed n-gram model from ``loop_dir``.
 
-    paths = list(loop_dir.glob("*.mid"))
+    Parameters
+    ----------
+    include_audio:
+        If true, ``.wav`` files are converted to MIDI and included in training.
+    """
+
+    paths = list(collect_midi_files(loop_dir, include_audio=include_audio))
+
+    import pretty_midi
 
     def _load(p: Path) -> tuple[list[tuple[float, int]], list[float]]:
-        notes = _iter_drum_notes(p)
+        try:
+            if p.suffix.lower() in {".wav", ".wave"}:
+                pm = convert_wav_to_midi(p)
+            else:
+                pm = pretty_midi.PrettyMIDI(str(p))
+            notes = midi_to_events(pm)
+        except Exception as exc:
+            log.warning("Audio-to-MIDI failed for %s: %s", p, exc)
+            return [], []
         offs = [off for off, _ in notes]
         return notes, offs
 
@@ -488,6 +562,11 @@ def _cmd_train(args: list[str]) -> None:
     parser.add_argument("--jobs", type=int, default=-1)
     parser.add_argument("--memmap-dir", type=Path)
     parser.add_argument(
+        "--no-audio",
+        action="store_true",
+        help="Ignore .wav/.wave files even if they exist.",
+    )
+    parser.add_argument(
         "--print-model",
         action="store_true",
         help="print model parameters after training",
@@ -502,6 +581,7 @@ def _cmd_train(args: list[str]) -> None:
         coarse=ns.coarse,
         n_jobs=ns.jobs,
         memmap_dir=ns.memmap_dir,
+        include_audio=not ns.no_audio,
     )
     elapsed = time.perf_counter() - t0
     save(model, ns.output)

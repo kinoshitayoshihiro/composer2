@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from random import Random
 
+import pretty_midi
+
 log = logging.getLogger(__name__)
 
 import numpy as np
@@ -119,13 +121,6 @@ def _hash_ctx(ctx: Iterable[int]) -> int:
     return _murmurhash3(arr.tobytes())
 
 
-from __future__ import annotations
-
-import logging
-from pathlib import Path
-from typing import List, Tuple
-
-import pretty_midi
 
 logger = logging.getLogger(__name__)
 
@@ -231,79 +226,38 @@ def train(
     if not paths:
         raise SystemExit("No files found — training aborted")
 
-    def _file_to_events(p: Path):
+    def _load(p: Path):
         try:
             if p.suffix.lower() in {".wav", ".wave"}:
                 pm = convert_wav_to_midi(p, fixed_bpm=fixed_bpm)
                 if pm is None:
-                    return []
+                    return None
             else:
                 pm = pretty_midi.PrettyMIDI(str(p))
-            return midi_to_events(pm)
+            notes = midi_to_events(pm)
+            offs = [off for off, _ in notes]
+            return notes, offs
         except Exception as exc:
             logger.warning("Failed to load %s: %s", p, exc)
-            return []
+            return None
 
     if n_jobs == 1 or n_jobs == 0:
-        results = [_file_to_events(p) for p in paths]
+        loaded = [_load(p) for p in paths]
     else:
-        with ProcessPoolExecutor(max_workers=None if n_jobs < 0 else n_jobs) as ex:
-            futs = {ex.submit(_file_to_events, p): p for p in paths}
-            results = []
-            for fut in as_completed(futs):
-                results.append(fut.result())
-
-    for ev in results:
-        if not ev:
-            files_skipped += 1
-            continue
-        total_events += len(ev)
-
-    logger.info(
-        "Scanned %d files (skipped %d) → %d events",
-        len(paths),
-        files_skipped,
-        total_events,
-    )
-
-    if total_events == 0:
-        raise SystemExit("No events collected — training aborted")
-
-    # TODO: integrate with existing n‑gram builder and return the model
-    # return NGramModel(...)
-    return None
-        offs = [off for off, _ in notes]
-        return notes, offs
+        loaded = Parallel(n_jobs=n_jobs)(delayed(_load)(p) for p in paths)
 
     results = []
-    if paths:
-        iterator: Iterable[Path] = paths
-        if progress:
-            iterator = tqdm(paths, desc="training")
-        if n_jobs == 1:
-            for p in iterator:
-                r = _load(p)
-                if r is None:
-                    files_skipped += 1
-                else:
-                    results.append(r)
+    for r in loaded:
+        if r is None:
+            files_skipped += 1
         else:
-            if progress:
-                # tqdm does not play well with joblib; disable for parallel
-                iterator = paths
-            loaded = Parallel(n_jobs=n_jobs)(delayed(_load)(p) for p in iterator)
-            for r in loaded:
-                if r is None:
-                    files_skipped += 1
-                else:
-                    results.append(r)
-        if progress and isinstance(iterator, tqdm):
-            iterator.close()
-        note_seqs = [r[0] for r in results]
-        all_offsets = [off for r in results for off in r[1]]
-    else:
-        note_seqs = []
-        all_offsets = []
+            results.append(r)
+
+    if not results:
+        raise SystemExit("No events collected — training aborted")
+
+    note_seqs = [r[0] for r in results]
+    all_offsets = [off for r in results for off in r[1]]
 
     resolution = int(infer_resolution(all_offsets) if auto_res else 16)
     resolution_coarse = resolution // 4 if coarse else resolution
@@ -695,11 +649,6 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
         "--no-audio",
         action="store_true",
         help="ignore .wav/.wave files during training",
-    )
-    parser.add_argument(
-        "--no-audio",
-        action="store_true",
-        help="Ignore .wav/.wave files even if they exist.",
     )
     parser.add_argument(
         "--print-model",

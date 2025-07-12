@@ -22,6 +22,9 @@ log = logging.getLogger(__name__)
 
 import numpy as np
 from joblib import Parallel, delayed
+from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 try:
     from .groove_sampler import _PITCH_TO_LABEL, _iter_drum_notes, infer_resolution
@@ -102,6 +105,9 @@ class NGramModel:
     ctx_maps: list[dict[int, int]]
     prob_paths: list[str] | None = None
     prob: list[np.ndarray] | None = None
+    files_scanned: int = 0
+    files_skipped: int = 0
+    total_events: int = 0
 
 
 def _encode_state(bar_mod: int, bin_in_bar: int, label: str) -> State:
@@ -113,58 +119,93 @@ def _hash_ctx(ctx: Iterable[int]) -> int:
     return _murmurhash3(arr.tobytes())
 
 
-def collect_midi_files(root: Path, include_audio: bool = True) -> Iterator[Path]:
-    """Yield MIDI or audio files recursively under ``root``."""
-    midi_exts = {".mid", ".midi"}
-    audio_exts = {".wav", ".wave"}
-    for p in root.rglob("*"):
-        suf = p.suffix.lower()
-        if suf in midi_exts:
-            yield p
-        elif include_audio and suf in audio_exts:
-            yield p
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import List, Tuple
+
+import pretty_midi
+
+logger = logging.getLogger(__name__)
 
 
-def midi_to_events(pm: "pretty_midi.PrettyMIDI") -> list[tuple[float, int]]:
-    """Return drum notes from a PrettyMIDI object as ``(beat, pitch)``."""
+def convert_wav_to_midi(
+    path: Path, *, fixed_bpm: float | None = None
+) -> "pretty_midi.PrettyMIDI" | None:
+    """Convert a WAV file to a PrettyMIDI object containing a single drum track
+    (kick on MIDI pitch 36).  Returns ``None`` and logs a warning on failure.
+
+    Parameters
+    ----------
+    path
+        Audio file path.
+    fixed_bpm
+        If given, use this BPM instead of automatic tempo estimation.
+    """
+    try:
+        import librosa  # optional dependency
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Audio-to-MIDI failed for %s: %s", path, exc)
+        return None
+
+    try:
+        y, sr = librosa.load(path, sr=None, mono=True)
+
+        if fixed_bpm is None:
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr, trim=False)
+            if hasattr(tempo, "__len__"):
+                tempo_val: float = float(tempo[0]) if len(tempo) else 0.0
+            else:
+                tempo_val = float(tempo)
+        else:
+            tempo_val = float(fixed_bpm)
+
+        bpm = tempo_val or 120.0
+        onset_times = librosa.onset.onset_detect(
+            y=y, sr=sr, hop_length=512, units="time"
+        )
+
+        pm = pretty_midi.PrettyMIDI(initial_tempo=bpm)
+        drum = pretty_midi.Instrument(program=0, is_drum=True)
+        for t in onset_times:
+            note = pretty_midi.Note(
+                velocity=100,
+                pitch=36,  # kick
+                start=float(t),
+                end=float(t) + 0.10,
+            )
+            drum.notes.append(note)
+        pm.instruments.append(drum)
+        return pm
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Audio-to-MIDI failed for %s: %s", path, exc)
+        return None
+
+
+def midi_to_events(pm: "pretty_midi.PrettyMIDI") -> List[Tuple[float, int]]:
+    """Extract ``(beat, pitch)`` tuples from a PrettyMIDI drum track."""
     tempo_arr = pm.get_tempo_changes()[1]
     tempo = float(tempo_arr[0]) if tempo_arr.size else 120.0
     sec_per_beat = 60.0 / tempo
-    notes: list[tuple[float, int]] = []
+
+    events: list[tuple[float, int]] = []
     for inst in pm.instruments:
         if not inst.is_drum:
             continue
         for n in inst.notes:
             beat = n.start / sec_per_beat
-            notes.append((beat, n.pitch))
-    notes.sort(key=lambda x: x[0])
-    return notes
+            events.append((beat, n.pitch))
+    events.sort(key=lambda x: x[0])
+    return events
 
 
-def convert_wav_to_midi(path: Path) -> "pretty_midi.PrettyMIDI":
-    """Convert a WAV file to a single-drum PrettyMIDI object."""
-    import librosa
-    import numpy as np
-    import pretty_midi
-
-    y, sr = librosa.load(path, sr=None, mono=True)
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr, trim=False)
-    if hasattr(tempo, "__len__"):
-        tempo_val = float(tempo[0]) if len(tempo) else 0.0
-    else:
-        tempo_val = float(tempo)
-    bpm = tempo_val or 120.0
-    onset_times = librosa.onset.onset_detect(y=y, sr=sr, hop_length=512, units="time")
-
-    pm = pretty_midi.PrettyMIDI(initial_tempo=bpm)
-    drum = pretty_midi.Instrument(program=0, is_drum=True)
-    for t in onset_times:
-        note = pretty_midi.Note(
-            velocity=100, pitch=36, start=float(t), end=float(t) + 0.10
-        )
-        drum.notes.append(note)
-    pm.instruments.append(drum)
-    return pm
+def collect_files(root: Path, include_audio: bool = True) -> List[Path]:
+    """Recursively collect MIDI and (optionally) WAV files under *root*."""
+    exts = {".mid", ".midi"}
+    if include_audio:
+        exts |= {".wav", ".wave"}
+    return [p for p in root.rglob("*") if p.suffix.lower() in exts]
 
 
 def train(
@@ -175,39 +216,90 @@ def train(
     coarse: bool = False,
     n_jobs: int = -1,
     memmap_dir: Path | None = None,
+    fixed_bpm: float | None = None,
+    progress: bool = False,
     include_audio: bool = True,
-) -> NGramModel:
-    """Build a hashed n-gram model from ``loop_dir``.
+):
+    """Build a hashed n‑gram model from drum loops located in *loop_dir*."""
 
-    Parameters
-    ----------
-    include_audio:
-        If true, ``.wav`` files are converted to MIDI and included in training.
-    """
+    from concurrent.futures import ProcessPoolExecutor, as_completed
 
-    paths = list(collect_midi_files(loop_dir, include_audio=include_audio))
+    paths = collect_files(loop_dir, include_audio)
+    total_events = 0
+    files_skipped = 0
 
-    import pretty_midi
+    if not paths:
+        raise SystemExit("No files found — training aborted")
 
-    def _load(p: Path) -> tuple[list[tuple[float, int]], list[float]]:
+    def _file_to_events(p: Path):
         try:
             if p.suffix.lower() in {".wav", ".wave"}:
-                pm = convert_wav_to_midi(p)
+                pm = convert_wav_to_midi(p, fixed_bpm=fixed_bpm)
+                if pm is None:
+                    return []
             else:
                 pm = pretty_midi.PrettyMIDI(str(p))
-            notes = midi_to_events(pm)
+            return midi_to_events(pm)
         except Exception as exc:
-            log.warning("Audio-to-MIDI failed for %s: %s", p, exc)
-            return [], []
+            logger.warning("Failed to load %s: %s", p, exc)
+            return []
+
+    if n_jobs == 1 or n_jobs == 0:
+        results = [_file_to_events(p) for p in paths]
+    else:
+        with ProcessPoolExecutor(max_workers=None if n_jobs < 0 else n_jobs) as ex:
+            futs = {ex.submit(_file_to_events, p): p for p in paths}
+            results = []
+            for fut in as_completed(futs):
+                results.append(fut.result())
+
+    for ev in results:
+        if not ev:
+            files_skipped += 1
+            continue
+        total_events += len(ev)
+
+    logger.info(
+        "Scanned %d files (skipped %d) → %d events",
+        len(paths),
+        files_skipped,
+        total_events,
+    )
+
+    if total_events == 0:
+        raise SystemExit("No events collected — training aborted")
+
+    # TODO: integrate with existing n‑gram builder and return the model
+    # return NGramModel(...)
+    return None
         offs = [off for off, _ in notes]
         return notes, offs
 
+    results = []
     if paths:
+        iterator: Iterable[Path] = paths
+        if progress:
+            iterator = tqdm(paths, desc="training")
         if n_jobs == 1:
-            results = [_load(p) for p in paths]
+            for p in iterator:
+                r = _load(p)
+                if r is None:
+                    files_skipped += 1
+                else:
+                    results.append(r)
         else:
-            results = Parallel(n_jobs=n_jobs)(delayed(_load)(p) for p in paths)
-        note_seqs = [r[0] for r in results if r[0]]
+            if progress:
+                # tqdm does not play well with joblib; disable for parallel
+                iterator = paths
+            loaded = Parallel(n_jobs=n_jobs)(delayed(_load)(p) for p in iterator)
+            for r in loaded:
+                if r is None:
+                    files_skipped += 1
+                else:
+                    results.append(r)
+        if progress and isinstance(iterator, tqdm):
+            iterator.close()
+        note_seqs = [r[0] for r in results]
         all_offsets = [off for r in results for off in r[1]]
     else:
         note_seqs = []
@@ -237,6 +329,8 @@ def train(
                 idx_to_state.append(st)
             seq.append(state_to_idx[st])
         seqs.append(seq)
+
+    total_events = sum(len(s) for s in seqs)
 
     n_states = len(idx_to_state)
     freq: list[FreqTable] = [dict() for _ in range(n)]
@@ -293,6 +387,16 @@ def train(
         else:
             prob_arrays.append(arr)
 
+    logger.info(
+        "Scanned %d files (skipped %d) \u2192 %d events \u2192 %d states",
+        len(paths),
+        files_skipped,
+        total_events,
+        len(idx_to_state),
+    )
+    if total_events == 0 or len(idx_to_state) == 0:
+        raise SystemExit("No events collected - check your data directory")
+
     return NGramModel(
         n=n,
         resolution=resolution,
@@ -304,6 +408,9 @@ def train(
         ctx_maps=ctx_maps,
         prob_paths=prob_paths,
         prob=prob_arrays,
+        files_scanned=len(paths),
+        files_skipped=files_skipped,
+        total_events=total_events,
     )
 
 
@@ -529,6 +636,9 @@ def save(model: NGramModel, path: Path) -> None:
         "bucket_freq": model.bucket_freq,
         "ctx_maps": model.ctx_maps,
         "prob_paths": model.prob_paths,
+        "files_scanned": model.files_scanned,
+        "files_skipped": model.files_skipped,
+        "total_events": model.total_events,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as fh:
@@ -538,7 +648,26 @@ def save(model: NGramModel, path: Path) -> None:
 def load(path: Path) -> NGramModel:
     with path.open("rb") as fh:
         data = pickle.load(fh)
-    model = NGramModel(**data, prob=None)
+    model = NGramModel(
+        **{
+            k: data.get(k)
+            for k in [
+                "n",
+                "resolution",
+                "resolution_coarse",
+                "state_to_idx",
+                "idx_to_state",
+                "freq",
+                "bucket_freq",
+                "ctx_maps",
+                "prob_paths",
+            ]
+        },
+        prob=None,
+        files_scanned=data.get("files_scanned", 0),
+        files_skipped=data.get("files_skipped", 0),
+        total_events=data.get("total_events", 0),
+    )
     if model.prob_paths is not None:
         from .memmap_utils import load_memmap
 
@@ -550,7 +679,7 @@ def load(path: Path) -> NGramModel:
     return model
 
 
-def _cmd_train(args: list[str]) -> None:
+def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(prog="groove_sampler_v2 train")
@@ -561,6 +690,12 @@ def _cmd_train(args: list[str]) -> None:
     parser.add_argument("--coarse", action="store_true")
     parser.add_argument("--jobs", type=int, default=-1)
     parser.add_argument("--memmap-dir", type=Path)
+    parser.add_argument("--fixed-bpm", type=float)
+    parser.add_argument(
+        "--no-audio",
+        action="store_true",
+        help="ignore .wav/.wave files during training",
+    )
     parser.add_argument(
         "--no-audio",
         action="store_true",
@@ -581,6 +716,8 @@ def _cmd_train(args: list[str]) -> None:
         coarse=ns.coarse,
         n_jobs=ns.jobs,
         memmap_dir=ns.memmap_dir,
+        fixed_bpm=ns.fixed_bpm,
+        progress=not quiet and not no_tqdm,
         include_audio=not ns.no_audio,
     )
     elapsed = time.perf_counter() - t0
@@ -631,22 +768,43 @@ def _cmd_stats(args: list[str]) -> None:
     ns = parser.parse_args(args)
     model = load(ns.model)
     print(f"n={model.n} resolution={model.resolution}")
+    print(
+        f"Scanned {model.files_scanned} files (skipped {model.files_skipped}) → {model.total_events} events → {len(model.idx_to_state)} states"
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
     import sys as _sys
+    import argparse
 
     argv = list(argv or _sys.argv[1:])
-    if not argv:
+    parser = argparse.ArgumentParser(prog="groove_sampler_v2", add_help=False)
+    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("-q", "--quiet", action="store_true")
+    parser.add_argument("--no-tqdm", action="store_true")
+    parser.add_argument("--no-audio", action="store_true")
+    ns, rest = parser.parse_known_args(argv)
+    if ns.verbose and ns.quiet:
+        parser.error("--verbose and --quiet cannot be used together")
+    level = (
+        logging.INFO if ns.verbose else logging.ERROR if ns.quiet else logging.WARNING
+    )
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
+
+    if not rest:
         raise SystemExit("Usage: groove_sampler_v2 <command> ...")
 
-    cmd = argv.pop(0)
+    cmd = rest.pop(0)
     if cmd == "train":
-        _cmd_train(argv)
+        _cmd_train(
+            rest + (["--no-audio"] if ns.no_audio else []),
+            quiet=ns.quiet,
+            no_tqdm=ns.no_tqdm,
+        )
     elif cmd == "sample":
-        _cmd_sample(argv)
+        _cmd_sample(rest)
     elif cmd == "stats":
-        _cmd_stats(argv)
+        _cmd_stats(rest)
     else:
         raise SystemExit(f"Unknown command: {cmd}")
 

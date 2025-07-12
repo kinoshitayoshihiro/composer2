@@ -9,6 +9,7 @@ positions into four buckets.
 from __future__ import annotations
 
 import json
+import logging
 import pickle
 import sys
 import time
@@ -19,6 +20,9 @@ from random import Random
 
 import numpy as np
 from joblib import Parallel, delayed
+from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 try:
     from .groove_sampler import _PITCH_TO_LABEL, _iter_drum_notes, infer_resolution
@@ -99,6 +103,9 @@ class NGramModel:
     ctx_maps: list[dict[int, int]]
     prob_paths: list[str] | None = None
     prob: list[np.ndarray] | None = None
+    files_scanned: int = 0
+    files_skipped: int = 0
+    total_events: int = 0
 
 
 def _encode_state(bar_mod: int, bin_in_bar: int, label: str) -> State:
@@ -110,6 +117,45 @@ def _hash_ctx(ctx: Iterable[int]) -> int:
     return _murmurhash3(arr.tobytes())
 
 
+def convert_wav_to_midi(
+    path: Path, *, fixed_bpm: float | None = None
+) -> list[tuple[float, int]] | None:
+    """Return drum note offsets extracted from a WAV file.
+
+    On failure ``None`` is returned and a warning logged.
+    """
+    try:
+        import librosa
+    except Exception as exc:  # pragma: no cover - optional dependency
+        logger.warning("Audio-to-MIDI failed for %s: %s", path, exc)
+        return None
+    try:
+        y, sr = librosa.load(path, sr=None, mono=True)
+        if fixed_bpm is None:
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+            if hasattr(tempo, "__len__"):
+                tempo_val = float(tempo[0]) if len(tempo) > 0 else 0.0
+            else:
+                tempo_val = float(tempo)
+        else:
+            tempo_val = float(fixed_bpm)
+        bpm = tempo_val or 120.0
+        sec_per_beat = 60.0 / bpm
+        onsets = librosa.onset.onset_detect(y=y, sr=sr, units="time")
+        return [(float(t) / sec_per_beat, 36) for t in onsets]
+    except Exception as exc:  # pragma: no cover - runtime diagnostics
+        logger.warning("Audio-to-MIDI failed for %s: %s", path, exc)
+        return None
+
+
+def collect_files(root: Path, include_audio: bool) -> list[Path]:
+    """Return MIDI/WAV files found under *root* recursively."""
+    exts = {".mid", ".midi"}
+    if include_audio:
+        exts |= {".wav", ".wave"}
+    return [p for p in root.rglob("*") if p.suffix.lower() in exts]
+
+
 def train(
     loop_dir: Path,
     *,
@@ -118,22 +164,52 @@ def train(
     coarse: bool = False,
     n_jobs: int = -1,
     memmap_dir: Path | None = None,
+    fixed_bpm: float | None = None,
+    progress: bool = False,
+    include_audio: bool = True,
 ) -> NGramModel:
     """Build a hashed n-gram model from ``loop_dir``."""
 
-    paths = list(loop_dir.glob("*.mid"))
+    paths = collect_files(loop_dir, include_audio)
+    files_skipped = 0
 
-    def _load(p: Path) -> tuple[list[tuple[float, int]], list[float]]:
-        notes = _iter_drum_notes(p)
+    def _load(p: Path) -> tuple[list[tuple[float, int]], list[float]] | None:
+        if p.suffix.lower() == ".wav":
+            notes = convert_wav_to_midi(p, fixed_bpm=fixed_bpm)
+            if notes is None:
+                return None
+        else:
+            notes = _iter_drum_notes(p)
+        if not notes:
+            return None
         offs = [off for off, _ in notes]
         return notes, offs
 
+    results = []
     if paths:
+        iterator: Iterable[Path] = paths
+        if progress:
+            iterator = tqdm(paths, desc="training")
         if n_jobs == 1:
-            results = [_load(p) for p in paths]
+            for p in iterator:
+                r = _load(p)
+                if r is None:
+                    files_skipped += 1
+                else:
+                    results.append(r)
         else:
-            results = Parallel(n_jobs=n_jobs)(delayed(_load)(p) for p in paths)
-        note_seqs = [r[0] for r in results if r[0]]
+            if progress:
+                # tqdm does not play well with joblib; disable for parallel
+                iterator = paths
+            loaded = Parallel(n_jobs=n_jobs)(delayed(_load)(p) for p in iterator)
+            for r in loaded:
+                if r is None:
+                    files_skipped += 1
+                else:
+                    results.append(r)
+        if progress and isinstance(iterator, tqdm):
+            iterator.close()
+        note_seqs = [r[0] for r in results]
         all_offsets = [off for r in results for off in r[1]]
     else:
         note_seqs = []
@@ -163,6 +239,8 @@ def train(
                 idx_to_state.append(st)
             seq.append(state_to_idx[st])
         seqs.append(seq)
+
+    total_events = sum(len(s) for s in seqs)
 
     n_states = len(idx_to_state)
     freq: list[FreqTable] = [dict() for _ in range(n)]
@@ -219,6 +297,16 @@ def train(
         else:
             prob_arrays.append(arr)
 
+    logger.info(
+        "Scanned %d files (skipped %d) \u2192 %d events \u2192 %d states",
+        len(paths),
+        files_skipped,
+        total_events,
+        len(idx_to_state),
+    )
+    if total_events == 0 or len(idx_to_state) == 0:
+        raise SystemExit("No events collected - check your data directory")
+
     return NGramModel(
         n=n,
         resolution=resolution,
@@ -230,6 +318,9 @@ def train(
         ctx_maps=ctx_maps,
         prob_paths=prob_paths,
         prob=prob_arrays,
+        files_scanned=len(paths),
+        files_skipped=files_skipped,
+        total_events=total_events,
     )
 
 
@@ -455,6 +546,9 @@ def save(model: NGramModel, path: Path) -> None:
         "bucket_freq": model.bucket_freq,
         "ctx_maps": model.ctx_maps,
         "prob_paths": model.prob_paths,
+        "files_scanned": model.files_scanned,
+        "files_skipped": model.files_skipped,
+        "total_events": model.total_events,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as fh:
@@ -464,7 +558,26 @@ def save(model: NGramModel, path: Path) -> None:
 def load(path: Path) -> NGramModel:
     with path.open("rb") as fh:
         data = pickle.load(fh)
-    model = NGramModel(**data, prob=None)
+    model = NGramModel(
+        **{
+            k: data.get(k)
+            for k in [
+                "n",
+                "resolution",
+                "resolution_coarse",
+                "state_to_idx",
+                "idx_to_state",
+                "freq",
+                "bucket_freq",
+                "ctx_maps",
+                "prob_paths",
+            ]
+        },
+        prob=None,
+        files_scanned=data.get("files_scanned", 0),
+        files_skipped=data.get("files_skipped", 0),
+        total_events=data.get("total_events", 0),
+    )
     if model.prob_paths is not None:
         from .memmap_utils import load_memmap
 
@@ -476,7 +589,7 @@ def load(path: Path) -> NGramModel:
     return model
 
 
-def _cmd_train(args: list[str]) -> None:
+def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(prog="groove_sampler_v2 train")
@@ -487,6 +600,12 @@ def _cmd_train(args: list[str]) -> None:
     parser.add_argument("--coarse", action="store_true")
     parser.add_argument("--jobs", type=int, default=-1)
     parser.add_argument("--memmap-dir", type=Path)
+    parser.add_argument("--fixed-bpm", type=float)
+    parser.add_argument(
+        "--no-audio",
+        action="store_true",
+        help="ignore .wav/.wave files during training",
+    )
     parser.add_argument(
         "--print-model",
         action="store_true",
@@ -502,6 +621,9 @@ def _cmd_train(args: list[str]) -> None:
         coarse=ns.coarse,
         n_jobs=ns.jobs,
         memmap_dir=ns.memmap_dir,
+        fixed_bpm=ns.fixed_bpm,
+        progress=not quiet and not no_tqdm,
+        include_audio=not ns.no_audio,
     )
     elapsed = time.perf_counter() - t0
     save(model, ns.output)
@@ -551,22 +673,43 @@ def _cmd_stats(args: list[str]) -> None:
     ns = parser.parse_args(args)
     model = load(ns.model)
     print(f"n={model.n} resolution={model.resolution}")
+    print(
+        f"Scanned {model.files_scanned} files (skipped {model.files_skipped}) → {model.total_events} events → {len(model.idx_to_state)} states"
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
     import sys as _sys
+    import argparse
 
     argv = list(argv or _sys.argv[1:])
-    if not argv:
+    parser = argparse.ArgumentParser(prog="groove_sampler_v2", add_help=False)
+    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("-q", "--quiet", action="store_true")
+    parser.add_argument("--no-tqdm", action="store_true")
+    parser.add_argument("--no-audio", action="store_true")
+    ns, rest = parser.parse_known_args(argv)
+    if ns.verbose and ns.quiet:
+        parser.error("--verbose and --quiet cannot be used together")
+    level = (
+        logging.INFO if ns.verbose else logging.ERROR if ns.quiet else logging.WARNING
+    )
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
+
+    if not rest:
         raise SystemExit("Usage: groove_sampler_v2 <command> ...")
 
-    cmd = argv.pop(0)
+    cmd = rest.pop(0)
     if cmd == "train":
-        _cmd_train(argv)
+        _cmd_train(
+            rest + (["--no-audio"] if ns.no_audio else []),
+            quiet=ns.quiet,
+            no_tqdm=ns.no_tqdm,
+        )
     elif cmd == "sample":
-        _cmd_sample(argv)
+        _cmd_sample(rest)
     elif cmd == "stats":
-        _cmd_stats(argv)
+        _cmd_stats(rest)
     else:
         raise SystemExit(f"Unknown command: {cmd}")
 

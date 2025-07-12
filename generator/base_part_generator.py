@@ -5,7 +5,12 @@ import statistics
 from abc import ABC, abstractmethod
 from typing import Any
 
-from music21 import meter, stream
+from music21 import meter, stream, volume as m21volume
+
+try:
+    import torch
+except Exception:  # pragma: no cover - optional
+    torch = None  # type: ignore
 
 from utilities import fx_envelope
 from utilities.cc_tools import finalize_cc_events, merge_cc_events
@@ -46,6 +51,7 @@ class BasePartGenerator(ABC):
         global_key_signature_tonic,
         global_key_signature_mode,
         rng=None,
+        ml_velocity_model_path: str | None = None,
         **kwargs,
     ):
         # ここを追加
@@ -68,6 +74,18 @@ class BasePartGenerator(ABC):
         self.global_key_signature_tonic = global_key_signature_tonic
         self.global_key_signature_mode = global_key_signature_mode
         self.rng = rng or random.Random()
+        self.ml_velocity_model_path = ml_velocity_model_path
+        self.ml_velocity_model = None
+        self.ml_velocity_cache_key = ml_velocity_model_path
+        if ml_velocity_model_path:
+            try:
+                from utilities.ml_velocity import MLVelocityModel
+
+                self.ml_velocity_model = MLVelocityModel.load(ml_velocity_model_path)
+            except Exception as exc:  # pragma: no cover - optional dependency
+                logging.getLogger(__name__).warning(
+                    "Failed to load ML velocity model %s: %s", ml_velocity_model_path, exc
+                )
         # 各ジェネレーター固有のロガー
         name = self.part_name or self.__class__.__name__.lower()
         self.logger = logging.getLogger(f"modular_composer.{name}")
@@ -120,6 +138,32 @@ class BasePartGenerator(ABC):
                 part.metadata.fx_envelope = envelope_map
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.error("Failed to apply effect envelope: %s", exc, exc_info=True)
+
+    def _apply_ml_velocity(self, part: stream.Part) -> None:
+        """Apply ML velocity model to generated notes if available."""
+        model = getattr(self, "ml_velocity_model", None)
+        if model is None or torch is None:
+            return
+        try:
+            import numpy as np
+
+            notes = list(part.recurse().notes)
+            if not notes:
+                return
+            ctx = np.array(
+                [
+                    [i / len(notes), n.pitch.midi / 127.0, (n.volume.velocity or 64) / 127.0]
+                    for i, n in enumerate(notes)
+                ],
+                dtype=np.float32,
+            )
+            vels = model.predict(ctx, cache_key=self.ml_velocity_cache_key)
+            for n, v in zip(notes, vels):
+                if n.volume is None:
+                    n.volume = m21volume.Volume(velocity=64)
+                n.volume.velocity = int(max(1, min(127, float(v))))
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.warning("ML velocity inference failed: %s", exc)
 
     def compose(
         self,
@@ -242,6 +286,7 @@ class BasePartGenerator(ABC):
                     post(part, section_data, ratio)
                 except Exception:  # pragma: no cover - best effort
                     pass
+            self._apply_ml_velocity(part)
             finalize_cc_events(part)
             self._last_section = section_data
             return part

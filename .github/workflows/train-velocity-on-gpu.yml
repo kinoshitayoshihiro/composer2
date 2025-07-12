@@ -97,7 +97,7 @@ jobs:
             apt-get install -y nvidia-container-toolkit
             systemctl restart docker
             ./run.sh &
-EOSSH
+            EOSSH
           }
           install_runner
           wait_runner_ready

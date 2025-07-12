@@ -108,14 +108,14 @@ BUCKET_TO_PATTERN_PIANO = {
 
 
 class PianoGenerator(BasePartGenerator):
-    def __init__(self, *args, main_cfg=None, **kwargs):
+    def __init__(self, *args, main_cfg=None, ml_velocity_model_path: str | None = None, **kwargs):
         self.main_cfg = main_cfg
         self.part_parameters = kwargs.get("part_parameters", {})
         self.chord_voicer = None
         ts_obj = get_time_signature_object(kwargs.get("global_time_signature", "4/4"))
         self.global_time_signature_obj = ts_obj
         self.measure_duration = ts_obj.barDuration.quarterLength if ts_obj else 4.0
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, ml_velocity_model_path=ml_velocity_model_path, **kwargs)
         self.cfg: dict = kwargs.copy()
         self._prev_voicings = {"RH": None, "LH": None}
         self._prev_last_pitch = {"RH": None, "LH": None}

@@ -205,6 +205,7 @@ class StringsGenerator(BasePartGenerator):
         max_harmonic_fret: int = 19,
         rng_seed: int | None = None,
         rng=None,
+        ml_velocity_model_path: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -215,6 +216,7 @@ class StringsGenerator(BasePartGenerator):
             global_key_signature_tonic=global_key_signature_tonic,
             global_key_signature_mode=global_key_signature_mode,
             rng=rng,
+            ml_velocity_model_path=ml_velocity_model_path,
             **kwargs,
         )
         self.cfg: dict = kwargs.copy()

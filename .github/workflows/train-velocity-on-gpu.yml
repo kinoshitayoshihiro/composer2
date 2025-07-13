@@ -1,4 +1,5 @@
 name: Train Velocity on A100
+# DEFAULT_RETRIES / DEFAULT_DELAY: retry count and delay seconds
 on:
   workflow_dispatch:
     inputs:
@@ -17,47 +18,80 @@ jobs:
     env:
       RUNPOD_API: ${{ secrets.RUNPOD_API }}
       GH_TOKEN: ${{ secrets.GH_PAT_RUNNER }}
+      DEFAULT_RETRIES: 3
+      DEFAULT_DELAY: 5
     outputs:
       pod_id: ${{ steps.spawn.outputs.pod_id }}
       ip: ${{ steps.info.outputs.ip }}
     steps:
-        - id: spawn
-          run: |
-            set -euo pipefail
-            query='mutation{podFindAndDeployOnDemand(templateId:"a100-40gb-ubuntu"){id}}'
-            for i in 1 2 3; do
-              resp=$(curl -sf https://api.runpod.io/graphql \
-                -H 'Content-Type: application/json' \
-                -H "Authorization: $RUNPOD_API" \
-                -d "{\"query\":\"$query\"}") && break || sleep 5
-            done
-            pod_id=$(echo "$resp" | jq -r '.data.podFindAndDeployOnDemand.id')
-            if [ -z "$pod_id" ] || [ "$pod_id" = "null" ]; then
-              echo "::error ::Failed to obtain pod_id: $resp"
-              exit 1
-            fi
+      - name: Setup helpers
+        run: |
+          cat <<'EOF' >> "$BASH_ENV"
+          call_graphql() {
+            local query="$1"
+            curl -s -w '\n%{http_code}' https://api.runpod.io/graphql \
+              -H 'Content-Type: application/json' \
+              -H "Authorization: $RUNPOD_API" \
+              -d '{"query":"'"$query"'"}'
+          }
+          EOF
+      - id: spawn
+        run: |
+          set -euo pipefail
+          query='mutation{podFindAndDeployOnDemand(templateId:"a100-40gb-ubuntu"){id}}'
+          for i in $(seq "$DEFAULT_RETRIES"); do
+            resp=$(call_graphql "$query")
+            status=$(echo "$resp" | tail -n1)
+            body=$(echo "$resp" | sed '$d')
+            [ "$status" = "200" ] && break
+            sleep "$DEFAULT_DELAY"
+          done
+          if [ "$status" != "200" ]; then
+            echo "::error ::HTTP $status when spawning pod: $body"
+          fi
+          pod_id=$(echo "$body" | jq -r '.data.podFindAndDeployOnDemand.id')
+          if [ -z "$pod_id" ] || [ "$pod_id" = "null" ]; then
+            echo "::error ::Failed to obtain pod_id: $body"
+            exit 1
+          fi
+          if [ -n "${GITHUB_OUTPUT:-}" ]; then
             echo "pod_id=$pod_id" >> "$GITHUB_OUTPUT"
+          else
+            echo "::set-output name=pod_id::$pod_id"
+          fi
       - id: info
         run: |
           set -euo pipefail
           pid=${{ steps.spawn.outputs.pod_id }}
           ip=null
           until [[ "$ip" != "null" ]]; do
-            resp=$(curl -s https://api.runpod.io/graphql \
-              -H 'Content-Type: application/json' \
-              -H "Authorization: $RUNPOD_API" \
-              -d "{\"query\":\"{pod(podId:\\"$pid\\"){ipAddress}}\"}")
-            ip=$(echo "$resp" | jq -r '.data.pod.ipAddress')
-            [[ "$ip" == "null" ]] && sleep 5
+            resp=$(call_graphql "{pod(podId:\"$pid\"){ipAddress}}")
+            status=$(echo "$resp" | tail -n1)
+            body=$(echo "$resp" | sed '$d')
+            if [ "$status" != "200" ]; then
+              echo "::warning ::HTTP $status when fetching IP: $body"
+            fi
+            ip=$(echo "$body" | jq -r '.data.pod.ipAddress')
+            [[ "$ip" == "null" ]] && sleep "$DEFAULT_DELAY"
           done
-          echo "ip=$ip" >> $GITHUB_OUTPUT
+          if [ -n "${GITHUB_OUTPUT:-}" ]; then
+            echo "ip=$ip" >> "$GITHUB_OUTPUT"
+          else
+            echo "::set-output name=ip::$ip"
+          fi
       - name: Get runner registration token
         id: token
         run: |
-          echo "token=$(gh api \
+          set -euo pipefail
+          token=$(gh api \
             -X POST \
             /repos/${{ github.repository }}/actions/runners/registration-token \
-            -q .token)" >> $GITHUB_OUTPUT
+            -q .token)
+          if [ -n "${GITHUB_OUTPUT:-}" ]; then
+            echo "token=$token" >> "$GITHUB_OUTPUT"
+          else
+            echo "::set-output name=token::$token"
+          fi
       - name: install-runner
         env:
           POD_ID: ${{ steps.spawn.outputs.pod_id }}
@@ -85,7 +119,10 @@ jobs:
             apt-get update
             apt-get install -y docker.io curl gpg
             url="https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/actions-runner-linux-x64-$RUNNER_VERSION.tar.gz"
-            curl -L "$url" -o actions-runner.tar.gz
+            status=$(curl -L "$url" -o actions-runner.tar.gz -w "%{http_code}")
+            if [ "$status" != "200" ]; then
+              echo "::error ::HTTP $status when downloading runner"
+            fi
             mkdir actions-runner
             tar xzf actions-runner.tar.gz -C actions-runner
             cd actions-runner
@@ -93,10 +130,19 @@ jobs:
             ./config.sh --url "$GITHUB_URL" \
               --token "$RUNNER_TOKEN" --labels self-hosted,gpu,a100 \
               --name "$POD_ID" --unattended
-            curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit.gpg
+            status=$(curl -fsSL -w "%{http_code}" https://nvidia.github.io/libnvidia-container/gpgkey -o gpgkey)
+            if [ "$status" != "200" ]; then
+              echo "::warning ::HTTP $status when fetching gpgkey"
+            fi
+            gpg --dearmor gpgkey > /usr/share/keyrings/nvidia-container-toolkit.gpg
+            rm gpgkey
             distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-            curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list \
-              | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+            status=$(curl -s -L -w "%{http_code}" https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list -o nvidia.list)
+            if [ "$status" != "200" ]; then
+              echo "::warning ::HTTP $status when fetching repo list"
+            fi
+            cat nvidia.list > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+            rm nvidia.list
             apt-get update
             apt-get install -y nvidia-container-toolkit
             systemctl restart docker
@@ -130,9 +176,22 @@ jobs:
     env:
       POD_ID: ${{ needs.spawn-runner.outputs.pod_id }}
     steps:
+      - name: Setup helpers
+        run: |
+          cat <<'EOF' >> "$BASH_ENV"
+          call_graphql() {
+            local query="$1"
+            curl -s -w '\n%{http_code}' https://api.runpod.io/graphql \
+              -H 'Content-Type: application/json' \
+              -H "Authorization: $RUNPOD_API" \
+              -d '{"query":"'"$query"'"}'
+          }
+          EOF
       - run: |
           set -euo pipefail
-          curl -s https://api.runpod.io/graphql \
-            -H 'Content-Type: application/json' \
-            -H "Authorization: $RUNPOD_API" \
-            -d "{\"query\":\"mutation{podTerminate(podId:\\"$POD_ID\\")}\"}"
+          resp=$(call_graphql "mutation{podTerminate(podId:\"$POD_ID\")}")
+          status=$(echo "$resp" | tail -n1)
+          body=$(echo "$resp" | sed '$d')
+          if [ "$status" != "200" ]; then
+            echo "::warning ::HTTP $status when terminating pod: $body"
+          fi

@@ -10,8 +10,8 @@ import pickle
 import random
 
 from utilities.convolver import render_wav
-
 from utilities.audio_env import has_fluidsynth
+from eval import metrics
 import tempfile
 import warnings
 from pathlib import Path
@@ -20,6 +20,8 @@ from typing import Any, cast
 
 import click
 import pretty_midi
+import matplotlib.pyplot as plt
+from collections import Counter
 import yaml  # type: ignore
 from music21 import stream as m21stream
 
@@ -133,9 +135,7 @@ def eval_metrics(midi: Path, ref_midi: Path | None) -> None:
 
     When ``--ref`` is supplied, also compute ``blec`` between the files.
     """
-    import pretty_midi
 
-    from eval import metrics
 
     pm = pretty_midi.PrettyMIDI(str(midi))
     tempo = pm.get_tempo_changes()[1]
@@ -249,6 +249,139 @@ def preset_import(file: Path, name: str | None) -> None:
         else:
             cfg = json.load(fh)
     preset_manager.save_preset(name or file.stem, cfg)
+
+
+@cli.command("export-midi")
+@click.argument("model", type=Path)
+@click.argument("out", type=Path)
+@click.option("-l", "--length", type=int, default=4, show_default=True)
+@click.option("--temperature", type=float, default=1.0, show_default=True)
+@click.option("--seed", type=int, default=None)
+def export_midi_cmd(
+    model: Path,
+    out: Path,
+    length: int,
+    temperature: float,
+    seed: int | None,
+) -> None:
+    """Generate ``length`` bars from ``model`` and save as MIDI."""
+
+    mdl = groove_sampler_ngram.load(model)
+    events = groove_sampler_ngram.sample(
+        mdl, bars=length, temperature=temperature, seed=seed
+    )
+    pm = groove_sampler_ngram.events_to_midi(events)
+    pm.write(str(out))
+    click.echo(str(out))
+
+
+@cli.command("render-audio")
+@click.argument("midi", type=Path)
+@click.option("-o", "--out", required=True, type=Path)
+@click.option("--soundfont", type=Path, default=None)
+@click.option("--use-default-sf2", is_flag=True, help="Use bundled SF2 if no soundfont")
+def render_audio_cmd(
+    midi: Path, out: Path, soundfont: Path | None, use_default_sf2: bool
+) -> None:
+    """Render ``midi`` to audio using Fluidsynth."""
+
+    if not has_fluidsynth():
+        raise click.ClickException("fluidsynth not found")
+    if soundfont is None and use_default_sf2:
+        soundfont = Path(pretty_midi.__file__).resolve().parent / pretty_midi.instrument.DEFAULT_SF2
+    synth.export_audio(midi, out, soundfont=soundfont)
+    click.echo(str(out))
+
+
+@cli.command("evaluate")
+@click.argument("midi", type=Path)
+@click.option("--ref", "ref_midi", type=Path, default=None)
+def evaluate_cmd(midi: Path, ref_midi: Path | None) -> None:
+    """Compute evaluation metrics for ``midi``."""
+
+    pm = pretty_midi.PrettyMIDI(str(midi))
+    tempo = pm.get_tempo_changes()[1]
+    bpm = float(tempo[0]) if getattr(tempo, "size", 0) else 120.0
+    beat = 60.0 / bpm
+    events = [
+        {"offset": n.start / beat, "velocity": n.velocity}
+        for inst in pm.instruments
+        for n in inst.notes
+    ]
+    res = {
+        "swing_score": round(metrics.swing_score(events), 4),
+        "note_density": round(metrics.note_density(events), 4),
+        "velocity_var": round(metrics.velocity_var(events), 4),
+    }
+    if ref_midi:
+        pm_ref = pretty_midi.PrettyMIDI(str(ref_midi))
+        events_ref = [
+            {"offset": n.start / beat, "velocity": n.velocity}
+            for inst in pm_ref.instruments
+            for n in inst.notes
+        ]
+        res["blec"] = round(metrics.blec_score(events_ref, events), 4)
+    click.echo(json.dumps(res))
+
+
+@cli.command("visualize")
+@click.argument("model", type=Path)
+@click.option("--out", type=Path, default=None)
+def visualize_cmd(model: Path, out: Path | None) -> None:
+    """Plot a simple n-gram heatmap from ``model``."""
+
+
+    mdl = groove_sampler_ngram.load(model)
+    freq = mdl.get("freq", {}).get(0, {}).get((), Counter())
+    grid: dict[str, list[int]] = {}
+    for (step, inst), cnt in freq.items():
+        arr = grid.setdefault(inst, [0] * mdl.get("resolution", 16))
+        if step < len(arr):
+            arr[step] = cnt
+    if not grid:
+        click.echo("No data")
+        return
+    fig, ax = plt.subplots()
+    insts = sorted(grid)
+    data = [grid[i] for i in insts]
+    im = ax.imshow(data, aspect="auto", cmap="hot")
+    ax.set_yticks(range(len(insts)))
+    ax.set_yticklabels(insts)
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Instrument")
+    fig.colorbar(im, ax=ax)
+    if out:
+        fig.savefig(out)
+        click.echo(str(out))
+    else:
+        plt.show()
+
+
+@cli.command("hyperopt")
+@click.argument("model", type=Path)
+@click.option("--trials", type=int, default=10, show_default=True)
+@click.option("--skip-if-no-optuna", is_flag=True, help="Skip when Optuna missing")
+def hyperopt_cmd(model: Path, trials: int, skip_if_no_optuna: bool) -> None:
+    """Run a simple Optuna search on ``temperature``."""
+
+    try:
+        import optuna
+    except Exception as exc:  # pragma: no cover - optional
+        if skip_if_no_optuna:
+            return
+        raise click.ClickException(f"Optuna unavailable: {exc}") from exc
+
+    mdl = groove_sampler_ngram.load(model)
+
+    def _obj(trial: optuna.Trial) -> float:
+        temp = trial.suggest_float("temperature", 0.5, 1.5)
+        ev = groove_sampler_ngram.sample(mdl, bars=2, temperature=temp)
+        return float(sum(e.get("velocity", 0) for e in ev))
+
+    study = optuna.create_study(direction="maximize")
+    study.optimize(_obj, n_trials=trials)
+    click.echo(json.dumps(study.best_params))
+
 
 
 @cli.group()

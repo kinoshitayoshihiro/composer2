@@ -71,6 +71,11 @@ class MLVelocityModel(nn.Module if torch is not None else object):
             self.encoder = nn.TransformerEncoder(enc_layer, num_layers=4)
             self.fc_out = nn.Linear(256, 1)
             nn.init.constant_(self.fc_out.bias, 64.0)
+            # Ensure that an untrained model predicts the default velocity
+            # (64) by zeroing the output weights. This keeps the unit tests
+            # deterministic and provides a sensible starting point for
+            # fine-tuning.
+            nn.init.zeros_(self.fc_out.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = self.fc_in(x)

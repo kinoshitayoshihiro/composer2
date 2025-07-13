@@ -209,6 +209,7 @@ def train(
     n: int = 4,
     auto_res: bool = False,
     coarse: bool = False,
+    beats_per_bar: int | None = None,
     n_jobs: int = -1,
     memmap_dir: Path | None = None,
     fixed_bpm: float | None = None,
@@ -259,7 +260,11 @@ def train(
     note_seqs = [r[0] for r in results]
     all_offsets = [off for r in results for off in r[1]]
 
-    resolution = int(infer_resolution(all_offsets) if auto_res else 16)
+    resolution = int(
+        infer_resolution(all_offsets, beats_per_bar=beats_per_bar)
+        if auto_res
+        else 16
+    )
     resolution_coarse = resolution // 4 if coarse else resolution
     step_per_beat = resolution / 4
     bar_len = resolution
@@ -382,6 +387,31 @@ def _choose(probs: np.ndarray, rng: Random) -> int:
     return len(probs) - 1
 
 
+def _filter_probs(
+    probs: np.ndarray, *, top_k: int | None = None, top_p: float | None = None
+) -> np.ndarray:
+    """Apply top-k and nucleus filtering to an array of probabilities."""
+
+    if top_k is not None and 0 < top_k < len(probs):
+        idx = np.argpartition(probs, len(probs) - top_k)[len(probs) - top_k :]
+        mask = np.zeros_like(probs, dtype=bool)
+        mask[idx] = True
+        probs = np.where(mask, probs, 0)
+    if top_p is not None and 0 < top_p < 1:
+        order = np.argsort(probs)[::-1]
+        sorted_probs = probs[order]
+        cumulative = np.cumsum(sorted_probs)
+        cutoff = top_p * cumulative[-1]
+        mask_ord = cumulative <= cutoff
+        if not mask_ord.any():
+            mask_ord[0] = True
+        keep = order[mask_ord]
+        mask = np.zeros_like(probs, dtype=bool)
+        mask[keep] = True
+        probs = np.where(mask, probs, 0)
+    return probs
+
+
 def sample_next(
     model: NGramModel,
     history: list[int],
@@ -389,9 +419,19 @@ def sample_next(
     rng: Random,
     *,
     temperature: float = 1.0,
+    top_k: int | None = None,
+    top_p: float | None = None,
     cond_kick: str | None = None,
 ) -> int:
-    """Sample next state index using hashed back-off."""
+    """Sample next state index using hashed back-off.
+
+    Parameters
+    ----------
+    top_k:
+        Limit choices to the ``k`` highest-probability states.
+    top_p:
+        Nucleus sampling threshold applied after ``top_k``.
+    """
 
     n = model.n
     for order in range(min(len(history), n - 1), 0, -1):
@@ -416,6 +456,7 @@ def sample_next(
                             probs[i] *= 0.5
             if temperature != 1.0:
                 probs = np.power(probs, 1.0 / temperature)
+            probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
             total = probs.sum()
             if total == 0:
                 return rng.randrange(len(model.idx_to_state))
@@ -440,6 +481,7 @@ def sample_next(
                         probs[i] *= 0.5
         if temperature != 1.0:
             probs = np.power(probs, 1.0 / temperature)
+        probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
         total = probs.sum()
         if total == 0:
             return rng.randrange(len(model.idx_to_state))
@@ -458,6 +500,7 @@ def sample_next(
                         probs[i] *= 0.5
         if temperature != 1.0:
             probs = np.power(probs, 1.0 / temperature)
+        probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
         total = probs.sum()
         if total == 0:
             return rng.randrange(len(model.idx_to_state))
@@ -472,11 +515,27 @@ def generate_events(
     *,
     bars: int = 4,
     temperature: float = 1.0,
+    top_k: int | None = None,
+    top_p: float | None = None,
+    temperature_end: float | None = None,
     seed: int | None = None,
     cond_velocity: str | None = None,
     cond_kick: str | None = None,
 ) -> list[dict[str, float | str]]:
-    """Generate a sequence of drum events."""
+    """Generate a sequence of drum events.
+
+    Parameters
+    ----------
+    temperature:
+        Starting sampling temperature.
+    top_k:
+        If set, restrict sampling to the ``k`` most probable states.
+    top_p:
+        If set, restrict choices to the smallest set of states whose
+        cumulative probability mass exceeds this value.
+    temperature_end:
+        Optional final temperature for linear scheduling.
+    """
 
     rng = Random(seed)
     res = model.resolution
@@ -498,12 +557,20 @@ def generate_events(
         if model.resolution_coarse != res:
             bucket //= 4
 
+        if temperature_end is not None:
+            prog = next_bin / end_bin
+            temp = temperature + (temperature_end - temperature) * prog
+        else:
+            temp = temperature
+
         idx = sample_next(
             model,
             history,
             bucket,
             rng,
-            temperature=temperature,
+            temperature=temp,
+            top_k=top_k,
+            top_p=top_p,
             cond_kick=cond_kick,
         )
         bar_mod, bin_in_bar, lbl = model.idx_to_state[idx]
@@ -642,6 +709,11 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
     parser.add_argument("--n", type=int, default=4)
     parser.add_argument("--auto-res", action="store_true")
     parser.add_argument("--coarse", action="store_true")
+    parser.add_argument(
+        "--beats-per-bar",
+        type=int,
+        help="override bar length when inferring resolution",
+    )
     parser.add_argument("--jobs", type=int, default=-1)
     parser.add_argument("--memmap-dir", type=Path)
     parser.add_argument("--fixed-bpm", type=float)
@@ -663,6 +735,7 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
         n=ns.n,
         auto_res=ns.auto_res,
         coarse=ns.coarse,
+        beats_per_bar=ns.beats_per_bar,
         n_jobs=ns.jobs,
         memmap_dir=ns.memmap_dir,
         fixed_bpm=ns.fixed_bpm,
@@ -690,11 +763,14 @@ def _cmd_sample(args: list[str]) -> None:
     parser.add_argument("model", type=Path)
     parser.add_argument("-l", "--length", type=int, default=4)
     parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--top-k", type=int)
+    parser.add_argument("--top-p", type=float)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--cond-velocity", choices=["soft", "hard"], default=None)
     parser.add_argument(
         "--cond-kick", choices=["four_on_floor", "sparse"], default=None
     )
+    parser.add_argument("--temperature-end", type=float)
     ns = parser.parse_args(args)
 
     model = load(ns.model)
@@ -702,6 +778,9 @@ def _cmd_sample(args: list[str]) -> None:
         model,
         bars=ns.length,
         temperature=ns.temperature,
+        top_k=ns.top_k,
+        top_p=ns.top_p,
+        temperature_end=ns.temperature_end,
         seed=ns.seed,
         cond_velocity=ns.cond_velocity,
         cond_kick=ns.cond_kick,

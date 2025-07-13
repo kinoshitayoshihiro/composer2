@@ -72,7 +72,12 @@ def _iter_drum_notes(midi_path: Path) -> list[tuple[float, int]]:
     return drum_hits
 
 
-def infer_resolution(beats: Sequence[float], max_denominator: int = 96) -> int:
+def infer_resolution(
+    beats: Sequence[float],
+    max_denominator: int = 96,
+    *,
+    beats_per_bar: int | None = None,
+) -> int:
     """Return quantization resolution inferred from beat offsets.
 
     Parameters
@@ -97,11 +102,23 @@ def infer_resolution(beats: Sequence[float], max_denominator: int = 96) -> int:
         base = gcd(base, abs(t))
 
     steps_per_beat = max_denominator // base
-    length = ceil(max(beats)) or 1
+    length = beats_per_bar if beats_per_bar is not None else ceil(max(beats)) or 1
     resolution = steps_per_beat * length
     if steps_per_beat == 3:
         resolution = 12
     return resolution
+
+
+def infer_multistage_resolution(
+    beats: Sequence[float], *, beats_per_bar: int = 4
+) -> dict[str, int]:
+    """Return coarse and fine resolutions for the given offsets."""
+
+    fine = infer_resolution(beats, max_denominator=96, beats_per_bar=beats_per_bar)
+    coarse = infer_resolution(beats, max_denominator=24, beats_per_bar=beats_per_bar)
+    if coarse > fine:
+        coarse = fine
+    return {"coarse": coarse, "fine": fine}
 
 
 def load_grooves(
@@ -110,6 +127,7 @@ def load_grooves(
     resolution: int | str = 16,
     n: int = 2,
     smoothing: float = 0.0,
+    beats_per_bar: int | None = None,
 ) -> Model:
     """Create an ``n``-gram model from a folder of MIDI files.
 
@@ -143,7 +161,7 @@ def load_grooves(
         all_offsets.extend(off for off, _ in notes)
 
     if resolution == "auto":
-        resolution = infer_resolution(all_offsets) if all_offsets else 16
+        resolution = infer_resolution(all_offsets, beats_per_bar=beats_per_bar) if all_offsets else 16
 
     res_int = int(resolution)
 

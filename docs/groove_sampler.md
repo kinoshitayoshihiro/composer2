@@ -19,6 +19,21 @@ Generate a four bar MIDI groove:
 modcompose groove sample model.pkl -l 4 --temperature 0.8 --seed 42 > out.mid
 ```
 
+### New parameters
+
+``groove_sampler_v2`` exposes additional options:
+
+- ``--beats-per-bar``: override bar length when inferring resolution
+- ``--temperature-end``: final sampling temperature for scheduling
+- ``--top-k`` / ``--top-p``: filter sampling candidates
+
+Example:
+
+```bash
+groove_sampler_v2 train loops/ --auto-res --beats-per-bar 8
+groove_sampler_v2 sample model.pkl -l 4 --top-k 5 --top-p 0.8 > out.json
+```
+
 An experimental RNN baseline can be trained from the cached loops:
 
 ```bash

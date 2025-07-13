@@ -79,18 +79,16 @@ def apply_harmonic_notation(
     try:
         from music21 import articulations
 
-        if not hasattr(n, "notations") or n.notations is None:
-            n.notations = m21note.Notations()
         harm = articulations.StringHarmonic()
         harm.harmonicType = "artificial" if meta.get("type") != "natural" else "natural"
         harm.pitchType = "touching"
-        n.notations.append(harm)
+        n.articulations.append(harm)
         StringCls = getattr(articulations, "StringIndication", None)
         FretCls = getattr(articulations, "FretIndication", None)
         if StringCls:
-            n.notations.append(StringCls(number=int(meta["string_idx"]) + 1))
+            n.articulations.append(StringCls(number=int(meta["string_idx"]) + 1))
         if FretCls:
-            n.notations.append(FretCls(number=int(meta["touch_fret"])))
+            n.articulations.append(FretCls(number=int(meta["touch_fret"])))
         setattr(n, "string", meta.get("string_idx"))
         setattr(n, "fret", meta.get("touch_fret"))
         n.harmonic_meta = meta

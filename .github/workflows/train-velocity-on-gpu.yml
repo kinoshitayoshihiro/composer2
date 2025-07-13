@@ -21,17 +21,22 @@ jobs:
       pod_id: ${{ steps.spawn.outputs.pod_id }}
       ip: ${{ steps.info.outputs.ip }}
     steps:
-      - id: spawn
-        run: |
-          set -euo pipefail
-          query='mutation{podFindAndDeployOnDemand(templateId:"a100-40gb-ubuntu"){id}}'
-          for i in 1 2 3; do
-            resp=$(curl -sf https://api.runpod.io/graphql \
-              -H 'Content-Type: application/json' \
-              -H "Authorization: $RUNPOD_API" \
-              -d "{\"query\":\"$query\"}") && break || sleep 5
-          done
-          echo "pod_id=$(echo $resp | jq -r '.data.podFindAndDeployOnDemand.id')" >> $GITHUB_OUTPUT
+        - id: spawn
+          run: |
+            set -euo pipefail
+            query='mutation{podFindAndDeployOnDemand(templateId:"a100-40gb-ubuntu"){id}}'
+            for i in 1 2 3; do
+              resp=$(curl -sf https://api.runpod.io/graphql \
+                -H 'Content-Type: application/json' \
+                -H "Authorization: $RUNPOD_API" \
+                -d "{\"query\":\"$query\"}") && break || sleep 5
+            done
+            pod_id=$(echo "$resp" | jq -r '.data.podFindAndDeployOnDemand.id')
+            if [ -z "$pod_id" ] || [ "$pod_id" = "null" ]; then
+              echo "::error ::Failed to obtain pod_id: $resp"
+              exit 1
+            fi
+            echo "pod_id=$pod_id" >> "$GITHUB_OUTPUT"
       - id: info
         run: |
           set -euo pipefail

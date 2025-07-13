@@ -10,6 +10,11 @@ from typing import TypedDict
 
 import click
 import pretty_midi
+import mido
+import concurrent.futures
+import logging
+
+logger = logging.getLogger(__name__)
 
 from .drum_map_registry import GM_DRUM_MAP
 from .types import Intensity
@@ -44,6 +49,37 @@ class LoopEntry(TypedDict, total=False):
 _PITCH_TO_LABEL = {val[1]: key for key, val in GM_DRUM_MAP.items()}
 
 
+def _load_pretty_midi(path: Path) -> pretty_midi.PrettyMIDI | None:
+    """Load a MIDI file with timeout and size guard."""
+
+    try:
+        mf = mido.MidiFile(str(path))
+        if mf.length > 600 or len(mf.tracks) > 32:
+            logger.warning(
+                "Skipping %s (too large: %.1fs, %d tracks)",
+                path,
+                mf.length,
+                len(mf.tracks),
+            )
+            return None
+    except Exception as exc:  # pragma: no cover - invalid MIDI
+        logger.warning("Failed to inspect %s: %s", path, exc)
+        return None
+
+    def _load() -> pretty_midi.PrettyMIDI:
+        return pretty_midi.PrettyMIDI(str(path))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(_load)
+        try:
+            return fut.result(timeout=10)
+        except concurrent.futures.TimeoutError:
+            logger.warning("Timed out loading %s", path)
+        except Exception as exc:
+            logger.warning("Failed to load %s: %s", path, exc)
+    return None
+
+
 def _quantize(
     beat: float, bar_beats: int, resolution: int, ppq: int
 ) -> tuple[int, int]:
@@ -61,8 +97,10 @@ def _quantize(
     return step, micro
 
 
-def _scan_midi(path: Path, resolution: int, ppq: int) -> LoopEntry:
-    pm = pretty_midi.PrettyMIDI(str(path))
+def _scan_midi(path: Path, resolution: int, ppq: int) -> LoopEntry | None:
+    pm = _load_pretty_midi(path)
+    if pm is None:
+        return None
     tempo = pm.get_tempo_changes()[1]
     bpm = float(tempo[0]) if tempo.size else 120.0
     sec_per_beat = 60.0 / bpm

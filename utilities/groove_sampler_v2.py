@@ -139,27 +139,29 @@ def convert_wav_to_midi(
         If given, use this BPM instead of automatic tempo estimation.
     """
     try:
-        import librosa  # optional dependency
+        import soundfile as sf
+        import numpy as np
     except Exception as exc:  # pragma: no cover
         logger.warning("Audio-to-MIDI failed for %s: %s", path, exc)
         return None
 
     try:
-        y, sr = librosa.load(path, sr=None, mono=True)
+        y, sr = sf.read(path, dtype="float32")
+        if y.ndim > 1:
+            y = y.mean(axis=1)
 
-        if fixed_bpm is None:
-            tempo, _ = librosa.beat.beat_track(y=y, sr=sr, trim=False)
-            if hasattr(tempo, "__len__"):
-                tempo_val: float = float(tempo[0]) if len(tempo) else 0.0
-            else:
-                tempo_val = float(tempo)
-        else:
-            tempo_val = float(fixed_bpm)
+        bpm = float(fixed_bpm) if fixed_bpm is not None else 120.0
 
-        bpm = tempo_val or 120.0
-        onset_times = librosa.onset.onset_detect(
-            y=y, sr=sr, hop_length=512, units="time"
-        )
+        threshold = 0.2
+        min_gap = int(0.1 * sr)
+        onset_samples = []
+        last_onset = -min_gap
+        for i, val in enumerate(y):
+            if val > threshold and i - last_onset >= min_gap:
+                onset_samples.append(i)
+                last_onset = i
+
+        onset_times = [s / sr for s in onset_samples]
 
         pm = pretty_midi.PrettyMIDI(initial_tempo=bpm)
         drum = pretty_midi.Instrument(program=0, is_drum=True)
@@ -210,7 +212,7 @@ def train(
     auto_res: bool = False,
     coarse: bool = False,
     beats_per_bar: int | None = None,
-    n_jobs: int = -1,
+    n_jobs: int = 1,
     memmap_dir: Path | None = None,
     fixed_bpm: float | None = None,
     progress: bool = False,
@@ -714,7 +716,7 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
         type=int,
         help="override bar length when inferring resolution",
     )
-    parser.add_argument("--jobs", type=int, default=-1)
+    parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--memmap-dir", type=Path)
     parser.add_argument("--fixed-bpm", type=float)
     parser.add_argument(

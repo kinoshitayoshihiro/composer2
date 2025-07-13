@@ -85,24 +85,32 @@ def _scan_midi(path: Path, resolution: int, ppq: int) -> LoopEntry:
 
 
 def _scan_wav(path: Path, resolution: int, ppq: int) -> LoopEntry:
-    if not HAVE_LIBROSA:
-        raise RuntimeError("librosa is required for WAV scanning")
-    assert librosa is not None
-    y, sr = librosa.load(path, sr=None, mono=True)
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    if hasattr(tempo, "__len__"):
-        tempo_val = float(tempo[0]) if len(tempo) > 0 else 0.0
-    else:
-        tempo_val = float(tempo)
-    bpm = tempo_val or 120.0
+    import soundfile as sf
+    import numpy as np
+
+    y, sr = sf.read(path, dtype="float32")
+    if y.ndim > 1:
+        y = y.mean(axis=1)
+
+    bpm = 120.0
     sec_per_beat = 60.0 / bpm
     bar_beats = max(1, int(round(len(y) / sr / sec_per_beat)))
-    onsets = librosa.onset.onset_detect(y=y, sr=sr, units="time")
+
+    threshold = 0.2
+    min_gap = int(0.1 * sr)
+    onset_samples = []
+    last_onset = -min_gap
+    for i, val in enumerate(y):
+        if val > threshold and i - last_onset >= min_gap:
+            onset_samples.append(i)
+            last_onset = i
+
     tokens: list[Token] = []
-    for t in onsets:
-        beat = t / sec_per_beat
+    for s in onset_samples:
+        beat = (s / sr) / sec_per_beat
         step, micro = _quantize(beat, bar_beats, resolution, ppq)
         tokens.append((step, "perc", 100, micro))
+
     return {
         "file": path.name,
         "tokens": tokens,

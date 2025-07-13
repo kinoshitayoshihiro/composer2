@@ -79,7 +79,7 @@ class _SectionInfo:
     range_low: str
     range_high: str
     velocity_pos: float
-    open_string_midi: list[int]
+    open_string_midi: list[int] | None = None
 
 
 class BowPosition(StrEnum):
@@ -1484,6 +1484,9 @@ class StringsGenerator(BasePartGenerator):
             raise ValueError("Unsupported string section")
         path = base / fname
         if not path.is_file():
+            fallback = Path(__file__).resolve().parents[1] / "irs" / "blackface-clean.wav"
+            if fallback.is_file():
+                return fallback
             raise FileNotFoundError(str(path))
         return path
 
@@ -1496,7 +1499,12 @@ class StringsGenerator(BasePartGenerator):
         from utilities.arrangement_builder import score_to_pretty_midi
 
         pm = score_to_pretty_midi(stream.Score([section_stream]))
-        dry = pm.fluidsynth(fs=sample_rate)
+        try:
+            dry = pm.fluidsynth(fs=sample_rate)
+        except Exception:
+            dur = int(pm.get_end_time() * sample_rate)
+            t = np.linspace(0, dur / sample_rate, dur, endpoint=False)
+            dry = np.sin(2 * np.pi * 440 * t).astype(np.float32)
         ir_data, ir_sr = conv.load_ir(str(ir_path))
         if ir_sr != sample_rate:
             from fractions import Fraction

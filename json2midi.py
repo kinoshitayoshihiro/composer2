@@ -149,6 +149,7 @@ def convert_events(
     pm.instruments.extend(instruments.values())
 
     if tempo_changes:
+        # TODO: replace _tick_scales hack with official API when available
         pm._tick_scales = []
         for beat, tbpm in sorted(tempo_changes, key=lambda x: x[0]):
             tick = int(round(beat * pm.resolution))
@@ -196,6 +197,19 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("-V", "--version", action="version", version=__version__)
     ns = ap.parse_args(argv)
 
+    swing = max(0.0, min(ns.swing, 1.0))
+    if swing != ns.swing:
+        logger.error("Invalid swing value: %s", ns.swing)
+        sys.exit(1)
+    timing = max(0.0, ns.humanize_timing)
+    if timing != ns.humanize_timing:
+        logger.error("Invalid humanize-timing value: %s", ns.humanize_timing)
+        sys.exit(1)
+    vel_jitter = max(0.0, ns.humanize_vel)
+    if vel_jitter != ns.humanize_vel:
+        logger.error("Invalid humanize-vel value: %s", ns.humanize_vel)
+        sys.exit(1)
+
     if ns.seed is not None:
         random.seed(ns.seed)
 
@@ -213,33 +227,39 @@ def main(argv: list[str] | None = None) -> None:
     single_out = ns.out if ns.out and len(inputs) == 1 else None
 
     for in_path in inputs:
-        data = _load_json(Path(in_path))
-        if isinstance(data, dict):
-            events = data.get("events", [])
-            tempo_changes = data.get("tempo_changes")
-            if not isinstance(events, list):
-                sys.exit(f"Invalid events in {in_path}")
-        else:
-            events = data
-            tempo_changes = None
-        pm = convert_events(
-            events,
-            ns.bpm,
-            mapping,
-            swing=ns.swing,
-            humanize_timing_ms=ns.humanize_timing,
-            humanize_vel_pct=ns.humanize_vel,
-            split_tracks=ns.split_tracks,
-            repeat=ns.repeat,
-            tempo_changes=tempo_changes,
-            quiet=ns.quiet,
-        )
-        out_path = single_out if single_out else Path(in_path).with_suffix(".mid")
-        pm.write(str(out_path))
-        if not ns.quiet:
-            msg = f"Saved {out_path} (events: {len(events)}, bpm: {ns.bpm})"
-            logger.info(msg)
-            print(msg)
+        try:
+            data = _load_json(Path(in_path))
+            if isinstance(data, dict):
+                events = data.get("events", [])
+                tempo_changes = data.get("tempo_changes")
+                if not isinstance(events, list):
+                    raise ValueError("Invalid events")
+            else:
+                events = data
+                tempo_changes = None
+            pm = convert_events(
+                events,
+                ns.bpm,
+                mapping,
+                swing=swing,
+                humanize_timing_ms=timing,
+                humanize_vel_pct=vel_jitter,
+                split_tracks=ns.split_tracks,
+                repeat=ns.repeat,
+                tempo_changes=tempo_changes,
+                quiet=ns.quiet,
+            )
+            out_path = (
+                single_out if single_out else Path(in_path).with_suffix(".mid")
+            )
+            pm.write(str(out_path))
+            if not ns.quiet:
+                msg = f"Saved {out_path} (events: {len(events)}, bpm: {ns.bpm})"
+                logger.info(msg)
+                print(msg)
+        except Exception as exc:
+            logger.error("Failed on %s: %s", in_path, exc, exc_info=True)
+            sys.exit(1)
 
 
 if __name__ == "__main__":

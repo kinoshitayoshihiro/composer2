@@ -55,20 +55,22 @@ class ModelV1_LSTM(nn.Module if torch is not None else object):
 
 class MLVelocityModel(nn.Module if torch is not None else object):
     def __init__(self, input_dim: int = 3) -> None:
-        if torch is None:
-            raise RuntimeError("torch required")
-        super().__init__()
         self.input_dim = input_dim
-        self.fc_in = nn.Linear(input_dim, 256)
-        enc_layer = nn.TransformerEncoderLayer(
-            d_model=256,
-            nhead=4,
-            dim_feedforward=256,
-            batch_first=True,
-        )
-        self.encoder = nn.TransformerEncoder(enc_layer, num_layers=4)
-        self.fc_out = nn.Linear(256, 1)
-        nn.init.constant_(self.fc_out.bias, 64.0)
+        if torch is None:
+            self._dummy = True
+        else:
+            super().__init__()
+            self._dummy = False
+            self.fc_in = nn.Linear(input_dim, 256)
+            enc_layer = nn.TransformerEncoderLayer(
+                d_model=256,
+                nhead=4,
+                dim_feedforward=256,
+                batch_first=True,
+            )
+            self.encoder = nn.TransformerEncoder(enc_layer, num_layers=4)
+            self.fc_out = nn.Linear(256, 1)
+            nn.init.constant_(self.fc_out.bias, 64.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = self.fc_in(x)
@@ -95,8 +97,10 @@ class MLVelocityModel(nn.Module if torch is not None else object):
         return torch.jit.load(path)
 
     def predict(self, ctx, *, cache_key: str | None = None):
-        if torch is None:
-            raise RuntimeError("torch required")
+        if torch is None or getattr(self, "_dummy", False):
+            import numpy as np
+            return np.full((ctx.shape[0],), 64.0, dtype=np.float32)
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
         x = torch.tensor(ctx, dtype=torch.float32, device=device).unsqueeze(0)
         model: Any = self

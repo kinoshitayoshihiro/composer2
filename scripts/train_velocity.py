@@ -1,7 +1,33 @@
 from __future__ import annotations
 
+import argparse
+import sys
+from pathlib import Path
+
+from omegaconf import DictConfig, OmegaConf
+
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument("--epochs", type=int)
+parser.add_argument("--out", type=str)
+parsed_args, remaining_argv = parser.parse_known_args()
+sys.argv = sys.argv[:1] + remaining_argv
+extra_overrides: list[str] = []
+if parsed_args.epochs is not None:
+    extra_overrides.append(f"training.epochs={parsed_args.epochs}")
+if parsed_args.out is not None:
+    cfg_file = Path(__file__).resolve().parent.parent / "configs" / "velocity_model.yaml"
+    try:
+        base_cfg = OmegaConf.load(cfg_file)
+    except Exception:
+        base_cfg = {}
+    if isinstance(base_cfg, DictConfig) and "out" in base_cfg:
+        extra_overrides.append(f"out.ckpt={parsed_args.out}")
+    else:
+        extra_overrides.append(f"+out={parsed_args.out}")
+if extra_overrides:
+    sys.argv += extra_overrides
+
 import hydra
-from omegaconf import DictConfig
 
 try:
     import pytorch_lightning as pl

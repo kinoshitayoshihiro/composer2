@@ -1240,6 +1240,8 @@ class GuitarGenerator(BasePartGenerator):
                         )
                         if meta:
                             apply_harmonic_notation(n_in_ch_note, meta)
+                            if not hasattr(ch, "harmonic_meta"):
+                                ch.harmonic_meta = meta
                 if is_palm_muted:
                     n_in_ch_note.articulations.append(articulations.Staccatissimo())
             ch.offset = self._jitter(0.0)

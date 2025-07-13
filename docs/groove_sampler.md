@@ -59,3 +59,15 @@ in version 1.0 and ignores auxiliary conditions.
 
 Models generated prior to commit 608fdda no longer include the
 deprecated `aux_dims` field and should be retrained.
+
+## CLI Commands
+
+| Command | Description | Key options |
+| ------- | ----------- | ----------- |
+| `groove train` | Train n-gram model from loops | `--ext`, `--out` |
+| `groove sample` | Generate groove MIDI | `-l`, `--temperature`, `--seed` |
+| `export-midi` | Save sampled MIDI to file | `--length`, `--temperature`, `--seed` |
+| `render-audio` | Convert MIDI to audio with FluidSynth | `--out`, `--soundfont`, `--use-default-sf2` |
+| `evaluate` | Calculate basic groove metrics | `--ref` |
+| `visualize` | Draw n-gram frequency heatmap | `--out` |
+| `hyperopt` | Optuna search over temperature | `--trials`, `--skip-if-no-optuna` |

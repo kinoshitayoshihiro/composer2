@@ -82,3 +82,17 @@ python -m utilities.audio_to_midi_batch loops/wav midi_out --jobs 4
 
 The converter runs on CPU and works best with 44.1 kHz audio. Cache
 `~/.cache/basic_pitch` to speed up repeated runs.
+
+### Audio → MIDI Batch CLI
+
+Use the batch converter to transcribe a folder of loops:
+
+```bash
+python -m utilities.audio_to_midi_batch loops/wav midi_out \
+    --part drums --ext wav,mp3 --jobs 4 --min-db -35
+```
+
+Pass `--stem` to restrict processing to a specific filename and add
+`--overwrite` to regenerate existing MIDI files.
+
+Requires the `libsndfile` system library for WAV/FLAC support.

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-import yaml
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-DEFAULT_PATH = Path(__file__).with_name("progression_templates.yaml")
+import yaml
+
+DEFAULT_YAML = Path(__file__).with_name("progression_templates.yaml")
+DEFAULT_PATH = DEFAULT_YAML  # backward compatibility
 
 
 @lru_cache()
-def _load(path: str | Path = DEFAULT_PATH) -> dict[str, Any]:
+def _load(path: str | Path = DEFAULT_YAML) -> dict[str, Any]:
     p = Path(path)
     if not p.exists():
         return {}
@@ -17,23 +19,40 @@ def _load(path: str | Path = DEFAULT_PATH) -> dict[str, Any]:
         data = yaml.safe_load(fh) or {}
     if not isinstance(data, dict):
         raise ValueError("Progression template file must contain a mapping")
+    if not isinstance(data.get("_default", {}), dict):
+        raise ValueError("Missing _default bucket")
     return data
 
 
 def get_progressions(
-    bucket: str, *, mode: str = "major", path: str | Path = DEFAULT_PATH
+    bucket: str, mode: str = "major", path: str | Path = DEFAULT_YAML
 ) -> list[str]:
-    """Return chord progressions for the given emotion bucket and mode."""
-    data = _load(path=path)
+    """Return list of progressions.
+
+    Fallback order:
+    1. exact bucket / mode
+    2. exact bucket / "major"
+    3. "_default"  / mode
+    4. "_default"  / "major"
+    Raises KeyError if nothing found.
+    """
+    data = _load(path)
     try:
-        modes = data[bucket]
-        return list(modes[mode])
-    except KeyError as exc:
-        raise KeyError(bucket, mode) from exc
+        return list(data[bucket][mode])
+    except KeyError:
+        try:
+            return list(data[bucket]["major"])
+        except KeyError:
+            try:
+                return list(data["_default"][mode])
+            except KeyError:
+                return list(data["_default"]["major"])
 
 
 if __name__ == "__main__":
     import argparse
+    import json
+    import pprint
     import sys
 
     ap = argparse.ArgumentParser()
@@ -41,8 +60,10 @@ if __name__ == "__main__":
     ap.add_argument("mode", nargs="?", default="major")
     ns = ap.parse_args()
     try:
-        print("\n".join(get_progressions(ns.bucket, mode=ns.mode)))
+        progs = get_progressions(ns.bucket, ns.mode)
+        data = _load()
+        if ns.bucket not in data:
+            raise KeyError(ns.bucket)
+        pprint.pp(progs)
     except KeyError as e:
-        sys.exit(f"Bucket/Mode not found: {e}")
-    except Exception as exc:
-        raise
+        sys.exit(f"Not found: {e}")

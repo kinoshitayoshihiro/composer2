@@ -24,6 +24,19 @@ ruamel.yaml>=0.17  # [yaml]
 scipy>=1.10  # [tests]
 tqdm>=4.66  # [cli]
 types-PyYAML>=6.0  # [typing]
+
 fastapi>=0.110
 uvicorn>=0.29
 httpx>=0.27
+music21>=7.3
+numpy>=1.26
+click>=8.1
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27
+
+librosa>=0.10
+soundfile>=0.12
+tqdm>=4.66
+ruamel.yaml>=0.17
+tqdm>=4.66

@@ -5,7 +5,8 @@ import statistics
 from abc import ABC, abstractmethod
 from typing import Any
 
-from music21 import meter, stream, volume as m21volume
+from music21 import meter, stream
+from music21 import volume as m21volume
 
 try:
     import torch
@@ -17,18 +18,14 @@ from utilities.cc_tools import finalize_cc_events, merge_cc_events
 from utilities.tone_shaper import ToneShaper
 
 try:
-    from utilities.humanizer import (
-        apply as humanize_apply,
-    )
+    from utilities.humanizer import apply as humanize_apply
     from utilities.humanizer import (
         apply_envelope,
         apply_humanization_to_part,
         apply_offset_profile,
         apply_swing,
     )
-    from utilities.override_loader import (
-        Overrides as OverrideModelType,
-    )
+    from utilities.override_loader import Overrides as OverrideModelType
     from utilities.override_loader import get_part_override
     from utilities.prettymidi_sync import apply_groove_pretty, load_groove_profile
 except ModuleNotFoundError as e:
@@ -76,7 +73,9 @@ class BasePartGenerator(ABC):
         self.rng = rng or random.Random()
         self.ml_velocity_model_path = ml_velocity_model_path
         self.ml_velocity_model = None
-        self.ml_velocity_cache_key = ml_velocity_model_path
+        self.ml_velocity_cache_key = (
+            ml_velocity_model_path if ml_velocity_model_path and torch else None
+        )
         if ml_velocity_model_path:
             try:
                 from utilities.ml_velocity import MLVelocityModel
@@ -84,7 +83,9 @@ class BasePartGenerator(ABC):
                 self.ml_velocity_model = MLVelocityModel.load(ml_velocity_model_path)
             except Exception as exc:  # pragma: no cover - optional dependency
                 logging.getLogger(__name__).warning(
-                    "Failed to load ML velocity model %s: %s", ml_velocity_model_path, exc
+                    "Failed to load ML velocity model %s: %s",
+                    ml_velocity_model_path,
+                    exc,
                 )
         # 各ジェネレーター固有のロガー
         name = self.part_name or self.__class__.__name__.lower()
@@ -152,7 +153,11 @@ class BasePartGenerator(ABC):
                 return
             ctx = np.array(
                 [
-                    [i / len(notes), n.pitch.midi / 127.0, (n.volume.velocity or 64) / 127.0]
+                    [
+                        i / len(notes),
+                        n.pitch.midi / 127.0,
+                        (n.volume.velocity or 64) / 127.0,
+                    ]
                     for i, n in enumerate(notes)
                 ],
                 dtype=np.float32,
@@ -174,6 +179,7 @@ class BasePartGenerator(ABC):
         next_section_data: dict[str, Any] | None = None,
         part_specific_humanize_params: dict[str, Any] | None = None,
         shared_tracks: dict[str, Any] | None = None,
+        vocal_metrics: dict | None = None,
     ) -> stream.Part:
         shared_tracks = shared_tracks or {}
         section_data.setdefault("shared_tracks", {}).update(shared_tracks)
@@ -212,7 +218,9 @@ class BasePartGenerator(ABC):
         self.logger.info(
             f"Rendering part for section: '{section_label}' with overrides: {overrides_dump}"
         )
-        parts = self._render_part(section_data, next_section_data)
+        parts = self._render_part(
+            section_data, next_section_data, vocal_metrics=vocal_metrics
+        )
 
         if not isinstance(parts, stream.Part | dict):
             self.logger.error(
@@ -324,6 +332,7 @@ class BasePartGenerator(ABC):
         self,
         section_data: dict[str, Any],
         next_section_data: dict[str, Any] | None = None,
+        vocal_metrics: dict | None = None,
     ) -> stream.Part | dict[str, stream.Part]:
         raise NotImplementedError
 

@@ -5,19 +5,29 @@ import re
 import statistics
 from typing import Any
 
-from music21 import articulations, chord, expressions, harmony, note, spanner, stream, volume
+from music21 import (
+    articulations,
+    chord,
+    expressions,
+    harmony,
+    note,
+    spanner,
+    stream,
+    volume,
+)
 
 from utilities import humanizer
-from utilities.cc_tools import merge_cc_events, finalize_cc_events
-from utilities.tone_shaper import ToneShaper
+from utilities.cc_tools import finalize_cc_events, merge_cc_events
 from utilities.humanizer import apply_swing
 from utilities.pedalizer import generate_pedal_cc
+from utilities.tone_shaper import ToneShaper
 
+from .articulation import QL_32ND, ArticulationEngine
 from .base_part_generator import BasePartGenerator
 from .voicing_density import VoicingDensityEngine
-from .articulation import ArticulationEngine, QL_32ND
 
 PPQ = 480
+
 
 class PianoTemplateGenerator(BasePartGenerator):
     """Very simple piano generator for alpha testing."""
@@ -46,6 +56,7 @@ class PianoTemplateGenerator(BasePartGenerator):
         next_section_data: dict[str, Any] | None = None,
         part_specific_humanize_params: dict[str, Any] | None = None,
         shared_tracks: dict[str, Any] | None = None,
+        vocal_metrics: dict | None = None,
     ) -> stream.Part | dict[str, stream.Part]:
         result = super().compose(
             section_data=section_data,
@@ -54,6 +65,7 @@ class PianoTemplateGenerator(BasePartGenerator):
             next_section_data=next_section_data,
             part_specific_humanize_params=part_specific_humanize_params,
             shared_tracks=shared_tracks,
+            vocal_metrics=vocal_metrics,
         )
 
         chord_label = section_data.get("chord_symbol_for_voicing", "")
@@ -99,7 +111,10 @@ class PianoTemplateGenerator(BasePartGenerator):
         return result
 
     def _render_part(
-        self, section_data: dict[str, Any], next_section_data: dict[str, Any] | None = None
+        self,
+        section_data: dict[str, Any],
+        next_section_data: dict[str, Any] | None = None,
+        vocal_metrics: dict | None = None,
     ) -> dict[str, stream.Part]:
         chord_label = section_data.get("chord_symbol_for_voicing", "C")
         tags = set(re.findall(r"<(gliss(?:_up|_down)?|trill)>", chord_label))
@@ -179,7 +194,9 @@ class PianoTemplateGenerator(BasePartGenerator):
         if chord_stream:
             events = generate_pedal_cc(chord_stream)
             for part in (rh, lh):
-                base: set[tuple[float, int, int]] = set(getattr(part, "_extra_cc", set()))
+                base: set[tuple[float, int, int]] = set(
+                    getattr(part, "_extra_cc", set())
+                )
                 part._extra_cc = set(merge_cc_events(base, events))
 
         if section_data.get("use_pedal"):
@@ -192,13 +209,11 @@ class PianoTemplateGenerator(BasePartGenerator):
                 lh.insert(ev["time"], copy.deepcopy(ped))
             for part in (rh, lh):
                 part.extra_cc = getattr(part, "extra_cc", []) + cc_events
-        profile = (
-            section_data.get("humanize_profile")
-            or self.global_settings.get("humanize_profile")
+        profile = section_data.get("humanize_profile") or self.global_settings.get(
+            "humanize_profile"
         )
-        swing_ratio = (
-            section_data.get("swing_ratio")
-            or self.global_settings.get("swing_ratio")
+        swing_ratio = section_data.get("swing_ratio") or self.global_settings.get(
+            "swing_ratio"
         )
         for p in (rh, lh):
             if profile:

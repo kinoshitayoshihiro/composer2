@@ -2,18 +2,17 @@ from __future__ import annotations
 
 """Saxophone phrasing generator."""
 
+import math
+import random
 from typing import Any
 
-from utilities.scale_registry import ScaleRegistry
-from utilities.cc_tools import add_cc_events
-import random
 import numpy as np
+from music21 import articulations, instrument, note, spanner, stream
 
-from music21 import instrument, articulations, spanner, stream, note
-import math
+from utilities.cc_tools import add_cc_events
+from utilities.scale_registry import ScaleRegistry
 
 from .melody_generator import MelodyGenerator
-
 
 DEFAULT_PHRASE_PATTERNS: dict[str, dict[str, Any]] = {
     "sax_basic_swing": {
@@ -118,7 +117,9 @@ class SaxGenerator(MelodyGenerator):
         for n in notes:
             off = float(n.offset)
 
-            is_stacc = any(isinstance(a, articulations.Staccato) for a in n.articulations)
+            is_stacc = any(
+                isinstance(a, articulations.Staccato) for a in n.articulations
+            )
             in_slur = id(n) in slur_notes or any(
                 isinstance(a, articulations.Tenuto) for a in n.articulations
             )
@@ -223,17 +224,22 @@ class SaxGenerator(MelodyGenerator):
         self,
         section_data: dict[str, Any],
         next_section_data: dict[str, Any] | None = None,
+        vocal_metrics: dict | None = None,
     ) -> stream.Part:
         pattern_key = (
             section_data.get("part_params", {})
             .get("melody", {})
             .get("rhythm_key", "sax_basic_swing")
         )
-        pat = DEFAULT_PHRASE_PATTERNS.get(pattern_key, DEFAULT_PHRASE_PATTERNS["sax_basic_swing"])
+        pat = DEFAULT_PHRASE_PATTERNS.get(
+            pattern_key, DEFAULT_PHRASE_PATTERNS["sax_basic_swing"]
+        )
 
         tonic = section_data.get("tonic_of_section", self.global_key_signature_tonic)
         mode = section_data.get("mode", self.global_key_signature_mode)
-        scale_pitches = ScaleRegistry.get(tonic or "C", mode or "major").getPitches("C3", "C5")
+        scale_pitches = ScaleRegistry.get(tonic or "C", mode or "major").getPitches(
+            "C3", "C5"
+        )
 
         part = stream.Part(id=self.part_name or "sax")
         part.insert(0, self.default_instrument)
@@ -258,10 +264,9 @@ class SaxGenerator(MelodyGenerator):
 
         return part
 
-    def compose(self, section_data=None):  # type: ignore[override]
-        if self.seed is not None:
-            random.seed(self.seed)
-            np.random.seed(self.seed)
+    def compose(
+        self, section_data=None, *, vocal_metrics: dict | None = None
+    ):  # type: ignore[override]
 
         if section_data:
             mi = section_data.get("musical_intent", {})
@@ -271,14 +276,14 @@ class SaxGenerator(MelodyGenerator):
             section_data.setdefault("part_params", {}).setdefault("melody", {})[
                 "rhythm_key"
             ] = pat_key
-        part = self._render_part(section_data)
+        part = self._render_part(section_data, vocal_metrics=vocal_metrics)
         tonic = (
             section_data.get("tonic_of_section")
-            if section_data else self.global_key_signature_tonic
+            if section_data
+            else self.global_key_signature_tonic
         )
         mode = (
-            section_data.get("mode")
-            if section_data else self.global_key_signature_mode
+            section_data.get("mode") if section_data else self.global_key_signature_mode
         )
         pcs = {
             p.pitchClass
@@ -289,7 +294,11 @@ class SaxGenerator(MelodyGenerator):
         for n in list(part.recurse().notes):
             if n.pitch.pitchClass not in pcs:
                 part.remove(n)
-        intensity = section_data.get("musical_intent", {}).get("intensity", "medium") if section_data else "medium"
+        intensity = (
+            section_data.get("musical_intent", {}).get("intensity", "medium")
+            if section_data
+            else "medium"
+        )
         self._apply_articulation_cc(part)
         self._apply_vibrato(part)
         self._apply_velocity_curve(part, intensity)

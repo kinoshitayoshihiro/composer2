@@ -4,22 +4,13 @@ from __future__ import annotations
 
 import copy
 import logging
+import random
 from typing import Any
 
-from music21 import (
-    chord as m21chord,
-)
-from music21 import (
-    expressions,
-    harmony,
-    interval,
-    note,
-    pitch,
-    stream,
-)
-from music21 import (
-    volume as m21volume,
-)
+from music21 import chord as m21chord
+from music21 import duration as m21duration
+from music21 import expressions, harmony, interval, note, pitch, stream
+from music21 import volume as m21volume
 
 from utilities.velocity_curve import resolve_velocity_curve
 
@@ -28,7 +19,6 @@ try:
     from music21.expressions import PedalMark
 except Exception:  # pragma: no cover - compatibility
     from music21.expressions import TextExpression as PedalMark
-
 
 from utilities import humanizer
 
@@ -108,7 +98,9 @@ BUCKET_TO_PATTERN_PIANO = {
 
 
 class PianoGenerator(BasePartGenerator):
-    def __init__(self, *args, main_cfg=None, ml_velocity_model_path: str | None = None, **kwargs):
+    def __init__(
+        self, *args, main_cfg=None, ml_velocity_model_path: str | None = None, **kwargs
+    ):
         self.main_cfg = main_cfg
         self.part_parameters = kwargs.get("part_parameters", {})
         self.chord_voicer = None
@@ -473,9 +465,7 @@ class PianoGenerator(BasePartGenerator):
                 frac = s / steps
                 t = start_t + frac * (end_t - start_t)
                 val = int(round(start_val + (end_val - start_val) * frac))
-                cc_events.append(
-                    {"time": t, "cc": 11, "val": max(0, min(127, val))}
-                )
+                cc_events.append({"time": t, "cc": 11, "val": max(0, min(127, val))})
         part.extra_cc = cc_events
 
     def _apply_weak_beat(self, part: stream.Part, style: str) -> stream.Part:
@@ -571,6 +561,7 @@ class PianoGenerator(BasePartGenerator):
         self,
         section_data: dict[str, Any],
         next_section_data: dict[str, Any] | None = None,
+        vocal_metrics: dict | None = None,
     ) -> dict[str, stream.Part]:
         rh_part = stream.Part(id=f"Piano_RH_{section_data.get('absolute_offset')}")
         lh_part = stream.Part(id=f"Piano_LH_{section_data.get('absolute_offset')}")
@@ -722,4 +713,16 @@ class PianoGenerator(BasePartGenerator):
         rh_part.partName = "Piano RH"
         lh_part.id = "piano_lh"
         lh_part.partName = "Piano LH"
+
+        if vocal_metrics:
+            root_pitch = cs.root() if "cs" in locals() else None
+            if root_pitch:
+                for b in vocal_metrics.get("onsets", []):
+                    if random.random() < 0.3:
+                        n = note.Note()
+                        n.pitch = root_pitch.transpose(12)
+                        n.duration = m21duration.Duration(0.25)
+                        n.volume = m21volume.Volume(velocity=75)
+                        rh_part.insert(b + 0.5, n)
+
         return {"piano_rh": rh_part, "piano_lh": lh_part}

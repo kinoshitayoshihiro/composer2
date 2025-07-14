@@ -2,6 +2,8 @@
 ## [Unreleased]
 - progression_templates helper
 
+- 2025-07-14: enhance `vocal_sync` with tempo map support and quantization deduplication
+
 <a name="v0.12.0-beta"></a>
 ## v0.12.0-beta - 2025-07-04
 ### Features

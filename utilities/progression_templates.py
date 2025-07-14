@@ -27,6 +27,7 @@ if __name__ == "__main__":
         print(yaml.dump(lst, allow_unicode=True))
     except KeyError as e:
         raise SystemExit(f"Missing key: {e}")
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -57,5 +58,20 @@ def get_progressions(bucket: str, *, mode: str = "major", path: str | Path = DEF
         return list(modes[mode])
     except KeyError as exc:
         raise KeyError(bucket, mode) from exc
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("bucket")
+    ap.add_argument("mode", nargs="?", default="major")
+    ns = ap.parse_args()
+    try:
+        print("\n".join(get_progressions(ns.bucket, mode=ns.mode)))
+    except KeyError as e:
+        sys.exit(f"Bucket/Mode not found: {e}")
+
     except Exception as exc:
         raise

@@ -32,7 +32,6 @@ def test_cache() -> None:
 def test_keyerror(bucket: str, mode: str) -> None:
     with pytest.raises(KeyError):
         get_progressions(bucket, mode=mode)
-=======
 import importlib
 from pathlib import Path
 import pytest

@@ -6,6 +6,7 @@ import random
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+from bisect import bisect_left
 
 import yaml
 from music21 import (
@@ -55,6 +56,16 @@ from utilities.velocity_smoother import EMASmoother
 from .base_part_generator import BasePartGenerator
 
 logger = logging.getLogger("modular_composer.drum_generator")
+
+__drum_gen_version__ = "0.3.0"
+
+# Default LUT mapping intensity to fill density
+DEFAULT_FILL_DENSITY_LUT: dict[float, float] = {
+    0.0: 0.05,  # whisper
+    0.3: 0.15,  # reflective
+    0.6: 0.35,  # energetic
+    1.0: 0.60,  # climax
+}
 
 # Hat suppression: omit hi-hat hits when relative vocal activity exceeds this
 # threshold (0-1 scale based on heatmap weight).
@@ -365,6 +376,7 @@ class DrumGenerator(BasePartGenerator):
         drum_map=None,
         tempo_map=None,
         ml_velocity_model_path: str | None = None,
+        fill_density_lut: dict[float, float] | None = None,
         **kwargs,
     ):
         self.main_cfg = main_cfg
@@ -390,6 +402,17 @@ class DrumGenerator(BasePartGenerator):
         self.fill_offsets: list[tuple[float, float]] = []
         global_cfg = self.main_cfg.get("global_settings", {}) if self.main_cfg else {}
         self.fade_beats_default = float(global_cfg.get("fill_fade_beats", 2.0))
+
+        lut = None
+        if fill_density_lut is not None:
+            lut = {float(k): float(v) for k, v in fill_density_lut.items()}
+        elif self.main_cfg is not None:
+            lut = self.main_cfg.get("drum", {}).get("fill_density_lut")
+            if isinstance(lut, dict):
+                lut = {float(k): float(v) for k, v in lut.items()}
+        if not lut:
+            lut = DEFAULT_FILL_DENSITY_LUT.copy()
+        self.fill_density_lut = dict(sorted(lut.items()))
         self.strict_drum_map = bool(
             self.global_settings.get("strict_drum_map", False)
         )
@@ -774,6 +797,30 @@ class DrumGenerator(BasePartGenerator):
             return self.tempo_map.get_bpm(abs_offset_ql)
         return self.global_tempo
 
+    def _calc_fill_density(self, intensity: float) -> float:
+        """Return interpolated fill density for a given intensity.
+
+        Intensity is clamped to the range [0, 1] and the value is
+        linearly interpolated from ``self.fill_density_lut``.
+        """
+        x = max(0.0, min(1.0, float(intensity)))
+        keys = sorted(self.fill_density_lut)
+        if x <= keys[0]:
+            return float(self.fill_density_lut[keys[0]])
+        if x >= keys[-1]:
+            return float(self.fill_density_lut[keys[-1]])
+        idx = bisect_left(keys, x)
+        hi = keys[idx]
+        lo = keys[idx - 1]
+        lo_v = self.fill_density_lut[lo]
+        hi_v = self.fill_density_lut[hi]
+        frac = (x - lo) / (hi - lo)
+        return lo_v + frac * (hi_v - lo_v)
+
+    def fill_density(self, intensity: float) -> float:
+        """Public helper wrapping :meth:`_calc_fill_density`."""
+        return self._calc_fill_density(intensity)
+
     def _choose_pattern_key(
         self,
         emotion: str | None,
@@ -942,6 +989,7 @@ class DrumGenerator(BasePartGenerator):
         )
 
         if section_data:
+            self._insert_emotional_fills(part, section_data)
             self.fill_inserter.insert(part, section_data)
         self._sync_hihat_with_vocals(part)
         if shared_tracks is not None:
@@ -1819,6 +1867,23 @@ class DrumGenerator(BasePartGenerator):
         main.volume = m21volume.Volume(velocity=max(1, velocity))
         main.offset = 0.0
         part.insert(offset, main)
+
+    def _insert_emotional_fills(
+        self, part: stream.Part, section_data: dict[str, Any]
+    ) -> None:
+        """Insert fills probabilistically based on section intensity."""
+        inten = section_data.get("musical_intent", {}).get("emotion_intensity")
+        if inten is None:
+            density = 0.15
+        else:
+            density = self._calc_fill_density(float(inten))
+        n_measures = section_data.get("length_in_measures")
+        if not n_measures:
+            ql = section_data.get("q_length", 4.0)
+            n_measures = max(1, round(ql / self.global_ts.barDuration.quarterLength))
+        for _ in range(int(n_measures)):
+            if self.rng.random() < density:
+                self.fill_inserter.insert(part, section_data)
 
     def _convert_ticks_to_seconds(self, tick: int) -> float:
         """Convert absolute ``tick`` position to seconds using ``TempoMap``."""

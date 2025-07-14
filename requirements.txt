@@ -1,5 +1,5 @@
 music21~=8.2
-pretty_midi>=0.2.10
+pretty_midi>=0.3.0
 numpy>=1.26.4,<2.0.0
 PyYAML>=6.0
 click>=8
@@ -24,17 +24,6 @@ ruamel.yaml>=0.17  # [yaml]
 scipy>=1.10  # [tests]
 tqdm>=4.66  # [cli]
 types-PyYAML>=6.0  # [typing]
-music21>=7.3
-numpy>=1.26
-click>=8.1
-pretty_midi>=0.2
 fastapi>=0.110
 uvicorn>=0.29
 httpx>=0.27
-
-pretty_midi>=0.2
-librosa>=0.10
-soundfile>=0.12
-tqdm>=4.66
-ruamel.yaml>=0.17
-tqdm>=4.66

@@ -39,8 +39,11 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/basic_pitch
-          key: basicpitch-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          key: basicpitch-${{ runner.os }}-${{ hashFiles('utilities/audio_to_midi_batch.py') }}
           restore-keys: basicpitch-${{ runner.os }}-
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libsndfile1
 
       - name: Install dependencies
         run: |
@@ -50,7 +53,7 @@ jobs:
       - name: Run tests
         run: poetry run pytest --cov=. -q
 
-      - name: Run audio->MIDI tests
+      - name: Run audio-to-MIDI tests
         run: poetry run pytest tests/audio_to_midi -q
 
       - name: Run demo

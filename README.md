@@ -130,6 +130,7 @@ sections_to_generate:
 ```
 
 Edit these values to point to your chordmap and rhythm library, and list the section labels you wish to render.
+Chord progressions are defined in `utilities/progression_templates.yaml`. Append new progressions to this file and reload to use them without code changes.
 
 [`data/tempo_curve.json`](data/tempo_curve.json) defines BPM over time. Each segment may specify
 `"curve": "linear"` or `"step"` to control interpolation:

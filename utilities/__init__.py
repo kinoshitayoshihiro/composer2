@@ -28,6 +28,13 @@ if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from . import groove_sampler_ngram as groove_sampler_ngram
     from . import vocal_sync as vocal_sync
 from .accent_mapper import AccentMapper
+if _HAS_YAML:
+    from .progression_templates import get_progressions
+else:  # pragma: no cover - optional dependency
+    def get_progressions(*_args: Any, **_kwargs: Any) -> None:
+        raise ModuleNotFoundError(
+            "PyYAML is required. Please run 'pip install -r requirements.txt'."
+        )
 
 try:
     from .consonant_extract import (
@@ -325,6 +332,7 @@ __all__ = [
     "EffectPresetLoader",
     "build_arrangement",
     "score_to_pretty_midi",
+    "get_progressions",
     "vocal_sync",
 ]
 

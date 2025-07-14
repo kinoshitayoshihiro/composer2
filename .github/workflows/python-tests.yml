@@ -1,0 +1,72 @@
+name: python-tests
+
+on:
+  push:
+    branches: [main, 'release/**']
+  pull_request:
+    branches: [main, 'release/**']
+
+jobs:
+  tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ['3.10', '3.11']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install Poetry
+        uses: abatilo/actions-poetry@v3
+        with:
+          poetry-version: 1.7.1
+
+      - name: Cache Poetry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pypoetry
+          key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: ${{ runner.os }}-poetry-
+
+      - name: Cache BasicPitch
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/basic_pitch
+          key: basicpitch-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: basicpitch-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          poetry install --no-root
+          poetry run pip install pytest-cov
+
+      - name: Run tests
+        run: poetry run pytest --cov=. -q
+
+      - name: Run audio->MIDI tests
+        run: poetry run pytest tests/audio_to_midi -q
+
+      - name: Run demo
+        run: poetry run make demo
+        continue-on-error: true
+
+      - name: Upload demo artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-midis
+          path: demos/*.mid
+          if-no-files: ignore
+
+      - name: Upload coverage to Codecov
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@v3
+        with:
+          fail_ci_if_error: false

@@ -1,5 +1,6 @@
 <a name="unreleased"></a>
 ## [Unreleased]
+- progression_templates helper
 
 <a name="v0.12.0-beta"></a>
 ## v0.12.0-beta - 2025-07-04

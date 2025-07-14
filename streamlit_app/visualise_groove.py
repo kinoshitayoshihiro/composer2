@@ -37,18 +37,25 @@ if model_file is not None:
         st.button("Play", disabled=True)
         st.info("Install extras: pip install -e .[gui]")
     elif st.button("Play"):
+
         class _Wrap:
+            def __init__(self):
+                self.events = []
+
             def feed_history(self, events):
                 pass
 
             def next_step(self, *, cond, rng):
-                nonlocal events
-                if not events:
+                if not self.events:
                     if path.suffix == ".pt":
-                        events = groove_sampler_rnn.sample(model, meta, bars=bars, temperature=temp)
+                        self.events = groove_sampler_rnn.sample(
+                            model, meta, bars=bars, temperature=temp
+                        )
                     else:
-                        events = groove_sampler_ngram.sample(model, bars=bars, temperature=temp)
-                return events.pop(0)
+                        self.events = groove_sampler_ngram.sample(
+                            model, bars=bars, temperature=temp
+                        )
+                return self.events.pop(0)
+
         player = RealtimePlayer(_Wrap(), bpm=bpm)
         threading.Thread(target=player.play, args=(bars,), daemon=True).start()
-

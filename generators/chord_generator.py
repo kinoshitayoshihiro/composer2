@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from typing import Iterable
 
-from utilities import get_progressions
+from utilities.progression_templates import get_progressions
 
 
 def _pick_progression(bucket: str, mode: str = "major") -> str:

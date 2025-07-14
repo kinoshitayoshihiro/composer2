@@ -68,21 +68,11 @@ def get_progressions(
         If ``bucket`` or ``mode`` is missing from the data.
     """
     data = _load(path=path)
-
-    if bucket not in data:
-        if bucket == "unknown":
-            bucket = "_default"
-        else:
-            raise KeyError(bucket, mode)
-
-    modes = data[bucket]
-    if mode not in modes:
-        if bucket == "_default" or bucket == "unknown":
-            raise KeyError(bucket, mode)
-        modes = data.get("_default", {})
-        if mode not in modes:
-            raise KeyError(bucket, mode)
-    return list(modes[mode])
+    try:
+        modes = data[bucket]
+        return list(modes[mode])
+    except KeyError as exc:
+        raise KeyError(bucket, mode) from exc
 
 
 if __name__ == "__main__":  # pragma: no cover - simple CLI

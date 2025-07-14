@@ -10,13 +10,10 @@ import music21.meter as meter
 import music21.duration as duration
 import music21.instrument as m21instrument
 import music21.tempo as tempo
-
-# import music21.key as key # このファイルでは直接使用していないためコメントアウト
-# import music21.expressions as expressions # このファイルでは直接使用していないためコメントアウト
 import music21.volume as m21volume
 import music21.expressions as expressions
-
 import music21.articulations as articulations
+
 # import music21.dynamics as dynamics # このファイルでは直接使用していないためコメントアウト
 from music21 import exceptions21
 from utilities.vibrato_engine import (
@@ -39,6 +36,7 @@ import random
 # NumPy import attempt and flag
 try:
     import numpy as np
+
     NUMPY_AVAILABLE = True
     logging.info(
         "VocalGen(Humanizer): NumPy found. Fractional noise generation is enabled."
@@ -53,7 +51,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-PHONEME_DICT_PATH = Path(__file__).resolve().parents[1] / "utilities" / "phoneme_dict.json"
+PHONEME_DICT_PATH = (
+    Path(__file__).resolve().parents[1] / "utilities" / "phoneme_dict.json"
+)
 try:
     with PHONEME_DICT_PATH.open("r", encoding="utf-8") as f:
         PHONEME_DICT: Dict[str, str] = json.load(f)
@@ -137,7 +137,9 @@ def text_to_syllables(text: str) -> List[str]:
 class PhonemeArticulation(articulations.Articulation):
     """Articulation storing phoneme, accent and note duration."""
 
-    def __init__(self, phoneme: str, accent: str = "L", duration_qL: float = 0.0, **keywords):
+    def __init__(
+        self, phoneme: str, accent: str = "L", duration_qL: float = 0.0, **keywords
+    ):
         super().__init__(**keywords)
         self.phoneme = phoneme
         self.accent = accent
@@ -145,6 +147,7 @@ class PhonemeArticulation(articulations.Articulation):
 
     def _reprInternal(self):  # type: ignore[override]
         return f"{self.phoneme}:{self.accent}:{self.duration_qL}"
+
 
 MIN_NOTE_DURATION_QL = 0.125
 # DEFAULT_BREATH_DURATION_QL: float = 0.25 # 歌詞ベースのブレス挿入削除のため不要
@@ -305,11 +308,15 @@ class VocalGenerator:
                         i += 1
         return syllables
 
-    def _assign_syllables_to_part(self, part: stream.Stream, syllables: List[str]) -> None:
+    def _assign_syllables_to_part(
+        self, part: stream.Stream, syllables: List[str]
+    ) -> None:
         """Assign syllables sequentially to notes of the part via ``note.lyric``."""
         notes = sorted(part.flatten().notes, key=lambda n: n.offset)
         if not syllables:
-            logger.warning("VocalGen: lyrics_words is empty. Skipping lyric assignment.")
+            logger.warning(
+                "VocalGen: lyrics_words is empty. Skipping lyric assignment."
+            )
             return
         if len(syllables) != len(notes):
             logger.warning(
@@ -348,9 +355,7 @@ class VocalGenerator:
                 if ph and ph[0].lower() in "aeiou"
                 else self.vibrato_depth * 0.5
             )
-            events = generate_vibrato(
-                n.quarterLength, depth, self.vibrato_rate
-            )
+            events = generate_vibrato(n.quarterLength, depth, self.vibrato_rate)
             n.expressions.append(expressions.TextExpression("vibrato"))
             n.editorial.vibrato_events = events
             for kind, t, val in events:

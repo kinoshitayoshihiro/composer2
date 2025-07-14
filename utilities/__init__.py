@@ -22,6 +22,7 @@ import importlib.util as importlib_util
 from typing import TYPE_CHECKING, Any
 
 from .progression_templates import get_progressions
+__all__: list[str] = []
 
 _HAS_MUSIC21 = importlib_util.find_spec("music21") is not None
 _HAS_YAML = importlib_util.find_spec("yaml") is not None
@@ -40,6 +41,9 @@ else:  # pragma: no cover - optional dependency
         raise ModuleNotFoundError(
             "PyYAML is required. Please run 'pip install -r requirements.txt'."
         )
+
+
+__all__.append("get_progressions")
 
 
 try:
@@ -284,7 +288,7 @@ else:
 
     EffectPresetLoader = None  # type: ignore
 
-__all__ = [
+__all__ += [
     "MIN_NOTE_DURATION_QL",
     "get_time_signature_object",
     "sanitize_chord_label",  # "get_music21_chord_object" を削除
@@ -356,3 +360,8 @@ def __getattr__(name: str) -> Any:  # pragma: no cover - thin wrapper
         globals()[name] = module
         return module
     raise AttributeError(name)
+    else:
+        raise AttributeError(name)
+
+
+__all__ = list(dict.fromkeys(__all__))  # de-dup

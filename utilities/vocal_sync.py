@@ -93,7 +93,59 @@ def find_long_rests(
     return rests
 
 
-def load_consonant_peaks(path: str | Path) -> list[float]:
+def extract_long_rests(
+    onsets: list[float],
+    *,
+    min_rest: float = 2.0,
+    tempo_map: pretty_midi.PrettyMIDI | None = None,
+    strict: bool | None = False,
+) -> list[tuple[float, float]]:
+    """Return long rests from onsets.
+
+    Parameters
+    ----------
+    onsets : list[float]
+        Note onsets in beats if ``tempo_map`` is ``None``. Otherwise they are
+        interpreted as seconds.
+    min_rest : float, optional
+        Minimum rest duration in beats.
+    tempo_map : pretty_midi.PrettyMIDI, optional
+        Tempo map used to convert seconds to beats. If omitted, ``onsets`` are
+        assumed to be in beats.
+    strict : bool, optional
+        If ``True`` and ``tempo_map`` is provided, raise :class:`ValueError` if
+        the units of ``onsets`` appear ambiguous.
+
+    Returns
+    -------
+    list[tuple[float, float]]
+        Long rests represented as ``(start_beat, duration_beats)`` tuples.
+    """
+
+    if not onsets:
+        return []
+
+    if tempo_map is not None:
+        if strict and all(float(v).is_integer() for v in onsets):
+            raise ValueError("ambiguous units")
+        beats = [tempo_map.time_to_tick(t) / tempo_map.resolution for t in onsets]
+    else:
+        beats = list(onsets)
+
+    rests: list[tuple[float, float]] = []
+    for a, b in zip(beats, beats[1:]):
+        dur = b - a
+        if dur >= min_rest:
+            rests.append((a, dur))
+    return rests
+
+
+def load_consonant_peaks(
+    path: str | Path,
+    *,
+    tempo_map: pretty_midi.PrettyMIDI | None = None,
+    tempo: float = 120.0,
+) -> list[float]:
     """Load consonant peaks and convert to beats.
 
     Parameters
@@ -106,9 +158,13 @@ def load_consonant_peaks(path: str | Path) -> list[float]:
     list[float]
         Consonant peak times in beats.
     """
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    return data.get("peaks", [])
+
+    peaks = data.get("peaks", [])
+    if tempo_map is not None:
+        return [tempo_map.time_to_tick(t) / tempo_map.resolution for t in peaks]
+    return [t * tempo / 60.0 for t in peaks]
 
 
 def quantize_times(

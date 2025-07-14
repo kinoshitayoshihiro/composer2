@@ -14,8 +14,21 @@
     │   ├── 🛠️ rhythm_library.yml – バリデーションエラー修正プラン をキャンバスにまとめました。.pdf
     │   └── 🛠️emotionalmaploader.pdf
     ├── __pycache__
-    │   └── sitecustomize.cpython-310.pyc
+    │   ├── build_all_json.cpython-310.pyc
+    │   ├── emotion_humanizer.cpython-310.pyc
+    │   ├── groove_profile.cpython-310.pyc
+    │   ├── json2midi.cpython-310.pyc
+    │   ├── modular_composer.cpython-310.pyc
+    │   ├── modular_composer.cpython-313.pyc
+    │   ├── setup.cpython-310.pyc
+    │   ├── sitecustomize.cpython-310.pyc
+    │   ├── sitecustomize.cpython-313.pyc
+    │   ├── streamlit_app_v2.cpython-310.pyc
+    │   ├── streamlit_app_v2.cpython-313.pyc
+    │   ├── train_piano_lora.cpython-310.pyc
+    │   └── train_sax_lora.cpython-310.pyc
     ├── api
+    │   ├── __pycache__
     │   ├── __init__.py
     │   ├── sax_server.py
     │   ├── server.py
@@ -34,20 +47,24 @@
     │   ├── python3
     │   └── python3.10
     ├── cli
+    │   ├── __pycache__
     │   └── ir_render.py
     ├── config
+    │   ├── drum_settings.yaml
     │   ├── main_cfg.yml
     │   ├── main_cfg_example.yml
     │   └── sax_demo.yml
     ├── configs
     │   └── velocity_model.yaml
     ├── cyext
+    │   ├── __pycache__
     │   ├── __init__.py
     │   ├── __init__.pyi
     │   ├── generators.pyx
     │   ├── humanize.pyi
     │   └── humanize.pyx
     ├── data
+    │   ├── __pycache__
     │   ├── golden
     │   ├── ir
     │   ├── loops
@@ -70,6 +87,7 @@
     │   ├── tempo_map.json
     │   └── vocal_note_data_ore.json
     ├── data_ops
+    │   ├── __pycache__
     │   ├── __init__.py
     │   ├── augment.py
     │   └── auto_tag.py
@@ -87,6 +105,7 @@
     │   ├── aux_features.md
     │   ├── bass_advanced.md
     │   ├── changelog.md
+    │   ├── config_reference.md
     │   ├── diversity.md
     │   ├── effect_presets.md
     │   ├── effects.md
@@ -115,6 +134,7 @@
     │   ├── tone_shaper.md
     │   └── vocal_generator.md
     ├── eval
+    │   ├── __pycache__
     │   ├── __init__.py
     │   ├── abx_gui.py
     │   ├── blec.py
@@ -125,12 +145,12 @@
     │   ├── groove_sampler.ipynb
     │   └── tempo_curve.json
     ├── generator
+    │   ├── __pycache__
     │   ├── __init__.py
     │   ├── articulation.py
     │   ├── base_part_generator.py
     │   ├── bass_generator.py
     │   ├── bass_utils.py
-    │   ├── chord_generator.py
     │   ├── chord_voicer.py
     │   ├── counter_line.py
     │   ├── drum_generator.py
@@ -148,9 +168,11 @@
     │   ├── vocal_generator.py
     │   └── voicing_density.py
     ├── generators
+    │   ├── __pycache__
     │   ├── __init__.py
     │   └── chord_generator.py
     ├── groove_sampler
+    │   ├── __pycache__
     │   ├── __init__.py
     │   └── loop_ingest.py
     ├── irs
@@ -160,13 +182,20 @@
     │   └── vintage-30.wav
     ├── lib
     │   └── python3.10
+    ├── loaders
+    │   └── section_loader.py
+    ├── model
+    │   ├── groove_ngram.pkl
+    │   └── groove_ngram_wav.pkl
     ├── modular_composer
+    │   ├── __pycache__
     │   ├── __init__.py
     │   └── cli.py
     ├── notebooks
     │   ├── quality_live_demo.ipynb
     │   └── quick_start.ipynb
     ├── plugins
+    │   ├── __pycache__
     │   ├── modcompose
     │   ├── piano_companion
     │   ├── sax_companion
@@ -176,6 +205,7 @@
     │   ├── sax_companion_stub.py
     │   └── vocal_companion_stub.py
     ├── realtime
+    │   ├── __pycache__
     │   ├── __init__.py
     │   ├── rtmidi_streamer.py
     │   ├── ws_bridge.py
@@ -183,6 +213,7 @@
     ├── recipe
     │   └── meta.yaml
     ├── scripts
+    │   ├── __pycache__
     │   ├── check_docs_snippets.py
     │   ├── ci_groove.sh
     │   ├── ci_groove_bass.sh
@@ -196,16 +227,20 @@
     │   ├── synthesize_vocal.py
     │   └── train_velocity.py
     ├── streamlit_app
+    │   ├── __pycache__
     │   ├── __init__.py
     │   ├── gui.py
     │   └── visualise_groove.py
     ├── tests
+    │   ├── __pycache__
+    │   ├── audio_to_midi
     │   ├── data
     │   ├── helpers
     │   ├── plugins
     │   ├── __init__.py
     │   ├── __init__.py  # マークダウン記法を削除
     │   ├── conftest.py
+    │   ├── drum_lut_test.py
     │   ├── mini.jsonl
     │   ├── modcompose
     │   ├── test_accent_mapper.py
@@ -290,6 +325,7 @@
     │   ├── test_drum_humanizer_templates.py
     │   ├── test_drum_labels.py
     │   ├── test_drum_lint.py
+    │   ├── test_drum_lut_reload.py
     │   ├── test_drum_map_integrity.py
     │   ├── test_drum_map_ujam.py
     │   ├── test_drum_map_valid.py
@@ -436,6 +472,7 @@
     │   ├── test_push_pull_blend.py
     │   ├── test_push_pull_swing.py
     │   ├── test_render_kwargs.py
+    │   ├── test_requirements.py
     │   ├── test_resolution_auto.py
     │   ├── test_resolution_multistage.py
     │   ├── test_rnn_lazy_import.py
@@ -473,6 +510,7 @@
     │   ├── test_strings_phase3.py
     │   ├── test_strings_phase4.py
     │   ├── test_strings_vibrato.py
+    │   ├── test_strings_vocal_metrics.py
     │   ├── test_style_curve.py
     │   ├── test_sync_peaks.py
     │   ├── test_synth.py
@@ -505,11 +543,14 @@
     │   ├── test_vibrato_engine.py
     │   ├── test_vocal_articulation_integration.py
     │   ├── test_vocal_lyrics.py
+    │   ├── test_vocal_metrics_plumbing.py
     │   ├── test_vocal_sync.py
+    │   ├── test_vocal_sync_integration.py
     │   ├── test_wheel_import.py
     │   ├── test_ws_echo.py
     │   └── test_ws_vocal_bridge.py
     ├── tools
+    │   ├── __pycache__
     │   ├── __init__.py
     │   ├── compare_sections.py
     │   ├── dump_drum_map.py
@@ -522,12 +563,14 @@
     │   ├── streamlit_gui.py
     │   └── test_timesig.py
     ├── transformer
+    │   ├── __pycache__
     │   ├── __init__.py
     │   ├── piano_transformer.py
     │   ├── sax_tokenizer.py
     │   ├── sax_transformer.py
     │   └── tokenizer_piano.py
     ├── utilities
+    │   ├── __pycache__
     │   ├── __init__.py
     │   ├── accent_mapper.py
     │   ├── ai_sampler.py
@@ -535,6 +578,7 @@
     │   ├── articulation_mapper.py
     │   ├── audio_env.py
     │   ├── audio_render.py
+    │   ├── audio_to_midi_batch.py
     │   ├── bass_transformer.py
     │   ├── bass_utils.py
     │   ├── cc_map.py
@@ -544,6 +588,7 @@
     │   ├── consonant_extract.py
     │   ├── convolver.py
     │   ├── core_music_utils.py
+    │   ├── custom_types.py
     │   ├── dataset_preprocessor.py
     │   ├── drum_lint.py
     │   ├── drum_map.py
@@ -589,6 +634,8 @@
     │   ├── prettymidi_sync.py
     │   ├── progression_templates.py
     │   ├── progression_templates.yaml
+    │   ├── progression_templates_broken.py
+    │   ├── progression_templates_fixed.py
     │   ├── realtime_engine.py
     │   ├── rhythm_library_loader.py
     │   ├── rt_midi_streamer.py
@@ -609,7 +656,10 @@
     │   ├── velocity_smoother.py
     │   ├── velocity_utils.py
     │   ├── vibrato_engine.py
-    │   └── vocal_sync.py
+    │   ├── vocal_sync.py
+    │   ├── vocal_sync_backup.py
+    │   ├── vocal_sync_fixed.py
+    │   └── vocal_sync_new.py
     ├── wheelhouse
     │   ├── PyYAML-6.0.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
     │   ├── PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -686,6 +736,7 @@
     │   └── wheel-0.43.0-py3-none-any.whl
     ├── CHANGELOG.md
     ├── CMakeLists.txt
+    ├── CONTRIBUTING.md
     ├── Dockerfile
     ├── LICENSE
     ├── Makefile
@@ -693,13 +744,17 @@
     ├── README.md
     ├── build_all_json.py
     ├── codex.yaml
+    ├── demo.mid
     ├── docker-compose.yml
     ├── emotion_humanizer.py
     ├── filelist.txt
+    ├── generated_events.json
+    ├── generated_events_wav.json
     ├── groove_profile.py
     ├── json2midi.py
     ├── midi_heatmap.png
     ├── mkdocs.yml
+    ├── model.pkl
     ├── modular_composer.py
     ├── mypy.ini
     ├── pdoc.yml

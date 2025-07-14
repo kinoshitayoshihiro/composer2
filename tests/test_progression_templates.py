@@ -37,6 +37,13 @@ def test_keyerror(bucket: str, mode: str) -> None:
 
 
 def test_basic_lookup(tmp_path: Path) -> None:
+import importlib
+from pathlib import Path
+import pytest
+
+# 1) ベーシック取得
+
+def test_basic_lookup(tmp_path):
     """YAML から emotion+mode で Progression が取れる."""
     yaml_file = tmp_path / "progs.yaml"
     yaml_file.write_text(
@@ -51,7 +58,7 @@ def test_basic_lookup(tmp_path: Path) -> None:
     assert lst == ["I V vi IV"]
 
 
-def test_cache_identity(tmp_path: Path) -> None:
+def test_cache_identity(tmp_path):
     yaml_file = tmp_path / "progs.yaml"
     yaml_file.write_text("dummy: {}\n")
     mod = importlib.import_module("utilities.progression_templates")
@@ -60,8 +67,12 @@ def test_cache_identity(tmp_path: Path) -> None:
     assert id1 == id2, "lru_cache should return same dict instance"
 
 
+
 @pytest.mark.parametrize("bucket, mode", [("missing", "major"), ("soft_reflective", "dorian")])
 def test_key_error(tmp_path: Path, bucket: str, mode: str) -> None:
+# 3) エラー系
+@pytest.mark.parametrize("bucket, mode", [("missing", "major"), ("soft_reflective", "dorian")])
+def test_key_error(tmp_path, bucket, mode):
     yaml_file = tmp_path / "progs.yaml"
     yaml_file.write_text("soft_reflective:\n  major: ['I IV V']\n")
     import utilities.progression_templates as pt

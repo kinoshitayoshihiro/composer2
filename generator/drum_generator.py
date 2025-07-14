@@ -3,12 +3,19 @@ import json
 import logging
 import math
 import random
+
 from bisect import bisect_left
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import pretty_midi
+
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+from bisect import bisect_left
+
 import yaml
 from music21 import (
     converter,
@@ -51,6 +58,9 @@ from utilities.groove_sampler_ngram import Event as GrooveEvent
 from utilities.humanizer import apply_humanization_to_element
 from utilities.onset_heatmap import RESOLUTION, load_heatmap
 from utilities.safe_get import safe_get
+
+from utilities import vocal_sync
+
 from utilities.tempo_utils import TempoMap, load_tempo_map
 from utilities.timing_utils import _combine_timing, align_to_consonant
 from utilities.velocity_smoother import EMASmoother
@@ -136,7 +146,9 @@ def resolve_velocity_curve(curve_spec: Any) -> list[float]:
         return [1.0]
 
     if isinstance(curve_spec, list):
-        curve = [float(v) for v in curve_spec if isinstance(v, int | float)]
+
+        curve = [float(v) for v in curve_spec if isinstance(v, (int, float))]
+
         return curve or [1.0]
 
     if isinstance(curve_spec, str):
@@ -410,6 +422,7 @@ class DrumGenerator(BasePartGenerator):
         self.fade_beats_default = float(global_cfg.get("fill_fade_beats", 2.0))
         self.strict_drum_map = bool(self.global_settings.get("strict_drum_map", False))
 
+
         lut = None
         if fill_density_lut is not None:
             lut = {float(k): float(v) for k, v in fill_density_lut.items()}
@@ -423,6 +436,7 @@ class DrumGenerator(BasePartGenerator):
         self.strict_drum_map = bool(
             self.global_settings.get("strict_drum_map", False)
         )
+
 
         self.drum_map_name = self.global_settings.get("drum_map", "gm")
         self.drum_map = get_drum_map(self.drum_map_name)
@@ -546,6 +560,7 @@ class DrumGenerator(BasePartGenerator):
         peak_json_path = self.main_cfg.get("paths", {}).get(
             "vocal_peak_json_for_drums"
         ) or self.main_cfg.get("vocal_peak_json_for_drums")
+
         kwargs: dict[str, Any] = {}
         if isinstance(getattr(self, "tempo_map", None), pretty_midi.PrettyMIDI):
             kwargs["tempo_map"] = self.tempo_map
@@ -793,7 +808,6 @@ class DrumGenerator(BasePartGenerator):
                 
                     "DrumGen __init__: Failed to parse global time_sig "
                     f"'{self.global_time_signature_str}'. Defaulting to 4/4."
-                
             )
             self.global_ts = meter.TimeSignature("4/4")
         self.instrument = m21instrument.Percussion()
@@ -1286,6 +1300,55 @@ class DrumGenerator(BasePartGenerator):
                                 fade_beats_local,
                             )
                         )
+
+                preferred_positions = [
+                    int(p)
+                    for p in style_def.get("preferred_fill_positions", [])
+                    if isinstance(p, int)
+                ]
+                if section_data:
+                    preferred_positions.extend(
+                        int(p)
+                        for p in section_data.get("preferred_fill_positions", [])
+                        if isinstance(p, int)
+                    )
+                fill_keys = style_def.get("fill_patterns", [])
+                at_section_end = (
+                    blk_idx == len(blocks) - 1 and is_last_pattern_iteration_in_block
+                )
+                bar_number = bars_since_section_start + 1
+                if (
+                    not fill_applied_this_iter
+                    and fill_keys
+                    and (bar_number in preferred_positions or at_section_end)
+                ):
+                    candidates = [
+                        fk
+                        for fk in fill_keys
+                        if self._get_effective_pattern_def(fk).get(
+                            "length_beats", pattern_unit_length_ql
+                        )
+                        == pattern_unit_length_ql
+                    ]
+                    if candidates:
+                        fill_key = self.rng.choice(candidates)
+                        fill_def = self._get_effective_pattern_def(fill_key)
+                        pattern_to_use_for_iteration = fill_def.get("pattern", [])
+                        fill_legato = bool(fill_def.get("legato"))
+                        fill_applied_this_iter = True
+                        fade_beats_local = safe_get(
+                            style_options,
+                            "fade_beats",
+                            default=self.fade_beats_default,
+                            cast_to=float,
+                            log_name=f"{log_render_prefix}.FadeBeats",
+                        )
+                        self.fill_offsets.append(
+                            (
+                                offset_in_score + current_pos_within_block,
+                                fade_beats_local,
+                            )
+                        )
                 fill_interval_bars = safe_get(
                     drums_params,
                     "drum_fill_interval_bars",
@@ -1457,6 +1520,68 @@ class DrumGenerator(BasePartGenerator):
 
             tk = self.global_settings.get("groove_top_k")
             tk_val = int(tk) if isinstance(tk, int | str) and str(tk).isdigit() else None
+
+            events = groove_sampler_ngram.generate_bar(
+                self._groove_history,
+                model=model_obj,
+                temperature=float(self.global_settings.get("groove_temperature", 1.0)),
+                top_k=tk_val,
+                cond=cond,
+                humanize_vel=bool(self.global_settings.get("humanize_profile")),
+                humanize_micro=self.groove_strength > 0,
+            )
+
+        if (
+            self.use_consonant_sync
+            and self.consonant_peaks
+            and self.consonant_sync_mode == "bar"
+        ):
+            start_sec = self._convert_ticks_to_seconds(
+                int(bar_start_abs_offset * self.ppq)
+            )
+            end_sec = self._convert_ticks_to_seconds(
+                int((bar_start_abs_offset + current_bar_actual_len_ql) * self.ppq)
+            )
+            peaks_in_bar = [
+                p - start_sec for p in self.consonant_peaks if start_sec <= p < end_sec
+            ]
+            if peaks_in_bar:
+                events = PeakSynchroniser.sync_events(
+                    peaks_in_bar,
+                    events,
+                    tempo_bpm=self.current_bpm,
+                    lag_ms=self.consonant_sync_cfg["lag_ms"],
+                    min_distance_beats=self.consonant_sync_cfg["min_distance_beats"],
+                    sustain_threshold_ms=self.consonant_sync_cfg[
+                        "sustain_threshold_ms"
+                    ],
+                )
+
+
+        if not events and self.groove_model:
+            model_obj: dict
+            if isinstance(self.groove_model, (str, Path)):
+                model_obj = groove_sampler_ngram.load(Path(self.groove_model))
+            else:
+                model_obj = self.groove_model
+
+            musical_intent = (
+                section_data.get("musical_intent", {}) if section_data else {}
+            )
+            cond = {
+                "section": (
+                    section_data.get("section_name", "verse")
+                    if section_data
+                    else "verse"
+                ),
+                "heat_bin": self.current_heat_bin,
+                "intensity": musical_intent.get("intensity", "mid"),
+            }
+
+            tk = self.global_settings.get("groove_top_k")
+            tk_val = (
+                int(tk) if isinstance(tk, (int, str)) and str(tk).isdigit() else None
+            )
 
             events = groove_sampler_ngram.generate_bar(
                 self._groove_history,

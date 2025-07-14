@@ -1,9 +1,8 @@
 import json
-from pathlib import Path
 
 import pretty_midi
-
-from generator.drum_generator import GM_DRUM_MAP, DrumGenerator
+from pathlib import Path
+from generator.drum_generator import DrumGenerator, GM_DRUM_MAP
 from tests.helpers.events import make_event
 
 
@@ -97,7 +96,6 @@ def test_hh_open_replacement(tmp_path: Path):
     part = gen.compose(section_data=section)
     notes = list(part.flatten().notes)
     ohh = GM_DRUM_MAP["ohh"][1]
-    assert any(
-        abs(n.offset - 4.0) < 0.01 and n.pitch.midi in {ohh, GM_DRUM_MAP["chh"][1]}
-        for n in notes
-    )
+    target = next(n for n in notes if abs(n.offset - 4.0) < 0.01)
+    assert target.pitch.midi == ohh
+    assert sum(1 for n in notes if n.pitch.midi == ohh) == 1

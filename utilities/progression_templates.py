@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+
+import yaml
+
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import yaml
 
 DEFAULT_PATH = Path(__file__).with_name("progression_templates.yaml")
 
@@ -28,6 +30,11 @@ def _load(path: str | Path = DEFAULT_PATH) -> dict[str, Any]:
     ValueError
         If the YAML root object is not a mapping.
     """
+DEFAULT_PATH = Path(__file__).with_name("progression_templates.yaml")
+
+
+@lru_cache()
+def _load(path: str | Path = DEFAULT_PATH) -> dict[str, Any]:
     p = Path(path)
     if not p.exists():
         return {}
@@ -92,3 +99,17 @@ if __name__ == "__main__":  # pragma: no cover - simple CLI
         print(yaml.dump(lst, allow_unicode=True))
     except KeyError as e:  # pragma: no cover - CLI output
         raise SystemExit(f"Missing key: {e}") from e
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("bucket")
+    ap.add_argument("mode", nargs="?", default="major")
+    ns = ap.parse_args()
+    try:
+        print("\n".join(get_progressions(ns.bucket, mode=ns.mode)))
+    except KeyError as e:
+        sys.exit(f"Bucket/Mode not found: {e}")
+    except Exception as exc:
+        raise

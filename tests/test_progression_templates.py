@@ -59,7 +59,6 @@ def test_keyerror(bucket: str, mode: str) -> None:
 
 
 def test_basic_lookup(tmp_path: Path) -> None:
-    """YAML から emotion+mode で Progression が取れる."""
     yaml_file = tmp_path / "progs.yaml"
     yaml_file.write_text(
         "soft_reflective:\n"
@@ -86,7 +85,6 @@ def test_cache_identity(tmp_path: Path) -> None:
     "bucket, mode", [("missing", "major"), ("soft_reflective", "dorian")]
 )
 def test_key_error(tmp_path: Path, bucket: str, mode: str) -> None:
-    """エラー系のテスト"""
     yaml_file = tmp_path / "progs.yaml"
     yaml_file.write_text("soft_reflective:\n  major: ['I IV V']\n")
     import utilities.progression_templates as pt

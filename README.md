@@ -218,6 +218,21 @@ section.  The mapping from intensity (0–1) to fill density can be customized v
 `drum.fill_density_lut` in the YAML configuration.  Higher intensity sections
 produce richer fills automatically.
 
+### Adjust drum fill density
+
+Edit `config/drum_settings.yaml` to fine‑tune fill density:
+
+```yaml
+drum:
+  fill_density_lut:
+    0.0: 0.05
+    0.2: 0.10
+    0.5: 0.30
+    0.8: 0.48
+    1.0: 0.65
+```
+Call `reload_lut()` on an existing `DrumGenerator` to apply edits without restarting.
+
 ## Advanced Guitar Features
 
 | Feature | Parameter | Effect |

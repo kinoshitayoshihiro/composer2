@@ -22,8 +22,7 @@ def load_cfg(path: str) -> dict:
 def main(cfg_path: str, sections: list[str] | None = None) -> None:
     model_path = Path("models/groove_ngram.pkl")
     if not model_path.exists():
-        print("\u26a0 Model not found; skipping demo generation", file=sys.stderr)
-        return
+        print("\u26a0 Model not found; continuing without generation", file=sys.stderr)
 
     cfg = load_cfg(cfg_path)
     available = {normalize_section(s): s for s in cfg.get("sections_to_generate", [])}

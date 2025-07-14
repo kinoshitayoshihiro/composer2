@@ -210,6 +210,13 @@ though the notes are correct. You can switch mappings programmatically via
 | II–V build-up         | `approach_style_on_4th`   | `approach_style_on_4th: subdom_dom`              |
 | Velocity envelope     | `velocity_envelope`       | `velocity_envelope: [[0.0,60],[2.0,90]]`         |
 
+## Lyric-responsive drum fills
+
+DrumGenerator now adjusts fill density based on the emotional intensity of each
+section.  The mapping from intensity (0–1) to fill density can be customized via
+`drum.fill_density_lut` in the YAML configuration.  Higher intensity sections
+produce richer fills automatically.
+
 ## Advanced Guitar Features
 
 | Feature | Parameter | Effect |

@@ -1,0 +1,723 @@
+└── composer2-3
+    ├── Backup
+    │   ├── 1. BasePartGenerator とは？.pdf
+    │   ├── DrumGenerator ― Vocal Sync 専念プラン.pdf
+    │   ├── PianoGenerator 改良プラン（Sprint P‑1〜P‑3）.pdf
+    │   ├── music21 コードシンボル完全ガイド.pdf
+    │   ├── “歌に呼応して揺れ・表情を付けるエモーショナル・ドラム” へ進化させること。.pdf
+    │   ├── ✅ 1. スキーマ案：duration + emotion による演奏制御.pdf
+    │   ├── このスクリプトは generate_chordmap_section(section_name, tonic, mode, length….pdf
+    │   ├── わたしが目指しているのは、歌詞という物語を元にすすむ、感情をベースにした音の地図です。.pdf
+    │   ├── 提案ドキュメント — “言葉と歌の文芸プロジェクト” 次世代ChordMap設計と演奏制御スクリプト.pdf
+    │   ├── 🎼 各セクションの chordmap_emotions.yaml 自動生成.pdf
+    │   ├── 🎼 感情マップ & モード : コードテンション解説.pdf
+    │   ├── 🛠️ rhythm_library.yml – バリデーションエラー修正プラン をキャンバスにまとめました。.pdf
+    │   └── 🛠️emotionalmaploader.pdf
+    ├── __pycache__
+    │   └── sitecustomize.cpython-310.pyc
+    ├── api
+    │   ├── __init__.py
+    │   ├── sax_server.py
+    │   ├── server.py
+    │   ├── session_manager.py
+    │   └── vocal_server.py
+    ├── bin
+    │   ├── Activate.ps1
+    │   ├── activate
+    │   ├── activate.csh
+    │   ├── activate.fish
+    │   ├── modcompose
+    │   ├── pip
+    │   ├── pip3
+    │   ├── pip3.10
+    │   ├── python
+    │   ├── python3
+    │   └── python3.10
+    ├── cli
+    │   └── ir_render.py
+    ├── config
+    │   ├── main_cfg.yml
+    │   ├── main_cfg_example.yml
+    │   └── sax_demo.yml
+    ├── configs
+    │   └── velocity_model.yaml
+    ├── cyext
+    │   ├── __init__.py
+    │   ├── __init__.pyi
+    │   ├── generators.pyx
+    │   ├── humanize.pyi
+    │   └── humanize.pyx
+    ├── data
+    │   ├── golden
+    │   ├── ir
+    │   ├── loops
+    │   ├── amp_presets.yml
+    │   ├── arrangement_overrides.json
+    │   ├── cc_map.yml
+    │   ├── chordmap.json
+    │   ├── drum_patterns.yml
+    │   ├── emotion_profile.yaml
+    │   ├── export_pretty.py
+    │   ├── expression_map.yml
+    │   ├── expression_maps.yml
+    │   ├── groove_profile.json
+    │   ├── heatmap.json
+    │   ├── my_settings.json
+    │   ├── preset_library.yml
+    │   ├── processed_chordmap_with_emotion.yaml
+    │   ├── rhythm_library.yml
+    │   ├── tempo_curve.json
+    │   ├── tempo_map.json
+    │   └── vocal_note_data_ore.json
+    ├── data_ops
+    │   ├── __init__.py
+    │   ├── augment.py
+    │   └── auto_tag.py
+    ├── docs
+    │   ├── api
+    │   ├── examples
+    │   ├── img
+    │   ├── ai.md
+    │   ├── ai_generator.md
+    │   ├── amp_guide.md
+    │   ├── architecture.md
+    │   ├── arrangement_features.md
+    │   ├── audio_pipeline.md
+    │   ├── auto_tag_aug.md
+    │   ├── aux_features.md
+    │   ├── bass_advanced.md
+    │   ├── changelog.md
+    │   ├── diversity.md
+    │   ├── effect_presets.md
+    │   ├── effects.md
+    │   ├── evaluation_metrics.md
+    │   ├── fx_guide.md
+    │   ├── groove.md
+    │   ├── groove_sampler.md
+    │   ├── gui.md
+    │   ├── gui_v2_walkthrough.md
+    │   ├── guitar_generator.md
+    │   ├── humanizer.md
+    │   ├── index.md
+    │   ├── live_tips.md
+    │   ├── ml_velocity.md
+    │   ├── offline_ir.md
+    │   ├── performance.md
+    │   ├── piano_beta.md
+    │   ├── piano_delta.md
+    │   ├── piano_epsilon.md
+    │   ├── piano_gamma.md
+    │   ├── plugin_guide.md
+    │   ├── quick_start.md
+    │   ├── sax_generator.md
+    │   ├── strings_generator.md
+    │   ├── tone.md
+    │   ├── tone_shaper.md
+    │   └── vocal_generator.md
+    ├── eval
+    │   ├── __init__.py
+    │   ├── abx_gui.py
+    │   ├── blec.py
+    │   ├── latency.py
+    │   └── metrics.py
+    ├── examples
+    │   ├── drumgen_tempo_curve.ipynb
+    │   ├── groove_sampler.ipynb
+    │   └── tempo_curve.json
+    ├── generator
+    │   ├── __init__.py
+    │   ├── articulation.py
+    │   ├── base_part_generator.py
+    │   ├── bass_generator.py
+    │   ├── bass_utils.py
+    │   ├── chord_generator.py
+    │   ├── chord_voicer.py
+    │   ├── counter_line.py
+    │   ├── drum_generator.py
+    │   ├── guitar_generator.py
+    │   ├── melody_generator.py
+    │   ├── melody_utils.py
+    │   ├── modular_composer_stub.py
+    │   ├── piano_generator.py
+    │   ├── piano_ml_generator.py
+    │   ├── piano_template_generator.py
+    │   ├── piano_transformer.py
+    │   ├── sax_generator.py
+    │   ├── scale,
+    │   ├── strings_generator.py
+    │   ├── vocal_generator.py
+    │   └── voicing_density.py
+    ├── generators
+    │   ├── __init__.py
+    │   └── chord_generator.py
+    ├── groove_sampler
+    │   ├── __init__.py
+    │   └── loop_ingest.py
+    ├── irs
+    │   ├── blackface-clean.wav
+    │   ├── fuzz-factory.wav
+    │   ├── greenback-drive.wav
+    │   └── vintage-30.wav
+    ├── lib
+    │   └── python3.10
+    ├── modular_composer
+    │   ├── __init__.py
+    │   └── cli.py
+    ├── notebooks
+    │   ├── quality_live_demo.ipynb
+    │   └── quick_start.ipynb
+    ├── plugins
+    │   ├── modcompose
+    │   ├── piano_companion
+    │   ├── sax_companion
+    │   ├── vocal_companion
+    │   ├── modcompose_stub.py
+    │   ├── piano_companion_stub.py
+    │   ├── sax_companion_stub.py
+    │   └── vocal_companion_stub.py
+    ├── realtime
+    │   ├── __init__.py
+    │   ├── rtmidi_streamer.py
+    │   ├── ws_bridge.py
+    │   └── ws_vocal_bridge.py
+    ├── recipe
+    │   └── meta.yaml
+    ├── scripts
+    │   ├── check_docs_snippets.py
+    │   ├── ci_groove.sh
+    │   ├── ci_groove_bass.sh
+    │   ├── ci_groove_rnn.sh
+    │   ├── clean_wheels.py
+    │   ├── dump_rhythm_library_map.py
+    │   ├── evaluate_piano_model.py
+    │   ├── extract_piano_voicings.py
+    │   ├── modcompose_batch_render.py
+    │   ├── setup_project.sh
+    │   ├── synthesize_vocal.py
+    │   └── train_velocity.py
+    ├── streamlit_app
+    │   ├── __init__.py
+    │   ├── gui.py
+    │   └── visualise_groove.py
+    ├── tests
+    │   ├── data
+    │   ├── helpers
+    │   ├── plugins
+    │   ├── __init__.py
+    │   ├── __init__.py  # マークダウン記法を削除
+    │   ├── conftest.py
+    │   ├── mini.jsonl
+    │   ├── modcompose
+    │   ├── test_accent_mapper.py
+    │   ├── test_ai_sampler.py
+    │   ├── test_amp_presets.py
+    │   ├── test_api_endpoints.py
+    │   ├── test_api_vocal_endpoints.py
+    │   ├── test_arrangement_builder.py
+    │   ├── test_articulation_cc.py
+    │   ├── test_articulation_mapper.py
+    │   ├── test_audio_render.py
+    │   ├── test_audio_spectrum.py
+    │   ├── test_augment.py
+    │   ├── test_auto_tag.py
+    │   ├── test_auto_tag_ngram.py
+    │   ├── test_bar_cache.py
+    │   ├── test_bass_build_octave_clamp.py
+    │   ├── test_bass_fallback.py
+    │   ├── test_bass_iiv.py
+    │   ├── test_bass_iiv_build.py
+    │   ├── test_bass_kick_lock.py
+    │   ├── test_bass_mirror.py
+    │   ├── test_bass_pattern_selection.py
+    │   ├── test_bass_quarters.py
+    │   ├── test_bass_range.py
+    │   ├── test_bass_velocity_swing.py
+    │   ├── test_bass_walking.py
+    │   ├── test_benchmark_compose.py
+    │   ├── test_cc_field_consistency.py
+    │   ├── test_cc_finalization.py
+    │   ├── test_cc_tools.py
+    │   ├── test_choose_preset_fallback.py
+    │   ├── test_chord_generator_progression.py
+    │   ├── test_chord_voicer_regex.py
+    │   ├── test_cli_fx.py
+    │   ├── test_cli_groove_info.py
+    │   ├── test_cli_hyperopt.py
+    │   ├── test_cli_info.py
+    │   ├── test_cli_ir_render.py
+    │   ├── test_cli_new_features.py
+    │   ├── test_cli_no_rnn.py
+    │   ├── test_cli_options.py
+    │   ├── test_cli_playback_fallback.py
+    │   ├── test_cli_playback_platform.py
+    │   ├── test_cli_render_lufs_fallback.py
+    │   ├── test_cli_transformer.py
+    │   ├── test_cli_tuning.py
+    │   ├── test_cli_vocal_articulation.py
+    │   ├── test_cli_vocal_dict.py
+    │   ├── test_compose_part_streams.py
+    │   ├── test_conda_import.py
+    │   ├── test_config_loader_list.py
+    │   ├── test_config_loader_tempo_map.py
+    │   ├── test_consonant_extract.py
+    │   ├── test_consonant_note_sync.py
+    │   ├── test_consonant_sync.py
+    │   ├── test_consonant_sync_settings.py
+    │   ├── test_convolver.py
+    │   ├── test_convolver_import.py
+    │   ├── test_convolver_sf_fallback.py
+    │   ├── test_counterline.py
+    │   ├── test_crescendo_helper.py
+    │   ├── test_custom_phrase_template.py
+    │   ├── test_cy_humanize_equiv.py
+    │   ├── test_dataset_plural.py
+    │   ├── test_default_drum_map.py
+    │   ├── test_demo_script.py
+    │   ├── test_density_scale.py
+    │   ├── test_docs_build.py
+    │   ├── test_drag_ruff.py
+    │   ├── test_drum_alias.py
+    │   ├── test_drum_articulations.py
+    │   ├── test_drum_emotional_fill.py
+    │   ├── test_drum_expressive.py
+    │   ├── test_drum_fill_density.py
+    │   ├── test_drum_fills.py
+    │   ├── test_drum_generator.py
+    │   ├── test_drum_generator_demo.py
+    │   ├── test_drum_generator_groove.py
+    │   ├── test_drum_generator_ngram_integration.py
+    │   ├── test_drum_generator_tempo_map.py
+    │   ├── test_drum_humanizer_templates.py
+    │   ├── test_drum_labels.py
+    │   ├── test_drum_lint.py
+    │   ├── test_drum_map_integrity.py
+    │   ├── test_drum_map_ujam.py
+    │   ├── test_drum_map_valid.py
+    │   ├── test_drum_mapping.py
+    │   ├── test_drum_no_duplicate.py
+    │   ├── test_drum_pattern_resolve.py
+    │   ├── test_drum_techniques.py
+    │   ├── test_drum_velocity_curve.py
+    │   ├── test_effect_cc.py
+    │   ├── test_effect_preset_loader.py
+    │   ├── test_element_insertion.py
+    │   ├── test_ema_adaptive.py
+    │   ├── test_ema_smoother.py
+    │   ├── test_emotion_arranger.py
+    │   ├── test_empty_aux.py
+    │   ├── test_empty_aux_backoff.py
+    │   ├── test_eval_stub.py
+    │   ├── test_export_audio.py
+    │   ├── test_export_audio_ir.py
+    │   ├── test_expression_phase5.py
+    │   ├── test_external_sync.py
+    │   ├── test_extract_piano_voicings.py
+    │   ├── test_fill_dsl.py
+    │   ├── test_fill_dsl_run.py
+    │   ├── test_fill_inserter_modes.py
+    │   ├── test_fx_envelope.py
+    │   ├── test_fx_pipeline.py
+    │   ├── test_generate_bar_legacy.py
+    │   ├── test_generation_rules.py
+    │   ├── test_gliss_cc.py
+    │   ├── test_gm_cli.py
+    │   ├── test_golden_midi.py
+    │   ├── test_groove_info_cli.py
+    │   ├── test_groove_sampler.py
+    │   ├── test_groove_sampler_audio.py
+    │   ├── test_groove_sampler_guard.py
+    │   ├── test_groove_sampler_humanize.py
+    │   ├── test_groove_sampler_ngram.py
+    │   ├── test_groove_sampler_ngram_integration.py
+    │   ├── test_groove_sampler_smoothed.py
+    │   ├── test_groove_sampler_v2.py
+    │   ├── test_groove_sampler_v2_core.py
+    │   ├── test_groove_sync.py
+    │   ├── test_gui_import.py
+    │   ├── test_gui_interactive.py
+    │   ├── test_gui_smoke.py
+    │   ├── test_guitar_generator.py
+    │   ├── test_guitar_phase2.py
+    │   ├── test_guitar_phase3.py
+    │   ├── test_guitar_phase4.py
+    │   ├── test_guitar_velocity.py
+    │   ├── test_harmonics.py
+    │   ├── test_harmonics_extended.py
+    │   ├── test_harmonics_xml.py
+    │   ├── test_hash_collision.py
+    │   ├── test_hash_collision_fail.py
+    │   ├── test_hihat_variants.py
+    │   ├── test_humanize_clamp.py
+    │   ├── test_humanize_sampling.py
+    │   ├── test_humanize_variation.py
+    │   ├── test_humanizer_curve.py
+    │   ├── test_infer_resolution.py
+    │   ├── test_integration_drum_sampler.py
+    │   ├── test_interact_transformer.py
+    │   ├── test_interactive_engine.py
+    │   ├── test_invalid_step_warning.py
+    │   ├── test_ir_convolution.py
+    │   ├── test_ir_missing_replaced.py
+    │   ├── test_ir_render.py
+    │   ├── test_ir_sr_channels.py
+    │   ├── test_json2midi.py
+    │   ├── test_kick_bass_lock.py
+    │   ├── test_kick_interface.py
+    │   ├── test_kick_lock_still_works.py
+    │   ├── test_late_humanization.py
+    │   ├── test_latency.py
+    │   ├── test_latency_eval.py
+    │   ├── test_lin_prob_lru.py
+    │   ├── test_live_buffer.py
+    │   ├── test_live_buffer_integration.py
+    │   ├── test_live_cli.py
+    │   ├── test_live_stub.py
+    │   ├── test_loop_ingest.py
+    │   ├── test_loudness_meter.py
+    │   ├── test_loudness_norm.py
+    │   ├── test_loudness_normalizer.py
+    │   ├── test_measure_duration.py
+    │   ├── test_melody_write_dirs.py
+    │   ├── test_metrics.py
+    │   ├── test_midi_capture.py
+    │   ├── test_midi_export.py
+    │   ├── test_midi_export_cc.py
+    │   ├── test_midi_feature_extractor.py
+    │   ├── test_midi_regression.py
+    │   ├── test_missing_instrument.py
+    │   ├── test_missing_prob_message.py
+    │   ├── test_mix_profile.py
+    │   ├── test_mix_roundtrip.py
+    │   ├── test_ml_velocity_integration.py
+    │   ├── test_ngram_aux.py
+    │   ├── test_ngram_aux_fallback.py
+    │   ├── test_ngram_aux_unseen.py
+    │   ├── test_ngram_aux_validate.py
+    │   ├── test_ngram_fallback.py
+    │   ├── test_ngram_model_core.py
+    │   ├── test_ngram_rhythm_schema.py
+    │   ├── test_ngram_speed.py
+    │   ├── test_ngram_train_wav_skip.py
+    │   ├── test_offset_profile.py
+    │   ├── test_onnx_wrapper.py
+    │   ├── test_onset_heatmap.py
+    │   ├── test_oversample_tail.py
+    │   ├── test_parse_chord_symbol.py
+    │   ├── test_peak_extractor.py
+    │   ├── test_peak_synchroniser.py
+    │   ├── test_pedalizer.py
+    │   ├── test_perf_budget.py
+    │   ├── test_perf_gate.py
+    │   ├── test_phoneme_articulation_metadata.py
+    │   ├── test_phoneme_map.py
+    │   ├── test_phrase_dynamics.py
+    │   ├── test_phrase_filter.py
+    │   ├── test_piano_kick_lock.py
+    │   ├── test_piano_measure_rubato.py
+    │   ├── test_piano_minimal_leap.py
+    │   ├── test_piano_ml_stub.py
+    │   ├── test_piano_mode_scale.py
+    │   ├── test_piano_ornaments.py
+    │   ├── test_piano_overrides.py
+    │   ├── test_piano_pedal_cc.py
+    │   ├── test_piano_pedal_marks.py
+    │   ├── test_piano_template.py
+    │   ├── test_piano_transformer.py
+    │   ├── test_piano_voice_leading.py
+    │   ├── test_piano_voice_leading_contiguity.py
+    │   ├── test_piano_voice_leading_note.py
+    │   ├── test_piano_voicing_style.py
+    │   ├── test_plugin_stub.py
+    │   ├── test_portamento_mapping.py
+    │   ├── test_preset_library.py
+    │   ├── test_preset_manager.py
+    │   ├── test_preview_fallback.py
+    │   ├── test_progression_templates.py
+    │   ├── test_push_pull_blend.py
+    │   ├── test_push_pull_swing.py
+    │   ├── test_render_kwargs.py
+    │   ├── test_resolution_auto.py
+    │   ├── test_resolution_multistage.py
+    │   ├── test_rnn_lazy_import.py
+    │   ├── test_rnn_offsets.py
+    │   ├── test_rnn_quality.py
+    │   ├── test_rnn_smoke.py
+    │   ├── test_rt_streamer_disconnect.py
+    │   ├── test_rt_streamer_dummy.py
+    │   ├── test_rtmidi_streamer.py
+    │   ├── test_rtmidi_stub.py
+    │   ├── test_sample_aux_fallback.py
+    │   ├── test_sampler_cli_humanize.py
+    │   ├── test_sampler_generate_bar.py
+    │   ├── test_sampler_humanize_flag.py
+    │   ├── test_sampling_filters.py
+    │   ├── test_sax_articulation.py
+    │   ├── test_sax_generator.py
+    │   ├── test_sax_phrasing.py
+    │   ├── test_sax_plugin_api.py
+    │   ├── test_sax_tokenizer.py
+    │   ├── test_sax_transformer.py
+    │   ├── test_step_guard.py
+    │   ├── test_stream_latency.py
+    │   ├── test_strings_articulation.py
+    │   ├── test_strings_audio_export.py
+    │   ├── test_strings_bowpos.py
+    │   ├── test_strings_effects.py
+    │   ├── test_strings_expression.py
+    │   ├── test_strings_expression_map.py
+    │   ├── test_strings_ir_render.py
+    │   ├── test_strings_mute_bow_cc.py
+    │   ├── test_strings_phase0.py
+    │   ├── test_strings_phase1.py
+    │   ├── test_strings_phase2.py
+    │   ├── test_strings_phase3.py
+    │   ├── test_strings_phase4.py
+    │   ├── test_strings_vibrato.py
+    │   ├── test_style_curve.py
+    │   ├── test_sync_peaks.py
+    │   ├── test_synth.py
+    │   ├── test_synthesize_vocal.py
+    │   ├── test_synthesize_vocal_cli.py
+    │   ├── test_temperature_schedule.py
+    │   ├── test_tempo_curve.py
+    │   ├── test_tempo_utils.py
+    │   ├── test_tempo_velocity_curve.py
+    │   ├── test_time_signature.py
+    │   ├── test_timing_corrector.py
+    │   ├── test_tok_safety.py
+    │   ├── test_tokenizer.py
+    │   ├── test_tom_fill_dsl.py
+    │   ├── test_tone_presets.py
+    │   ├── test_tone_shaper.py
+    │   ├── test_tone_shaper_fit.py
+    │   ├── test_tone_shaper_integration.py
+    │   ├── test_tone_shaper_reload.py
+    │   ├── test_torch_download_retry.py
+    │   ├── test_transformer_sample.py
+    │   ├── test_user_history.py
+    │   ├── test_velocity_curve.py
+    │   ├── test_velocity_envelope.py
+    │   ├── test_velocity_fade.py
+    │   ├── test_velocity_histogram.py
+    │   ├── test_velocity_random_walk.py
+    │   ├── test_velocity_smoother.py
+    │   ├── test_velocity_utils.py
+    │   ├── test_vibrato_engine.py
+    │   ├── test_vocal_articulation_integration.py
+    │   ├── test_vocal_lyrics.py
+    │   ├── test_vocal_sync.py
+    │   ├── test_wheel_import.py
+    │   ├── test_ws_echo.py
+    │   └── test_ws_vocal_bridge.py
+    ├── tools
+    │   ├── __init__.py
+    │   ├── compare_sections.py
+    │   ├── dump_drum_map.py
+    │   ├── dump_tree.py
+    │   ├── generate_demo_midis.py
+    │   ├── git_tools.py
+    │   ├── golden.py
+    │   ├── midi_feature_extractor.py
+    │   ├── peak_synchroniser.py
+    │   ├── streamlit_gui.py
+    │   └── test_timesig.py
+    ├── transformer
+    │   ├── __init__.py
+    │   ├── piano_transformer.py
+    │   ├── sax_tokenizer.py
+    │   ├── sax_transformer.py
+    │   └── tokenizer_piano.py
+    ├── utilities
+    │   ├── __init__.py
+    │   ├── accent_mapper.py
+    │   ├── ai_sampler.py
+    │   ├── arrangement_builder.py
+    │   ├── articulation_mapper.py
+    │   ├── audio_env.py
+    │   ├── audio_render.py
+    │   ├── bass_transformer.py
+    │   ├── bass_utils.py
+    │   ├── cc_map.py
+    │   ├── cc_tools.py
+    │   ├── cli_playback.py
+    │   ├── config_loader.py
+    │   ├── consonant_extract.py
+    │   ├── convolver.py
+    │   ├── core_music_utils.py
+    │   ├── dataset_preprocessor.py
+    │   ├── drum_lint.py
+    │   ├── drum_map.py
+    │   ├── drum_map_registry.py
+    │   ├── effect_preset_loader.py
+    │   ├── emotion_arranger.py
+    │   ├── emotion_profile_loader.py
+    │   ├── expression_map.py
+    │   ├── fill_dsl.py
+    │   ├── fx_envelope.py
+    │   ├── generator_factory.py
+    │   ├── ghost_jitter.py
+    │   ├── golden.py
+    │   ├── groove_rnn_v2.py
+    │   ├── groove_sampler.py
+    │   ├── groove_sampler_ngram.py
+    │   ├── groove_sampler_rnn.py
+    │   ├── groove_sampler_v2.py
+    │   ├── harmonic_utils.py
+    │   ├── humanizer.py
+    │   ├── install_utils.py
+    │   ├── interactive_engine.py
+    │   ├── ir_renderer.py
+    │   ├── live_buffer.py
+    │   ├── live_player.py
+    │   ├── loop_ingest.py
+    │   ├── loop_scanner.py
+    │   ├── loudness_meter.py
+    │   ├── loudness_normalizer.py
+    │   ├── memmap_utils.py
+    │   ├── midi_capture.py
+    │   ├── midi_export.py
+    │   ├── mix_profile.py
+    │   ├── ml_velocity.py
+    │   ├── onset_heatmap.py
+    │   ├── override_loader.py
+    │   ├── peak_extractor.py
+    │   ├── peak_synchroniser.py
+    │   ├── pedalizer.py
+    │   ├── phoneme_dict.json
+    │   ├── phrase_filter.py
+    │   ├── preset_manager.py
+    │   ├── prettymidi_sync.py
+    │   ├── progression_templates.py
+    │   ├── progression_templates.yaml
+    │   ├── realtime_engine.py
+    │   ├── rhythm_library_loader.py
+    │   ├── rt_midi_streamer.py
+    │   ├── safe_get.py
+    │   ├── scale_registry.py
+    │   ├── streaming_sampler.py
+    │   ├── style_db.py
+    │   ├── synth.py
+    │   ├── tempo_curve.py
+    │   ├── tempo_loader.py
+    │   ├── tempo_utils.py
+    │   ├── timing_corrector.py
+    │   ├── timing_utils.py
+    │   ├── tone_shaper.py
+    │   ├── types.py
+    │   ├── user_history.py
+    │   ├── velocity_curve.py
+    │   ├── velocity_smoother.py
+    │   ├── velocity_utils.py
+    │   ├── vibrato_engine.py
+    │   └── vocal_sync.py
+    ├── wheelhouse
+    │   ├── PyYAML-6.0.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── PyYAML-6.0.2-cp312-cp312-musllinux_1_1_x86_64.whl
+    │   ├── PyYAML-6.0.2-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── annotated_types-0.7.0-py3-none-any.whl
+    │   ├── black-25.1.0-cp313-cp313-macosx_11_0_arm64.whl
+    │   ├── black-25.1.0-py3-none-any.whl
+    │   ├── certifi-2025.6.15-py3-none-any.whl
+    │   ├── chardet-5.2.0-py3-none-any.whl
+    │   ├── charset_normalizer-3.4.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── charset_normalizer-3.4.2-cp312-cp312-musllinux_1_2_x86_64.whl
+    │   ├── click-8.2.1-py3-none-any.whl
+    │   ├── contourpy-1.3.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── contourpy-1.3.2-cp312-cp312-musllinux_1_2_x86_64.whl
+    │   ├── cycler-0.12.1-py3-none-any.whl
+    │   ├── exceptiongroup-1.3.0-py3-none-any.whl
+    │   ├── flake8-7.2.0-py2.py3-none-any.whl
+    │   ├── fonttools-4.58.4-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+    │   ├── fonttools-4.58.4-cp312-cp312-musllinux_1_2_x86_64.whl
+    │   ├── idna-3.10-py3-none-any.whl
+    │   ├── iniconfig-2.1.0-py3-none-any.whl
+    │   ├── joblib-1.3.2-py3-none-any.whl
+    │   ├── joblib-1.5.1-py3-none-any.whl
+    │   ├── jsonpickle-4.1.1-py3-none-any.whl
+    │   ├── kiwisolver-1.4.8-cp310-cp310-manylinux_2_12_x86_64.manylinux2010_x86_64.whl
+    │   ├── kiwisolver-1.4.8-cp312-cp312-musllinux_1_2_x86_64.whl
+    │   ├── matplotlib-3.10.3-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── matplotlib-3.10.3-cp312-cp312-musllinux_1_2_x86_64.whl
+    │   ├── mccabe-0.7.0-py2.py3-none-any.whl
+    │   ├── mido-1.3.3-py3-none-any.whl
+    │   ├── more_itertools-10.7.0-py3-none-any.whl
+    │   ├── music21-9.7.0-py3-none-any.whl
+    │   ├── mypy_extensions-1.1.0-py3-none-any.whl
+    │   ├── numpy-1.26.4-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── numpy-1.26.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── numpy-1.26.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64 (1).whl
+    │   ├── numpy-1.26.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── numpy-1.26.4-cp312-cp312-musllinux_1_1_x86_64.whl
+    │   ├── numpy-2.3.0-cp312-cp312-musllinux_1_2_x86_64.whl
+    │   ├── numpy-2.3.0-cp313-cp313-macosx_14_0_arm64.whl
+    │   ├── packaging-25.0-py3-none-any.whl
+    │   ├── pathspec-0.12.1-py3-none-any.whl
+    │   ├── pillow-11.2.1-cp310-cp310-manylinux_2_28_x86_64.whl
+    │   ├── pillow-11.2.1-cp312-cp312-musllinux_1_2_x86_64.whl
+    │   ├── platformdirs-4.3.8-py3-none-any.whl
+    │   ├── pluggy-1.6.0-py3-none-any.whl
+    │   ├── pretty_midi-0.2.10-py3-none-any.whl
+    │   ├── pretty_midi-0.2.10.tar.gz
+    │   ├── pycodestyle-2.13.0-py2.py3-none-any.whl
+    │   ├── pydantic-2.11.7-py3-none-any.whl
+    │   ├── pydantic_core-2.33.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── pydantic_core-2.33.2-cp312-cp312-musllinux_1_1_x86_64.whl
+    │   ├── pydub-0.25.1-py2.py3-none-any.whl
+    │   ├── pyflakes-3.3.2-py2.py3-none-any.whl
+    │   ├── pygments-2.19.1-py3-none-any.whl
+    │   ├── pyparsing-3.2.3-py3-none-any.whl
+    │   ├── pytest-8.4.0-py3-none-any.whl
+    │   ├── python_dateutil-2.9.0.post0-py2.py3-none-any.whl
+    │   ├── requests-2.32.4-py3-none-any.whl
+    │   ├── scikit_learn-1.3.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── scipy-1.15.3-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── scipy-1.15.3-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    │   ├── scipy-1.15.3-cp312-cp312-musllinux_1_2_x86_64.whl
+    │   ├── setuptools-80.9.0-py3-none-any.whl
+    │   ├── six-1.17.0-py2.py3-none-any.whl
+    │   ├── threadpoolctl-3.6.0-py3-none-any.whl
+    │   ├── tomli-2.2.1-cp312-cp312-musllinux_1_2_x86_64.whl
+    │   ├── tomli-2.2.1-py3-none-any.whl
+    │   ├── typing_extensions-4.14.0-py3-none-any.whl
+    │   ├── typing_inspection-0.4.1-py3-none-any.whl
+    │   ├── urllib3-2.4.0-py3-none-any.whl
+    │   ├── webcolors-24.11.1-py3-none-any.whl
+    │   └── wheel-0.43.0-py3-none-any.whl
+    ├── CHANGELOG.md
+    ├── CMakeLists.txt
+    ├── Dockerfile
+    ├── LICENSE
+    ├── Makefile
+    ├── NOTICE
+    ├── README.md
+    ├── build_all_json.py
+    ├── codex.yaml
+    ├── docker-compose.yml
+    ├── emotion_humanizer.py
+    ├── filelist.txt
+    ├── groove_profile.py
+    ├── json2midi.py
+    ├── midi_heatmap.png
+    ├── mkdocs.yml
+    ├── modular_composer.py
+    ├── mypy.ini
+    ├── pdoc.yml
+    ├── pyproject.toml
+    ├── pytest.ini
+    ├── pyvenv.cfg
+    ├── requirements-dev.txt
+    ├── requirements-extra.txt
+    ├── requirements-optional.txt
+    ├── requirements-test.txt
+    ├── requirements.txt
+    ├── run_generate_demo.sh
+    ├── setup.cfg
+    ├── setup.py
+    ├── setup.sh
+    ├── setup_project.sh
+    ├── sitecustomize.py
+    ├── streamlit_app_v2.py
+    ├── train_piano_lora.py
+    ├── train_sax_lora.py
+    └── tree.txt

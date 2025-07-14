@@ -1,8 +1,10 @@
 import json
+
 import pretty_midi
 from pathlib import Path
 from generator.drum_generator import DrumGenerator, GM_DRUM_MAP
 from tests.helpers.events import make_event
+
 
 class SimpleDrum(DrumGenerator):
     def _resolve_style_key(self, mi, ov, section_data=None):

@@ -3,12 +3,14 @@ import json
 import logging
 import math
 import random
+import yaml
+
+from bisect import bisect_left
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
-from bisect import bisect_left
 
-import yaml
+import pretty_midi
 from music21 import (
     converter,
     meter,
@@ -34,6 +36,7 @@ try:
     from cyext import apply_velocity_curve as cy_apply_velocity_curve
 except Exception:  # pragma: no cover
     cy_apply_velocity_curve = None
+from utilities import vocal_sync
 from utilities.accent_mapper import AccentMapper
 from utilities.core_music_utils import (
     MIN_NOTE_DURATION_QL,
@@ -49,7 +52,9 @@ from utilities.groove_sampler_ngram import Event as GrooveEvent
 from utilities.humanizer import apply_humanization_to_element
 from utilities.onset_heatmap import RESOLUTION, load_heatmap
 from utilities.safe_get import safe_get
+
 from utilities import vocal_sync
+
 from utilities.tempo_utils import TempoMap, load_tempo_map
 from utilities.timing_utils import _combine_timing, align_to_consonant
 from utilities.velocity_smoother import EMASmoother
@@ -135,7 +140,9 @@ def resolve_velocity_curve(curve_spec: Any) -> list[float]:
         return [1.0]
 
     if isinstance(curve_spec, list):
+
         curve = [float(v) for v in curve_spec if isinstance(v, (int, float))]
+
         return curve or [1.0]
 
     if isinstance(curve_spec, str):
@@ -305,7 +312,8 @@ def _resolve_style(emotion: str, intensity: str, pattern_lib: dict[str, Any]) ->
     style_map_for_bucket = BUCKET_INTENSITY_TO_STYLE.get(bucket)
     if not style_map_for_bucket:
         logger.error(
-            f"DrumGen _resolve_style: CRITICAL - Bucket '{bucket}' not defined. Using 'default_drum_pattern'."
+            f"DrumGen _resolve_style: CRITICAL - Bucket '{bucket}' not defined. "
+            "Using 'default_drum_pattern'."
         )
         return "default_drum_pattern"
     resolved_style = style_map_for_bucket.get(intensity.lower())
@@ -313,11 +321,12 @@ def _resolve_style(emotion: str, intensity: str, pattern_lib: dict[str, Any]) ->
         resolved_style = style_map_for_bucket.get("default", "default_drum_pattern")
     if resolved_style not in pattern_lib:
         logger.warning(
-            f"DrumGen _resolve_style: Resolved style '{resolved_style}' (E:'{emotion}',I:'{intensity}') not in pattern_lib. Falling back to 'default_drum_pattern'."
+            f"DrumGen _resolve_style: style '{resolved_style}' "
+            f"for {emotion}/{intensity} missing; using default."
         )
         if "default_drum_pattern" not in pattern_lib:
             logger.error(
-                "DrumGen _resolve_style: CRITICAL - Fallback 'default_drum_pattern' also not in pattern_lib. Returning 'no_drums'."
+                "DrumGen _resolve_style: default pattern missing; returning 'no_drums'."
             )
             return "no_drums"
         return "default_drum_pattern"
@@ -403,7 +412,6 @@ class DrumGenerator(BasePartGenerator):
         self.fade_beats_default = float(global_cfg.get("fill_fade_beats", 2.0))
         self.strict_drum_map = bool(self.global_settings.get("strict_drum_map", False))
 
-
         lut = None
         if fill_density_lut is not None:
             lut = {float(k): float(v) for k, v in fill_density_lut.items()}
@@ -414,10 +422,7 @@ class DrumGenerator(BasePartGenerator):
         if not lut:
             lut = DEFAULT_FILL_DENSITY_LUT.copy()
         self.fill_density_lut = dict(sorted(lut.items()))
-        self.strict_drum_map = bool(
-            self.global_settings.get("strict_drum_map", False)
-        )
-
+        self.strict_drum_map = bool(self.global_settings.get("strict_drum_map", False))
 
         self.drum_map_name = self.global_settings.get("drum_map", "gm")
         self.drum_map = get_drum_map(self.drum_map_name)
@@ -541,7 +546,17 @@ class DrumGenerator(BasePartGenerator):
         peak_json_path = self.main_cfg.get("paths", {}).get(
             "vocal_peak_json_for_drums"
         ) or self.main_cfg.get("vocal_peak_json_for_drums")
-        self.consonant_peaks = vocal_sync.load_consonant_peaks(peak_json_path)
+
+        kwargs: dict[str, Any] = {}
+        if isinstance(getattr(self, "tempo_map", None), pretty_midi.PrettyMIDI):
+            kwargs["tempo_map"] = self.tempo_map
+        if peak_json_path:
+            self.consonant_peaks = vocal_sync.load_consonant_peaks(
+                peak_json_path,
+                **kwargs,
+            )
+        else:
+            self.consonant_peaks = []
 
         self.vocal_midi_path = (
             self.main_cfg.get("paths", {}).get("vocal_midi_path_for_drums")
@@ -641,9 +656,9 @@ class DrumGenerator(BasePartGenerator):
         )
         vr = global_cfg.get("velocity_range", (0.9, 1.1))
         if (
-            isinstance(vr, (list, tuple))
+            isinstance(vr, list | tuple)
             and len(vr) == 2
-            and all(isinstance(v, (int, float)) for v in vr)
+            and all(isinstance(v, int | float) for v in vr)
         ):
             self.velocity_range = (float(vr[0]), float(vr[1]))
         else:
@@ -654,7 +669,7 @@ class DrumGenerator(BasePartGenerator):
             self.default_instrument = m21instrument.Percussion()
             if hasattr(self.default_instrument, "midiChannel"):
                 self.default_instrument.midiChannel = 9
-        except:
+        except Exception:
             self.default_instrument = m21instrument.Percussion()
 
         # (初期化ロジックは前回と同様)
@@ -755,7 +770,9 @@ class DrumGenerator(BasePartGenerator):
         for style_key in all_referenced_styles_in_luts:
             if style_key not in self.raw_pattern_lib:
                 self.raw_pattern_lib[style_key] = {
-                    "description": f"Auto-added placeholder for undefined style '{style_key}'.",
+                    "description": (
+                        f"Auto-added placeholder for undefined style '{style_key}'."
+                    ),
                     "pattern": [],
                     "time_signature": "4/4",
                     "swing": 0.5,
@@ -764,14 +781,16 @@ class DrumGenerator(BasePartGenerator):
                     "velocity_base": 70,
                 }
                 logger.info(
-                    f"DrumGen __init__: Added silent placeholder for undefined style '{style_key}' (from LUT)."
+                    "DrumGen __init__: Added silent placeholder for undefined style "
+                    f"'{style_key}' (from LUT)."
                 )
         self.global_tempo = self.main_cfg.get("tempo", 120)
         self.global_time_signature_str = self.main_cfg.get("time_signature", "4/4")
         self.global_ts = get_time_signature_object(self.global_time_signature_str)
         if not self.global_ts:
             logger.warning(
-                f"DrumGen __init__: Failed to parse global time_sig '{self.global_time_signature_str}'. Defaulting to 4/4."
+                "DrumGen __init__: Failed to parse global time_sig "
+                f"'{self.global_time_signature_str}'. Defaulting to 4/4."
             )
             self.global_ts = meter.TimeSignature("4/4")
         self.instrument = m21instrument.Percussion()
@@ -855,7 +874,8 @@ class DrumGenerator(BasePartGenerator):
             visited = set()
         if style_key in visited:
             logger.error(
-                f"DrumGen: Circular inheritance for '{style_key}'. Returning 'default_drum_pattern'."
+                f"DrumGen: Circular inheritance for '{style_key}'. "
+                "Returning 'default_drum_pattern'."
             )
             default_p_data = self.pattern_lib_cache.get(
                 "default_drum_pattern"
@@ -866,12 +886,14 @@ class DrumGenerator(BasePartGenerator):
         pattern_def_original = self.raw_pattern_lib.get(style_key)
         if not pattern_def_original:
             logger.warning(
-                f"DrumGen: Style key '{style_key}' not found. Falling back to 'default_drum_pattern'."
+                f"DrumGen: Style key '{style_key}' not found. "
+                "Falling back to 'default_drum_pattern'."
             )
             default_p = self.raw_pattern_lib.get("default_drum_pattern")
             if not default_p:
                 logger.error(
-                    "DrumGen: CRITICAL - 'default_drum_pattern' missing. Returning minimal empty."
+                    "DrumGen: CRITICAL - 'default_drum_pattern' missing. "
+                    "Returning minimal empty."
                 )
                 return {
                     "description": "Minimal Empty (Critical Fallback)",
@@ -1084,7 +1106,8 @@ class DrumGenerator(BasePartGenerator):
             )
             if pattern_unit_length_ql <= 0:
                 logger.warning(
-                    f"{log_render_prefix}: Pattern '{style_key}' invalid length {pattern_unit_length_ql}. Defaulting to 4.0"
+                    f"{log_render_prefix}: Pattern '{style_key}' invalid length "
+                    f"{pattern_unit_length_ql}. Defaulting to 4.0"
                 )
                 pattern_unit_length_ql = 4.0
 
@@ -1100,7 +1123,7 @@ class DrumGenerator(BasePartGenerator):
                     cast_to=float,
                     log_name=f"{log_render_prefix}.SwingRatio",
                 )
-            elif isinstance(swing_setting, (float, int)):
+            elif isinstance(swing_setting, float | int):
                 swing_ratio_val = float(swing_setting)
 
             fills = style_def.get("fill_ins", {})
@@ -1142,8 +1165,12 @@ class DrumGenerator(BasePartGenerator):
                 log_name=f"{log_render_prefix}.HumDur",
             )
             if remaining_ql_in_block <= 0:
+                raw_val = blk_data.get(
+                    "humanized_duration_beats", blk_data.get("q_length")
+                )
                 logger.warning(
-                    f"{log_render_prefix}: Non-positive duration {remaining_ql_in_block} (raw: {blk_data.get('humanized_duration_beats', blk_data.get('q_length'))}). Using {default_block_dur}ql."
+                    f"{log_render_prefix}: Non-positive duration {remaining_ql_in_block} "
+                    f"(raw: {raw_val}). Using {default_block_dur}ql."
                 )
                 remaining_ql_in_block = default_block_dur
             # --- ここまでオフセットとデュレーション ---
@@ -1162,7 +1189,8 @@ class DrumGenerator(BasePartGenerator):
                     step_range = int(step_base * INTENSITY_FACTOR.get(intensity, 1.0))
                     self.accent_mapper.begin_bar(bar_start_abs_offset, step_range)
                     self._walk_advanced = True
-                # (フィルインロジック、パターンの適用は前回と同様、base_vel を _apply_pattern に渡す)
+                # (フィルインロジック、パターンの適用は前回と同様、base_vel を
+                #  _apply_pattern に渡す)  # noqa: E501
                 current_pattern_iteration_ql = min(
                     pattern_unit_length_ql, remaining_ql_in_block
                 )
@@ -1186,11 +1214,62 @@ class DrumGenerator(BasePartGenerator):
                         fill_legato = bool(fill_def.get("legato"))
                         fill_applied_this_iter = True
                         logger.debug(
-                            f"{log_render_prefix}: Applied override fill '{override_fill_key}' for style '{style_key}'."
+                            f"{log_render_prefix}: Applied override fill '{override_fill_key}' "
+                            f"for style '{style_key}'."
                         )
                     else:
                         logger.warning(
-                            f"{log_render_prefix}: Override fill key '{override_fill_key}' not in fills for '{style_key}'."
+                            f"{log_render_prefix}: Override fill key '{override_fill_key}' "
+                            f"not in fills for '{style_key}'."
+                        )
+
+                preferred_positions = [
+                    int(p)
+                    for p in style_def.get("preferred_fill_positions", [])
+                    if isinstance(p, int)
+                ]
+                if section_data:
+                    preferred_positions.extend(
+                        int(p)
+                        for p in section_data.get("preferred_fill_positions", [])
+                        if isinstance(p, int)
+                    )
+                fill_keys = style_def.get("fill_patterns", [])
+                at_section_end = (
+                    blk_idx == len(blocks) - 1 and is_last_pattern_iteration_in_block
+                )
+                bar_number = bars_since_section_start + 1
+                if (
+                    not fill_applied_this_iter
+                    and fill_keys
+                    and (bar_number in preferred_positions or at_section_end)
+                ):
+                    candidates = [
+                        fk
+                        for fk in fill_keys
+                        if self._get_effective_pattern_def(fk).get(
+                            "length_beats", pattern_unit_length_ql
+                        )
+                        == pattern_unit_length_ql
+                    ]
+                    if candidates:
+                        fill_key = self.rng.choice(candidates)
+                        fill_def = self._get_effective_pattern_def(fill_key)
+                        pattern_to_use_for_iteration = fill_def.get("pattern", [])
+                        fill_legato = bool(fill_def.get("legato"))
+                        fill_applied_this_iter = True
+                        fade_beats_local = safe_get(
+                            style_options,
+                            "fade_beats",
+                            default=self.fade_beats_default,
+                            cast_to=float,
+                            log_name=f"{log_render_prefix}.FadeBeats",
+                        )
+                        self.fill_offsets.append(
+                            (
+                                offset_in_score + current_pos_within_block,
+                                fade_beats_local,
+                            )
                         )
 
                 preferred_positions = [
@@ -1269,13 +1348,14 @@ class DrumGenerator(BasePartGenerator):
                                 fill_legato = bool(fill_def.get("legato"))
                         fill_applied_this_iter = True
                         logger.debug(
-                            f"{log_render_prefix}: Applied scheduled fill '{chosen_fill_key}' for style '{style_key}'."
+                            f"{log_render_prefix}: Applied scheduled fill '{chosen_fill_key}' "
+                            f"for style '{style_key}'."
                         )
                 if not pattern_to_use_for_iteration and self.groove_model:
                     tk = self.global_settings.get("groove_top_k")
                     tk_val = (
                         int(tk)
-                        if isinstance(tk, (int, str)) and str(tk).isdigit()
+                        if isinstance(tk, int | str) and str(tk).isdigit()
                         else None
                     )
                     pattern_to_use_for_iteration = groove_sampler_ngram.generate_bar(
@@ -1388,6 +1468,67 @@ class DrumGenerator(BasePartGenerator):
             )
 
         self.current_heat_bin = int(bar_start_abs_offset * RESOLUTION) % RESOLUTION
+
+        if not events and self.groove_model:
+            model_obj: dict
+            if isinstance(self.groove_model, str | Path):
+                model_obj = groove_sampler_ngram.load(Path(self.groove_model))
+            else:
+                model_obj = self.groove_model
+
+            musical_intent = (
+                section_data.get("musical_intent", {}) if section_data else {}
+            )
+            cond = {
+                "section": (
+                    section_data.get("section_name", "verse")
+                    if section_data
+                    else "verse"
+                ),
+                "heat_bin": self.current_heat_bin,
+                "intensity": musical_intent.get("intensity", "mid"),
+            }
+
+            tk = self.global_settings.get("groove_top_k")
+            tk_val = (
+                int(tk) if isinstance(tk, int | str) and str(tk).isdigit() else None
+            )
+
+            events = groove_sampler_ngram.generate_bar(
+                self._groove_history,
+                model=model_obj,
+                temperature=float(self.global_settings.get("groove_temperature", 1.0)),
+                top_k=tk_val,
+                cond=cond,
+                humanize_vel=bool(self.global_settings.get("humanize_profile")),
+                humanize_micro=self.groove_strength > 0,
+            )
+
+        if (
+            self.use_consonant_sync
+            and self.consonant_peaks
+            and self.consonant_sync_mode == "bar"
+        ):
+            start_sec = self._convert_ticks_to_seconds(
+                int(bar_start_abs_offset * self.ppq)
+            )
+            end_sec = self._convert_ticks_to_seconds(
+                int((bar_start_abs_offset + current_bar_actual_len_ql) * self.ppq)
+            )
+            peaks_in_bar = [
+                p - start_sec for p in self.consonant_peaks if start_sec <= p < end_sec
+            ]
+            if peaks_in_bar:
+                events = PeakSynchroniser.sync_events(
+                    peaks_in_bar,
+                    events,
+                    tempo_bpm=self.current_bpm,
+                    lag_ms=self.consonant_sync_cfg["lag_ms"],
+                    min_distance_beats=self.consonant_sync_cfg["min_distance_beats"],
+                    sustain_threshold_ms=self.consonant_sync_cfg[
+                        "sustain_threshold_ms"
+                    ],
+                )
 
         if not events and self.groove_model:
             model_obj: dict
@@ -1593,7 +1734,9 @@ class DrumGenerator(BasePartGenerator):
                 and bin_count >= self.heatmap_threshold
             ):
                 logger.debug(
-                    f"{log_event_prefix}: Skip ghost hat at {final_insert_offset_in_score:.3f} (bin {bin_idx} count {bin_count})"
+                    f"{log_event_prefix}: Skip ghost hat at "
+                    f"{final_insert_offset_in_score:.3f} "
+                    f"(bin {bin_idx} count {bin_count})"
                 )
                 continue
             if inst_name in {"ghost", "ghost_hat"}:
@@ -1688,7 +1831,7 @@ class DrumGenerator(BasePartGenerator):
             if templates:
                 mode = str(ev_def.get("humanize_templates_mode", "sequential")).lower()
                 if isinstance(templates, Sequence) and not isinstance(
-                    templates, (str, bytes)
+                    templates, str | bytes
                 ):
                     template_list = list(templates)
                 else:
@@ -1848,7 +1991,8 @@ class DrumGenerator(BasePartGenerator):
         midi_pitch_val = self.gm_pitch_map.get(actual_name_for_midi)
         if midi_pitch_val is None:
             logger.warning(
-                f"DrumGen _make_hit: Unknown drum sound '{name}' (mapped to '{actual_name_for_midi}'). MIDI mapping not found. Skipping."
+                f"DrumGen _make_hit: Unknown drum sound '{name}' "
+                f"(mapped to '{actual_name_for_midi}'). MIDI mapping not found. Skipping."
             )
             return None
         n = note.Note()

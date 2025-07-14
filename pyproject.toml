@@ -125,6 +125,7 @@ modcompose = "modular_composer.cli:main"
 
 [tool.ruff]
 target-version = "py310"
+
 select = ["E", "F", "I", "UP"]
 fix = true
 line-length = 100
@@ -149,6 +150,10 @@ extend-exclude = [
     "setup_project.sh",
     "streamlit_app/*",
 ]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.10"

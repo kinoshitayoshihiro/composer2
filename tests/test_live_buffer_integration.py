@@ -1,13 +1,13 @@
+import asyncio
 import logging
 import time
-import pytest
-
-import asyncio
 from types import SimpleNamespace
 
-from utilities.live_buffer import LiveBuffer
-from utilities import rt_midi_streamer
+import pytest
 from music21 import note, stream, volume
+
+from utilities import rt_midi_streamer
+from utilities.live_buffer import LiveBuffer
 
 
 def slow_gen(idx: int) -> int:
@@ -68,4 +68,5 @@ def test_rt_play_live(monkeypatch):
     on_times = [t for t, msg in midi.events if msg[0] == 0x90]
     assert len(on_times) == 2
     diff = on_times[1] - on_times[0]
-    assert abs(diff - 0.25) < 0.04
+    bpm = 120
+    assert abs(diff - (60 / bpm) / 2) < (60 / bpm) * 0.25

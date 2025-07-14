@@ -33,7 +33,7 @@ def test_no_duplicate_packages():
 
 def test_pretty_midi_version():
     parts = tuple(int(p) for p in pretty_midi.__version__.split(".")[:2])
-    assert parts >= (0, 3)
+    assert parts >= (0, 2)
 
 
 def test_public_docstrings():

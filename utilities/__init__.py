@@ -26,6 +26,7 @@ _HAS_YAML = importlib_util.find_spec("yaml") is not None
 
 if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from . import groove_sampler_ngram as groove_sampler_ngram
+    from . import vocal_sync as vocal_sync
 from .accent_mapper import AccentMapper
 
 try:
@@ -63,6 +64,7 @@ else:  # pragma: no cover - optional dependency
     get_time_signature_object = _missing
     sanitize_chord_label = _missing
 from .drum_map import get_drum_map
+
 if _HAS_MUSIC21:
     from .humanizer import (
         HUMANIZATION_TEMPLATES,
@@ -86,14 +88,17 @@ else:
 if _HAS_MUSIC21:
     from .midi_export import write_demo_bar
 else:
+
     def write_demo_bar(*_args: Any, **_kwargs: Any) -> None:
         raise ModuleNotFoundError(
             "music21 is required. Please run 'pip install -r requirements.txt'."
         )
 
+
 if _HAS_MUSIC21:
     from .arrangement_builder import build_arrangement, score_to_pretty_midi
 else:
+
     def build_arrangement(*_args: Any, **_kwargs: Any) -> tuple[Any, list[str]]:
         raise ModuleNotFoundError(
             "music21 is required. Please run 'pip install -r requirements.txt'."
@@ -104,9 +109,11 @@ else:
             "music21 is required. Please run 'pip install -r requirements.txt'."
         )
 
+
 if _HAS_MUSIC21:
     from .scale_registry import ScaleRegistry, build_scale_object
 else:
+
     class ScaleRegistry:  # type: ignore[misc]
         pass
 
@@ -114,9 +121,12 @@ else:
         raise ModuleNotFoundError(
             "music21 is required. Please run 'pip install -r requirements.txt'."
         )
+
+
 if _HAS_MUSIC21:
     from .synth import render_midi, export_audio
 else:
+
     def render_midi(*_args: Any, **_kwargs: Any) -> None:
         raise ModuleNotFoundError(
             "music21 is required. Please run 'pip install -r requirements.txt'."
@@ -126,9 +136,12 @@ else:
         raise ModuleNotFoundError(
             "music21 is required. Please run 'pip install -r requirements.txt'."
         )
+
+
 if _HAS_MUSIC21 and _HAS_YAML:
     from .tempo_curve import TempoCurve, TempoPoint, load_tempo_curve
 else:
+
     class TempoPoint:  # type: ignore[misc]
         beat: float
         bpm: float
@@ -143,6 +156,8 @@ else:
         raise ModuleNotFoundError(
             "PyYAML and music21 are required. Please run 'pip install -r requirements.txt'."
         )
+
+
 from .tempo_utils import (
     TempoMap,
     TempoVelocitySmoother,
@@ -157,9 +172,11 @@ from .tempo_utils import (
 )
 from .velocity_curve import PREDEFINED_CURVES, resolve_velocity_curve
 from .velocity_smoother import EMASmoother, VelocitySmoother
+
 if _HAS_MUSIC21:
     from .humanizer import apply_velocity_histogram, apply_velocity_histogram_profile
 else:
+
     def apply_velocity_histogram(*_args: Any, **_kwargs: Any) -> None:
         raise ModuleNotFoundError(
             "music21 is required. Please run 'pip install -r requirements.txt'."
@@ -169,31 +186,43 @@ else:
         raise ModuleNotFoundError(
             "music21 is required. Please run 'pip install -r requirements.txt'."
         )
+
+
 if _HAS_MUSIC21:
     from .timing_corrector import TimingCorrector
 else:
+
     class TimingCorrector:  # type: ignore[misc]
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             raise ModuleNotFoundError(
                 "music21 is required. Please run 'pip install -r requirements.txt'."
             )
+
+
 if _HAS_YAML:
     from .emotion_profile_loader import load_emotion_profile
 else:
+
     def load_emotion_profile(*_args: Any, **_kwargs: Any) -> None:
         raise ModuleNotFoundError(
             "PyYAML is required. Please run 'pip install -r requirements.txt'."
         )
+
+
 if importlib_util.find_spec("numpy") is not None:
     from .loudness_meter import RealtimeLoudnessMeter
 else:
+
     class RealtimeLoudnessMeter:  # type: ignore[misc]
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             raise ModuleNotFoundError(
                 "numpy is required. Please run 'pip install -r requirements.txt'."
             )
+
+
 from .install_utils import run_with_retry
 from . import mix_profile
+
 try:
     from .cc_map import cc_map, load_cc_map
 except Exception:
@@ -203,6 +232,8 @@ except Exception:
         raise ModuleNotFoundError(
             "PyYAML is required. Please run 'pip install -r requirements.txt'."
         )
+
+
 try:
     importlib.import_module("utilities.ir_renderer")
     from . import ir_renderer
@@ -231,8 +262,10 @@ else:
     load_ir = convolver_stub.load_ir
     convolve_ir = convolver_stub.convolve_ir
     render_wav = convolver_stub.render_wav
+
     def render_part_audio(*_a: Any, **_k: Any) -> None:
         _missing()
+
     EffectPresetLoader = None  # type: ignore
 
 __all__ = [
@@ -288,16 +321,18 @@ __all__ = [
     "EffectPresetLoader",
     "build_arrangement",
     "score_to_pretty_midi",
+    "vocal_sync",
 ]
 
 
 def __getattr__(name: str) -> Any:  # pragma: no cover - thin wrapper
     if name == "groove_sampler_ngram":
         module = importlib.import_module("utilities.groove_sampler_ngram")
-        globals()[name] = module
-        return module
-    if name == "groove_sampler_rnn":
+    elif name == "groove_sampler_rnn":
         module = importlib.import_module("utilities.groove_sampler_rnn")
-        globals()[name] = module
-        return module
-    raise AttributeError(name)
+    elif name == "vocal_sync":
+        module = importlib.import_module("utilities.vocal_sync")
+    else:
+        raise AttributeError(name)
+    globals()[name] = module
+    return module

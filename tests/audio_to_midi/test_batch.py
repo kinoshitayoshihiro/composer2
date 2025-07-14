@@ -32,3 +32,8 @@ def test_audio_to_midi_batch(tmp_path, monkeypatch):
     assert len(mids) == 3
     pm = pretty_midi.PrettyMIDI(str(mids[0]))
     assert any(n.pitch == 36 for n in pm.instruments[0].notes)
+
+
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__])

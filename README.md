@@ -130,6 +130,7 @@ sections_to_generate:
 ```
 
 Edit these values to point to your chordmap and rhythm library, and list the section labels you wish to render.
+Chord progressions are defined in `utilities/progression_templates.yaml`. Append new progressions to this file and reload to use them without code changes.
 
 [`data/tempo_curve.json`](data/tempo_curve.json) defines BPM over time. Each segment may specify
 `"curve": "linear"` or `"step"` to control interpolation:
@@ -208,6 +209,13 @@ though the notes are correct. You can switch mappings programmatically via
 | Kick-lock velocity    | `velocity_shift_on_kick`  | `velocity_shift_on_kick: 12`                     |
 | II–V build-up         | `approach_style_on_4th`   | `approach_style_on_4th: subdom_dom`              |
 | Velocity envelope     | `velocity_envelope`       | `velocity_envelope: [[0.0,60],[2.0,90]]`         |
+
+## Lyric-responsive drum fills
+
+DrumGenerator now adjusts fill density based on the emotional intensity of each
+section.  The mapping from intensity (0–1) to fill density can be customized via
+`drum.fill_density_lut` in the YAML configuration.  Higher intensity sections
+produce richer fills automatically.
 
 ## Advanced Guitar Features
 

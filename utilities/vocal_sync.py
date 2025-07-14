@@ -23,6 +23,7 @@ __all__ = [
 
 def load_vocal_midi(path: str | Path) -> pretty_midi.PrettyMIDI:
     """Load a vocal MIDI file.
+    """Load a MIDI file.
 
     Parameters
     ----------
@@ -33,6 +34,7 @@ def load_vocal_midi(path: str | Path) -> pretty_midi.PrettyMIDI:
     -------
     pretty_midi.PrettyMIDI
         Parsed MIDI object.
+        Loaded MIDI object.
 
     Raises
     ------
@@ -44,6 +46,7 @@ def load_vocal_midi(path: str | Path) -> pretty_midi.PrettyMIDI:
     >>> pm = load_vocal_midi("v.mid")
     >>> len(pm.instruments)
     1
+        If ``path`` does not exist.
     """
 
     p = Path(path)
@@ -79,6 +82,7 @@ def extract_onsets(
     >>> pm = load_vocal_midi("v.mid")
     >>> extract_onsets(pm)[:2]
     [0.0, 1.0]
+        Note onsets in beats, sorted ascending.
     """
 
     onsets: list[float] = []
@@ -112,14 +116,21 @@ def extract_long_rests(
     min_rest : float, optional
         Minimum rest length in beats.
     tempo : float, optional
+
         Tempo in BPM used when ``tempo_map`` is not given and ``onsets`` are
         in seconds.
     tempo_map : pretty_midi.PrettyMIDI, optional
         Tempo map that overrides ``tempo``.
+        Fixed tempo in beats per minute. Used when ``tempo_map`` is ``None`` and
+        ``onsets`` are given in seconds.
+    tempo_map : pretty_midi.PrettyMIDI, optional
+        Tempo map used to convert seconds to beats. Takes precedence over
+        ``tempo``.
 
     Returns
     -------
     list[tuple[float, float]]
+
         ``(start_beat, duration)`` pairs.
 
     Examples
@@ -133,6 +144,11 @@ def extract_long_rests(
             tempo_map.time_to_tick(t) / tempo_map.resolution
             for t in onsets
         ]
+        Pairs of ``(start_beat, duration)`` for each long rest.
+    """
+
+    if tempo_map is not None:
+        beats = [tempo_map.time_to_tick(t) / tempo_map.resolution for t in onsets]
     elif tempo is not None:
         sec_per_beat = 60.0 / tempo
         beats = [t / sec_per_beat for t in onsets]
@@ -182,9 +198,12 @@ def load_consonant_peaks(
     data = json.loads(p.read_text(encoding="utf-8"))
     peaks = [float(t) for t in data.get("peaks", [])]
     if tempo_map is not None:
+
         return sorted(
             tempo_map.time_to_tick(t) / tempo_map.resolution for t in peaks
         )
+
+      return sorted(tempo_map.time_to_tick(t) / tempo_map.resolution for t in peaks)
     sec_per_beat = 60.0 / float(tempo if tempo is not None else 120.0)
     return sorted(t / sec_per_beat for t in peaks)
 
@@ -211,6 +230,11 @@ def quantize_times(
         Tolerance when comparing values.
     use_decimal : bool, optional
         Use ``decimal.Decimal`` for rounding.
+        Input time values in beats.
+    grid : float
+        Quantization grid in beats.
+    dedup : bool, optional
+        If ``True``, remove duplicate quantized values.
 
     Returns
     -------
@@ -240,13 +264,18 @@ def quantize_times(
             if not out or abs(v - out[-1]) > eps:
                 out.append(v)
         return out
+    """
+
+    q = [round(t / grid) * grid for t in times]
+    if dedup:
+        return sorted(set(q))
     return q
 
 
 if __name__ == "__main__":  # pragma: no cover - simple CLI
     import argparse
 
-    parser = argparse.ArgumentParser(description="Print vocal onsets")
+    parser = argparse.ArgumentParser(description="Print vocal onsets from MIDI")
     parser.add_argument("midi")
     parser.add_argument("--tempo-map", dest="tempo_map")
     args = parser.parse_args()

@@ -63,7 +63,7 @@ def test_quantize_times_dedup():
     assert q == [0.0, 0.25]
 
 
-def test_drumgen_integration(monkeypatch, tmp_path: Path):
+def test_drumgen_integration(monkeypatch, tmp_path: Path, rhythm_library):
     midi_path = tmp_path / "v.mid"
     _make_pm().write(str(midi_path))
     peaks_json = tmp_path / "c.json"
@@ -96,7 +96,7 @@ def test_drumgen_integration(monkeypatch, tmp_path: Path):
     drum = DrumGenerator(
         main_cfg=cfg,
         part_name="drums",
-        part_parameters={},
+        part_parameters=rhythm_library.drum_patterns or {},
     )
     section = {"absolute_offset": 0.0, "length_in_measures": 1}
     drum.compose(section_data=section)

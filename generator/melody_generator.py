@@ -9,9 +9,7 @@ import logging
 import os
 import random
 from pathlib import Path
-from typing import (
-    Any,
-)
+from typing import Any
 
 import music21.harmony as harmony
 import music21.instrument as m21instrument  # 指摘された形式
@@ -36,13 +34,10 @@ try:
     from utilities.humanizer import HUMANIZATION_TEMPLATES, apply_humanization_to_part
 
     from .melody_utils import generate_melodic_pitches
+
     try:
-        from cyext import (
-            insert_melody_notes as cy_insert_melody_notes,
-        )
-        from cyext import (
-            velocity_random_walk as cy_velocity_random_walk,
-        )
+        from cyext import insert_melody_notes as cy_insert_melody_notes
+        from cyext import velocity_random_walk as cy_velocity_random_walk
     except Exception:
         cy_velocity_random_walk = None
         cy_insert_melody_notes = None
@@ -160,10 +155,14 @@ class MelodyGenerator(BasePartGenerator):
             )
         return details
 
-    def compose(self, section_data=None) -> stream.Part:
-        """
-        modular_composer.py から section_data=... で呼ばれることを想定。
-        section_data: dict or None
+    def compose(
+        self, section_data=None, *, vocal_metrics: dict | None = None
+    ) -> stream.Part:
+        """Generate melody for the given section.
+
+        This generator implements its own compose logic instead of calling
+        :meth:`BasePartGenerator.compose`, so ``vocal_metrics`` is consumed
+        directly here when needed.
         """
         # section_data を processed_blocks のように扱う
         if section_data is None:
@@ -285,21 +284,28 @@ class MelodyGenerator(BasePartGenerator):
                     continue
                 note_start_offset_in_block = final_beat_offsets_for_block[idx]
                 if idx < len(final_beat_offsets_for_block) - 1:
-                    next_note_start_offset_in_block = final_beat_offsets_for_block[idx + 1]
-                    max_dur = next_note_start_offset_in_block - note_start_offset_in_block
+                    next_note_start_offset_in_block = final_beat_offsets_for_block[
+                        idx + 1
+                    ]
+                    max_dur = (
+                        next_note_start_offset_in_block - note_start_offset_in_block
+                    )
                 else:
                     max_dur = block_q_length - note_start_offset_in_block
-                actual_dur = max(
-                    MIN_NOTE_DURATION_QL,
-                    min(
-                        max_dur,
-                        (
-                            base_note_duration_ql * stretch_factor
-                            if "stretch_factor" in locals()
-                            else base_note_duration_ql
+                actual_dur = (
+                    max(
+                        MIN_NOTE_DURATION_QL,
+                        min(
+                            max_dur,
+                            (
+                                base_note_duration_ql * stretch_factor
+                                if "stretch_factor" in locals()
+                                else base_note_duration_ql
+                            ),
                         ),
-                    ),
-                ) * 0.95
+                    )
+                    * 0.95
+                )
                 offsets.append(current_total_offset + note_start_offset_in_block)
                 durs.append(actual_dur)
                 kept.append(n_obj)

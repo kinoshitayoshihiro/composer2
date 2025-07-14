@@ -7,6 +7,9 @@ import io
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+
+from utilities import vocal_sync
 
 try:  # pragma: no cover - optional dependency for export helpers
     import mido
@@ -92,18 +95,27 @@ def export_song(
     bars: int,
     *,
     tempo_map: list[tuple[float, float]] | None = None,
-    generators: dict[str, Callable[[int, float], "pretty_midi.PrettyMIDI"]],
+    generators: dict[str, Callable[..., "pretty_midi.PrettyMIDI"]],
     fixed_tempo: float = 120.0,
     out_path: str | Path = "song.mid",
+    sections: list[dict[str, Any]] | None = None,
 ) -> "pretty_midi.PrettyMIDI":
     """Generate multiple parts and export a merged MIDI file."""
 
     out_path = Path(out_path)
     child_pms: list["pretty_midi.PrettyMIDI"] = []
-    for name, gen in (generators or {}).items():
-        pm = gen(bars, fixed_tempo)
-        apply_tempo_map(pm, tempo_map)
-        child_pms.append(pm)
+    if sections:
+        for sec in sections:
+            vm = vocal_sync.analyse_section(sec, tempo_bpm=fixed_tempo)
+            for name, gen in (generators or {}).items():
+                pm = gen(sec, fixed_tempo, vocal_metrics=vm)
+                apply_tempo_map(pm, tempo_map)
+                child_pms.append(pm)
+    else:
+        for name, gen in (generators or {}).items():
+            pm = gen(bars, fixed_tempo)
+            apply_tempo_map(pm, tempo_map)
+            child_pms.append(pm)
 
     master = pretty_midi.PrettyMIDI(initial_tempo=fixed_tempo)
     for pm in child_pms:

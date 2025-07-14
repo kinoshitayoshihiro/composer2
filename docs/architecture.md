@@ -35,3 +35,10 @@ The current integration logic will eventually move into an
 `ArrangementBuilder` class to centralize score assembly and prepare for more
 advanced editing features.
 
+## Vocal-sync data flow
+
+```
+vocal MIDI -> analyse_section -> {onsets, rests, peaks}
+        \-> BassGenerator/PianoGenerator
+```
+

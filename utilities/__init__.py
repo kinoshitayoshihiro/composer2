@@ -21,7 +21,6 @@ import importlib
 import importlib.util as importlib_util
 from typing import TYPE_CHECKING, Any
 
-
 from .progression_templates import get_progressions
 
 _HAS_MUSIC21 = importlib_util.find_spec("music21") is not None
@@ -30,14 +29,18 @@ _HAS_YAML = importlib_util.find_spec("yaml") is not None
 if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from . import groove_sampler_ngram as groove_sampler_ngram
     from . import vocal_sync as vocal_sync
+
 from .accent_mapper import AccentMapper
+
 if _HAS_YAML:
     from .progression_templates import get_progressions
 else:  # pragma: no cover - optional dependency
+
     def get_progressions(*_args: Any, **_kwargs: Any) -> None:
         raise ModuleNotFoundError(
             "PyYAML is required. Please run 'pip install -r requirements.txt'."
         )
+
 
 try:
     from .consonant_extract import (
@@ -134,7 +137,7 @@ else:
 
 
 if _HAS_MUSIC21:
-    from .synth import render_midi, export_audio
+    from .synth import export_audio, render_midi
 else:
 
     def render_midi(*_args: Any, **_kwargs: Any) -> None:
@@ -175,11 +178,9 @@ from .tempo_utils import (
     get_bpm_at,
     get_tempo_at_beat,
     interpolate_bpm,
-    load_tempo_map,
 )
-from .tempo_utils import (
-    load_tempo_curve as load_tempo_curve_simple,
-)
+from .tempo_utils import load_tempo_curve as load_tempo_curve_simple
+from .tempo_utils import load_tempo_map
 from .velocity_curve import PREDEFINED_CURVES, resolve_velocity_curve
 from .velocity_smoother import EMASmoother, VelocitySmoother
 
@@ -230,8 +231,8 @@ else:
             )
 
 
-from .install_utils import run_with_retry
 from . import mix_profile
+from .install_utils import run_with_retry
 
 try:
     from .cc_map import cc_map, load_cc_map
@@ -254,11 +255,12 @@ try:
 except Exception:
     vocal_sync = None  # type: ignore
 if importlib_util.find_spec("numpy") is not None:
-    from .convolver import load_ir, convolve_ir, render_wav
     from .audio_render import render_part_audio
+    from .convolver import convolve_ir, load_ir, render_wav
     from .effect_preset_loader import EffectPresetLoader
 else:
-    import types, sys
+    import sys
+    import types
 
     convolver_stub = types.ModuleType("utilities.convolver")
 
@@ -349,12 +351,8 @@ def __getattr__(name: str) -> Any:  # pragma: no cover - thin wrapper
         module = importlib.import_module("utilities.groove_sampler_rnn")
         globals()[name] = module
         return module
-    raise AttributeError(name)
-    elif name == "groove_sampler_rnn":
-        module = importlib.import_module("utilities.groove_sampler_rnn")
-    elif name == "vocal_sync":
+    if name == "vocal_sync":
         module = importlib.import_module("utilities.vocal_sync")
-    else:
-        raise AttributeError(name)
-    globals()[name] = module
-    return module
+        globals()[name] = module
+        return module
+    raise AttributeError(name)

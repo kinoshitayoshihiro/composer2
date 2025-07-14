@@ -17,37 +17,18 @@ __all__ = [
     "extract_onsets",
     "extract_long_rests",
     "load_consonant_peaks",
+    "analyse_section",
     "quantize_times",
 ]
 
 
 def load_vocal_midi(path: str | Path) -> pretty_midi.PrettyMIDI:
-    """Load a vocal MIDI file.
-    """Load a MIDI file.
+    """Load a MIDI file containing the vocal line."""
 
-    Parameters
-    ----------
-    path : str or Path
-        Path to the MIDI file.
-
-    Returns
-    -------
-    pretty_midi.PrettyMIDI
-        Parsed MIDI object.
-        Loaded MIDI object.
-
-    Raises
-    ------
-    FileNotFoundError
-        When ``path`` does not exist.
-
-    Examples
-    --------
-    >>> pm = load_vocal_midi("v.mid")
-    >>> len(pm.instruments)
-    1
-        If ``path`` does not exist.
-    """
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(str(p))
+    return pretty_midi.PrettyMIDI(str(p))
 
     p = Path(path)
     if not p.exists():
@@ -164,22 +145,6 @@ def extract_long_rests(
         if maybe_beats:
             raise ValueError("ambiguous units")
 
-        ``(start_beat, duration)`` pairs.
-
-    Examples
-    --------
-    >>> extract_long_rests([0.0, 1.5, 3.5], min_rest=1.0)
-    [(1.5, 2.0)]
-    """
-
-    if tempo_map is not None:
-        beats = [
-            tempo_map.time_to_tick(t) / tempo_map.resolution
-            for t in onsets
-        ]
-        Pairs of ``(start_beat, duration)`` for each long rest.
-    """
-
     if tempo_map is not None:
         beats = [tempo_map.time_to_tick(t) / tempo_map.resolution for t in onsets]
     elif tempo is not None:
@@ -233,87 +198,36 @@ def load_consonant_peaks(
     peaks = [float(t) for t in data.get("peaks", [])]
     if tempo_map is not None:
         return sorted(tempo_map.time_to_tick(t) / tempo_map.resolution for t in peaks)
-
-        return sorted(
-            tempo_map.time_to_tick(t) / tempo_map.resolution for t in peaks
-        )
-
-      return sorted(tempo_map.time_to_tick(t) / tempo_map.resolution for t in peaks)
     sec_per_beat = 60.0 / float(tempo if tempo is not None else 120.0)
     return sorted(t / sec_per_beat for t in peaks)
 
 
+def analyse_section(section: dict[str, Any], *, tempo_bpm: float) -> dict[str, list]:
+    """Analyse a section and return vocal timing metrics."""
+
+    midi_path = section.get("vocal_midi_path")
+    pm = load_vocal_midi(midi_path) if midi_path else None
+    onsets = extract_onsets(pm, tempo=tempo_bpm) if pm else []
+    rests = extract_long_rests(onsets, min_rest=0.5)
+    peaks: list[float] = []
+    cjson = section.get("consonant_json")
+    if cjson:
+        peaks = load_consonant_peaks(cjson, tempo=tempo_bpm)
+    return {"onsets": onsets, "rests": rests, "consonant_peaks": peaks}
+
+
 def quantize_times(
-    times: Iterable[float],
-    grid: float = 0.25,
-    *,
-    dedup: bool = False,
+    times: Iterable[float], grid: float = 0.25, *, dedup: bool = False
 ) -> list[float]:
-    """Quantize ``times`` to the nearest ``grid``.
-    eps: float = 1e-6,
-    use_decimal: bool = False,
-) -> list[float]:
-    """Quantize times to ``grid`` size.
-
-    Parameters
-    ----------
-    times : Iterable[float]
-        Beat positions to quantize.
-    grid : float
-        Quantization step in beats.
-    dedup : bool, optional
-        Remove duplicates after quantization.
-    eps : float, optional
-        Tolerance when comparing values.
-    use_decimal : bool, optional
-        Use ``decimal.Decimal`` for rounding.
-        Input time values in beats.
-    grid : float
-        Quantization grid in beats.
-    dedup : bool, optional
-        If ``True``, remove duplicate quantized values.
-
-    Returns
-    -------
-    list[float]
-        Quantized beat times. Order is preserved unless ``dedup`` is ``True``.
-
-    Examples
-    --------
-    >>> quantize_times([0.1, 0.26], 0.25)
-    [0.0, 0.25]
-    """
-
-        Quantized beat times.
-
-    Examples
-    --------
-    >>> quantize_times([0.1, 0.26], 0.25, dedup=True)
-    [0.0, 0.25]
-    """
-
-    if use_decimal:
-        factor = Decimal(str(grid))
-        q = [
-            float(
-                (Decimal(str(t)) / factor).to_integral_value(ROUND_HALF_UP)
-                * factor
-            )
-            for t in times
-        ]
-    else:
-        q = [round(t / grid) * grid for t in times]
-    if dedup:
-        out: list[float] = []
-        for v in sorted(q):
-            if not out or abs(v - out[-1]) > eps:
-                out.append(v)
-        return out
-    """
+    """Quantize times to a grid in beats."""
 
     q = [round(t / grid) * grid for t in times]
     if dedup:
-        return sorted(set(q))
+        out: list[float] = []
+        for v in sorted(q):
+            if not out or abs(v - out[-1]) > 1e-6:
+                out.append(v)
+        return out
     return q
 
 

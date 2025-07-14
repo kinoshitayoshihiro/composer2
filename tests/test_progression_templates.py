@@ -1,3 +1,6 @@
+import pytest
+
+from utilities.progression_templates import get_progressions
 import importlib
 from pathlib import Path
 
@@ -11,8 +14,15 @@ from utilities.progression_templates import _load, get_progressions
     [
         ("soft_reflective", "major"),
         ("soft_reflective", "minor"),
+        ("_default", "major"),
+        ("_default", "minor"),
+        ("unknown", "minor"),
     ],
 )
+def test_progressions(bucket: str, mode: str) -> None:
+    progs = get_progressions(bucket, mode=mode)
+    assert isinstance(progs, list)
+    assert len(progs) >= 3
 def test_lookup(bucket: str, mode: str) -> None:
     lst = get_progressions(bucket, mode=mode)
     assert isinstance(lst, list) and lst

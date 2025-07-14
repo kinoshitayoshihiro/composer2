@@ -2,10 +2,22 @@ soft_reflective:
   major:
     - "vi IV I V"
     - "I V vi IV"
+    - "I V/vi vi IV"
+    - "I IV V IV"
   minor:
     - "i VI III VII"
+    - "i VII VI VII"
+    - "vi♭ VII III♭ II♭"
+    - "i iv v i"
 
 # default bucket for unknown emotions
 _default:
   major:
     - "I V vi IV"
+    - "IV V/vi vi V"
+    - "I IV I V"
+  minor:
+    - "i VI♭ III♭ VII♭"
+    - "i iv VII III"
+    - "i v VI VII"
+  

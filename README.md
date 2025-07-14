@@ -1,6 +1,7 @@
 # OtoKotoba Composer
-![CI](https://github.com/OpenAI/modular_composer/actions/workflows/ci.yml/badge.svg)
-![Nightly](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml/badge.svg)
+[![python-tests](https://github.com/OpenAI/modular_composer/actions/workflows/python-tests.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/python-tests.yml)
+[![Nightly](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml)
+[![Contributing](https://img.shields.io/badge/CONTRIBUTING-guide-blue.svg)](CONTRIBUTING.md)
 
 
 This project blends poetic Japanese narration with emotive musical arrangements.

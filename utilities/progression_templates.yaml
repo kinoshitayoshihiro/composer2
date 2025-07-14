@@ -1,0 +1,11 @@
+soft_reflective:
+  major:
+    - "vi IV I V"
+    - "I V vi IV"
+  minor:
+    - "i VI III VII"
+
+# default bucket for unknown emotions
+_default:
+  major:
+    - "I V vi IV"

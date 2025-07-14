@@ -31,13 +31,16 @@ if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from . import groove_sampler_ngram as groove_sampler_ngram
     from . import vocal_sync as vocal_sync
 from .accent_mapper import AccentMapper
+
 if _HAS_YAML:
     from .progression_templates import get_progressions
 else:  # pragma: no cover - optional dependency
+
     def get_progressions(*_args: Any, **_kwargs: Any) -> None:
         raise ModuleNotFoundError(
             "PyYAML is required. Please run 'pip install -r requirements.txt'."
         )
+
 
 try:
     from .consonant_extract import (
@@ -349,12 +352,8 @@ def __getattr__(name: str) -> Any:  # pragma: no cover - thin wrapper
         module = importlib.import_module("utilities.groove_sampler_rnn")
         globals()[name] = module
         return module
-    raise AttributeError(name)
-    elif name == "groove_sampler_rnn":
-        module = importlib.import_module("utilities.groove_sampler_rnn")
-    elif name == "vocal_sync":
+    if name == "vocal_sync":
         module = importlib.import_module("utilities.vocal_sync")
-    else:
-        raise AttributeError(name)
-    globals()[name] = module
-    return module
+        globals()[name] = module
+        return module
+    raise AttributeError(name)

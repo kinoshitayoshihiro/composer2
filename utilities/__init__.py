@@ -340,10 +340,11 @@ __all__ = [
 def __getattr__(name: str) -> Any:  # pragma: no cover - thin wrapper
     if name == "groove_sampler_ngram":
         module = importlib.import_module("utilities.groove_sampler_ngram")
-        globals()[name] = module
-        return module
-    if name == "groove_sampler_rnn":
+    elif name == "groove_sampler_rnn":
         module = importlib.import_module("utilities.groove_sampler_rnn")
-        globals()[name] = module
-        return module
-    raise AttributeError(name)
+    elif name == "vocal_sync":
+        module = importlib.import_module("utilities.vocal_sync")
+    else:
+        raise AttributeError(name)
+    globals()[name] = module
+    return module

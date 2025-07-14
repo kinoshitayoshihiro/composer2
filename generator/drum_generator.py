@@ -403,6 +403,7 @@ class DrumGenerator(BasePartGenerator):
         self.fade_beats_default = float(global_cfg.get("fill_fade_beats", 2.0))
         self.strict_drum_map = bool(self.global_settings.get("strict_drum_map", False))
 
+
         lut = None
         if fill_density_lut is not None:
             lut = {float(k): float(v) for k, v in fill_density_lut.items()}
@@ -416,6 +417,7 @@ class DrumGenerator(BasePartGenerator):
         self.strict_drum_map = bool(
             self.global_settings.get("strict_drum_map", False)
         )
+
 
         self.drum_map_name = self.global_settings.get("drum_map", "gm")
         self.drum_map = get_drum_map(self.drum_map_name)

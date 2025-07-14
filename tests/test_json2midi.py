@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pretty_midi
@@ -10,7 +11,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "json2midi.py"
 def run_cli(args):
     return subprocess.run(
         [
-            "python",
+            sys.executable,
             str(SCRIPT),
             *args,
         ],

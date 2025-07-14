@@ -49,6 +49,7 @@ from utilities.groove_sampler_ngram import Event as GrooveEvent
 from utilities.humanizer import apply_humanization_to_element
 from utilities.onset_heatmap import RESOLUTION, load_heatmap
 from utilities.safe_get import safe_get
+from utilities import vocal_sync
 from utilities.tempo_utils import TempoMap, load_tempo_map
 from utilities.timing_utils import _combine_timing, align_to_consonant
 from utilities.velocity_smoother import EMASmoother
@@ -153,8 +154,6 @@ def resolve_velocity_curve(curve_spec: Any) -> list[float]:
             return [1.0]
 
     return [1.0]
-
-
 
 
 class FillInserter:
@@ -402,6 +401,7 @@ class DrumGenerator(BasePartGenerator):
         self.fill_offsets: list[tuple[float, float]] = []
         global_cfg = self.main_cfg.get("global_settings", {}) if self.main_cfg else {}
         self.fade_beats_default = float(global_cfg.get("fill_fade_beats", 2.0))
+        self.strict_drum_map = bool(self.global_settings.get("strict_drum_map", False))
 
         lut = None
         if fill_density_lut is not None:
@@ -416,6 +416,7 @@ class DrumGenerator(BasePartGenerator):
         self.strict_drum_map = bool(
             self.global_settings.get("strict_drum_map", False)
         )
+
         self.drum_map_name = self.global_settings.get("drum_map", "gm")
         self.drum_map = get_drum_map(self.drum_map_name)
         # Simplified mapping to MIDI note numbers for internal use
@@ -456,9 +457,7 @@ class DrumGenerator(BasePartGenerator):
                             [
                                 {
                                     "beat": 0.0,
-                                    "bpm": self.global_settings.get(
-                                        "tempo_bpm", 120
-                                    ),
+                                    "bpm": self.global_settings.get("tempo_bpm", 120),
                                 }
                             ]
                         )
@@ -521,15 +520,13 @@ class DrumGenerator(BasePartGenerator):
         )
         radius = self.consonant_sync_cfg["note_radius_ms"]
         if not (1.0 <= radius <= 200.0):
-            raise ValueError(
-                "consonant_sync.note_radius_ms must be 1-200 ms"
-            )
+            raise ValueError("consonant_sync.note_radius_ms must be 1-200 ms")
         boost = self.consonant_sync_cfg["velocity_boost"]
         if not (0 <= boost <= 32):
-            raise ValueError(
-                "consonant_sync.velocity_boost must be 0-32"
-            )
-        self.use_consonant_sync = bool(self.global_settings.get("use_consonant_sync", False))
+            raise ValueError("consonant_sync.velocity_boost must be 0-32")
+        self.use_consonant_sync = bool(
+            self.global_settings.get("use_consonant_sync", False)
+        )
         self.consonant_sync_mode = str(
             self.global_settings.get("consonant_sync_mode", "bar")
         ).lower()
@@ -539,21 +536,29 @@ class DrumGenerator(BasePartGenerator):
                 " Expected 'bar' or 'note'."
             )
 
-        peak_json_path = (
-            self.main_cfg.get("paths", {}).get("vocal_peak_json_for_drums")
-            or self.main_cfg.get("vocal_peak_json_for_drums")
-        )
-        self.consonant_peaks: list[float] = self._load_consonant_peaks(peak_json_path)
+        peak_json_path = self.main_cfg.get("paths", {}).get(
+            "vocal_peak_json_for_drums"
+        ) or self.main_cfg.get("vocal_peak_json_for_drums")
+        self.consonant_peaks = vocal_sync.load_consonant_peaks(peak_json_path)
 
-        # Use path settings from main_cfg, preferring an explicit MIDI file path
         self.vocal_midi_path = (
             self.main_cfg.get("paths", {}).get("vocal_midi_path_for_drums")
             or self.main_cfg.get("vocal_midi_path_for_drums")
             or self.main_cfg.get("paths", {}).get("vocal_note_data_path")
         )
-        self.vocal_end_times: list[float] = self._load_vocal_end_times(
-            self.vocal_midi_path
-        )
+        self.rest_thresh = float(self.main_cfg.get("vocal_rest_threshold", 0.5))
+        self.vocal_rests: list[tuple[float, float]] = []
+        if self.vocal_midi_path:
+            try:
+                pm = vocal_sync.load_vocal_midi(self.vocal_midi_path)
+                onsets = vocal_sync.extract_onsets(pm)
+                self.vocal_rests = vocal_sync.extract_long_rests(
+                    onsets, min_rest=self.rest_thresh
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.warning(
+                    f"DrumGen: failed to analyse vocal MIDI {self.vocal_midi_path}: {exc}"
+                )
 
         heatmap_json_path = self.main_cfg.get("heatmap_json_path_for_drums")
         if not heatmap_json_path:
@@ -1148,7 +1153,9 @@ class DrumGenerator(BasePartGenerator):
             while remaining_ql_in_block > MIN_NOTE_DURATION_QL / 8.0:
                 bar_start_abs_offset = offset_in_score + current_pos_within_block
                 if not getattr(self, "_walk_advanced", False):
-                    intensity = drums_params.get("musical_intent", {}).get("intensity", "medium")
+                    intensity = drums_params.get("musical_intent", {}).get(
+                        "intensity", "medium"
+                    )
                     step_base = self.global_settings.get("random_walk_step", 8)
                     step_range = int(step_base * INTENSITY_FACTOR.get(intensity, 1.0))
                     self.accent_mapper.begin_bar(bar_start_abs_offset, step_range)
@@ -1273,7 +1280,9 @@ class DrumGenerator(BasePartGenerator):
                         self._groove_history,
                         model=self.groove_model,
                         cond=section_data.get("musical_intent", {}),
-                        temperature=float(self.global_settings.get("groove_temperature", 1.0)),
+                        temperature=float(
+                            self.global_settings.get("groove_temperature", 1.0)
+                        ),
                         top_k=tk_val,
                         humanize_vel=bool(self.global_settings.get("humanize_profile")),
                         humanize_micro=self.groove_strength > 0,
@@ -1376,7 +1385,6 @@ class DrumGenerator(BasePartGenerator):
                 f"invalid consonant_sync_mode '{self.consonant_sync_mode}'"
             )
 
-
         self.current_heat_bin = int(bar_start_abs_offset * RESOLUTION) % RESOLUTION
 
         if not events and self.groove_model:
@@ -1386,15 +1394,23 @@ class DrumGenerator(BasePartGenerator):
             else:
                 model_obj = self.groove_model
 
-            musical_intent = section_data.get("musical_intent", {}) if section_data else {}
+            musical_intent = (
+                section_data.get("musical_intent", {}) if section_data else {}
+            )
             cond = {
-                "section": section_data.get("section_name", "verse") if section_data else "verse",
+                "section": (
+                    section_data.get("section_name", "verse")
+                    if section_data
+                    else "verse"
+                ),
                 "heat_bin": self.current_heat_bin,
                 "intensity": musical_intent.get("intensity", "mid"),
             }
 
             tk = self.global_settings.get("groove_top_k")
-            tk_val = int(tk) if isinstance(tk, (int, str)) and str(tk).isdigit() else None
+            tk_val = (
+                int(tk) if isinstance(tk, (int, str)) and str(tk).isdigit() else None
+            )
 
             events = groove_sampler_ngram.generate_bar(
                 self._groove_history,
@@ -1469,13 +1485,16 @@ class DrumGenerator(BasePartGenerator):
                     logger.warning(f"Unknown drum instrument: '{inst_name}'")
                     self._warned_missing_drum_map.add(inst_name)
 
-            rel_offset_in_pattern = safe_get(
-                ev_def,
-                "offset",
-                default=0.0,
-                cast_to=float,
-                log_name=f"{log_event_prefix}.Offset",
-            ) % current_bar_actual_len_ql
+            rel_offset_in_pattern = (
+                safe_get(
+                    ev_def,
+                    "offset",
+                    default=0.0,
+                    cast_to=float,
+                    log_name=f"{log_event_prefix}.Offset",
+                )
+                % current_bar_actual_len_ql
+            )
             event_bpm = self._current_bpm(bar_start_abs_offset + rel_offset_in_pattern)
             self.current_bpm = event_bpm
             blend = _combine_timing(
@@ -1582,7 +1601,6 @@ class DrumGenerator(BasePartGenerator):
                         continue
                 if not self.accent_mapper.maybe_ghost_hat(bin_idx):
                     continue
-
 
             layer_idx = ev_def.get("velocity_layer")
             if velocity_curve and layer_idx is not None:
@@ -1774,9 +1792,7 @@ class DrumGenerator(BasePartGenerator):
         n_hist = int(self.groove_model.get("n", 3)) if self.groove_model else 0
         max_len = max(n_hist - 1, 0)
         if len(self._groove_history) > max_len:
-            self._groove_history = (
-                self._groove_history[-max_len:] if max_len else []
-            )
+            self._groove_history = self._groove_history[-max_len:] if max_len else []
 
         if self.export_random_walk_cc and self.accent_mapper.debug_rw_values:
             cc_events = getattr(part, "extra_cc", [])
@@ -1982,31 +1998,6 @@ class DrumGenerator(BasePartGenerator):
         main.offset = 0.0
         part.insert(offset, main)
 
-    def _load_vocal_end_times(self, midi_path: str) -> list[float]:
-        if not midi_path or not Path(midi_path).exists():
-            return []
-        try:
-            midi = converter.parse(midi_path)
-            return sorted(
-                float(n.offset + n.quarterLength)
-                for n in midi.flatten().notes
-                if isinstance(n, note.Note)
-            )
-        except Exception as exc:
-            logger.warning(f"DrumGen: failed to load vocal MIDI for hi-hat sync: {exc}")
-            return []
-
-    def _load_consonant_peaks(self, json_path: str | None) -> list[float]:
-        if not json_path or not Path(json_path).exists():
-            return []
-        try:
-            with open(json_path, encoding="utf-8") as fh:
-                data = json.load(fh)
-            return sorted(float(p) for p in data)
-        except Exception as exc:
-            logger.warning(f"DrumGen: failed to load consonant peaks: {exc}")
-            return []
-
     def _velocity_fade_into_fill(
         self, part: stream.Part, fill_offset: float, fade_beats: float = 2.0
     ) -> None:
@@ -2054,7 +2045,7 @@ class DrumGenerator(BasePartGenerator):
         return max(0.0, rel_offset + shift_ql)
 
     def _sync_hihat_with_vocals(self, part: stream.Part) -> None:
-        if not self.vocal_end_times:
+        if not self.vocal_rests:
             return
         chh = self.gm_pitch_map.get("chh")
         ohh = self.gm_pitch_map.get("ohh")
@@ -2063,16 +2054,16 @@ class DrumGenerator(BasePartGenerator):
         bar_len = self.global_ts.barDuration.quarterLength
         notes = sorted(part.recurse().notes, key=lambda n: n.offset)
         idx = 0
-        for end in self.vocal_end_times:
-            thr = (50.0 / 1000.0) * (self._current_bpm(end) / 60.0)
-            beat4 = round(end / bar_len) * bar_len
-            if abs(end - beat4) > thr:
+        for start, _dur in self.vocal_rests:
+            thr = (50.0 / 1000.0) * (self._current_bpm(start) / 60.0)
+            beat4 = round(start / bar_len) * bar_len
+            if abs(start - beat4) > thr:
                 continue
-            while idx < len(notes) and notes[idx].offset < end - 1e-6:
+            while idx < len(notes) and notes[idx].offset < start - 1e-6:
                 idx += 1
             while idx < len(notes):
                 n = notes[idx]
-                if n.offset >= end - 1e-6:
+                if n.offset >= start - 1e-6:
                     if int(n.pitch.midi) == chh:
                         n.pitch.midi = ohh
                         idx += 1
@@ -2243,8 +2234,7 @@ class DrumGenerator(BasePartGenerator):
         self.current_bpm = self._current_bpm(0.0)
         self.kick_offsets.clear()
         events = [
-            {"instrument": "kick", "offset": float(b)}
-            for b in range(int(length_beats))
+            {"instrument": "kick", "offset": float(b)} for b in range(int(length_beats))
         ]
         self._apply_pattern(
             part,

@@ -21,6 +21,8 @@ import importlib
 import importlib.util as importlib_util
 from typing import TYPE_CHECKING, Any
 
+from .progression_templates import get_progressions
+
 _HAS_MUSIC21 = importlib_util.find_spec("music21") is not None
 _HAS_YAML = importlib_util.find_spec("yaml") is not None
 
@@ -288,6 +290,7 @@ __all__ = [
     "EffectPresetLoader",
     "build_arrangement",
     "score_to_pretty_midi",
+    "get_progressions",
 ]
 
 

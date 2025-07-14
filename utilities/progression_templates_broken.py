@@ -14,12 +14,6 @@ DEFAULT_PATH = DEFAULT_YAML  # backward compatibility
 
 @lru_cache()
 def _load(path: str | Path = DEFAULT_YAML) -> dict[str, Any]:
-
-DEFAULT_PATH = Path(__file__).with_name("progression_templates.yaml")
-
-
-@lru_cache()
-def _load(path: str | Path = DEFAULT_PATH) -> dict[str, Any]:
     """Load and cache YAML progression templates.
 
     Parameters

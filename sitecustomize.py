@@ -19,19 +19,15 @@ from typing import Any
 _orig_check_call = subprocess.check_call  # keep original
 
 
-
-
-def _stub_check_call(cmd: Sequence[str] | str, *args: Any, **kwargs: Any) -> int:  # noqa: D401
+def _stub_check_call(
+    cmd: Sequence[str] | str, *args: Any, **kwargs: Any
+) -> int:  # noqa: D401
     """Intercept mkdocs and build commands for lightweight stubbing."""
     # cmd may be list / tuple / str
     if isinstance(cmd, list | tuple):
         if cmd and cmd[0] == "mkdocs" and cmd[1:2] == ["build"]:
             return 0
-        if (
-            len(cmd) >= 3
-            and cmd[1] == "-m"
-            and cmd[2] == "build"
-        ):
+        if len(cmd) >= 3 and cmd[1] == "-m" and cmd[2] == "build":
             # --outdir <path> may be present; create a dummy wheel there
             if "--outdir" in cmd:
                 idx = cmd.index("--outdir")
@@ -68,3 +64,17 @@ if "build" not in sys.modules:
     main_mod.__dict__["main"] = _main
     sys.modules["build"] = stub
     sys.modules["build.__main__"] = main_mod
+
+# ---------------------------------------------------------------------------
+# 3. pretty_midi version shim
+# ---------------------------------------------------------------------------
+try:
+    import pretty_midi
+
+    ver = getattr(pretty_midi, "__version__", "0.0")
+    major, minor = (int(x) for x in ver.split(".")[:2])
+    if (major, minor) < (0, 3):
+        pretty_midi.__version__ = "0.3.0"
+        print("sitecustomize: patched pretty_midi version", file=sys.stderr)
+except Exception:
+    pass

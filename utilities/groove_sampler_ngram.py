@@ -27,7 +27,7 @@ from typing_extensions import Required
 
 from utilities import cli_playback
 from utilities.loop_ingest import scan_loops
-from utilities.types import AuxTuple
+from utilities.custom_types import AuxTuple
 from utilities import phrase_filter
 
 from .drum_map_registry import GM_DRUM_MAP

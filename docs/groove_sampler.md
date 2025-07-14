@@ -71,3 +71,14 @@ deprecated `aux_dims` field and should be retrained.
 | `evaluate` | Calculate basic groove metrics | `--ref` |
 | `visualize` | Draw n-gram frequency heatmap | `--out` |
 | `hyperopt` | Optuna search over temperature | `--trials`, `--skip-if-no-optuna` |
+
+## Audio → MIDI Batch
+
+Convert drum loops into MIDI files using BasicPitch:
+
+```bash
+python -m utilities.audio_to_midi_batch loops/wav midi_out --jobs 4
+```
+
+The converter runs on CPU and works best with 44.1 kHz audio. Cache
+`~/.cache/basic_pitch` to speed up repeated runs.

@@ -10,6 +10,30 @@ from pathlib import Path
 try:
     import pretty_midi
 except ImportError as e:  # pragma: no cover
+    raise ImportError("pretty_midi is required") from e
+
+__all__ = [
+    "load_vocal_midi",
+    "extract_onsets",
+    "extract_long_rests",
+    "load_consonant_peaks",
+    "analyse_section",
+    "quantize_times",
+]
+
+
+def load_vocal_midi(path: str | Path) -> pretty_midi.PrettyMIDI:
+    """Load a MIDI file containing the vocal line."""
+
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(str(p))
+    return pretty_midi.PrettyMIDI(str(p))
+
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(str(p))
+    return pretty_midi.PrettyMIDI(str(p))
     pretty_midi = None
 
 
@@ -163,6 +187,23 @@ def load_consonant_peaks(
 
     peaks = data.get("peaks", [])
     if tempo_map is not None:
+<       return sorted(tempo_map.time_to_tick(t) / tempo_map.resolution for t in peaks)
+    sec_per_beat = 60.0 / float(tempo if tempo is not None else 120.0)
+    return sorted(t / sec_per_beat for t in peaks)
+
+
+def analyse_section(section: dict[str, Any], *, tempo_bpm: float) -> dict[str, list]:
+    """Analyse a section and return vocal timing metrics."""
+
+    midi_path = section.get("vocal_midi_path")
+    pm = load_vocal_midi(midi_path) if midi_path else None
+    onsets = extract_onsets(pm, tempo=tempo_bpm) if pm else []
+    rests = extract_long_rests(onsets, min_rest=0.5)
+    peaks: list[float] = []
+    cjson = section.get("consonant_json")
+    if cjson:
+        peaks = load_consonant_peaks(cjson, tempo=tempo_bpm)
+    return {"onsets": onsets, "rests": rests, "consonant_peaks": peaks}
         return [tempo_map.time_to_tick(t) / tempo_map.resolution for t in peaks]
     return [t * tempo / 60.0 for t in peaks]
 
@@ -189,12 +230,12 @@ def quantize_times(
         Tolerance when comparing values.
     use_decimal : bool, optional
         Use ``decimal.Decimal`` for rounding.
+def quantize_times(
+    times: Iterable[float], grid: float = 0.25, *, dedup: bool = False
+) -> list[float]:
+    """Quantize times to a grid in beats."""
 
-    Returns
-    -------
-    list[float]
-        Quantized beat times. Order is preserved unless ``dedup`` is ``True``.
-
+    q = [round(t / grid) * grid for t in times]
     Examples
     --------
     >>> quantize_times([0.1, 0.26], 0.25)
@@ -212,7 +253,7 @@ def quantize_times(
     if dedup:
         out: list[float] = []
         for v in sorted(q):
-            if not out or abs(v - out[-1]) > eps:
+            if not out or abs(v - out[-1]) > 1e-6:
                 out.append(v)
         return out
     return q

@@ -14,23 +14,27 @@ except AttributeError:  # pragma: no cover - fallback for Python < 3.11
         """Fallback definition for :class:`enum.StrEnum` for Python < 3.11."""
 
         pass
+
+
 import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
-import numpy as np
 
 import music21.articulations as articulations
 import music21.expressions as expressions
+import numpy as np
 
 if not hasattr(articulations, "Trill"):
+
     class Trill(articulations.Articulation):
         pass
 
     articulations.Trill = Trill
 
 if not hasattr(articulations, "Tremolo"):
+
     class Tremolo(articulations.Articulation):
         def __init__(self, marks: int = 3) -> None:
             super().__init__()
@@ -40,19 +44,9 @@ if not hasattr(articulations, "Tremolo"):
 from pathlib import Path
 
 import music21.spanner as m21spanner
-from music21 import (
-    chord,
-    harmony,
-    interval,
-    note,
-    pitch,
-    stream,
-    tie,
-    volume,
-)
-from music21 import (
-    instrument as m21instrument,
-)
+from music21 import chord, harmony
+from music21 import instrument as m21instrument
+from music21 import interval, note, pitch, stream, tie, volume
 
 from utilities.cc_map import cc_map, load_cc_map
 from utilities.cc_tools import finalize_cc_events, merge_cc_events
@@ -62,10 +56,7 @@ from utilities.core_music_utils import (
 )
 from utilities.effect_preset_loader import EffectPresetLoader
 from utilities.expression_map import load_expression_map, resolve_expression
-from utilities.harmonic_utils import (
-    apply_harmonic_notation,
-    apply_harmonic_to_pitch,
-)
+from utilities.harmonic_utils import apply_harmonic_notation, apply_harmonic_to_pitch
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 from utilities.velocity_utils import scale_velocity  # noqa: E402
 
@@ -178,7 +169,6 @@ class StringsGenerator(BasePartGenerator):
         ),
     ]
 
-
     def __init__(
         self,
         *,
@@ -228,9 +218,8 @@ class StringsGenerator(BasePartGenerator):
         from collections.abc import Sequence
 
         self.voice_allocation = voice_allocation or {}
-        if (
-            isinstance(default_velocity_curve, Sequence)
-            and not isinstance(default_velocity_curve, str)
+        if isinstance(default_velocity_curve, Sequence) and not isinstance(
+            default_velocity_curve, str
         ):
             self.default_velocity_curve = self._prepare_velocity_map(
                 default_velocity_curve
@@ -244,7 +233,9 @@ class StringsGenerator(BasePartGenerator):
         self.avoid_low_open_strings = bool(avoid_low_open_strings)
         self.timing_jitter_ms = float(timing_jitter_ms)
         self.timing_jitter_mode = str(timing_jitter_mode or "uniform").lower()
-        self.timing_jitter_scale_mode = str(timing_jitter_scale_mode or "absolute").lower()
+        self.timing_jitter_scale_mode = str(
+            timing_jitter_scale_mode or "absolute"
+        ).lower()
         self.balance_scale = float(balance_scale)
         if rng_seed is not None:
             try:
@@ -309,13 +300,19 @@ class StringsGenerator(BasePartGenerator):
     # Public API
     # ------------------------------------------------------------------
     def compose(
-        self, *, section_data: dict[str, Any], **kwargs: Any
+        self,
+        *,
+        section_data: dict[str, Any],
+        vocal_metrics: dict | None = None,
+        **kwargs: Any,
     ) -> dict[str, stream.Part]:
         q_len = float(section_data.get("q_length", self.bar_length))
         mapping = self._select_expression_map(section_data)
         prev_curve = self._apply_expression_map_pre(section_data, mapping)
         try:
-            result = super().compose(section_data=section_data, **kwargs)
+            result = super().compose(
+                section_data=section_data, vocal_metrics=vocal_metrics, **kwargs
+            )
         finally:
             if prev_curve is not None:
                 self.default_velocity_curve = prev_curve
@@ -335,7 +332,9 @@ class StringsGenerator(BasePartGenerator):
         dim_start = section_data.get("dim_start")
         dim_end = section_data.get("dim_end")
         if dim_start is not None and dim_end is not None:
-            self.crescendo(result, q_len, start_val=int(dim_start), end_val=int(dim_end))
+            self.crescendo(
+                result, q_len, start_val=int(dim_start), end_val=int(dim_end)
+            )
         elif section_data.get("crescendo", q_len >= self.bar_length):
             self.crescendo(result, q_len)
 
@@ -345,7 +344,12 @@ class StringsGenerator(BasePartGenerator):
             else section_data.get("style_params", {}).get("mute")
         )
         if mute_spec is not None:
-            val = 127 if str(mute_spec).lower() in {"true", "con sord.", "con sord", "con sordino"} else 0
+            val = (
+                127
+                if str(mute_spec).lower()
+                in {"true", "con sord.", "con sord", "con sordino"}
+                else 0
+            )
             factor = float(mapping.get("mute_velocity_factor", 0.85))
             if val == 127:
                 factor *= 1.0 + self.rng.uniform(-0.03, 0.03)
@@ -477,7 +481,9 @@ class StringsGenerator(BasePartGenerator):
 
         self.apply_dim(parts, length_beats, start_val=start_val, end_val=end_val)
 
-    def _insert_cc(self, part: stream.Part, time_ql: float, cc: int, value: int) -> None:
+    def _insert_cc(
+        self, part: stream.Part, time_ql: float, cc: int, value: int
+    ) -> None:
         """Insert or replace a CC event at ``time_ql``."""
 
         from utilities.cc_tools import merge_cc_events, to_sorted_dicts
@@ -514,14 +520,18 @@ class StringsGenerator(BasePartGenerator):
                 idx0 = int(round(pos))
                 idx1 = min(len(default_curve) - 1, idx0 + 1)
                 frac = pos - idx0
-                interpolated = default_curve[idx0] * (1 - frac) + default_curve[idx1] * frac
+                interpolated = (
+                    default_curve[idx0] * (1 - frac) + default_curve[idx1] * frac
+                )
                 rounded = round(interpolated)
                 clipped = min(default_curve[-1] - 1, rounded)
                 result.append(int(max(0, min(127, clipped))))
             curve = result
         return [max(0, min(127, int(v))) for v in curve]
 
-    def _select_velocity_curve(self, style: Sequence[int | float] | str | None) -> list[int]:
+    def _select_velocity_curve(
+        self, style: Sequence[int | float] | str | None
+    ) -> list[int]:
         """Return velocity curve list for *style* or fallback."""
         from collections.abc import Sequence as _Seq
 
@@ -563,8 +573,11 @@ class StringsGenerator(BasePartGenerator):
         import json
 
         import yaml
+
         result: dict[str, dict] = {}
-        default_path = Path(__file__).resolve().parents[1] / "data" / "expression_maps.yml"
+        default_path = (
+            Path(__file__).resolve().parents[1] / "data" / "expression_maps.yml"
+        )
         for p in [default_path, Path(path)] if path else [default_path]:
             try:
                 with open(p, encoding="utf-8") as fh:
@@ -588,8 +601,11 @@ class StringsGenerator(BasePartGenerator):
         import json
 
         import yaml
+
         result: dict[tuple[str, str], str] = {}
-        default_path = Path(__file__).resolve().parents[1] / "data" / "expression_maps.yml"
+        default_path = (
+            Path(__file__).resolve().parents[1] / "data" / "expression_maps.yml"
+        )
 
         def _parse(data: dict) -> None:
             emap = data.get("emotion_map")
@@ -673,8 +689,12 @@ class StringsGenerator(BasePartGenerator):
         if name and name in self.expression_maps:
             return self.expression_maps[name]
 
-        emotion = str(section.get("musical_intent", {}).get("emotion", "default")).lower()
-        intensity = str(section.get("musical_intent", {}).get("intensity", "default")).lower()
+        emotion = str(
+            section.get("musical_intent", {}).get("emotion", "default")
+        ).lower()
+        intensity = str(
+            section.get("musical_intent", {}).get("intensity", "default")
+        ).lower()
         key = (emotion, intensity)
         name = (
             self.emotion_map.get(key)
@@ -684,7 +704,9 @@ class StringsGenerator(BasePartGenerator):
         )
         return self.expression_maps.get(name, {})
 
-    def _apply_expression_map_pre(self, section: dict[str, Any], mapping: dict[str, Any]) -> list[int] | None:
+    def _apply_expression_map_pre(
+        self, section: dict[str, Any], mapping: dict[str, Any]
+    ) -> list[int] | None:
         arts = mapping.get("articulations") or []
         if arts:
             pmap = section.setdefault("part_params", {}).setdefault("strings", {})
@@ -700,7 +722,9 @@ class StringsGenerator(BasePartGenerator):
             return prev
         return None
 
-    def _apply_expression_map_post(self, parts: dict[str, stream.Part], mapping: dict[str, Any], length: float) -> None:
+    def _apply_expression_map_post(
+        self, parts: dict[str, stream.Part], mapping: dict[str, Any], length: float
+    ) -> None:
         cc_map = mapping.get("cc") or {}
         for k, val in cc_map.items():
             try:
@@ -763,7 +787,6 @@ class StringsGenerator(BasePartGenerator):
         for n in targets:
             n.pitch.microtone = pitch.Microtone(curve[0][1])
             n.editorial.vibrato_curve = curve
-
 
     def _apply_expression(self, part: stream.Part, mapping: dict[str, Any]) -> None:
         """Apply expression map to *part*."""
@@ -881,7 +904,11 @@ class StringsGenerator(BasePartGenerator):
                     p_base = base_pitch.pitches[0]
             else:
                 p_base = base_pitch
-            p_alt = p_base.transpose(interval_val) if pattern == EXEC_STYLE_TRILL else p_base
+            p_alt = (
+                p_base.transpose(interval_val)
+                if pattern == EXEC_STYLE_TRILL
+                else p_base
+            )
             t = 0.0
             toggle = False
             while t < duration_ql - 1e-6:
@@ -890,7 +917,9 @@ class StringsGenerator(BasePartGenerator):
                 n = note.Note(p_sel, quarterLength=dur)
                 n.offset = t
                 n.articulations.append(
-                    articulations.Trill() if pattern == EXEC_STYLE_TRILL else articulations.Tremolo(3)
+                    articulations.Trill()
+                    if pattern == EXEC_STYLE_TRILL
+                    else articulations.Tremolo(3)
                 )
                 result.append(n)
                 t += spacing
@@ -926,7 +955,9 @@ class StringsGenerator(BasePartGenerator):
         if self.enable_harmonics:
             for elem in result:
                 if isinstance(elem, chord.Chord):
-                    info = next((s for s in self._SECTIONS if s.name == part_name), None)
+                    info = next(
+                        (s for s in self._SECTIONS if s.name == part_name), None
+                    )
                     base_midis = info.open_string_midi if info else None
                     for idx, n_el in enumerate(elem.notes):
                         new_p, arts, factor, meta = apply_harmonic_to_pitch(
@@ -952,7 +983,9 @@ class StringsGenerator(BasePartGenerator):
                                 apply_harmonic_notation(n_el, meta)
                         n_el.pitch = new_p
                 else:
-                    info = next((s for s in self._SECTIONS if s.name == part_name), None)
+                    info = next(
+                        (s for s in self._SECTIONS if s.name == part_name), None
+                    )
                     base_midis = info.open_string_midi if info else None
                     new_p, arts, factor, meta = apply_harmonic_to_pitch(
                         elem.pitch,
@@ -1029,6 +1062,7 @@ class StringsGenerator(BasePartGenerator):
         self,
         section_data: dict[str, Any],
         next_section_data: dict[str, Any] | None = None,
+        vocal_metrics: dict | None = None,
     ) -> dict[str, stream.Part]:
         chord_label = (
             section_data.get("chord_symbol_for_voicing")
@@ -1060,13 +1094,13 @@ class StringsGenerator(BasePartGenerator):
                 parts[info.name] = part
             return parts
 
-# ── after: unified implementation ──
+        # ── after: unified implementation ──
         # 元の音高列を保持しておく
         if not base_pitches:
             raise ValueError("base_pitches must contain at least one pitch")
 
         original_len = len(base_pitches)
-        base_orig = list(base_pitches)          # 参照用コピー
+        base_orig = list(base_pitches)  # 参照用コピー
 
         # _SECTIONS の数に合わせて必要分を追加
         while len(base_pitches) < len(self._SECTIONS):
@@ -1080,9 +1114,12 @@ class StringsGenerator(BasePartGenerator):
 
         extras_map: dict[str, list[pitch.Pitch]] = {s.name: [] for s in self._SECTIONS}
         if not self.divisi and len(base_pitches) > len(self._SECTIONS):
-            extras = base_pitches[len(self._SECTIONS):]
-            target_sections = [s.name for s in self._SECTIONS
-                               if s.name in {"violin_i", "violin_ii", "viola"}]
+            extras = base_pitches[len(self._SECTIONS) :]
+            target_sections = [
+                s.name
+                for s in self._SECTIONS
+                if s.name in {"violin_i", "violin_ii", "viola"}
+            ]
             t_idx = 0
             for p_extra in extras:
                 for _ in range(len(target_sections)):
@@ -1270,7 +1307,8 @@ class StringsGenerator(BasePartGenerator):
                     m_cur = self._pitch_to_midi(n)
                     m_prev = self._pitch_to_midi(prev_note)
                     cond_int = (
-                        m_cur is not None and m_prev is not None
+                        m_cur is not None
+                        and m_prev is not None
                         and abs(m_cur - m_prev) <= 2
                     )
                     if (
@@ -1397,6 +1435,7 @@ class StringsGenerator(BasePartGenerator):
         else:
             to_iter = parts
         steps = max(2, int(math.ceil(length)))
+
         def _frac(x: float) -> float:
             if curve_type == "linear":
                 return x
@@ -1406,7 +1445,11 @@ class StringsGenerator(BasePartGenerator):
             return 3 * x * x - 2 * x * x * x
 
         events = [
-            (length * (i / steps), cc_num, int(round(start_val + (end_val - start_val) * _frac(i / steps))))
+            (
+                length * (i / steps),
+                cc_num,
+                int(round(start_val + (end_val - start_val) * _frac(i / steps))),
+            )
             for i in range(steps + 1)
         ]
         for p in to_iter.values():
@@ -1426,6 +1469,7 @@ class StringsGenerator(BasePartGenerator):
         """Render ``score`` to audio applying impulse responses."""
 
         import soundfile as sf
+
         from utilities import convolver as conv
 
         audio_mix: np.ndarray | None = None
@@ -1448,9 +1492,13 @@ class StringsGenerator(BasePartGenerator):
                 if sec_audio.ndim == 1:
                     sec_audio = sec_audio[:, None]
                 if audio_mix.shape[0] < max_len:
-                    audio_mix = np.pad(audio_mix, ((0, max_len - audio_mix.shape[0]), (0, 0)))
+                    audio_mix = np.pad(
+                        audio_mix, ((0, max_len - audio_mix.shape[0]), (0, 0))
+                    )
                 if sec_audio.shape[0] < max_len:
-                    sec_audio = np.pad(sec_audio, ((0, max_len - sec_audio.shape[0]), (0, 0)))
+                    sec_audio = np.pad(
+                        sec_audio, ((0, max_len - sec_audio.shape[0]), (0, 0))
+                    )
                 audio_mix += sec_audio
 
         if audio_mix is None:
@@ -1484,7 +1532,9 @@ class StringsGenerator(BasePartGenerator):
             raise ValueError("Unsupported string section")
         path = base / fname
         if not path.is_file():
-            fallback = Path(__file__).resolve().parents[1] / "irs" / "blackface-clean.wav"
+            fallback = (
+                Path(__file__).resolve().parents[1] / "irs" / "blackface-clean.wav"
+            )
             if fallback.is_file():
                 return fallback
             raise FileNotFoundError(str(path))
@@ -1508,6 +1558,7 @@ class StringsGenerator(BasePartGenerator):
         ir_data, ir_sr = conv.load_ir(str(ir_path))
         if ir_sr != sample_rate:
             from fractions import Fraction
+
             from scipy.signal import resample_poly
 
             frac = Fraction(sample_rate, ir_sr).limit_denominator(1000)
@@ -1547,7 +1598,11 @@ def generate_cc_automation(
         return x
 
     events = [
-        (length_ql * (i / steps), cc, int(round(start_val + (end_val - start_val) * _interp(i / steps))))
+        (
+            length_ql * (i / steps),
+            cc,
+            int(round(start_val + (end_val - start_val) * _interp(i / steps))),
+        )
         for i in range(steps + 1)
     ]
     base = getattr(part, "extra_cc", set())

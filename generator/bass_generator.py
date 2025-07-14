@@ -10,22 +10,9 @@ from typing import Any
 
 import music21
 import numpy as np
-from music21 import (
-    duration as m21duration,
-)
-from music21 import (
-    harmony,
-    interval,
-    key,
-    meter,
-    note,
-    pitch,
-    scale,
-    stream,
-)
-from music21 import (
-    volume as m21volume,
-)
+from music21 import duration as m21duration
+from music21 import harmony, interval, key, meter, note, pitch, scale, stream
+from music21 import volume as m21volume
 
 from utilities import MIN_NOTE_DURATION_QL, humanizer
 from utilities.bass_transformer import BassTransformer
@@ -33,12 +20,8 @@ from utilities.cc_tools import finalize_cc_events, merge_cc_events
 from utilities.tone_shaper import ToneShaper
 
 try:
-    from cyext import (
-        postprocess_kick_lock as cy_postprocess_kick_lock,
-    )
-    from cyext import (
-        velocity_random_walk as cy_velocity_random_walk,
-    )
+    from cyext import postprocess_kick_lock as cy_postprocess_kick_lock
+    from cyext import velocity_random_walk as cy_velocity_random_walk
 except Exception:  # pragma: no cover - optional
     cy_postprocess_kick_lock = None
     cy_velocity_random_walk = None
@@ -80,9 +63,9 @@ try:
         get_time_signature_object,
         sanitize_chord_label,
     )
-    from utilities.override_loader import (
+    from utilities.override_loader import (  # ★★★ PartOverrideModel -> PartOverride ★★★
         PartOverride,
-    )  # ★★★ PartOverrideModel -> PartOverride ★★★
+    )
     from utilities.scale_registry import ScaleRegistry
 except ImportError as e:
     print(f"BassGenerator: Warning - could not import some core utilities: {e}")
@@ -96,9 +79,7 @@ except ImportError as e:
 
     class ScaleRegistry:
         @staticmethod
-        def get(
-            tonic_str: str | None, mode_str: str | None
-        ) -> scale.ConcreteScale:
+        def get(tonic_str: str | None, mode_str: str | None) -> scale.ConcreteScale:
             return scale.MajorScale(tonic_str or "C")
 
     def get_approach_note(
@@ -186,6 +167,7 @@ def _apply_tone(part: stream.Part, intensity: str, preset: str | None = None) ->
         amp_name=chosen, intensity=intensity, as_dict=False
     )
     part.extra_cc = merge_cc_events(set(existing), set(new_events))
+
 
 DIRECTION_UP = 1
 DIRECTION_DOWN = -1
@@ -338,6 +320,7 @@ class BassGenerator(BasePartGenerator):
         next_section_data: dict[str, Any] | None = None,
         part_specific_humanize_params: dict[str, Any] | None = None,
         shared_tracks: dict[str, Any] | None = None,
+        vocal_metrics: dict | None = None,
     ) -> stream.Part:
         if shared_tracks and "kick_offsets" in shared_tracks:
             self.kick_offsets = list(shared_tracks["kick_offsets"])
@@ -345,9 +328,7 @@ class BassGenerator(BasePartGenerator):
             self.kick_offsets = []
 
         self.base_velocity = (
-            section_data.get("part_params", {})
-            .get("bass", {})
-            .get("velocity", 70)
+            section_data.get("part_params", {}).get("bass", {}).get("velocity", 70)
         )
 
         if self.mirror_melody and section_data.get("vocal_notes"):
@@ -377,6 +358,7 @@ class BassGenerator(BasePartGenerator):
             next_section_data=next_section_data,
             part_specific_humanize_params=part_specific_humanize_params,
             shared_tracks=shared_tracks,
+            vocal_metrics=vocal_metrics,
         )
 
         if self.overrides and self.overrides.velocity_shift_on_kick is not None:
@@ -392,14 +374,18 @@ class BassGenerator(BasePartGenerator):
             self._root_offsets = [float(n.offset) for n in part.flatten().notes]
             return part
 
-        intensity_label = section_data.get("musical_intent", {}).get("intensity", "medium")
+        intensity_label = section_data.get("musical_intent", {}).get(
+            "intensity", "medium"
+        )
 
         if isinstance(result, dict):
             shared_preset: str | None = None
             for p in result.values():
                 apply_shift(p)
                 if shared_preset is None:
-                    shared_preset = self._apply_tone(p, intensity_label, self.tone_preset)
+                    shared_preset = self._apply_tone(
+                        p, intensity_label, self.tone_preset
+                    )
                 else:
                     self._apply_tone(p, intensity_label, shared_preset)
                 finalize_cc_events(p)
@@ -480,6 +466,7 @@ class BassGenerator(BasePartGenerator):
                 midi += 12
             midi = max(self.bass_range_lo, min(self.bass_range_hi, midi))
             n.pitch.midi = midi
+
     def _apply_tone(
         self,
         part: stream.Part,
@@ -507,7 +494,9 @@ class BassGenerator(BasePartGenerator):
         if not notes:
             return preset or "clean"
 
-        avg_vel = statistics.mean(n.volume.velocity or self.base_velocity for n in notes)
+        avg_vel = statistics.mean(
+            n.volume.velocity or self.base_velocity for n in notes
+        )
 
         # ── ToneShaper でプリセット選択 ─────────────────────
         shaper = ToneShaper()
@@ -532,7 +521,9 @@ class BassGenerator(BasePartGenerator):
 
         return chosen
 
-    def _apply_kick_lock(self, part: stream.Part, kick_offsets_sec: list[float]) -> None:
+    def _apply_kick_lock(
+        self, part: stream.Part, kick_offsets_sec: list[float]
+    ) -> None:
         if not kick_offsets_sec:
             return
         cfg = self.kick_lock_cfg
@@ -1722,6 +1713,7 @@ class BassGenerator(BasePartGenerator):
         self,
         section_data: dict[str, Any],
         next_section_data: dict[str, Any] | None = None,
+        vocal_metrics: dict | None = None,
     ) -> stream.Part:
         bass_part = stream.Part(id=self.part_name)
         actual_instrument = copy.deepcopy(self.default_instrument)
@@ -1974,6 +1966,18 @@ class BassGenerator(BasePartGenerator):
                 self.logger.debug(
                     f"{log_blk_prefix}: Final note for {m21_cs_obj.figure} at {current_note_abs_offset_in_block:.2f} too short ({note_obj_to_add.duration.quarterLength:.3f}ql). Skipping."
                 )
+
+        if vocal_metrics:
+            root_pitch = m21_cs_obj.root() if m21_cs_obj else None
+            if root_pitch:
+                for start, dur in vocal_metrics.get("rests", []):
+                    if dur >= 0.5:
+                        off = start + dur * 0.75
+                        n = note.Note()
+                        n.pitch = root_pitch.transpose(-1)
+                        n.duration = m21duration.Duration(0.25)
+                        n.volume = m21volume.Volume(velocity=max(1, base_vel - 10))
+                        bass_part.insert(off, n)
         profile_name = (
             self.cfg.get("humanize_profile")
             or section_data.get("humanize_profile")
@@ -2112,7 +2116,11 @@ class BassGenerator(BasePartGenerator):
         riff = pat.get("riff", [1, 5, 1, 5])
         velocity_layer = pat.get("velocity", "mid") or "mid"
         swing_val = pat.get("swing", "off")
-        swing_flag = bool(swing_val) if isinstance(swing_val, bool) else str(swing_val).lower() == "on"
+        swing_flag = (
+            bool(swing_val)
+            if isinstance(swing_val, bool)
+            else str(swing_val).lower() == "on"
+        )
         base_velocity = AccentMapper.map_layer(velocity_layer, rng=self._rng)
 
         first_note = note.Note(root_pitch)
@@ -2120,7 +2128,6 @@ class BassGenerator(BasePartGenerator):
         first_note.volume = m21volume.Volume(velocity=base_velocity)
 
         notes_data: list[tuple[float, note.Note]] = [(first_offset, first_note)]
-
 
         for off, pitch_midi, dur in melody:
             if float(off) < 1.0:
@@ -2162,12 +2169,8 @@ class BassGenerator(BasePartGenerator):
         # --------------------------------------------------------------
         # ii-V build-up detection and generation (beats >= 3 only)
         # --------------------------------------------------------------
-        key_tonic = (
-            self.global_key_signature_tonic or self.global_key_tonic or "C"
-        )
-        key_mode = (
-            self.global_key_signature_mode or self.global_key_mode or "major"
-        )
+        key_tonic = self.global_key_signature_tonic or self.global_key_tonic or "C"
+        key_mode = self.global_key_signature_mode or self.global_key_mode or "major"
         try:
             key_obj = key.Key(key_tonic, key_mode)
         except Exception:
@@ -2209,7 +2212,9 @@ class BassGenerator(BasePartGenerator):
                 while midi_val > self.bass_range_hi:
                     midi_val -= 12
                 p_obj.midi = midi_val
-                notes_data = [d for d in notes_data if not (b_off <= d[0] < b_off + 1.0)]
+                notes_data = [
+                    d for d in notes_data if not (b_off <= d[0] < b_off + 1.0)
+                ]
                 n_bu = note.Note(p_obj)
                 n_bu.duration = m21duration.Duration(1.0)
                 n_bu.volume = m21volume.Volume(
@@ -2234,14 +2239,18 @@ class BassGenerator(BasePartGenerator):
                 last_off, last_n = clamped[-1]
                 last_n.duration.quarterLength = max(
                     MIN_NOTE_DURATION_QL,
-                    min(last_n.duration.quarterLength, self.measure_duration - last_off),
+                    min(
+                        last_n.duration.quarterLength, self.measure_duration - last_off
+                    ),
                 )
             return clamped
 
         merged = _clamp_note_durations(notes_data)
 
         humanize_opts = {
-            opt.strip() for opt in str(section_data.get("humanize", "")).split(",") if opt
+            opt.strip()
+            for opt in str(section_data.get("humanize", "")).split(",")
+            if opt
         }
         swung: list[tuple[float, note.Note]] = []
         for idx, (off, n) in enumerate(merged):

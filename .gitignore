@@ -28,3 +28,8 @@ data/irs/*.wav
 *.pkl
 model/
 models/
+
+# Virtual environments
+.venv/
+venv/
+env/

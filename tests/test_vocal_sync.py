@@ -63,6 +63,13 @@ def test_quantize_times_dedup():
     assert q == [0.0, 0.25]
 
 
+def test_extract_long_rests_strict():
+    tempo_map = pretty_midi.PrettyMIDI(initial_tempo=120)
+    onsets = [0.0, 1.0]
+    with pytest.raises(ValueError, match="ambiguous units"):
+        vocal_sync.extract_long_rests(onsets, tempo_map=tempo_map, strict=True)
+
+
 def test_drumgen_integration(monkeypatch, tmp_path: Path, rhythm_library):
     midi_path = tmp_path / "v.mid"
     _make_pm().write(str(midi_path))

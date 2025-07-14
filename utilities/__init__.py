@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 __all__: list[str] = []
 
+from .progression_templates import get_progressions
+
 _HAS_MUSIC21 = importlib_util.find_spec("music21") is not None
 _HAS_YAML = importlib_util.find_spec("yaml") is not None
 
@@ -348,9 +350,13 @@ __all__ += [
 def __getattr__(name: str) -> Any:  # pragma: no cover - thin wrapper
     if name == "groove_sampler_ngram":
         module = importlib.import_module("utilities.groove_sampler_ngram")
-    elif name == "groove_sampler_rnn":
+        globals()[name] = module
+        return module
+    if name == "groove_sampler_rnn":
         module = importlib.import_module("utilities.groove_sampler_rnn")
-    elif name == "vocal_sync":
+        globals()[name] = module
+        return module
+    if name == "vocal_sync":
         module = importlib.import_module("utilities.vocal_sync")
     else:
         raise AttributeError(name)

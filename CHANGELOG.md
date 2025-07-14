@@ -1,5 +1,6 @@
 <a name="unreleased"></a>
 ## [Unreleased]
+- progression_templates helper
 
 - 2025-07-14: enhance `vocal_sync` with tempo map support and quantization deduplication
 

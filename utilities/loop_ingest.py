@@ -295,6 +295,11 @@ def scan(
                     suf = "mid"
                 if suf in extset:
                     file_list.append(p)
+    if not HAVE_LIBROSA and any(f.suffix.lower() == ".wav" for f in file_list):
+        click.echo(
+            'WAV files detected but skipped due to missing dependency "librosa". '
+            'Install it with pip install librosa.'
+        )
     iterator = file_list
     bar = None
     if progress:

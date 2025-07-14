@@ -24,6 +24,7 @@ docs/examples/loops/*.mid
 docs/assets/*.mp4
 data/irs/*.wav
 
+
 # Large model files (>100MB)
 *.pkl
 model/
@@ -33,3 +34,4 @@ models/
 .venv/
 venv/
 env/
+

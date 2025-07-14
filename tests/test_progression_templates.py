@@ -1,3 +1,6 @@
+import pytest
+
+from utilities.progression_templates import get_progressions
 import importlib
 from pathlib import Path
 
@@ -11,6 +14,25 @@ from utilities.progression_templates import _load, get_progressions
     [
         ("soft_reflective", "major"),
         ("soft_reflective", "minor"),
+        ("_default", "major"),
+        ("_default", "minor"),
+        ("unknown", "minor"),
+    ],
+)
+def test_progressions(bucket: str, mode: str) -> None:
+    progs = get_progressions(bucket, mode=mode)
+    assert isinstance(progs, list)
+    assert len(progs) >= 3
+
+
+@pytest.mark.parametrize(
+    "bucket,mode",
+    [
+        ("soft_reflective", "major"),
+        ("soft_reflective", "minor"),
+        ("_default", "major"),
+        ("_default", "minor"),
+        ("unknown", "minor"),
     ],
 )
 def test_lookup(bucket: str, mode: str) -> None:
@@ -37,7 +59,6 @@ def test_keyerror(bucket: str, mode: str) -> None:
 
 
 def test_basic_lookup(tmp_path: Path) -> None:
-    """YAMLからemotion+modeでProgressionが取得できる"""
     yaml_file = tmp_path / "progs.yaml"
     yaml_file.write_text(
         "soft_reflective:\n"

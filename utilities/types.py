@@ -1,4 +1,6 @@
 """Common type aliases used across utilities."""
+
+from typing import Literal
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:  # pragma: no cover - optional imports for typing
@@ -11,4 +13,3 @@ Intensity = Literal["low", "mid", "high"]
 AuxTuple = tuple[str, str, str]
 
 __all__ = ["Intensity", "AuxTuple"]
-

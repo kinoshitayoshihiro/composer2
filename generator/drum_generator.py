@@ -665,7 +665,7 @@ class DrumGenerator(BasePartGenerator):
         logger.info(
             f"DrumGen __init__: Initialized with {len(self.raw_pattern_lib)} raw drum patterns."
         )
-        self.fill_inserter = FillInserter(self.raw_pattern_lib)
+        self.fill_inserter: FillInserter = FillInserter(self.raw_pattern_lib)
         self.fill_inserter.drum_map = self.drum_map
         core_defaults = {
             "default_drum_pattern": {

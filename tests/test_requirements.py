@@ -1,6 +1,16 @@
 import importlib
 from pathlib import Path
 
+# Ensure any version shims from sitecustomize are applied before
+# importing optional dependencies.  This is necessary when running the
+# tests with a plain `pytest` invocation where the repository root is
+# not automatically on ``PYTHONPATH`` and therefore ``sitecustomize``
+# would not be imported implicitly.
+try:  # pragma: no cover - if sitecustomize is missing this is a no-op
+    import sitecustomize  # type: ignore
+except Exception:  # pragma: no cover - ignore any import issues
+    pass
+
 import pretty_midi
 
 

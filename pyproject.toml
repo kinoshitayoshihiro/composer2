@@ -12,21 +12,22 @@ authors = [
 ]
 keywords = ["music", "midi", "generation", "plugin"]
 requires-python = ">=3.9"
+version = "1.0.1"
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
 ]
-dynamic = ["version"]
 dependencies = [
-  "music21>=9.0",
+  "music21>=9.1",
   "PyYAML>=6.0",
   "pydantic>=2.7",
   "pydub>=0.25",
   "mido>=1.3.0",
   "tomli>=2.0",
   "audioread>=2.1.9",
-  "pretty_midi>=0.2",
+  "pretty_midi>=0.2.10",
+  "basic_pitch>=0.3",
 ]
 
 [project.optional-dependencies]
@@ -50,9 +51,6 @@ audio = [
 velocity = [
   "numpy>=1.24",
   "scipy>=1.10",
-]
-essentia = [
-  "essentia>=2.1",
 ]
 groove = [
   "pretty_midi>=0.2.10",
@@ -92,7 +90,6 @@ all = [
   "tqdm",
   "numpy>=1.24",
   "scipy>=1.10",
-  "essentia>=2.1",
   "pretty_midi>=0.2.10",
   "music21>=9.1",
   "mido",

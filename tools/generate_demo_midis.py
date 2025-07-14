@@ -1,4 +1,6 @@
 import argparse
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +20,11 @@ def load_cfg(path: str) -> dict:
 
 
 def main(cfg_path: str, sections: list[str] | None = None) -> None:
+    model_path = Path("models/groove_ngram.pkl")
+    if not model_path.exists():
+        print("\u26a0 Model not found; skipping demo generation", file=sys.stderr)
+        return
+
     cfg = load_cfg(cfg_path)
     available = {normalize_section(s): s for s in cfg.get("sections_to_generate", [])}
 
@@ -55,5 +62,13 @@ if __name__ == "__main__":
     parser.add_argument("-m", "--main-cfg", required=True)
     parser.add_argument("--sections", nargs="*", help="Override sections to generate")
     args = parser.parse_args()
+    if not os.environ.get("DISPLAY"):
+        print("\u26a0 No display backend; skipping demo generation", file=sys.stderr)
+        sys.exit(0)
+    sf2 = os.getenv("MC_SF2")
+    if not sf2 and not Path("assets/default.sf2").exists():
+        print("\u26a0 No SoundFont found; skipping audio render", file=sys.stderr)
+        sys.exit(0)
+
     Path("demos").mkdir(exist_ok=True)
     main(args.main_cfg, args.sections)

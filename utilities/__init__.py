@@ -23,8 +23,6 @@ from typing import TYPE_CHECKING, Any
 
 __all__: list[str] = []
 
-from .progression_templates import get_progressions
-
 _HAS_MUSIC21 = importlib_util.find_spec("music21") is not None
 _HAS_YAML = importlib_util.find_spec("yaml") is not None
 

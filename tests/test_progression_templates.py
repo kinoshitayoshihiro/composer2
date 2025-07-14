@@ -23,6 +23,18 @@ def test_progressions(bucket: str, mode: str) -> None:
     progs = get_progressions(bucket, mode=mode)
     assert isinstance(progs, list)
     assert len(progs) >= 3
+
+
+@pytest.mark.parametrize(
+    "bucket,mode",
+    [
+        ("soft_reflective", "major"),
+        ("soft_reflective", "minor"),
+        ("_default", "major"),
+        ("_default", "minor"),
+        ("unknown", "minor"),
+    ],
+)
 def test_lookup(bucket: str, mode: str) -> None:
     lst = get_progressions(bucket, mode=mode)
     assert isinstance(lst, list) and lst

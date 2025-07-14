@@ -572,6 +572,13 @@ class DrumGenerator(BasePartGenerator):
                 self.vocal_rests = vocal_sync.extract_long_rests(
                     onsets, min_rest=self.rest_thresh
                 )
+                if onsets:
+                    last_end = max(n.end for inst in pm.instruments for n in inst.notes)
+                    last_start = onsets[-1]
+                    end_beat = pm.time_to_tick(last_end) / pm.resolution
+                    rest_dur = end_beat - last_start
+                    if rest_dur >= self.rest_thresh:
+                        self.vocal_rests.append((end_beat, rest_dur))
             except Exception as exc:  # pragma: no cover - best effort
                 logger.warning(
                     f"DrumGen: failed to analyse vocal MIDI {self.vocal_midi_path}: {exc}"

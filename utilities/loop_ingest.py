@@ -121,7 +121,21 @@ def _quantize(
     return step, micro
 
 
-def _scan_midi(path: Path, resolution: int, ppq: int) -> LoopEntry | None:
+_PERC_PITCH_TO_LABEL = {
+    39: "conga_cl",
+    40: "conga_op",
+    70: "shaker",
+    71: "shaker",
+    72: "tamb",
+    73: "tamb",
+    74: "clap",
+    75: "clap",
+    76: "cowbell",
+    77: "cowbell",
+}
+
+
+def _scan_midi(path: Path, resolution: int, ppq: int, *, part: str = "drums") -> LoopEntry | None:
     pm = _load_pretty_midi(path)
     if pm is None:
         return None
@@ -136,7 +150,12 @@ def _scan_midi(path: Path, resolution: int, ppq: int) -> LoopEntry | None:
         for note in inst.notes:
             beat = note.start / sec_per_beat
             step, micro = _quantize(beat, bar_beats, resolution, ppq)
-            label = _PITCH_TO_LABEL.get(note.pitch, str(note.pitch))
+            if part == "perc":
+                label = _PERC_PITCH_TO_LABEL.get(note.pitch)
+                if not label:
+                    continue
+            else:
+                label = _PITCH_TO_LABEL.get(note.pitch, str(note.pitch))
             tokens.append((step, label, note.velocity, micro))
     return {
         "file": path.name,
@@ -146,7 +165,7 @@ def _scan_midi(path: Path, resolution: int, ppq: int) -> LoopEntry | None:
     }
 
 
-def _scan_wav(path: Path, resolution: int, ppq: int) -> LoopEntry:
+def _scan_wav(path: Path, resolution: int, ppq: int, *, part: str = "drums") -> LoopEntry:
     import soundfile as sf
     import numpy as np
 
@@ -168,10 +187,28 @@ def _scan_wav(path: Path, resolution: int, ppq: int) -> LoopEntry:
             last_onset = i
 
     tokens: list[Token] = []
-    for s in onset_samples:
+    for idx, s in enumerate(onset_samples):
+        end = onset_samples[idx + 1] if idx + 1 < len(onset_samples) else len(y)
+        seg = y[s:end]
         beat = (s / sr) / sec_per_beat
         step, micro = _quantize(beat, bar_beats, resolution, ppq)
-        tokens.append((step, "perc", 100, micro))
+        label = "perc"
+        if part == "perc":
+            import numpy as np
+
+            fft = np.abs(np.fft.rfft(seg))
+            freqs = np.fft.rfftfreq(len(seg), 1 / sr)
+            f = freqs[np.argmax(fft)] if fft.size else 0.0
+            dur_ms = len(seg) / sr * 1000
+            if f < 120:
+                label = "conga_cl"
+            elif f < 300:
+                label = "conga_op"
+            elif f > 3000 and dur_ms < 120:
+                label = "shaker"
+            else:
+                label = "perc_other"
+        tokens.append((step, label, 100, micro))
 
     return {
         "file": path.name,
@@ -181,14 +218,14 @@ def _scan_wav(path: Path, resolution: int, ppq: int) -> LoopEntry:
     }
 
 
-def _scan_file(path: Path, resolution: int, ppq: int) -> LoopEntry | None:
+def _scan_file(path: Path, resolution: int, ppq: int, *, part: str = "drums") -> LoopEntry | None:
     suf = path.suffix.lower()
     entry: LoopEntry | None = None
     if suf in {".mid", ".midi"}:
-        entry = _scan_midi(path, resolution, ppq)
+        entry = _scan_midi(path, resolution, ppq, part=part)
     elif suf == ".wav":
         try:
-            entry = _scan_wav(path, resolution, ppq)
+            entry = _scan_wav(path, resolution, ppq, part=part)
         except RuntimeError:
             return None
     if entry is not None:
@@ -205,6 +242,8 @@ def scan_loops(
     resolution: int = 16,
     ppq: int = 480,
     progress: bool = False,
+    *,
+    part: str = "drums",
 ) -> list[LoopEntry]:
     """Return token sequences for all loops in ``loop_dir``.
 
@@ -242,7 +281,7 @@ def scan_loops(
             suf = "mid"
         if suf not in extset:
             continue
-        entry = _scan_file(path, resolution, ppq)
+        entry = _scan_file(path, resolution, ppq, part=part)
         if entry:
             data.append(entry)
     if bar is not None:
@@ -289,6 +328,7 @@ def cli() -> None:
 @click.option("--ppq", default=480, type=int)
 @click.option("--progress/--no-progress", default=True)
 @click.option("--auto-aux/--no-auto-aux", default=False, help="Infer aux metadata")
+@click.option("--part", type=str, default="drums", help="drums or perc")
 def scan(
     paths: tuple[str, ...],
     ext: str,
@@ -297,6 +337,7 @@ def scan(
     ppq: int,
     progress: bool,
     auto_aux: bool,
+    part: str,
 ) -> None:
     """Scan loops and save a token cache.
 
@@ -347,7 +388,7 @@ def scan(
     skipped = 0
     warned_librosa = False
     for f in iterator:
-        entry = _scan_file(f, resolution, ppq)
+        entry = _scan_file(f, resolution, ppq, part=part)
         if entry:
             if auto_aux:
                 entry.setdefault("section", f.parent.name or "unknown")

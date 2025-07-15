@@ -7,7 +7,7 @@ from pathlib import Path
 from omegaconf import DictConfig
 
 parser = argparse.ArgumentParser(add_help=False)
-parser.add_argument("--epochs", type=int)
+parser.add_argument("--max-epochs", type=int)
 parser.add_argument("--out", type=str)
 parser.add_argument("--run-dir", type=str)
 
@@ -18,10 +18,10 @@ if "-h" in sys.argv or "--help" in sys.argv:
 parsed_args, remaining_argv = parser.parse_known_args()
 sys.argv = sys.argv[:1] + remaining_argv
 extra_overrides: list[str] = []
-if parsed_args.epochs is not None:
-    extra_overrides.append(f"training.epochs={parsed_args.epochs}")
+if parsed_args.max_epochs is not None:
+    extra_overrides.append(f"trainer.max_epochs={parsed_args.max_epochs}")
 if parsed_args.out is not None:
-    extra_overrides.append(f"+out={parsed_args.out}")
+    extra_overrides.append(f"trainer.checkpoint_path={parsed_args.out}")
 if parsed_args.run_dir is not None:
     extra_overrides.append(f"hydra.run.dir={parsed_args.run_dir}")
 if extra_overrides:
@@ -95,27 +95,51 @@ class LightningModule(pl.LightningModule if pl is not None else object):
 
 
 @hydra.main(config_path="../configs", config_name="velocity_model.yaml")
-def main(cfg: DictConfig) -> None:
+def main(cfg: DictConfig) -> int:
     if pl is None or torch is None:
-        raise RuntimeError("PyTorch Lightning required")
+        print("PyTorch Lightning required", file=sys.stderr)
+        return 1
     train_ds = CsvDataset(cfg.data.train, cfg.input_dim)
     val_ds = CsvDataset(cfg.data.val, cfg.input_dim)
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers)
-    val_loader = DataLoader(val_ds, batch_size=cfg.batch_size, num_workers=cfg.num_workers)
-    callbacks = [
-        pl.callbacks.EarlyStopping(monitor="val_MSE", mode="min", patience=cfg.patience, stopping_threshold=0.015)
-    ]
+    train_loader = DataLoader(
+        train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=cfg.batch_size, num_workers=cfg.num_workers
+    )
+    callbacks = []
+    if "callbacks" in cfg.trainer and "early_stopping" in cfg.trainer.callbacks:
+        es_cfg = cfg.trainer.callbacks.early_stopping
+        callbacks.append(
+            pl.callbacks.EarlyStopping(
+                monitor=es_cfg.monitor,
+                mode=es_cfg.mode,
+                patience=es_cfg.patience,
+                stopping_threshold=es_cfg.stopping_threshold,
+            )
+        )
     logger = False
-    if cfg.wandb:
+    if "logger" in cfg.trainer and cfg.trainer.logger.use_wandb:
         from pytorch_lightning.loggers import WandbLogger
 
         logger = WandbLogger(project="velocity")
-    trainer = pl.Trainer(max_epochs=cfg.epochs, callbacks=callbacks, logger=logger)
+
+    trainer_kwargs = {
+        k: v
+        for k, v in cfg.trainer.items()
+        if k not in {"logger", "callbacks", "checkpoint_path"}
+    }
+    trainer = pl.Trainer(**trainer_kwargs, callbacks=callbacks, logger=logger)
     module = LightningModule(cfg)
     trainer.fit(module, train_loader, val_loader)
     Path("checkpoints").mkdir(exist_ok=True)
     trainer.save_checkpoint("checkpoints/last.ckpt")
+    return 0
+    checkpoint_path = cfg.trainer.get("checkpoint_path", getattr(cfg, "out", None))
+    if checkpoint_path:
+        Path(checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
+        trainer.save_checkpoint(checkpoint_path)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

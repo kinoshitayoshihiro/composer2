@@ -23,7 +23,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
-      - name: Install system libs
+      - name: Install system libs for soundfile
         run: sudo apt-get update && sudo apt-get install -y libsndfile1
 
       - name: Install Poetry
@@ -49,6 +49,10 @@ jobs:
         run: |
           poetry install --no-root
           poetry run pip install .[test]
+          poetry run pip install pytest-cov pretty_midi soundfile
+
+      - name: Verify train-velocity CLI
+        run: poetry run train-velocity --help
 
       - name: Run tests
         run: poetry run pytest --cov=. -q

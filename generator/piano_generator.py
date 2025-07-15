@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import logging
-from utilities.rest_utils import get_rest_windows
 import random
 from typing import Any
 
@@ -101,7 +100,12 @@ BUCKET_TO_PATTERN_PIANO = {
 
 class PianoGenerator(BasePartGenerator):
     def __init__(
-        self, *args, main_cfg=None, ml_velocity_model_path: str | None = None, **kwargs
+        self,
+        *args,
+        main_cfg=None,
+        ml_velocity_model_path: str | None = None,
+        velocity_model=None,
+        **kwargs,
     ):
         self.main_cfg = main_cfg
         self.part_parameters = kwargs.get("part_parameters", {})
@@ -111,7 +115,13 @@ class PianoGenerator(BasePartGenerator):
         cfg_piano = (main_cfg or {}).get("piano", {})
         self.anticipatory_chord = bool(cfg_piano.get("anticipatory_chord", False))
         self.measure_duration = ts_obj.barDuration.quarterLength if ts_obj else 4.0
-        super().__init__(*args, ml_velocity_model_path=ml_velocity_model_path, **kwargs)
+        self.velocity_model = velocity_model
+        super().__init__(
+            *args,
+            ml_velocity_model_path=ml_velocity_model_path,
+            velocity_model=velocity_model,
+            **kwargs,
+        )
         self.cfg: dict = kwargs.copy()
         self._prev_voicings = {"RH": None, "LH": None}
         self._prev_last_pitch = {"RH": None, "LH": None}

@@ -6,8 +6,16 @@ build-backend = "poetry.core.masonry.api"
 name = "modular-composer"
 version = "3.0.0"
 description = "OtoKotoba Modular Composer"
-authors = ["Harusan <haru@example.com>"]
-
+authors = [{ name = "Harusan", email = "haru@example.com" }]
+readme = "README.md"
+license = { file = "LICENSE" }
+keywords = ["music", "midi", "generation", "plugin"]
+requires-python = ">=3.10,<4.0"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
@@ -24,26 +32,59 @@ PyYAML = ">=6.0"
 soundfile = ">=0.12"
 tomli = ">=2.0"
 setuptools = "*"
+websockets = ">=12.0"
 
 [tool.poetry.extras]
 test = [
-    "pytest",
-    "pytest-cov",
-    "mypy",
-    "ruff",
-    "music21",
-    "scikit-learn",
-    "librosa",
-    "soundfile",
-    "scipy",
-    "pretty_midi",
-    "mido",
-    "python-rtmidi",
-    "hdbscan",
-    "PyYAML",
+  "pytest",
+  "pytest-cov",
+  "mypy",
+  "ruff",
+  "music21>=9.1",
+  "scikit-learn>=1.3.0",
+  "librosa>=0.10",
+  "soundfile>=0.12",
+  "scipy>=1.10",
+  "pretty_midi>=0.2.10",
+  "mido>=1.2.10,<1.3",
+  "python-rtmidi",
+  "hdbscan>=0.8",
+  "PyYAML>=6.0",
+  "websockets>=12.0",
 ]
-gui = ["streamlit"]
-
+audio = [
+  "soundfile>=0.12",
+  "scipy>=1.10",
+]
+velocity = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+]
+groove = [
+  "pretty_midi>=0.2.10",
+  "librosa>=0.10",
+]
+gui = ["streamlit", "plotly"]
+rnn = ["torch==2.3.0", "pytorch_lightning==2.2.4", "optuna==3.6.1"]
+live = ["mido>=1.2.10,<1.3", "python-rtmidi>=1.5"]
+ml = ["scikit-learn>=1.3.0"]
+ai = [
+  "transformers>=4.43",
+  "accelerate",
+  "sentencepiece",
+  "music21>=9.1",
+  "pretty_midi>=0.2.10",
+  "mido>=1.2.10,<1.3",
+  "python-rtmidi",
+  "hdbscan>=0.8",
+]
+piano_ml = ["transformers>=4.43", "torch>=2.2"]
+data_ops = ["hmmlearn>=0.3"]
+plugin = [
+  "pybind11>=2.10",
+  "cmake",
+  "ninja",
+]
 
 [tool.hatch.version]
 path = "modular_composer/__init__.py"
@@ -51,36 +92,35 @@ path = "modular_composer/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["modular_composer", "utilities"]
 
-
 [tool.poetry.scripts]
 modcompose = "modular_composer.cli:main"
+train-velocity = "scripts.train_velocity:main"
 
 [tool.ruff]
 target-version = "py310"
-
 select = ["E", "F", "I", "UP"]
 fix = true
 line-length = 100
 extend-exclude = [
-    "generator/*",
-    "utilities/*",
-    "tests/*",
-    "data/*",
-    "Backup/*",
-    "docs/*",
-    "config/*",
-    "midi_output/*",
-    "scripts/*",
-    "tools/*",
-    "wheelhouse/*",
-    "modular_composer.py",
-    "emotion_humanizer.py",
-    "groove_profile.py",
-    "build_all_json.py",
-    "run_generate_demo.sh",
-    "setup.sh",
-    "setup_project.sh",
-    "streamlit_app/*",
+  "generator/*",
+  "utilities/*",
+  "tests/*",
+  "data/*",
+  "Backup/*",
+  "docs/*",
+  "config/*",
+  "midi_output/*",
+  "scripts/*",
+  "tools/*",
+  "wheelhouse/*",
+  "modular_composer.py",
+  "emotion_humanizer.py",
+  "groove_profile.py",
+  "build_all_json.py",
+  "run_generate_demo.sh",
+  "setup.sh",
+  "setup_project.sh",
+  "streamlit_app/*",
 ]
 
 [tool.ruff.lint]
@@ -101,11 +141,10 @@ ignore_missing_imports = true
 module = ["plotly.*", "streamlit.*", "sounddevice.*"]
 ignore_missing_imports = true
 
-
 [tool.pytest.ini_options]
 markers = [
-    "ci_perf: performance gate",
-    "stretch: stretch smoke tests",
-    "packaging: packaging checks",
-    "docs: documentation build",
+  "ci_perf: performance gate",
+  "stretch: stretch smoke tests",
+  "packaging: packaging checks",
+  "docs: documentation build",
 ]

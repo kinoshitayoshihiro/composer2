@@ -519,6 +519,17 @@ Inspect a saved model with:
 ```bash
 modcompose groove info model.pkl --json --stats
 ```
+
+### Style/Aux Tagging
+
+Version 2 extends auxiliary metadata with style and feel tags stored in
+``.meta.yaml`` files next to each loop. Train with ``--aux-key style`` and
+sample with ``--cond-style`` or ``--cond-feel``:
+
+```bash
+python -m utilities.groove_sampler_v2 train data/loops/drums -o model.pkl --aux-key style
+python -m utilities.groove_sampler_v2 sample model.pkl --cond-style lofi -l 4
+```
 For a quick textual overview you can also run:
 ```bash
 modcompose groove info model.pkl --stats

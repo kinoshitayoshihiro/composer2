@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from utilities.rest_utils import get_rest_windows
 import random
 from typing import Any
 
@@ -592,6 +593,10 @@ class PianoGenerator(BasePartGenerator):
         duration_ql = section_data.get("q_length", 4.0)
         musical_intent = section_data.get("musical_intent", {})
         piano_params = section_data.get("part_params", {}).get("piano", {})
+        global_ant = False
+        if self.main_cfg:
+            global_ant = self.main_cfg.get("piano", {}).get("anticipatory_chord", False)
+        anticipatory = piano_params.get("anticipatory_chord", global_ant)
 
         rh_key = None
         lh_key = None
@@ -657,6 +662,36 @@ class PianoGenerator(BasePartGenerator):
             mode=mode,
             velocity_shift=ov.get("velocity_shift_lh"),
         )
+
+        rest_windows = get_rest_windows(vocal_metrics)
+
+        if rest_windows:
+            for part in (rh_part, lh_part):
+                for n in list(part.recurse().notes):
+                    if any(s <= n.offset < e for s, e in rest_windows):
+                        part.remove(n)
+            if anticipatory:
+                v = [n.volume.velocity or 64 for n in rh_part.recurse().notes]
+                base_vel_rh = int(sum(v) / len(v)) if v else 64
+                v = [n.volume.velocity or 64 for n in lh_part.recurse().notes]
+                base_vel_lh = int(sum(v) / len(v)) if v else 64
+                for start, end in rest_windows:
+                    off = max(start, end - 0.125)
+                    if cs.pitches:
+                        chord_rh = m21chord.Chord(
+                            [p.transpose(0) for p in cs.pitches], quarterLength=0.25
+                        )
+                        chord_rh.volume = m21volume.Volume(
+                            velocity=max(1, int(base_vel_rh * 0.85))
+                        )
+                        rh_part.insert(off, chord_rh)
+                    root = cs.root()
+                    if root:
+                        n_lh = note.Note(root.transpose(-12), quarterLength=0.25)
+                        n_lh.volume = m21volume.Volume(
+                            velocity=max(1, int(base_vel_lh * 0.85))
+                        )
+                        lh_part.insert(off, n_lh)
 
         rh_part = self._apply_weak_beat(rh_part, ov.get("weak_beat_style_rh", "none"))
         lh_part = self._apply_weak_beat(lh_part, ov.get("weak_beat_style_lh", "none"))

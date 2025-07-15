@@ -1,14 +1,44 @@
+import time
+import numpy as np
 import pytest
 
+# 依存ライブラリがない場合はスキップ
+pytest.importorskip("pretty_midi")
 pytest.importorskip("soundfile")
+
+from utilities.kde_velocity import KDEVelocityModel
 from utilities.velocity_model import pretty_midi
 
-pytestmark = pytest.mark.skipif(pretty_midi is None, reason="pretty_midi not installed")
+# pretty_midi がロードできないとき、Bass/Piano テストはスキップ
+pytestmark = pytest.mark.skipif(
+    pretty_midi is None,
+    reason="pretty_midi not installed for bass/piano tests"
+)
 
 from music21 import instrument
-
 from generator.bass_generator import BassGenerator
 from generator.piano_generator import PianoGenerator
+
+
+@pytest.fixture()
+def velocity_model() -> KDEVelocityModel:
+    return KDEVelocityModel(np.array([64.0], dtype=np.float32))
+
+
+def test_kde_velocity_accuracy(velocity_model: KDEVelocityModel) -> None:
+    ctx = np.random.rand(32, 1).astype(np.float32)
+    preds = velocity_model.predict(ctx)
+    mse = np.mean((preds - 64) ** 2)
+    assert mse < 0.02
+
+
+def test_kde_velocity_speed(velocity_model: KDEVelocityModel) -> None:
+    ctx = np.random.rand(32, 1).astype(np.float32)
+    start = time.time()
+    for _ in range(100):
+        velocity_model.predict(ctx)
+    avg_ms = (time.time() - start) / 100 * 1000
+    assert avg_ms < 50
 
 
 class DummyVelocity:

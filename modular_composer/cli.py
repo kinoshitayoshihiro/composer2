@@ -382,6 +382,19 @@ def hyperopt_cmd(model: Path, trials: int, skip_if_no_optuna: bool) -> None:
     click.echo(json.dumps(study.best_params))
 
 
+@cli.command("dump-tree", help="Write a Markdown tree of ROOT")
+@click.argument("root", type=Path)
+@click.option("--version", type=int, default=3, show_default=True)
+def dump_tree_cmd(root: Path, version: int) -> None:
+    """Dump directory tree as ``tree.md`` under ROOT."""
+    if version != 3:
+        raise click.BadParameter("unsupported version")
+    from scripts.dump_tree_v3 import main as dump_main  # noqa: E402
+
+    out = dump_main(root)
+    click.echo(str(out))
+
+
 
 @cli.group()
 def fx() -> None:
@@ -1248,17 +1261,6 @@ def _cmd_augment(args: list[str]) -> None:
     print(f"wrote {ns.out}")
 
 
-def _cmd_dump_tree(args: list[str]) -> None:
-    ap = argparse.ArgumentParser(prog="modcompose dump-tree")
-    ap.add_argument("root", type=Path)
-    ap.add_argument("--version", type=int, default=3)
-    ns = ap.parse_args(args)
-    if ns.version != 3:
-        raise SystemExit("unsupported version")
-    from scripts.dump_tree_v3 import main as dump_main
-
-    out = dump_main(ns.root)
-    print(out)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1293,8 +1295,6 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_tag(argv[1:])
     elif cmd == "augment":
         _cmd_augment(argv[1:])
-    elif cmd == "dump-tree":
-        _cmd_dump_tree(argv[1:])
     else:
         cli.main(args=argv, standalone_mode=False)
 

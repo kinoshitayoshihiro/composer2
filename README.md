@@ -242,6 +242,9 @@ Call `reload_lut()` on an existing `DrumGenerator` to apply edits without restar
 | Slide timing | `slide_in_offset`, `slide_out_offset` | Fractional offsets (0.0–1.0) describing portamento start and end |
 | Fret bend | `bend_amount`, `bend_release_offset` | Bend depth in semitones and release position before note end |
 | Fingering controls | `position_lock`, `preferred_position`, `open_string_bonus`, `string_shift_weight`, `fret_shift_weight`, `strict_string_order` | Defaults: `False`, `0`, `-1`, `2`, `1`, `False` |
+| Percussion n-gram | `parts.percussion.model_path` | Path to n‑gram model for auxiliary percussion |
+
+Percussion hits that land on the same tick as a kick or snare are delayed by one tick when merged.
 
 ## Velocity presets by tuning
 
@@ -1014,7 +1017,7 @@ The JSON output now includes ``hand`` and ``pedal`` fields.
 
 Adjust density with ``--intensity``.
 
-Set ``piano.anticipatory_chord`` to ``true`` in your ``main_cfg`` to insert a gentle chord an eighth-note before each vocal re‑entry.
+``piano.anticipatory_chord`` in ``main_cfg.yml`` enables a short chord hit right before each vocal rest ends.
 
 ## PianoGenerator ML
 

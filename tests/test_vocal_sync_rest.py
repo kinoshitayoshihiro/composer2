@@ -1,7 +1,11 @@
+import random
 from music21 import instrument
 
-from generator.bass_generator import BassGenerator
 from generator.piano_generator import PianoGenerator
+from generator.bass_generator import BassGenerator
+from utilities.rest_utils import get_rest_windows
+
+import pytest
 
 
 def _make_bass_gen():
@@ -27,11 +31,40 @@ def _make_bass_gen():
 
 
 class SimplePiano(PianoGenerator):
+    def __init__(self, pattern_keys, *args, **kwargs):
+        self._pattern_keys = pattern_keys
+        super().__init__(*args, **kwargs)
+
     def _get_pattern_keys(self, musical_intent, overrides):
-        return "rh_test", "lh_test"
+        return self._pattern_keys
 
 
-def _make_piano_gen(main_cfg=None):
+def make_gen(anticipatory: bool = False) -> SimplePiano:
+    patterns = {
+        "rh": {
+            "pattern": [{"offset": 0.0, "duration": 1.0, "type": "chord"}],
+            "length_beats": 1.0,
+        },
+        "lh": {
+            "pattern": [{"offset": 0.0, "duration": 1.0, "type": "root"}],
+            "length_beats": 1.0,
+        },
+    }
+    return SimplePiano(
+        ("rh", "lh"),
+        part_name="piano",
+        part_parameters=patterns,
+        default_instrument=instrument.Piano(),
+        global_tempo=120,
+        global_time_signature="4/4",
+        global_key_signature_tonic="C",
+        global_key_signature_mode="major",
+        main_cfg={"piano": {"anticipatory_chord": anticipatory}},
+        rng=random.Random(0),
+    )
+
+
+def _make_piano_gen(main_cfg: dict | None = None) -> SimplePiano:
     patterns = {
         "rh_test": {
             "pattern": [{"offset": 0, "duration": 1.0, "type": "chord"}],
@@ -43,6 +76,7 @@ def _make_piano_gen(main_cfg=None):
         },
     }
     return SimplePiano(
+        ("rh_test", "lh_test"),
         part_name="piano",
         part_parameters=patterns,
         default_instrument=instrument.Piano(),
@@ -51,10 +85,36 @@ def _make_piano_gen(main_cfg=None):
         global_key_signature_tonic="C",
         global_key_signature_mode="major",
         main_cfg=main_cfg or {},
+        rng=random.Random(0),
     )
 
 
-import pytest
+def test_anticipatory_chord_notes():
+    gen = make_gen(anticipatory=True)
+    section = {
+        "chord_symbol_for_voicing": "C",
+        "q_length": 4.0,
+        "part_params": {"piano": {}},
+    }
+    vm = {"rests": [(0.0, 1.0), (2.0, 1.0)], "onsets": []}
+    parts = gen.compose(section_data=section, vocal_metrics=vm)
+    rh = parts["piano_rh"].flatten().notes
+    for start, end in get_rest_windows(vm):
+        within = [n for n in rh if end - 0.125 <= n.offset < end]
+        assert within
+
+
+def test_no_anticipatory_chord():
+    gen = make_gen(anticipatory=False)
+    section = {
+        "chord_symbol_for_voicing": "C",
+        "q_length": 4.0,
+        "part_params": {"piano": {}},
+    }
+    vm = {"rests": [(0.0, 1.0)], "onsets": []}
+    parts = gen.compose(section_data=section, vocal_metrics=vm)
+    rh = parts["piano_rh"].flatten().notes
+    assert not [n for n in rh if 0.875 <= n.offset < 1.0]
 
 
 @pytest.fixture
@@ -114,3 +174,4 @@ def test_vocal_rest_anticipation(vocal_metrics):
         for part in (rh, lh):
             anticip = [n for n in part.notes if end - 0.15 <= n.offset < end]
             assert anticip
+

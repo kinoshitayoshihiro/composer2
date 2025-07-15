@@ -68,6 +68,7 @@ part_defaults:
     humanize_profile: ""
     dynamics_profile: ""
     articulation: "sustain"
+    anticipatory_chord: false
 
   guitar:
     rhythm_key: "guitar_ballad_arpeggio"
@@ -103,6 +104,10 @@ part_defaults:
     instrument_name: "Orchestral Strings" # ← 追加
     rhythm_key: "strings_melody_basic"
     humanize_profile: "gentle_push"
+
+  percussion:
+    backend: perc_ngram
+    model_path: models/perc_ngram.pkl
 
 
 # ---------- 4. Section Overrides (拍子/テンポ/HZ) ----------

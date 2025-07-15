@@ -15,6 +15,7 @@ class PercGenerator:
         self.cond: Dict[str, str] = cond or {}
 
     def sample(self, bars: int = 4, **kwargs: Any) -> list[dict[str, float | str]]:
+        """Generate percussion events for the given number of bars."""
         return groove_sampler_v2.generate_events(
             self.model,
             bars=bars,

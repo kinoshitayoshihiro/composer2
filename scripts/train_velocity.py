@@ -21,7 +21,7 @@ extra_overrides: list[str] = []
 if parsed_args.max_epochs is not None:
     extra_overrides.append(f"trainer.max_epochs={parsed_args.max_epochs}")
 if parsed_args.out is not None:
-    extra_overrides.append(f"+out={parsed_args.out}")
+    extra_overrides.append(f"trainer.checkpoint_path={parsed_args.out}")
 if parsed_args.run_dir is not None:
     extra_overrides.append(f"hydra.run.dir={parsed_args.run_dir}")
 if extra_overrides:
@@ -100,11 +100,15 @@ def main(cfg: DictConfig) -> None:
         raise RuntimeError("PyTorch Lightning required")
     train_ds = CsvDataset(cfg.data.train, cfg.input_dim)
     val_ds = CsvDataset(cfg.data.val, cfg.input_dim)
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers)
-    val_loader = DataLoader(val_ds, batch_size=cfg.batch_size, num_workers=cfg.num_workers)
+    train_loader = DataLoader(
+        train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=cfg.batch_size, num_workers=cfg.num_workers
+    )
     callbacks = []
-    if "callbacks" in cfg and "early_stopping" in cfg.callbacks:
-        es_cfg = cfg.callbacks.early_stopping
+    if "callbacks" in cfg.trainer and "early_stopping" in cfg.trainer.callbacks:
+        es_cfg = cfg.trainer.callbacks.early_stopping
         callbacks.append(
             pl.callbacks.EarlyStopping(
                 monitor=es_cfg.monitor,
@@ -114,21 +118,23 @@ def main(cfg: DictConfig) -> None:
             )
         )
     logger = False
-    if (
-        "trainer" in cfg
-        and "logger" in cfg.trainer
-        and cfg.trainer.logger.use_wandb
-    ):
+    if "logger" in cfg.trainer and cfg.trainer.logger.use_wandb:
         from pytorch_lightning.loggers import WandbLogger
 
         logger = WandbLogger(project="velocity")
 
-    trainer_kwargs = {k: v for k, v in cfg.trainer.items() if k != "logger"}
+    trainer_kwargs = {
+        k: v
+        for k, v in cfg.trainer.items()
+        if k not in {"logger", "callbacks", "checkpoint_path"}
+    }
     trainer = pl.Trainer(**trainer_kwargs, callbacks=callbacks, logger=logger)
     module = LightningModule(cfg)
     trainer.fit(module, train_loader, val_loader)
-    Path("checkpoints").mkdir(exist_ok=True)
-    trainer.save_checkpoint("checkpoints/last.ckpt")
+    checkpoint_path = cfg.trainer.get("checkpoint_path", getattr(cfg, "out", None))
+    if checkpoint_path:
+        Path(checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
+        trainer.save_checkpoint(checkpoint_path)
 
 
 if __name__ == "__main__":

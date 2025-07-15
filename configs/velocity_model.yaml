@@ -10,14 +10,16 @@ data:
 
 trainer:
   max_epochs: 2
+  accelerator: cpu
   gpus: null
   devices: null
+  default_root_dir: ${hydra.run.dir}
   logger:
     use_wandb: false
-
-callbacks:
-  early_stopping:
-    patience: 10
-    monitor: val_MSE
-    mode: min
-    stopping_threshold: 0.015
+  callbacks:
+    early_stopping:
+      patience: 10
+      monitor: val_MSE
+      mode: min
+      stopping_threshold: 0.015
+  checkpoint_path: checkpoints/last.ckpt

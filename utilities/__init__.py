@@ -31,10 +31,10 @@ if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from . import vocal_sync as vocal_sync
 
 from .accent_mapper import AccentMapper
+from .kde_velocity import KDEVelocityModel
+from .loader import load_chordmap  # noqa: E402
 from .progression_templates import get_progressions
 from .rest_utils import get_rest_windows
-from .progression_templates import get_progressions
-from .kde_velocity import KDEVelocityModel
 from .velocity_model import KDEVelocityModel
 
 __all__.append("get_progressions")
@@ -42,6 +42,7 @@ __all__.append("get_progressions")
 from .tempo_utils import beat_to_seconds
 
 __all__.append("beat_to_seconds")
+__all__.append("load_chordmap")
 
 
 try:
@@ -176,15 +177,12 @@ else:
 from .tempo_utils import (
     TempoMap,
     TempoVelocitySmoother,
-    beat_to_seconds,
     get_bpm_at,
     get_tempo_at_beat,
     interpolate_bpm,
-)
-from .tempo_utils import load_tempo_curve as load_tempo_curve_simple
-from .tempo_utils import (
     load_tempo_map,
 )
+from .tempo_utils import load_tempo_curve as load_tempo_curve_simple
 from .velocity_curve import PREDEFINED_CURVES, resolve_velocity_curve
 from .velocity_smoother import EMASmoother, VelocitySmoother
 
@@ -344,7 +342,7 @@ __all__ += [
     "score_to_pretty_midi",
     "get_rest_windows",
     "get_progressions",
-    "KDEVelocityModel",
+    "load_chordmap",
     "vocal_sync",
 ]
 

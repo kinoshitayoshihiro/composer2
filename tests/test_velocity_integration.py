@@ -13,7 +13,6 @@ from utilities.velocity_utils import scale_velocity
 
 # 依存ライブラリがない場合はスキップ
 pytest.importorskip("pretty_midi")
-pytest.importorskip("soundfile")
 
 # pretty_midi がロードできないとき、Bass/Piano テストはスキップ
 pytestmark = pytest.mark.skipif(

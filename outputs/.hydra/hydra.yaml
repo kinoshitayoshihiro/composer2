@@ -113,15 +113,15 @@ hydra:
     - hydra.run.dir=./outputs
     - hydra.mode=RUN
     task:
-    - +training.epochs=30
-    - +out.ckpt=ckpt_vscode.pt
     - +device=mps
     - data.train=/Users/kinoshitayoshihiro/music21/composer2-3/data/velocity.csv
     - data.val=/Users/kinoshitayoshihiro/music21/composer2-3/data/velocity.csv
+    - trainer.max_epochs=30
+    - trainer.default_root_dir=./outputs
   job:
     name: train_velocity
     chdir: null
-    override_dirname: +device=mps,+out.ckpt=ckpt_vscode.pt,+training.epochs=30,data.train=/Users/kinoshitayoshihiro/music21/composer2-3/data/velocity.csv,data.val=/Users/kinoshitayoshihiro/music21/composer2-3/data/velocity.csv
+    override_dirname: +device=mps,data.train=/Users/kinoshitayoshihiro/music21/composer2-3/data/velocity.csv,data.val=/Users/kinoshitayoshihiro/music21/composer2-3/data/velocity.csv,trainer.default_root_dir=./outputs,trainer.max_epochs=30
     id: ???
     num: ???
     config_name: velocity_model.yaml

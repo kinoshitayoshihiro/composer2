@@ -72,6 +72,7 @@
     │   ├── arrangement_overrides.json
     │   ├── cc_map.yml
     │   ├── chordmap.json
+    │   ├── chordmap.yaml
     │   ├── drum_patterns.yml
     │   ├── emotion_profile.yaml
     │   ├── export_pretty.py
@@ -96,6 +97,8 @@
     │   ├── api
     │   ├── examples
     │   ├── img
+    │   ├── ARCH.md
+    │   ├── ROADMAP_canvas.md
     │   ├── ai.md
     │   ├── ai_generator.md
     │   ├── amp_guide.md
@@ -134,6 +137,7 @@
     │   ├── strings_generator.md
     │   ├── tone.md
     │   ├── tone_shaper.md
+    │   ├── v3_upgrade.md
     │   └── vocal_generator.md
     ├── eval
     │   ├── __pycache__
@@ -143,8 +147,10 @@
     │   ├── latency.py
     │   └── metrics.py
     ├── examples
+    │   ├── README.md
     │   ├── drumgen_tempo_curve.ipynb
     │   ├── groove_sampler.ipynb
+    │   ├── lofi_ws_client.py
     │   └── tempo_curve.json
     ├── generator
     │   ├── __pycache__
@@ -201,6 +207,7 @@
     │   └── quick_start.ipynb
     ├── outputs
     │   ├── checkpoints
+    │   ├── outputs
     │   └── train_velocity.log
     ├── plugins
     │   ├── __pycache__
@@ -228,6 +235,7 @@
     │   ├── ci_groove_rnn.sh
     │   ├── clean_wheels.py
     │   ├── dump_rhythm_library_map.py
+    │   ├── dump_tree_v3.py
     │   ├── evaluate_piano_model.py
     │   ├── extract_piano_voicings.py
     │   ├── modcompose_batch_render.py
@@ -342,6 +350,7 @@
     │   ├── test_drum_pattern_resolve.py
     │   ├── test_drum_techniques.py
     │   ├── test_drum_velocity_curve.py
+    │   ├── test_dump_tree_v3.py
     │   ├── test_effect_cc.py
     │   ├── test_effect_preset_loader.py
     │   ├── test_element_insertion.py
@@ -416,11 +425,13 @@
     │   ├── test_live_buffer_integration.py
     │   ├── test_live_cli.py
     │   ├── test_live_stub.py
+    │   ├── test_loader.py
     │   ├── test_loop_ingest.py
     │   ├── test_loudness_meter.py
     │   ├── test_loudness_norm.py
     │   ├── test_loudness_normalizer.py
     │   ├── test_measure_duration.py
+    │   ├── test_melody_echo.py
     │   ├── test_melody_write_dirs.py
     │   ├── test_metrics.py
     │   ├── test_midi_capture.py
@@ -542,12 +553,14 @@
     │   ├── test_tone_shaper_integration.py
     │   ├── test_tone_shaper_reload.py
     │   ├── test_torch_download_retry.py
+    │   ├── test_transformer_integration.py
     │   ├── test_transformer_sample.py
     │   ├── test_user_history.py
     │   ├── test_velocity_curve.py
     │   ├── test_velocity_envelope.py
     │   ├── test_velocity_fade.py
     │   ├── test_velocity_histogram.py
+    │   ├── test_velocity_integration.py
     │   ├── test_velocity_random_walk.py
     │   ├── test_velocity_smoother.py
     │   ├── test_velocity_utils.py
@@ -574,7 +587,8 @@
     │   ├── midi_feature_extractor.py
     │   ├── peak_synchroniser.py
     │   ├── streamlit_gui.py
-    │   └── test_timesig.py
+    │   ├── test_timesig.py
+    │   └── train_transformer.py
     ├── transformer
     │   ├── __pycache__
     │   ├── __init__.py
@@ -620,13 +634,16 @@
     │   ├── groove_sampler_ngram.py
     │   ├── groove_sampler_rnn.py
     │   ├── groove_sampler_v2.py
+    │   ├── groove_transformer.py
     │   ├── harmonic_utils.py
     │   ├── humanizer.py
     │   ├── install_utils.py
     │   ├── interactive_engine.py
     │   ├── ir_renderer.py
+    │   ├── kde_velocity.py
     │   ├── live_buffer.py
     │   ├── live_player.py
+    │   ├── loader.py
     │   ├── loop_ingest.py
     │   ├── loop_scanner.py
     │   ├── loudness_meter.py
@@ -668,9 +685,11 @@
     │   ├── timing_corrector.py
     │   ├── timing_utils.py
     │   ├── tone_shaper.py
+    │   ├── transformer_sampler.py
     │   ├── types.py
     │   ├── user_history.py
     │   ├── velocity_curve.py
+    │   ├── velocity_model.py
     │   ├── velocity_smoother.py
     │   ├── velocity_utils.py
     │   ├── vibrato_engine.py
@@ -794,4 +813,5 @@
     ├── streamlit_app_v2.py
     ├── train_piano_lora.py
     ├── train_sax_lora.py
+    ├── train_velocity.py
     └── tree.txt

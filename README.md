@@ -1,6 +1,7 @@
 # OtoKotoba Composer
 [![python-tests](https://github.com/OpenAI/modular_composer/actions/workflows/python-tests.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/python-tests.yml)
 [![Nightly](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml)
+[![PyPI](https://img.shields.io/pypi/v/modular-composer.svg)](https://pypi.org/project/modular-composer/)
 [![Contributing](https://img.shields.io/badge/CONTRIBUTING-guide-blue.svg)](CONTRIBUTING.md)
 
 
@@ -38,6 +39,8 @@ or equivalently
 pip install -r requirements.txt      # core + music21
 pip install -e .[gui]                # optional GUI
 ```
+
+See [v3 upgrade guide](docs/v3_upgrade.md) for migrating from the previous version.
 
 ### Quick Start
 

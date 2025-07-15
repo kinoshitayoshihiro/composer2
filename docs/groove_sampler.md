@@ -152,3 +152,27 @@ parts:
 ```
 
 Percussion hits colliding with a kick or snare are shifted forward by one tick when merging with the drum track.
+
+## Advanced ML (Transformer)
+
+An experimental Transformer model can jointly generate drums, bass, piano and percussion. It uses a `TransformerEncoder` implemented with PyTorch Lightning.
+
+```
+drums  ┐
+bass   ┤  Embedding + PosEnc → Transformer → separate heads → predictions
+piano  ┤
+perc   ┘
+```
+
+Train on token text files for each part:
+
+```bash
+python tools/train_transformer.py data/loops --parts drums,bass --epochs 1 --batch 8
+```
+
+Sample a short phrase:
+
+```bash
+python -m utilities.transformer_sampler sample models/groove_transformer.ckpt --parts drums,bass --length 8
+```
+

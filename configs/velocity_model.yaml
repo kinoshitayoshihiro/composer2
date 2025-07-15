@@ -2,11 +2,22 @@
 
 input_dim: 3
 batch_size: 8
-epochs: 2
 learning_rate: 0.001
 num_workers: 0
 data:
   train: tests/data/velocity_mini.csv
   val: tests/data/velocity_mini.csv
-wandb: false
-patience: 10
+
+trainer:
+  max_epochs: 2
+  gpus: null
+  devices: null
+  logger:
+    use_wandb: false
+
+callbacks:
+  early_stopping:
+    patience: 10
+    monitor: val_MSE
+    mode: min
+    stopping_threshold: 0.015

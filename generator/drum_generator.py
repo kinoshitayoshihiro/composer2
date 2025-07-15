@@ -455,7 +455,6 @@ class DrumGenerator(BasePartGenerator):
             path_candidates = [
                 lut_path,
                 os.getenv("DRUM_LUT_PATH"),
-                Path("config/drum_settings.yaml"),
             ]
             for cand in path_candidates:
                 if not cand:

@@ -1003,6 +1003,8 @@ The JSON output now includes ``hand`` and ``pedal`` fields.
 
 Adjust density with ``--intensity``.
 
+``piano.anticipatory_chord`` in ``main_cfg.yml`` enables a short chord hit right before each vocal rest ends.
+
 ## PianoGenerator ML
 
 Phase γ introduces a transformer-based voicing model.

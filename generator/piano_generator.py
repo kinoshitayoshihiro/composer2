@@ -12,6 +12,7 @@ from music21 import duration as m21duration
 from music21 import expressions, harmony, interval, note, pitch, stream
 from music21 import volume as m21volume
 
+from utilities.rest_utils import get_rest_windows
 from utilities.velocity_curve import resolve_velocity_curve
 
 # Pedalクラスはexpressionsから個別にインポート
@@ -106,6 +107,8 @@ class PianoGenerator(BasePartGenerator):
         self.chord_voicer = None
         ts_obj = get_time_signature_object(kwargs.get("global_time_signature", "4/4"))
         self.global_time_signature_obj = ts_obj
+        cfg_piano = (main_cfg or {}).get("piano", {})
+        self.anticipatory_chord = bool(cfg_piano.get("anticipatory_chord", False))
         self.measure_duration = ts_obj.barDuration.quarterLength if ts_obj else 4.0
         super().__init__(*args, ml_velocity_model_path=ml_velocity_model_path, **kwargs)
         self.cfg: dict = kwargs.copy()
@@ -717,6 +720,15 @@ class PianoGenerator(BasePartGenerator):
         if vocal_metrics:
             root_pitch = cs.root() if "cs" in locals() else None
             if root_pitch:
+                if self.anticipatory_chord:
+                    for start, end in get_rest_windows(vocal_metrics):
+                        off = end - 0.125
+                        if off >= start:
+                            n = note.Note()
+                            n.pitch = root_pitch.transpose(12)
+                            n.duration = m21duration.Duration(0.25)
+                            n.volume = m21volume.Volume(velocity=75)
+                            rh_part.insert(off, n)
                 for b in vocal_metrics.get("onsets", []):
                     if random.random() < 0.3:
                         n = note.Note()

@@ -3,7 +3,6 @@ import copy
 import logging
 import math
 import random  # 追加
-import statistics
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -17,6 +16,7 @@ from music21 import volume as m21volume
 from utilities import MIN_NOTE_DURATION_QL, humanizer
 from utilities.bass_transformer import BassTransformer
 from utilities.cc_tools import finalize_cc_events, merge_cc_events
+from utilities.rest_utils import get_rest_windows
 from utilities.tone_shaper import ToneShaper
 
 try:
@@ -494,8 +494,8 @@ class BassGenerator(BasePartGenerator):
         if not notes:
             return preset or "clean"
 
-        avg_vel = statistics.mean(
-            n.volume.velocity or self.base_velocity for n in notes
+        avg_vel = sum(n.volume.velocity or self.base_velocity for n in notes) / len(
+            notes
         )
 
         # ── ToneShaper でプリセット選択 ─────────────────────
@@ -1970,14 +1970,15 @@ class BassGenerator(BasePartGenerator):
         if vocal_metrics:
             root_pitch = m21_cs_obj.root() if m21_cs_obj else None
             if root_pitch:
-                for start, dur in vocal_metrics.get("rests", []):
-                    if dur >= 0.5:
-                        off = start + dur * 0.75
-                        n = note.Note()
-                        n.pitch = root_pitch.transpose(-1)
-                        n.duration = m21duration.Duration(0.25)
-                        n.volume = m21volume.Volume(velocity=max(1, base_vel - 10))
-                        bass_part.insert(off, n)
+                for start, end in get_rest_windows(vocal_metrics):
+                    dur = end - start
+                    length = 0.75 * dur
+                    off = start + dur * 0.75
+                    n = note.Note()
+                    n.pitch = root_pitch.transpose(-1)
+                    n.duration = m21duration.Duration(length)
+                    n.volume = m21volume.Volume(velocity=max(1, base_vel - 10))
+                    bass_part.insert(off, n)
         profile_name = (
             self.cfg.get("humanize_profile")
             or section_data.get("humanize_profile")

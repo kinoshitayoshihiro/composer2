@@ -32,8 +32,8 @@ if TYPE_CHECKING:  # pragma: no cover - used for type checking only
 
 from .accent_mapper import AccentMapper
 from .rest_utils import get_rest_windows
-
-__all__.append("get_progressions")
+from .progression_templates import get_progressions
+from .kde_velocity import KDEVelocityModel
 
 from .tempo_utils import beat_to_seconds
 
@@ -339,7 +339,7 @@ __all__ += [
     "score_to_pretty_midi",
     "get_rest_windows",
     "get_progressions",
-    "get_rest_windows",
+    "KDEVelocityModel",
     "vocal_sync",
 ]
 

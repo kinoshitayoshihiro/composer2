@@ -140,6 +140,9 @@ packages = ["modular_composer", "utilities"]
 [project.scripts]
 modcompose = "modular_composer.cli:main"
 
+[tool.poetry.scripts]
+train-velocity = "scripts.train_velocity:main"
+
 [tool.ruff]
 target-version = "py310"
 

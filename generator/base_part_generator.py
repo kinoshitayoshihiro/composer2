@@ -16,6 +16,7 @@ except Exception:  # pragma: no cover - optional
 from utilities import fx_envelope
 from utilities.cc_tools import finalize_cc_events, merge_cc_events
 from utilities.tone_shaper import ToneShaper
+from utilities.velocity_utils import scale_velocity
 
 try:
     from utilities.humanizer import apply as humanize_apply
@@ -179,17 +180,39 @@ class BasePartGenerator(ABC):
         model = getattr(self, "velocity_model", None)
         if model is None:
             return
-        for n in part.recurse().notes:
-            pos = float(n.offset)
+        notes = list(part.recurse().notes)
+        if hasattr(model, "predict"):
             try:
-                vel = model.sample(self.part_name or "part", pos)
+                import numpy as np
+
+                ctx = np.array(
+                    [
+                        [float(n.offset), float(n.pitch.midi)]
+                        for n in notes
+                    ],
+                    dtype=np.float32,
+                )
+                preds = model.predict(ctx)
             except Exception:
-                vel = None
-            if vel is not None:
+                preds = [None] * len(notes)
+            for n, v in zip(notes, preds):
+                if v is None:
+                    continue
                 if n.volume is None:
-                    n.volume = m21volume.Volume(velocity=vel)
-                else:
-                    n.volume.velocity = int(max(1, min(127, vel)))
+                    n.volume = m21volume.Volume(velocity=64)
+                n.volume.velocity = scale_velocity(v, 1.0)
+        else:
+            for n in notes:
+                pos = float(n.offset)
+                try:
+                    vel = model.sample(self.part_name or "part", pos)
+                except Exception:
+                    vel = None
+                if vel is not None:
+                    if n.volume is None:
+                        n.volume = m21volume.Volume(velocity=vel)
+                    else:
+                        n.volume.velocity = scale_velocity(vel, 1.0)
 
     def compose(
         self,

@@ -1,9 +1,10 @@
 import json
+import math
+from collections import deque
+from functools import lru_cache
 from pathlib import Path
 from statistics import median
-from typing import List, Dict, Iterable
-from collections import deque
-import math
+from typing import Dict, Iterable, List
 
 
 def load_tempo_curve(path: Path) -> List[Dict[str, float]]:
@@ -81,7 +82,12 @@ def interpolate_bpm(curve: List[Dict[str, float]], beat: float) -> float:
     return get_bpm_at(beat, curve)
 
 
-def beat_to_seconds(beat: float, curve: List[Dict[str, float]]) -> float:
+@lru_cache(maxsize=256)
+def _sec_per_beat(bpm: float) -> float:
+    return 60.0 / bpm
+
+
+def _beat_to_seconds_curve(beat: float, curve: List[Dict[str, float]]) -> float:
     """Convert absolute beat position to seconds based on ``curve``."""
     if not curve:
         return beat * 0.5  # 120 BPM default
@@ -130,6 +136,32 @@ def beat_to_seconds(beat: float, curve: List[Dict[str, float]]) -> float:
     seg_beats = beat - prev["beat"]
     total += _seg_time(prev["bpm"], prev["bpm"], seg_beats, prev.get("curve", "linear"))
     return total
+
+
+def beat_to_seconds(beat: float, tempo_map: Iterable | List[Dict[str, float]]) -> float:
+    """Convert absolute beat to seconds using a tempo map.
+
+    ``tempo_map`` may be a sequence of ``(beat, bpm)`` tuples or a list of
+    dictionaries with ``"beat"`` and ``"bpm"`` keys. The sequence must be
+    sorted by beat.
+    """
+
+    if not tempo_map:
+        return beat * 0.5
+
+    seq = tuple(tempo_map)
+    first = seq[0]
+    if isinstance(first, dict):
+        return _beat_to_seconds_curve(beat, list(seq))
+
+    elapsed = 0.0
+    prev_b, prev_bpm = first
+    for b, bpm in seq[1:]:
+        if beat <= b:
+            return elapsed + (beat - prev_b) * _sec_per_beat(prev_bpm)
+        elapsed += (b - prev_b) * _sec_per_beat(prev_bpm)
+        prev_b, prev_bpm = b, bpm
+    return elapsed + (beat - prev_b) * _sec_per_beat(prev_bpm)
 
 
 class TempoMap:

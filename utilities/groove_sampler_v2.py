@@ -26,6 +26,8 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
+from utilities.loop_ingest import load_meta
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -107,6 +109,8 @@ class NGramModel:
     ctx_maps: list[dict[int, int]]
     prob_paths: list[str] | None = None
     prob: list[np.ndarray] | None = None
+    aux_key: str | None = None
+    aux_counts: dict[int, dict[str, np.ndarray]] | None = None
     files_scanned: int = 0
     files_skipped: int = 0
     total_events: int = 0
@@ -119,7 +123,6 @@ def _encode_state(bar_mod: int, bin_in_bar: int, label: str) -> State:
 def _hash_ctx(ctx: Iterable[int]) -> int:
     arr = np.fromiter(ctx, dtype=np.uint32)
     return _murmurhash3(arr.tobytes())
-
 
 
 logger = logging.getLogger(__name__)
@@ -217,6 +220,7 @@ def train(
     fixed_bpm: float | None = None,
     progress: bool = False,
     include_audio: bool = True,
+    aux_key: str | None = None,
 ):
     """Build a hashed n‑gram model from drum loops located in *loop_dir*."""
 
@@ -249,12 +253,15 @@ def train(
     else:
         loaded = Parallel(n_jobs=n_jobs)(delayed(_load)(p) for p in paths)
 
+    aux_values: list[str | None] = []
     results = []
-    for r in loaded:
+    for p, r in zip(paths, loaded):
         if r is None:
             files_skipped += 1
         else:
             results.append(r)
+            meta = load_meta(p)
+            aux_values.append(meta.get(aux_key) if aux_key else None)
 
     if not results:
         raise SystemExit("No events collected — training aborted")
@@ -263,9 +270,7 @@ def train(
     all_offsets = [off for r in results for off in r[1]]
 
     resolution = int(
-        infer_resolution(all_offsets, beats_per_bar=beats_per_bar)
-        if auto_res
-        else 16
+        infer_resolution(all_offsets, beats_per_bar=beats_per_bar) if auto_res else 16
     )
     resolution_coarse = resolution // 4 if coarse else resolution
     step_per_beat = resolution / 4
@@ -297,11 +302,20 @@ def train(
     freq: list[FreqTable] = [dict() for _ in range(n)]
     bucket_freq: dict[int, np.ndarray] = {}
 
-    for seq in seqs:
+    aux_counts: dict[int, dict[str, np.ndarray]] = {}
+
+    for seq, aux_val in zip(seqs, aux_values):
         for i, cur in enumerate(seq):
             # unigram
             arr0 = freq[0].setdefault(0, np.zeros(n_states, dtype=np.uint32))
             arr0[cur] += 1
+            if aux_val is not None:
+                aux_map = aux_counts.setdefault(0, {})
+                arr_aux = aux_map.get(aux_val)
+                if arr_aux is None:
+                    arr_aux = np.zeros(n_states, dtype=np.uint32)
+                    aux_map[aux_val] = arr_aux
+                arr_aux[cur] += 1
 
             # higher orders
             for order in range(1, n):
@@ -314,6 +328,13 @@ def train(
                     arr = np.zeros(n_states, dtype=np.uint32)
                     freq[order][ctx_id] = arr
                 arr[cur] += 1
+                if aux_val is not None:
+                    aux_map = aux_counts.setdefault(ctx_id, {})
+                    arr_aux = aux_map.get(aux_val)
+                    if arr_aux is None:
+                        arr_aux = np.zeros(n_states, dtype=np.uint32)
+                        aux_map[aux_val] = arr_aux
+                    arr_aux[cur] += 1
 
             bucket = idx_to_state[cur][1]
             b_arr = bucket_freq.get(bucket)
@@ -369,6 +390,8 @@ def train(
         ctx_maps=ctx_maps,
         prob_paths=prob_paths,
         prob=prob_arrays,
+        aux_key=aux_key,
+        aux_counts=aux_counts,
         files_scanned=len(paths),
         files_skipped=files_skipped,
         total_events=total_events,
@@ -424,6 +447,7 @@ def sample_next(
     top_k: int | None = None,
     top_p: float | None = None,
     cond_kick: str | None = None,
+    cond: dict[str, str] | None = None,
 ) -> int:
     """Sample next state index using hashed back-off.
 
@@ -436,9 +460,16 @@ def sample_next(
     """
 
     n = model.n
+    aux_val = None
+    if cond is not None and model.aux_key:
+        aux_val = cond.get(model.aux_key)
     for order in range(min(len(history), n - 1), 0, -1):
         ctx_id = _hash_ctx(history[-order:])
         arr = None
+        if aux_val is not None and model.aux_counts is not None:
+            arr = model.aux_counts.get(ctx_id, {}).get(aux_val)
+            if arr is not None:
+                arr = arr.astype(float)
         if model.prob is not None:
             row = model.ctx_maps[order].get(ctx_id)
             if row is not None:
@@ -466,7 +497,11 @@ def sample_next(
             return _choose(probs, rng)
 
     arr = None
-    if model.prob is not None:
+    if aux_val is not None and model.aux_counts is not None:
+        arr = model.aux_counts.get(0, {}).get(aux_val)
+        if arr is not None:
+            arr = arr.astype(float)
+    if arr is None and model.prob is not None:
         arr = np.asarray(model.prob[0][model.ctx_maps[0].get(0, 0)])
     if arr is None:
         arr = model.freq[0].get(0)
@@ -523,6 +558,7 @@ def generate_events(
     seed: int | None = None,
     cond_velocity: str | None = None,
     cond_kick: str | None = None,
+    cond: dict[str, str] | None = None,
 ) -> list[dict[str, float | str]]:
     """Generate a sequence of drum events.
 
@@ -537,6 +573,8 @@ def generate_events(
         cumulative probability mass exceeds this value.
     temperature_end:
         Optional final temperature for linear scheduling.
+    cond:
+        Dictionary of auxiliary conditions such as style or feel.
     """
 
     rng = Random(seed)
@@ -574,6 +612,7 @@ def generate_events(
             top_k=top_k,
             top_p=top_p,
             cond_kick=cond_kick,
+            cond=cond,
         )
         bar_mod, bin_in_bar, lbl = model.idx_to_state[idx]
         if model.resolution_coarse != res:
@@ -659,6 +698,8 @@ def save(model: NGramModel, path: Path) -> None:
         "bucket_freq": model.bucket_freq,
         "ctx_maps": model.ctx_maps,
         "prob_paths": model.prob_paths,
+        "aux_key": model.aux_key,
+        "aux_counts": model.aux_counts,
         "files_scanned": model.files_scanned,
         "files_skipped": model.files_skipped,
         "total_events": model.total_events,
@@ -687,6 +728,8 @@ def load(path: Path) -> NGramModel:
             ]
         },
         prob=None,
+        aux_key=data.get("aux_key"),
+        aux_counts=data.get("aux_counts"),
         files_scanned=data.get("files_scanned", 0),
         files_skipped=data.get("files_skipped", 0),
         total_events=data.get("total_events", 0),
@@ -719,6 +762,7 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--memmap-dir", type=Path)
     parser.add_argument("--fixed-bpm", type=float)
+    parser.add_argument("--aux-key", type=str, default="style")
     parser.add_argument(
         "--no-audio",
         action="store_true",
@@ -743,6 +787,7 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
         fixed_bpm=ns.fixed_bpm,
         progress=not quiet and not no_tqdm,
         include_audio=not ns.no_audio,
+        aux_key=ns.aux_key,
     )
     elapsed = time.perf_counter() - t0
     save(model, ns.output)
@@ -772,6 +817,8 @@ def _cmd_sample(args: list[str]) -> None:
     parser.add_argument(
         "--cond-kick", choices=["four_on_floor", "sparse"], default=None
     )
+    parser.add_argument("--cond-style", type=str)
+    parser.add_argument("--cond-feel", type=str)
     parser.add_argument("--temperature-end", type=float)
     ns = parser.parse_args(args)
 
@@ -786,6 +833,9 @@ def _cmd_sample(args: list[str]) -> None:
         seed=ns.seed,
         cond_velocity=ns.cond_velocity,
         cond_kick=ns.cond_kick,
+        cond={
+            k: v for k, v in {"style": ns.cond_style, "feel": ns.cond_feel}.items() if v
+        },
     )
     json.dump(events, fp=sys.stdout)
 

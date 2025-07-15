@@ -1,0 +1,15 @@
+input_dim: 3
+batch_size: 8
+epochs: 2
+learning_rate: 0.001
+num_workers: 0
+data:
+  train: /data/velocity.csv
+  val: tests/data/velocity_mini.csv
+wandb: false
+patience: 10
+training:
+  epochs: 30
+out:
+  ckpt: ckpt_vscode.pt
+device: mps

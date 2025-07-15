@@ -14,9 +14,7 @@ from utilities.perc_sampler_v1 import PERC_NOTE_MAP
 
 def normalize_section(name: str) -> str:
     """Normalize section name for matching."""
-    return " ".join(
-        name.replace("_", " ").replace("\u2011", "-").strip().split()
-    )
+    return " ".join(name.replace("_", " ").replace("\u2011", "-").strip().split())
 
 
 def load_cfg(path: str) -> dict:
@@ -99,20 +97,24 @@ def main(cfg_path: str, sections: list[str] | None = None) -> None:
             continue
         out_name = f"demo_{normalized.replace(' ', '_')}.mid"
         try:
-            subprocess.run(
-                [
-                    "python3",
-                    "modular_composer.py",
-                    "-m",
-                    cfg_path,
-                    "--dry-run",
-                    "--output-dir",
-                    "demos",
-                    "--output-filename",
-                    out_name,
-                ],
-                check=True,
-            )
+            cmd = [
+                "python3",
+                "modular_composer.py",
+                "-m",
+                cfg_path,
+                "--dry-run",
+                "--output-dir",
+                "demos",
+                "--output-filename",
+                out_name,
+            ]
+            drums_cond = cfg.get("part_defaults", {}).get("drums", {}).get("cond", {})
+            if isinstance(drums_cond, dict):
+                if drums_cond.get("style"):
+                    cmd += ["--cond-style", drums_cond["style"]]
+                if drums_cond.get("feel"):
+                    cmd += ["--cond-feel", drums_cond["feel"]]
+            subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as exc:
             print(f"failed to generate {section}: {exc}", file=sys.stderr)
         else:

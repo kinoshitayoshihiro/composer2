@@ -342,7 +342,7 @@ __all__ += [
     "score_to_pretty_midi",
     "get_rest_windows",
     "get_progressions",
-    "KDEVelocityModel",
+    "load_chordmap",
     "vocal_sync",
 ]
 

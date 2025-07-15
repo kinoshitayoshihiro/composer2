@@ -21,6 +21,27 @@ For live playback, run:
 modcompose realtime
 ```
 
+### Section YAML fields
+
+`load_chordmap` expects `sections` under `global_settings`. Missing
+`vocal_midi_path` defaults to `<section>_vocal.mid` and all paths are resolved
+relative to the YAML file.
+
+```yaml
+global_settings:
+  tempo: 120
+  sections:
+    Verse:
+      order: 1
+      length_in_measures: 4
+```
+
+Generate a directory tree summary:
+
+```bash
+modcompose dump-tree <root> --version 3
+```
+
 ### Arpeggio Pattern DSL
 
 You can specify an arpeggio note order directly in your rhythm library using

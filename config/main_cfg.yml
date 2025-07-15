@@ -101,6 +101,10 @@ part_defaults:
     rhythm_key: "strings_melody_basic"
     humanize_profile: "gentle_push"
 
+  percussion:
+    backend: perc_ngram
+    model_path: models/perc_ngram.pkl
+
 
 # ---------- 4. Section Overrides (拍子/テンポ/HZ) ----------
 # processed_chordmap_with_emotion.yaml でセクションを定義している場合、

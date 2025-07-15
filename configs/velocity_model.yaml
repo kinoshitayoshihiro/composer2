@@ -2,24 +2,22 @@
 
 input_dim: 3
 batch_size: 8
+epochs: 2
 learning_rate: 0.001
 num_workers: 0
 data:
   train: tests/data/velocity_mini.csv
   val: tests/data/velocity_mini.csv
+wandb: false
+patience: 10
 
 trainer:
-  max_epochs: 2
-  accelerator: cpu
-  gpus: null
-  devices: null
+  # Lightning の max_epochs に対応。デフォルトは root の epochs を引き継ぐ
+  max_epochs: ${epochs}
+  # チェックポイントやログの出力ディレクトリ
   default_root_dir: ${hydra.run.dir}
-  logger:
-    use_wandb: false
-  callbacks:
-    early_stopping:
-      patience: 10
-      monitor: val_MSE
-      mode: min
-      stopping_threshold: 0.015
-  checkpoint_path: checkpoints/last.ckpt
+  # デバイス設定（必要なら追加／オーバーライド可能）
+  # accelerator: mps
+  # devices: 1
+  # logger: …
+  # callbacks: …

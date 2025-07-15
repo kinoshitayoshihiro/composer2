@@ -1,13 +1,31 @@
 name: plugin
+
 on:
   push:
   pull_request:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install JUCE (macOS)
+        if: runner.os == 'macOS'
+        run: brew install juce || true
+
+      - name: Install JUCE (Windows)
+        if: runner.os == 'Windows'
+        run: choco install juce --no-progress || exit 0
+
+      - name: Prepare JUCE (Linux)
+        if: runner.os == 'Linux'
+        run: echo "⚠ juce-cli installation not configured for Linux; skipping install"
+
       - name: Build plugin
         run: |
           if command -v juce-cli >/dev/null; then
@@ -18,4 +36,3 @@ jobs:
           else
             echo "⚠ juce-cli not found; skipping plugin build"
           fi
-

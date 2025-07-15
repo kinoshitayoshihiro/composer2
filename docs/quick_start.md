@@ -21,6 +21,27 @@ For live playback, run:
 modcompose realtime
 ```
 
+### Section YAML fields
+
+`load_chordmap` expects `sections` under `global_settings`. Missing
+`vocal_midi_path` defaults to `<section>_vocal.mid` and all paths are resolved
+relative to the YAML file.
+
+```yaml
+global_settings:
+  tempo: 120
+  sections:
+    Verse:
+      order: 1
+      length_in_measures: 4
+```
+
+Generate a directory tree summary:
+
+```bash
+modcompose dump-tree <root> --version 3
+```
+
 ### Arpeggio Pattern DSL
 
 You can specify an arpeggio note order directly in your rhythm library using
@@ -150,3 +171,26 @@ gen = StringsGenerator()
 parts = gen.compose(section_data={"section_name": "A", "q_length": 1.0})
 gen.export_audio(ir_name="hall", out_path="out/strings_A.wav")
 ```
+
+### Section YAML fields
+
+Include per-section metadata in your chord map:
+
+```yaml
+sections:
+  Verse:
+    vocal_midi_path: "{section}_vocal.mid"
+    consonant_json: verse_consonants.json
+```
+
+Paths resolve relative to `chordmap.yaml`.
+
+### Dump-tree v3
+
+Create a Markdown tree of any project directory:
+
+```bash
+modcompose dump-tree my_project --version 3
+```
+
+The file `tree.md` appears inside `my_project`.

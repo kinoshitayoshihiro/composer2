@@ -33,6 +33,8 @@ soundfile = ">=0.12"
 tomli = ">=2.0"
 setuptools = "*"
 websockets = ">=12.0"
+torch = "^2.0"
+pytorch-lightning = "^2.0"
 
 [tool.poetry.extras]
 test = [

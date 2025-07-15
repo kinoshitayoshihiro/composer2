@@ -45,6 +45,13 @@ jobs:
           key: basicpitch-${{ runner.os }}-${{ hashFiles('utilities/perc_sampler_v1.py') }}
           restore-keys: basicpitch-${{ runner.os }}-
 
+      - name: Cache Torch Models
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/torch_models
+          key: torch-${{ runner.os }}-${{ hashFiles('utilities/groove_transformer.py') }}
+          restore-keys: torch-${{ runner.os }}-
+
       - name: Install dependencies
         run: |
           poetry install --no-root
@@ -56,6 +63,9 @@ jobs:
 
       - name: Run tests
         run: poetry run pytest --cov=. -q
+
+      - name: Run transformer integration test
+        run: poetry run pytest tests/test_transformer_integration.py -q
 
       - name: Run audio-to-MIDI tests
         run: poetry run pytest tests/audio_to_midi -q

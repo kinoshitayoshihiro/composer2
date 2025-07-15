@@ -1248,6 +1248,7 @@ def _cmd_augment(args: list[str]) -> None:
     print(f"wrote {ns.out}")
 
 
+
 def _dump_tree(root: Path, version: int) -> Path:
     if version != 3:
         raise SystemExit("unsupported version")
@@ -1270,6 +1271,7 @@ def _cmd_dump_tree(args: list[str]) -> None:
     ap.add_argument("--version", type=int, default=3, help="Format version")
     ns = ap.parse_args(args)
     out = _dump_tree(ns.root, ns.version)
+
     print(out)
 
 

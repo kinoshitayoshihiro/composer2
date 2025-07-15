@@ -13,6 +13,7 @@ from utilities.velocity_utils import scale_velocity
 
 # 依存ライブラリがない場合はスキップ
 pytest.importorskip("pretty_midi")
+pytest.importorskip("soundfile")
 
 # pretty_midi がロードできないとき、Bass/Piano テストはスキップ
 pytestmark = pytest.mark.skipif(
@@ -93,7 +94,7 @@ def test_bass_velocity_model():
         "tonic_of_section": "C",
         "mode": "major",
     }
-    with patch("generator.base_part_generator.scale_velocity", wraps=scale_velocity) as spy:
+    with patch("utilities.velocity_utils.scale_velocity", wraps=scale_velocity) as spy:
         part = gen.compose(section_data=section)
         assert spy.called
     for n in part.flatten().notes:
@@ -120,7 +121,7 @@ def test_piano_velocity_model():
         "musical_intent": {},
         "part_params": {},
     }
-    with patch("generator.base_part_generator.scale_velocity", wraps=scale_velocity) as spy:
+    with patch("utilities.velocity_utils.scale_velocity", wraps=scale_velocity) as spy:
         parts = gen.compose(section_data=section)
         assert spy.called
         for p in parts.values():

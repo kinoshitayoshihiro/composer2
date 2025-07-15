@@ -11,6 +11,11 @@ from typing import Any
 
 from utilities import vocal_sync
 
+try:  # optional dependency introduced by tempo merging
+    from utilities import tempo_utils
+except Exception as exc:  # pragma: no cover - missing core extras
+    raise RuntimeError("tempo_utils missing — run pip install .[core]") from exc
+
 try:  # pragma: no cover - optional dependency for export helpers
     import mido
 except ImportError:  # pragma: no cover - handled gracefully in functions
@@ -100,29 +105,81 @@ def export_song(
     out_path: str | Path = "song.mid",
     sections: list[dict[str, Any]] | None = None,
 ) -> "pretty_midi.PrettyMIDI":
-    """Generate multiple parts and export a merged MIDI file."""
+    """Generate multiple parts and export a merged MIDI file.
+
+    When ``sections`` are provided each section may include a ``tempo_map`` key
+    containing ``[(beat, bpm), ...]`` pairs. Generated parts for that section are
+    offset by the cumulative beat position and all tempo change events are
+    applied once to the master ``PrettyMIDI`` object.
+    """
 
     out_path = Path(out_path)
-    child_pms: list["pretty_midi.PrettyMIDI"] = []
+    master = pretty_midi.PrettyMIDI(initial_tempo=fixed_tempo)
+    all_tempos: list[tuple[float, float]] = []
+    tempo_tuple: tuple[tuple[float, float], ...] | None = None
+
     if sections:
+        beat_offset = 0.0
+        sec_per_beat = 60.0 / fixed_tempo
+
         for sec in sections:
             vm = vocal_sync.analyse_section(sec, tempo_bpm=fixed_tempo)
+            sec_pms: list[pretty_midi.PrettyMIDI] = []
             for name, gen in (generators or {}).items():
-                pm = gen(sec, fixed_tempo, vocal_metrics=vm)
-                apply_tempo_map(pm, tempo_map)
-                child_pms.append(pm)
+                sec_pms.append(gen(sec, fixed_tempo, vocal_metrics=vm))
+
+            # determine section duration from generated parts
+            sec_duration = 0.0
+            for pm in sec_pms:
+                sec_duration = max(sec_duration, pm.get_end_time())
+
+            sec_tm = sec.get("tempo_map") or []
+            new_tempo = False
+            for beat, bpm in sec_tm:
+                all_tempos.append((beat + beat_offset, bpm))
+                new_tempo = True
+            if tempo_tuple is None or new_tempo:
+                tempo_tuple = tuple(all_tempos)
+                new_tempo = False
+
+            for pm in sec_pms:
+                for inst in pm.instruments:
+                    inst_copy = copy.deepcopy(inst)
+                    for note in inst_copy.notes:
+                        start_b = beat_offset + note.start / sec_per_beat
+                        end_b = beat_offset + note.end / sec_per_beat
+                        note.start = tempo_utils.beat_to_seconds(start_b, tempo_tuple)
+                        note.end = tempo_utils.beat_to_seconds(end_b, tempo_tuple)
+                    for cc in inst_copy.control_changes:
+                        b = beat_offset + cc.time / sec_per_beat
+                        cc.time = tempo_utils.beat_to_seconds(b, tempo_tuple)
+                    for bend in inst_copy.pitch_bends:
+                        b = beat_offset + bend.time / sec_per_beat
+                        bend.time = tempo_utils.beat_to_seconds(b, tempo_tuple)
+                    master.instruments.append(inst_copy)
+
+            if "bars" in sec:
+                sec_beats = float(sec["bars"]) * 4.0
+            else:
+                sec_beats = sec_duration / sec_per_beat
+            beat_offset += sec_beats
     else:
         for name, gen in (generators or {}).items():
             pm = gen(bars, fixed_tempo)
-            apply_tempo_map(pm, tempo_map)
-            child_pms.append(pm)
+            for inst in pm.instruments:
+                master.instruments.append(copy.deepcopy(inst))
+        all_tempos = list(tempo_map or [])
+        tempo_tuple = None
 
-    master = pretty_midi.PrettyMIDI(initial_tempo=fixed_tempo)
-    for pm in child_pms:
-        for inst in pm.instruments:
-            master.instruments.append(copy.deepcopy(inst))
+    if all_tempos or tempo_map:
+        # fallback to provided tempo_map when no sections were used
+        if tempo_map and not sections:
+            all_tempos = list(tempo_map)
+        all_tempos.sort(key=lambda x: float(x[0]))
+        if all_tempos:
+            master._tick_scales = []  # avoid double scaling
+            apply_tempo_map(master, all_tempos)
 
-    apply_tempo_map(master, tempo_map)
     master.write(str(out_path))
     return master
 

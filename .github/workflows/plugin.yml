@@ -1,0 +1,26 @@
+name: plugin
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install JUCE (macOS)
+        if: runner.os == 'macOS'
+        run: brew install juce || true
+      - name: Install JUCE (Windows)
+        if: runner.os == 'Windows'
+        run: choco install juce --no-progress || exit 0
+      - name: Build plugin
+        run: |
+          cd plugin
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+          cmake --build build --target check || true

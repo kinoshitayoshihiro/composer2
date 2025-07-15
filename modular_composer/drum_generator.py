@@ -6,8 +6,8 @@ from typing import Any, Dict
 from utilities import groove_sampler_v2
 
 
-class PercGenerator:
-    """Simple percussion generator using :mod:`groove_sampler_v2`."""
+class DrumGenerator:
+    """Simplified drum generator wrapping :mod:`groove_sampler_v2`."""
 
     def __init__(self, model: Path | str, cond: Dict[str, str] | None = None) -> None:
         self.model_path = Path(model)
@@ -15,7 +15,7 @@ class PercGenerator:
         self.cond: Dict[str, str] = cond or {}
 
     def sample(self, bars: int = 4, **kwargs: Any) -> list[dict[str, float | str]]:
-        """Generate percussion events for the given number of bars."""
+        """Generate drum events."""
         return groove_sampler_v2.generate_events(
             self.model,
             bars=bars,

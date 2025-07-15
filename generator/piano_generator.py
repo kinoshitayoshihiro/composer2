@@ -14,6 +14,7 @@ from music21 import volume as m21volume
 
 from utilities.rest_utils import get_rest_windows
 from utilities.velocity_curve import resolve_velocity_curve
+from utilities.velocity_utils import scale_velocity
 
 # Pedalクラスはexpressionsから個別にインポート
 try:
@@ -129,6 +130,19 @@ class PianoGenerator(BasePartGenerator):
         self._current_cycle_section = None
         # ...他の初期化処理...
 
+    def apply_melody_echo(
+        self, input_series: list[pitch.Pitch], delay_beats: float
+    ) -> list[note.Note]:
+        """Return a delayed mirror of ``input_series`` as piano notes."""
+        notes: list[note.Note] = []
+        off = float(delay_beats)
+        for p in input_series:
+            n = note.Note(p, quarterLength=1.0)
+            n.offset = off
+            off += 1.0
+            notes.append(n)
+        return notes
+
     def _find_pattern_by_tags(self, tags: list[str], hand: str) -> str | None:
         for key, data in self.part_parameters.items():
             pat_tags = data.get("tags") or []
@@ -237,15 +251,15 @@ class PianoGenerator(BasePartGenerator):
             if duration < MIN_NOTE_DURATION_QL / 4:
                 continue
             vel_factor = float(p_event.get("velocity_factor", 1.0))
-            velocity = int(base_velocity * vel_factor)
+            velocity = scale_velocity(base_velocity, vel_factor)
             if velocity_shift is not None:
-                velocity += int(velocity_shift)
+                velocity = max(1, min(127, velocity + int(velocity_shift)))
             layer_idx = p_event.get("velocity_layer")
             if velocity_curve_list and layer_idx is not None:
                 try:
                     idx = int(layer_idx)
                     if 0 <= idx < len(velocity_curve_list):
-                        velocity = int(velocity * velocity_curve_list[idx])
+                        velocity = scale_velocity(velocity, velocity_curve_list[idx])
                 except (TypeError, ValueError):
                     pass
             velocity = max(1, min(127, velocity))

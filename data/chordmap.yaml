@@ -1,0 +1,17 @@
+project_title: TestProject
+global_settings:
+  tempo: 120
+  time_signature: 4/4
+  key_tonic: C
+  key_mode: major
+sections:
+  Verse:
+    order: 1
+    length_in_measures: 4
+    vocal_midi_path: "{section}_vocal.mid"
+    consonant_json: verse_consonants.json
+  Chorus:
+    order: 2
+    length_in_measures: 4
+    vocal_midi_path: "{section}_vocal.mid"
+    consonant_json: chorus_consonants.json

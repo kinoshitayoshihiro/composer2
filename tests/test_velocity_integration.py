@@ -1,23 +1,24 @@
 import time
+from unittest.mock import patch
+
 import numpy as np
 import pytest
+from music21 import instrument
+
+from generator.bass_generator import BassGenerator
+from generator.piano_generator import PianoGenerator
+from utilities.kde_velocity import KDEVelocityModel
+from utilities.velocity_model import pretty_midi
+from utilities.velocity_utils import scale_velocity
 
 # 依存ライブラリがない場合はスキップ
 pytest.importorskip("pretty_midi")
-pytest.importorskip("soundfile")
-
-from utilities.kde_velocity import KDEVelocityModel
-from utilities.velocity_model import pretty_midi
 
 # pretty_midi がロードできないとき、Bass/Piano テストはスキップ
 pytestmark = pytest.mark.skipif(
     pretty_midi is None,
-    reason="pretty_midi not installed for bass/piano tests"
+    reason="pretty_midi not installed for bass/piano tests",
 )
-
-from music21 import instrument
-from generator.bass_generator import BassGenerator
-from generator.piano_generator import PianoGenerator
 
 
 @pytest.fixture()
@@ -92,7 +93,9 @@ def test_bass_velocity_model():
         "tonic_of_section": "C",
         "mode": "major",
     }
-    part = gen.compose(section_data=section)
+    with patch("generator.base_part_generator.scale_velocity", wraps=scale_velocity) as spy:
+        part = gen.compose(section_data=section)
+        assert spy.called
     for n in part.flatten().notes:
         assert n.volume.velocity == 80
 
@@ -117,7 +120,9 @@ def test_piano_velocity_model():
         "musical_intent": {},
         "part_params": {},
     }
-    parts = gen.compose(section_data=section)
-    for p in parts.values():
-        for n in p.flatten().notes:
-            assert n.volume.velocity == 70
+    with patch("generator.base_part_generator.scale_velocity", wraps=scale_velocity) as spy:
+        parts = gen.compose(section_data=section)
+        assert spy.called
+        for p in parts.values():
+            for n in p.flatten().notes:
+                assert n.volume.velocity == 70

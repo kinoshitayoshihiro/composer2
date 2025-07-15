@@ -312,6 +312,27 @@ def load_cache(path: Path) -> list[LoopEntry]:
     return list(obj["data"])
 
 
+def collate_multi_part(
+    sequences: Sequence[dict[str, Sequence[int]]],
+    parts: Sequence[str],
+    pad: int = 0,
+) -> dict[str, list[list[int]]]:
+    """Align multi-part integer sequences with padding."""
+
+    max_len = 0
+    for seq in sequences:
+        for p in parts:
+            max_len = max(max_len, len(seq.get(p, [])))
+    result = {p: [] for p in parts}
+    for seq in sequences:
+        for p in parts:
+            part_seq = list(seq.get(p, []))
+            if len(part_seq) < max_len:
+                part_seq += [pad] * (max_len - len(part_seq))
+            result[p].append(part_seq)
+    return result
+
+
 # --------------------------- CLI -------------------------------------------
 
 

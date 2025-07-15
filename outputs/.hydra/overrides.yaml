@@ -1,4 +1,5 @@
 - +training.epochs=30
 - +out.ckpt=ckpt_vscode.pt
 - +device=mps
-- data.train=/data/velocity.csv
+- data.train=/Users/kinoshitayoshihiro/music21/composer2-3/data/velocity.csv
+- data.val=/Users/kinoshitayoshihiro/music21/composer2-3/data/velocity.csv

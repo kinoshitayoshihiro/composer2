@@ -1,24 +1,24 @@
 from __future__ import annotations
-from pathlib import Path
-from typing import Any
 
-from utilities import perc_sampler_v1
+from pathlib import Path
+from typing import Any, Dict
+
+from utilities import groove_sampler_v2
 
 
 class PercGenerator:
-    """Simple percussion generator based on n-gram sampling."""
+    """Simple percussion generator using :mod:`groove_sampler_v2`."""
 
-    def __init__(self, model_path: str | Path = "models/perc_ngram.pkl") -> None:
-        self.model_path = Path(model_path)
-        self.model: perc_sampler_v1.PercModel | None = None
-        if self.model_path.exists():
-            self.model = perc_sampler_v1.load(self.model_path)
-        self.history: list[str] = []
+    def __init__(self, model: Path | str, cond: Dict[str, str] | None = None) -> None:
+        self.model_path = Path(model)
+        self.model = groove_sampler_v2.load(self.model_path)
+        self.cond: Dict[str, str] = cond or {}
 
-    def reset(self) -> None:
-        self.history.clear()
-
-    def generate_bar(self, *, temperature: float = 1.0) -> list[dict[str, Any]]:
-        if self.model is None:
-            return []
-        return perc_sampler_v1.generate_bar(self.history, model=self.model, temperature=temperature)
+    def sample(self, bars: int = 4, **kwargs: Any) -> list[dict[str, float | str]]:
+        """Generate percussion events for the given number of bars."""
+        return groove_sampler_v2.generate_events(
+            self.model,
+            bars=bars,
+            cond=self.cond,
+            **kwargs,
+        )

@@ -31,7 +31,23 @@ dependencies = [
   "numpy>=1.24",
   "soundfile>=0.12",
   "basic_pitch>=0.3",
+  "websockets>=12.0",
 ]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+audioread = ">=2.1.9"
+basic_pitch = ">=0.3"
+librosa = ">=0.10"
+mido = ">=1.2.10,<1.3"
+music21 = ">=9.1"
+numpy = ">=1.24"
+pretty_midi = "^0.2"
+pydantic = ">=2.7"
+pydub = ">=0.25"
+PyYAML = ">=6.0"
+soundfile = ">=0.12"
+tomli = ">=2.0"
 
 [project.optional-dependencies]
 dev = ["pytest", "mypy", "ruff", "PyYAML>=6.0"]
@@ -46,6 +62,7 @@ test = [
   "python-rtmidi",
   "hdbscan>=0.8",
   "PyYAML>=6.0",
+  "websockets>=12.0",
 ]
 audio = [
   "soundfile>=0.12",

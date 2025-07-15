@@ -35,6 +35,13 @@ from .progression_templates import get_progressions
 from .rest_utils import get_rest_windows
 from .velocity_model import KDEVelocityModel
 
+__all__.append("get_progressions")
+
+from .tempo_utils import beat_to_seconds
+
+__all__.append("beat_to_seconds")
+
+
 try:
     from .consonant_extract import (
         EssentiaUnavailable,
@@ -173,7 +180,9 @@ from .tempo_utils import (
     interpolate_bpm,
 )
 from .tempo_utils import load_tempo_curve as load_tempo_curve_simple
-from .tempo_utils import load_tempo_map
+from .tempo_utils import (
+    load_tempo_map,
+)
 from .velocity_curve import PREDEFINED_CURVES, resolve_velocity_curve
 from .velocity_smoother import EMASmoother, VelocitySmoother
 

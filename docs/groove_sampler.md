@@ -60,6 +60,32 @@ in version 1.0 and ignores auxiliary conditions.
 Models generated prior to commit 608fdda no longer include the
 deprecated `aux_dims` field and should be retrained.
 
+## Style/Aux Tagging
+
+Loops may include a sidecar YAML file with optional tags:
+
+```yaml
+style: lofi
+feel: relaxed
+density: sparse
+source: freesound
+```
+
+Train with one of these tags using `--aux-key` and condition at sample time:
+
+```bash
+python -m utilities.groove_sampler_v2 train loops/ -o model.pkl --aux-key style
+python -m utilities.groove_sampler_v2 sample model.pkl --cond-style lofi -l 4
+```
+
+In YAML configs you can set:
+
+```yaml
+parts:
+  drums:
+    cond: {style: funk}
+```
+
 ## CLI Commands
 
 | Command | Description | Key options |

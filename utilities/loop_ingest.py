@@ -6,7 +6,9 @@ import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from statistics import mean
-from typing import TypedDict
+from typing import TypedDict, Any
+
+import yaml
 
 import click
 import pretty_midi
@@ -21,6 +23,7 @@ from .types import Intensity
 
 try:  # optional dependency
     import librosa
+
     HAVE_LIBROSA = True
 except Exception:  # pragma: no cover - optional dependency missing
     librosa = None  # type: ignore
@@ -28,6 +31,7 @@ except Exception:  # pragma: no cover - optional dependency missing
 
 try:  # older SciPy compatibility
     from scipy import signal
+
     if not hasattr(signal, "hann") and hasattr(signal, "windows"):
         signal.hann = signal.windows.hann  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - optional dependency
@@ -47,6 +51,26 @@ class LoopEntry(TypedDict, total=False):
 
 
 _PITCH_TO_LABEL = {val[1]: key for key, val in GM_DRUM_MAP.items()}
+
+
+def load_meta(path: Path) -> dict[str, Any]:
+    """Load auxiliary metadata next to *path*.
+
+    Looks for ``<name>.meta.yaml`` or ``<name>.meta.yml`` and returns the
+    parsed dictionary if available. Unknown formats are ignored.
+    """
+    for suf in (".meta.yaml", ".meta.yml"):
+        meta_path = path.with_suffix(suf)
+        if meta_path.is_file():
+            try:
+                with meta_path.open("r", encoding="utf-8") as fh:
+                    data = yaml.safe_load(fh) or {}
+                if isinstance(data, dict):
+                    return {str(k): data[k] for k in data}
+            except Exception as exc:  # pragma: no cover - malformed yaml
+                logger.warning("Failed to load meta for %s: %s", path, exc)
+            break
+    return {}
 
 
 def _load_pretty_midi(path: Path) -> pretty_midi.PrettyMIDI | None:
@@ -206,6 +230,9 @@ def _scan_file(path: Path, resolution: int, ppq: int, *, part: str = "drums") ->
             return None
     if entry is not None:
         entry["file"] = path.name
+        meta = load_meta(path)
+        if meta:
+            entry["aux"] = meta  # type: ignore[typeddict-item]
     return entry
 
 
@@ -229,11 +256,15 @@ def scan_loops(
     """
 
     extset = {
-        e.lower().lstrip(".").replace("midi", "mid")
-        for e in (exts or ["mid", "wav"])
+        e.lower().lstrip(".").replace("midi", "mid") for e in (exts or ["mid", "wav"])
     }
     data: list[LoopEntry] = []
-    files = [p for p in sorted(loop_dir.iterdir()) if p.suffix.lower().lstrip(".") in extset or (p.suffix.lower().lstrip(".") == "midi" and "mid" in extset)]
+    files = [
+        p
+        for p in sorted(loop_dir.iterdir())
+        if p.suffix.lower().lstrip(".") in extset
+        or (p.suffix.lower().lstrip(".") == "midi" and "mid" in extset)
+    ]
     iterator: Sequence[Path] = files
     bar = None
     if progress and len(files) > 100:
@@ -316,7 +347,9 @@ def scan(
     The heat bin is the step with the highest hit count modulo ``16``.
     """
 
-    extset = {e.strip().lower().replace("midi", "mid") for e in ext.split(",") if e.strip()}
+    extset = {
+        e.strip().lower().replace("midi", "mid") for e in ext.split(",") if e.strip()
+    }
     file_list: list[Path] = []
     if not paths:
         paths = (".",)
@@ -339,7 +372,7 @@ def scan(
     if not HAVE_LIBROSA and any(f.suffix.lower() == ".wav" for f in file_list):
         click.echo(
             'WAV files detected but skipped due to missing dependency "librosa". '
-            'Install it with pip install librosa.'
+            "Install it with pip install librosa."
         )
     iterator = file_list
     bar = None
@@ -369,7 +402,7 @@ def scan(
             if not warned_librosa:
                 click.echo(
                     'WAV files detected but skipped due to missing dependency "librosa". '
-                    'Install it with pip install librosa.'
+                    "Install it with pip install librosa."
                 )
                 warned_librosa = True
             skipped += 1
@@ -399,8 +432,10 @@ def info(cache: Path) -> None:
         f"tempo BPM min/mean/max: {min(tempos):.1f}/{mean(tempos):.1f}/{max(tempos):.1f}"
     )
 
+
 __all__ = [
     "LoopEntry",
+    "load_meta",
     "scan_loops",
     "save_cache",
     "load_cache",

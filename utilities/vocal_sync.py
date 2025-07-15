@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Vocal synchronization utilities for MIDI processing and timing analysis.
 
@@ -25,15 +27,22 @@ except ImportError:
 def load_vocal_midi(path: str | Path) -> "pretty_midi.PrettyMIDI":
     """Load a MIDI file for vocal analysis.
 
-    Args:
-        path: Path to MIDI file
+    Parameters
+    ----------
+    path : str or Path
+        Path to MIDI file.
 
-    Returns:
-        PrettyMIDI object
+    Returns
+    -------
+    pretty_midi.PrettyMIDI
+        Loaded MIDI data.
 
-    Raises:
-        ImportError: If pretty_midi is not available
-        FileNotFoundError: If file doesn't exist
+    Raises
+    ------
+    ImportError
+        If pretty_midi is not available.
+    FileNotFoundError
+        If file doesn't exist.
     """
     if pretty_midi is None:
         raise ImportError("pretty_midi is required for vocal MIDI loading")
@@ -46,17 +55,29 @@ def load_vocal_midi(path: str | Path) -> "pretty_midi.PrettyMIDI":
 
 
 def extract_onsets(
-    pm: "pretty_midi.PrettyMIDI", *, tempo: float = 120.0, track_idx: int = 0
+    pm: "pretty_midi.PrettyMIDI",
+    *,
+    tempo: float = 120.0,
+    track_idx: int = 0,
+    tempo_map: "pretty_midi.PrettyMIDI" | None = None,
 ) -> list[float]:
     """Extract note onsets from MIDI in beats.
 
-    Args:
-        pm: PrettyMIDI object
-        tempo: Tempo in BPM for beat conversion
-        track_idx: Track index to analyze
+    Parameters
+    ----------
+    pm : pretty_midi.PrettyMIDI
+        MIDI object containing the vocal track.
+    tempo : float, optional
+        Tempo in BPM for conversion when ``tempo_map`` is ``None``.
+    track_idx : int, optional
+        Track index to analyse.
+    tempo_map : pretty_midi.PrettyMIDI, optional
+        External tempo map used to convert seconds to beats.
 
-    Returns:
-        List of onset times in beats
+    Returns
+    -------
+    list[float]
+        Onset times in beats.
     """
     if not pm.instruments:
         return []
@@ -67,52 +88,89 @@ def extract_onsets(
         else pm.instruments[0]
     )
 
-    # Convert seconds to beats: seconds * (tempo/60) = beats
-    sec_per_beat = 60.0 / tempo
-    onsets = [note.start / sec_per_beat for note in track.notes]
+    if tempo_map is not None:
+        onsets = [
+            tempo_map.time_to_tick(note.start) / tempo_map.resolution
+            for note in track.notes
+        ]
+    else:
+        sec_per_beat = 60.0 / tempo
+        onsets = [note.start / sec_per_beat for note in track.notes]
 
     return sorted(onsets)
 
 
 def extract_long_rests(
-    onsets: list[float], *, min_rest: float = 0.5
+    onsets: list[float],
+    *,
+    min_rest: float = 0.5,
+    tempo_map: "pretty_midi.PrettyMIDI" | None = None,
+    strict: bool | None = False,
 ) -> list[tuple[float, float]]:
     """Extract long rest periods between onsets.
 
-    Args:
-        onsets: List of onset times in beats
-        min_rest: Minimum rest duration to include
+    Parameters
+    ----------
+    onsets : list[float]
+        Onset times. Interpreted as beats unless ``tempo_map`` is provided,
+        in which case they are treated as seconds.
+    min_rest : float, optional
+        Minimum rest duration in beats.
+    tempo_map : pretty_midi.PrettyMIDI, optional
+        Tempo map for converting seconds to beats.
+    strict : bool, optional
+        When ``True`` and ``tempo_map`` is supplied, raise an error if the
+        units appear ambiguous.
 
-    Returns:
-        List of (start, end) tuples for rest periods
+    Returns
+    -------
+    list[tuple[float, float]]
+        Rest intervals. When ``tempo_map`` is ``None`` the pairs are
+        ``(start_beat, end_beat)``; otherwise ``(start_beat, duration_beats)``.
     """
     if len(onsets) < 2:
         return []
 
-    rests = []
-    for i in range(1, len(onsets)):
-        rest_start = onsets[i - 1]
-        rest_end = onsets[i]
-        rest_duration = rest_end - rest_start
+    if tempo_map is not None:
+        if strict and all(float(v).is_integer() for v in onsets):
+            raise ValueError("ambiguous units")
+        beats = [tempo_map.time_to_tick(t) / tempo_map.resolution for t in onsets]
+    else:
+        beats = list(onsets)
 
-        if rest_duration >= min_rest:
-            rests.append((rest_start, rest_end))
+    rests = []
+    for a, b in zip(beats, beats[1:]):
+        dur = b - a
+        if dur >= min_rest:
+            if tempo_map is not None:
+                rests.append((a, dur))
+            else:
+                rests.append((a, dur))
 
     return rests
 
 
 def load_consonant_peaks(
-    path: str | Path, *, tempo: float = 120.0, tempo_map=None
+    path: str | Path,
+    *,
+    tempo: float = 120.0,
+    tempo_map: "pretty_midi.PrettyMIDI" | None = None,
 ) -> list[float]:
     """Load consonant peaks from JSON file.
 
-    Args:
-        path: Path to consonant peaks JSON file
-        tempo: Tempo in BPM for conversion
-        tempo_map: Optional tempo map for conversion
+    Parameters
+    ----------
+    path : str or Path
+        Path to consonant peaks JSON file.
+    tempo : float, optional
+        Tempo in BPM for conversion when ``tempo_map`` is ``None``.
+    tempo_map : pretty_midi.PrettyMIDI, optional
+        Tempo map used to convert seconds to beats.
 
-    Returns:
-        List of peak times in beats
+    Returns
+    -------
+    list[float]
+        Peak times in beats.
     """
     path = Path(path)
     if not path.exists():
@@ -132,12 +190,17 @@ def load_consonant_peaks(
 def analyse_section(section: dict[str, Any], *, tempo_bpm: float) -> dict[str, list]:
     """Analyse a section and return vocal timing metrics.
 
-    Args:
-        section: Section configuration dictionary
-        tempo_bpm: Tempo in beats per minute
+    Parameters
+    ----------
+    section : dict
+        Section configuration dictionary.
+    tempo_bpm : float
+        Tempo in beats per minute.
 
-    Returns:
-        Dictionary with 'onsets', 'rests', and 'consonant_peaks' keys
+    Returns
+    -------
+    dict[str, list]
+        Dictionary with ``"onsets"``, ``"rests"`` and ``"consonant_peaks"`` keys.
     """
     midi_path = section.get("vocal_midi_path")
     pm = load_vocal_midi(midi_path) if midi_path else None
@@ -160,19 +223,28 @@ def quantize_times(
 ) -> list[float]:
     """Quantize times to grid size.
 
-    Args:
-        times: Input time values in beats
-        grid: Quantization grid in beats
-        dedup: If True, remove duplicate quantized values
-        eps: Tolerance when comparing values
-        use_decimal: Use decimal.Decimal for rounding
+    Parameters
+    ----------
+    times : Iterable[float]
+        Input time values in beats.
+    grid : float, optional
+        Quantization grid in beats.
+    dedup : bool, optional
+        If ``True``, remove duplicate quantized values.
+    eps : float, optional
+        Tolerance when comparing values.
+    use_decimal : bool, optional
+        Use ``decimal.Decimal`` for rounding.
 
-    Returns:
-        List of quantized times
+    Returns
+    -------
+    list[float]
+        Quantized times.
 
-    Examples:
-        >>> quantize_times([0.1, 0.6, 1.1], grid=0.5)
-        [0.0, 0.5, 1.0]
+    Examples
+    --------
+    >>> quantize_times([0.1, 0.6, 1.1], grid=0.5)
+    [0.0, 0.5, 1.0]
     """
     if use_decimal:
         grid_decimal = Decimal(str(grid))

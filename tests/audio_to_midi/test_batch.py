@@ -1,22 +1,39 @@
 from pathlib import Path
+import sys
+import types
 
 import numpy as np
 import pretty_midi
 import soundfile as sf
-import sys
-import types
 
-sys.modules.setdefault("basic_pitch", types.ModuleType("basic_pitch"))
-sys.modules["basic_pitch"].inference = types.ModuleType("inference")
-from basic_pitch.inference import predict  # noqa: F401
+# Mock basic_pitch module before any imports that might use it
+basic_pitch_module = types.ModuleType("basic_pitch")
+inference_module = types.ModuleType("inference")
+
+
+def mock_predict(path: str, *args, **kwargs):
+    """Mock predict function for testing without basic_pitch dependency"""
+    return {}, pretty_midi.PrettyMIDI(), [(0.0, 0.1, 45, 0.2, None)]
+
+
+# Set up the mock modules
+inference_module.predict = mock_predict
+basic_pitch_module.inference = inference_module
+
+sys.modules["basic_pitch"] = basic_pitch_module
+sys.modules["basic_pitch.inference"] = inference_module
+
+# Now safe to import modules that depend on basic_pitch
 from utilities import audio_to_midi_batch
 
 
-def fake_predict(path: str, *_, **__):
+def fake_predict(path: str, *args, **kwargs):
+    """Alternative fake predict function for monkeypatch"""
     return {}, pretty_midi.PrettyMIDI(), [(0.0, 0.1, 45, 0.2, None)]
 
 
 def test_audio_to_midi_batch(tmp_path, monkeypatch):
+    """Test audio to MIDI batch processing with mocked basic_pitch"""
     in_dir = tmp_path / "wav"
     out_dir = tmp_path / "out"
     in_dir.mkdir()

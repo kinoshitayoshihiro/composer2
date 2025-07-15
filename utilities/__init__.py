@@ -33,16 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from . import vocal_sync as vocal_sync
 
 from .accent_mapper import AccentMapper
-
-if _HAS_YAML:
-    from .progression_templates import get_progressions
-else:  # pragma: no cover - optional dependency
-
-    def get_progressions(*_args: Any, **_kwargs: Any) -> None:
-        raise ModuleNotFoundError(
-            "PyYAML is required. Please run 'pip install -r requirements.txt'."
-        )
-
+from .rest_utils import get_rest_windows
 
 __all__.append("get_progressions")
 
@@ -342,6 +333,7 @@ __all__ += [
     "EffectPresetLoader",
     "build_arrangement",
     "score_to_pretty_midi",
+    "get_rest_windows",
     "get_progressions",
     "vocal_sync",
 ]

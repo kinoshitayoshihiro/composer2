@@ -68,6 +68,7 @@ part_defaults:
     humanize_profile: ""
     dynamics_profile: ""
     articulation: "sustain"
+    anticipatory_chord: false
 
   guitar:
     rhythm_key: "guitar_ballad_arpeggio"

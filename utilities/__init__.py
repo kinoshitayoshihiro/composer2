@@ -30,17 +30,19 @@ if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from . import groove_sampler_ngram as groove_sampler_ngram
     from . import vocal_sync as vocal_sync
 
-from .accent_mapper import AccentMapper  # noqa: E402
-from .kde_velocity import KDEVelocityModel  # noqa: E402
+from .accent_mapper import AccentMapper
+from .kde_velocity import KDEVelocityModel
 from .loader import load_chordmap  # noqa: E402
-from .progression_templates import get_progressions  # noqa: E402
-from .rest_utils import get_rest_windows  # noqa: E402
+from .progression_templates import get_progressions
+from .rest_utils import get_rest_windows
+from .velocity_model import KDEVelocityModel
 
 __all__.append("get_progressions")
 
 from .tempo_utils import beat_to_seconds
 
 __all__.append("beat_to_seconds")
+__all__.append("load_chordmap")
 
 
 try:

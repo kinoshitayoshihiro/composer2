@@ -1003,7 +1003,7 @@ The JSON output now includes ``hand`` and ``pedal`` fields.
 
 Adjust density with ``--intensity``.
 
-Set ``piano.anticipatory_chord`` to ``true`` in your ``main_cfg`` to insert a gentle chord an eighth-note before each vocal re‑entry.
+``piano.anticipatory_chord`` in ``main_cfg.yml`` enables a short chord hit right before each vocal rest ends.
 
 ## PianoGenerator ML
 

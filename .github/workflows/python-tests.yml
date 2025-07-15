@@ -48,7 +48,7 @@ jobs:
       - name: Install dependencies
         run: |
           poetry install --no-root
-          poetry run pip install pytest-cov
+          poetry run pip install .[test]
 
       - name: Run tests
         run: poetry run pytest --cov=. -q

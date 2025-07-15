@@ -39,6 +39,7 @@ from .strings_generator import (
     EXEC_STYLE_TREMOLO,
 )
 from .vocal_generator import VocalGenerator
+from modular_composer.perc_generator import PercGenerator
 
 __all__ = [
     "BasePartGenerator",
@@ -57,4 +58,5 @@ __all__ = [
     "EXEC_STYLE_TREMOLO",
     "ChordVoicer",
     "ModularComposer",
+    "PercGenerator",
 ]

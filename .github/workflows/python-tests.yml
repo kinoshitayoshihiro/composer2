@@ -23,6 +23,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
+      - name: Install system libs
+        run: sudo apt-get update && sudo apt-get install -y libsndfile1
+
       - name: Install Poetry
         uses: abatilo/actions-poetry@v3
         with:
@@ -39,11 +42,8 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/basic_pitch
-          key: basicpitch-${{ runner.os }}-${{ hashFiles('utilities/audio_to_midi_batch.py') }}
+          key: basicpitch-${{ runner.os }}-${{ hashFiles('utilities/perc_sampler_v1.py') }}
           restore-keys: basicpitch-${{ runner.os }}-
-
-      - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y libsndfile1
 
       - name: Install dependencies
         run: |

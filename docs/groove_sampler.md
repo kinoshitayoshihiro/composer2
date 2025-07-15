@@ -96,3 +96,23 @@ Pass `--stem` to restrict processing to a specific filename and add
 `--overwrite` to regenerate existing MIDI files.
 
 Requires the `libsndfile` system library for WAV/FLAC support.
+
+## Percussion workflow
+
+Train a simple n‑gram model from percussion loops and sample bars:
+
+```bash
+python -m utilities.perc_sampler_v1 train data/loops/percussion -o models/perc_ngram.pkl --auto-res
+python -m utilities.perc_sampler_v1 sample models/perc_ngram.pkl --length 4 > perc.mid
+```
+
+Add a percussion part to your configuration:
+
+```yaml
+parts:
+  percussion:
+    backend: perc_ngram
+    model_path: models/perc_ngram.pkl
+```
+
+Percussion hits colliding with a kick or snare are shifted forward by one tick when merging with the drum track.

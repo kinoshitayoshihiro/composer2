@@ -2,6 +2,16 @@
 
 Train an n-gram model from a folder of MIDI or WAV loops.
 
+![WebSocket Bridge](https://example.com/ws_bridge.gif)
+
+## Table of Contents
+- [New parameters](#new-parameters)
+- [Aux-feature training / sampling](#aux-feature-training--sampling)
+- [Style/Aux Tagging](#styleaux-tagging)
+- [CLI Commands](#cli-commands)
+- [Audio → MIDI Batch](#audio--midi-batch)
+- [Percussion workflow](#percussion-workflow)
+
 Install optional dependencies to enable WAV extraction and the CLI:
 
 ```bash

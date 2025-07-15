@@ -31,7 +31,9 @@ if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from . import vocal_sync as vocal_sync
 
 from .accent_mapper import AccentMapper
+from .progression_templates import get_progressions
 from .rest_utils import get_rest_windows
+from .velocity_model import KDEVelocityModel
 
 __all__.append("get_progressions")
 
@@ -335,6 +337,7 @@ __all__ += [
     "render_wav",
     "render_part_audio",
     "EffectPresetLoader",
+    "KDEVelocityModel",
     "build_arrangement",
     "score_to_pretty_midi",
     "get_rest_windows",

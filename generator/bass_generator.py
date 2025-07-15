@@ -227,6 +227,7 @@ class BassGenerator(BasePartGenerator):
         emotion_profile_path: str | Path | None = None,
         tone_preset: str | None = None,
         normalize_loudness: bool = False,
+        velocity_model=None,
         **kwargs,
     ):
         """Create a bass part generator.
@@ -241,6 +242,7 @@ class BassGenerator(BasePartGenerator):
         self.kick_lock_cfg = (global_settings or {}).get("kick_lock", {})
         seed = self.kick_lock_cfg.get("random_seed")
         self._rng = random.Random(0 if seed is None else seed)
+        self.velocity_model = velocity_model
 
         super().__init__(
             global_settings=global_settings,
@@ -250,6 +252,7 @@ class BassGenerator(BasePartGenerator):
             global_key_signature_tonic=global_key_signature_tonic,
             global_key_signature_mode=global_key_signature_mode,
             rng=self._rng,
+            velocity_model=velocity_model,
             **kwargs,
         )
         self.cfg: dict = kwargs.copy()

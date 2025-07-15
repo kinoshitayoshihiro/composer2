@@ -49,6 +49,7 @@ class BasePartGenerator(ABC):
         global_key_signature_mode,
         rng=None,
         ml_velocity_model_path: str | None = None,
+        velocity_model=None,
         **kwargs,
     ):
         # ここを追加
@@ -72,6 +73,7 @@ class BasePartGenerator(ABC):
         self.global_key_signature_mode = global_key_signature_mode
         self.rng = rng or random.Random()
         self.ml_velocity_model_path = ml_velocity_model_path
+        self.velocity_model = velocity_model
         self.ml_velocity_model = None
         self.ml_velocity_cache_key = (
             ml_velocity_model_path if ml_velocity_model_path and torch else None
@@ -90,6 +92,8 @@ class BasePartGenerator(ABC):
         # 各ジェネレーター固有のロガー
         name = self.part_name or self.__class__.__name__.lower()
         self.logger = logging.getLogger(f"modular_composer.{name}")
+
+        super().__init__()
 
     # --------------------------------------------------------------
     # Properties
@@ -169,6 +173,23 @@ class BasePartGenerator(ABC):
                 n.volume.velocity = int(max(1, min(127, float(v))))
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.warning("ML velocity inference failed: %s", exc)
+
+    def _apply_velocity_model(self, part: stream.Part) -> None:
+        """Apply simple velocity model if provided."""
+        model = getattr(self, "velocity_model", None)
+        if model is None:
+            return
+        for n in part.recurse().notes:
+            pos = float(n.offset)
+            try:
+                vel = model.sample(self.part_name or "part", pos)
+            except Exception:
+                vel = None
+            if vel is not None:
+                if n.volume is None:
+                    n.volume = m21volume.Volume(velocity=vel)
+                else:
+                    n.volume.velocity = int(max(1, min(127, vel)))
 
     def compose(
         self,
@@ -298,6 +319,7 @@ class BasePartGenerator(ABC):
                 except Exception:  # pragma: no cover - best effort
                     pass
             self._apply_ml_velocity(part)
+            self._apply_velocity_model(part)
             finalize_cc_events(part)
             self._last_section = section_data
             return part

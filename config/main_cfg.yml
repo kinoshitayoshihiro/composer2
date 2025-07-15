@@ -93,6 +93,10 @@ part_defaults:
     additional_kick_density: 0.2
     humanize_profile: ""
     dynamics_profile: ""
+    cond: {style: funk}
+
+  percussion:
+    cond: {style: lofi}
 
   strings:
     role: "pad"

@@ -218,9 +218,12 @@ class BasePartGenerator(ABC):
         self.logger.info(
             f"Rendering part for section: '{section_label}' with overrides: {overrides_dump}"
         )
-        parts = self._render_part(
-            section_data, next_section_data, vocal_metrics=vocal_metrics
-        )
+        try:
+            parts = self._render_part(
+                section_data, next_section_data, vocal_metrics=vocal_metrics
+            )
+        except TypeError:
+            parts = self._render_part(section_data, next_section_data)
 
         if not isinstance(parts, stream.Part | dict):
             self.logger.error(

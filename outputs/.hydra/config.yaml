@@ -4,8 +4,8 @@ epochs: 2
 learning_rate: 0.001
 num_workers: 0
 data:
-  train: /data/velocity.csv
-  val: tests/data/velocity_mini.csv
+  train: /Users/kinoshitayoshihiro/music21/composer2-3/data/velocity.csv
+  val: /Users/kinoshitayoshihiro/music21/composer2-3/data/velocity.csv
 wandb: false
 patience: 10
 training:

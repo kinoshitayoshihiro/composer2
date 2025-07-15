@@ -85,6 +85,7 @@
     │   ├── rhythm_library.yml
     │   ├── tempo_curve.json
     │   ├── tempo_map.json
+    │   ├── velocity.csv
     │   └── vocal_note_data_ore.json
     ├── data_ops
     │   ├── __pycache__
@@ -128,6 +129,7 @@
     │   ├── piano_gamma.md
     │   ├── plugin_guide.md
     │   ├── quick_start.md
+    │   ├── realtime_ws.md
     │   ├── sax_generator.md
     │   ├── strings_generator.md
     │   ├── tone.md
@@ -183,6 +185,7 @@
     ├── lib
     │   └── python3.10
     ├── loaders
+    │   ├── __pycache__
     │   └── section_loader.py
     ├── model
     │   ├── groove_ngram.pkl
@@ -190,10 +193,15 @@
     ├── modular_composer
     │   ├── __pycache__
     │   ├── __init__.py
-    │   └── cli.py
+    │   ├── cli.py
+    │   ├── drum_generator.py
+    │   └── perc_generator.py
     ├── notebooks
     │   ├── quality_live_demo.ipynb
     │   └── quick_start.ipynb
+    ├── outputs
+    │   ├── checkpoints
+    │   └── train_velocity.log
     ├── plugins
     │   ├── __pycache__
     │   ├── modcompose
@@ -442,6 +450,7 @@
     │   ├── test_peak_extractor.py
     │   ├── test_peak_synchroniser.py
     │   ├── test_pedalizer.py
+    │   ├── test_perc_generator.py
     │   ├── test_perf_budget.py
     │   ├── test_perf_gate.py
     │   ├── test_phoneme_articulation_metadata.py
@@ -511,6 +520,7 @@
     │   ├── test_strings_phase4.py
     │   ├── test_strings_vibrato.py
     │   ├── test_strings_vocal_metrics.py
+    │   ├── test_style_aux.py
     │   ├── test_style_curve.py
     │   ├── test_sync_peaks.py
     │   ├── test_synth.py
@@ -518,6 +528,7 @@
     │   ├── test_synthesize_vocal_cli.py
     │   ├── test_temperature_schedule.py
     │   ├── test_tempo_curve.py
+    │   ├── test_tempo_map_e2e.py
     │   ├── test_tempo_utils.py
     │   ├── test_tempo_velocity_curve.py
     │   ├── test_time_signature.py
@@ -546,8 +557,10 @@
     │   ├── test_vocal_metrics_plumbing.py
     │   ├── test_vocal_sync.py
     │   ├── test_vocal_sync_integration.py
+    │   ├── test_vocal_sync_rest.py
     │   ├── test_wheel_import.py
     │   ├── test_ws_echo.py
+    │   ├── test_ws_latency.py
     │   └── test_ws_vocal_bridge.py
     ├── tools
     │   ├── __pycache__
@@ -628,6 +641,7 @@
     │   ├── peak_extractor.py
     │   ├── peak_synchroniser.py
     │   ├── pedalizer.py
+    │   ├── perc_sampler_v1.py
     │   ├── phoneme_dict.json
     │   ├── phrase_filter.py
     │   ├── preset_manager.py
@@ -637,8 +651,12 @@
     │   ├── progression_templates_broken.py
     │   ├── progression_templates_fixed.py
     │   ├── realtime_engine.py
+    │   ├── realtime_sampler.py
+    │   ├── rest_utils.py
     │   ├── rhythm_library_loader.py
+    │   ├── ring_buffer.py
     │   ├── rt_midi_streamer.py
+    │   ├── rtmidi_streamer.py
     │   ├── safe_get.py
     │   ├── scale_registry.py
     │   ├── streaming_sampler.py
@@ -659,7 +677,8 @@
     │   ├── vocal_sync.py
     │   ├── vocal_sync_backup.py
     │   ├── vocal_sync_fixed.py
-    │   └── vocal_sync_new.py
+    │   ├── vocal_sync_new.py
+    │   └── ws_bridge.py
     ├── wheelhouse
     │   ├── PyYAML-6.0.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
     │   ├── PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl

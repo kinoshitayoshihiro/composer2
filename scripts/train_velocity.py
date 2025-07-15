@@ -7,7 +7,7 @@ from pathlib import Path
 from omegaconf import DictConfig
 
 parser = argparse.ArgumentParser(add_help=False)
-parser.add_argument("--epochs", type=int)
+parser.add_argument("--max-epochs", type=int)
 parser.add_argument("--out", type=str)
 parser.add_argument("--run-dir", type=str)
 
@@ -18,8 +18,8 @@ if "-h" in sys.argv or "--help" in sys.argv:
 parsed_args, remaining_argv = parser.parse_known_args()
 sys.argv = sys.argv[:1] + remaining_argv
 extra_overrides: list[str] = []
-if parsed_args.epochs is not None:
-    extra_overrides.append(f"training.epochs={parsed_args.epochs}")
+if parsed_args.max_epochs is not None:
+    extra_overrides.append(f"trainer.max_epochs={parsed_args.max_epochs}")
 if parsed_args.out is not None:
     extra_overrides.append(f"+out={parsed_args.out}")
 if parsed_args.run_dir is not None:
@@ -102,15 +102,29 @@ def main(cfg: DictConfig) -> None:
     val_ds = CsvDataset(cfg.data.val, cfg.input_dim)
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers)
     val_loader = DataLoader(val_ds, batch_size=cfg.batch_size, num_workers=cfg.num_workers)
-    callbacks = [
-        pl.callbacks.EarlyStopping(monitor="val_MSE", mode="min", patience=cfg.patience, stopping_threshold=0.015)
-    ]
+    callbacks = []
+    if "callbacks" in cfg and "early_stopping" in cfg.callbacks:
+        es_cfg = cfg.callbacks.early_stopping
+        callbacks.append(
+            pl.callbacks.EarlyStopping(
+                monitor=es_cfg.monitor,
+                mode=es_cfg.mode,
+                patience=es_cfg.patience,
+                stopping_threshold=es_cfg.stopping_threshold,
+            )
+        )
     logger = False
-    if cfg.wandb:
+    if (
+        "trainer" in cfg
+        and "logger" in cfg.trainer
+        and cfg.trainer.logger.use_wandb
+    ):
         from pytorch_lightning.loggers import WandbLogger
 
         logger = WandbLogger(project="velocity")
-    trainer = pl.Trainer(max_epochs=cfg.epochs, callbacks=callbacks, logger=logger)
+
+    trainer_kwargs = {k: v for k, v in cfg.trainer.items() if k != "logger"}
+    trainer = pl.Trainer(**trainer_kwargs, callbacks=callbacks, logger=logger)
     module = LightningModule(cfg)
     trainer.fit(module, train_loader, val_loader)
     Path("checkpoints").mkdir(exist_ok=True)

@@ -10,7 +10,13 @@ def load_chordmap(path: str | Path) -> dict[str, Any]:
     """Load chordmap YAML and resolve new fields."""
     p = Path(path).expanduser().resolve()
     data: dict[str, Any] = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    sections = data.get("sections", {})
+    sections = data.get("sections")
+    if sections is None:
+        sections = data.get("global_settings", {}).get("sections")
+        if isinstance(sections, dict):
+            data["sections"] = sections
+    if sections is None:
+        sections = {}
     if isinstance(sections, dict):
         for name, sec in sections.items():
             if not isinstance(sec, dict):
@@ -21,6 +27,8 @@ def load_chordmap(path: str | Path) -> dict[str, Any]:
             cjson = sec.get("consonant_json")
             if cjson is not None:
                 sec["consonant_json"] = str((base / cjson).resolve())
+            else:
+                sec["consonant_json"] = None
     return data
 
 __all__ = ["load_chordmap"]

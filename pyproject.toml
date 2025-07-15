@@ -1,43 +1,26 @@
 [build-system]
-requires = ["setuptools", "wheel", "build", "hatchling"]
-build-backend = "hatchling.build"
+requires = ["poetry-core>=1.7.0"]
+build-backend = "poetry.core.masonry.api"
 
-[project]
+[tool.poetry]
 name = "modular-composer"
+version = "3.0.0"
 description = "OtoKotoba Modular Composer"
+authors = [{ name = "Harusan", email = "haru@example.com" }]
 readme = "README.md"
 license = { file = "LICENSE" }
-authors = [
-  { name = "Harusan", email = "haru@example.com" },
-]
 keywords = ["music", "midi", "generation", "plugin"]
-requires-python = ">=3.9"
-version = "1.0.1"
+requires-python = ">=3.10,<4.0"
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
 ]
-dependencies = [
-  "music21>=9.1",
-  "PyYAML>=6.0",
-  "pydantic>=2.7",
-  "pydub>=0.25",
-  "mido>=1.2.10,<1.3",
-  "tomli>=2.0",
-  "audioread>=2.1.9",
-  "pretty_midi>=0.2.10",
-  "librosa>=0.10",
-  "numpy>=1.24",
-  "soundfile>=0.12",
-  "basic_pitch>=0.3",
-  "websockets>=12.0",
-]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = ">=3.10,<4.0"
 audioread = ">=2.1.9"
-basic_pitch = ">=0.3"
+basic_pitch = { version = ">=0.3", python = "<3.12" }
 librosa = ">=0.10"
 mido = ">=1.2.10,<1.3"
 music21 = ">=9.1"
@@ -48,14 +31,19 @@ pydub = ">=0.25"
 PyYAML = ">=6.0"
 soundfile = ">=0.12"
 tomli = ">=2.0"
+setuptools = "*"
+websockets = ">=12.0"
 
-[project.optional-dependencies]
-dev = ["pytest", "mypy", "ruff", "PyYAML>=6.0"]
+[tool.poetry.extras]
 test = [
+  "pytest",
+  "pytest-cov",
+  "mypy",
+  "ruff",
   "music21>=9.1",
   "scikit-learn>=1.3.0",
-  "librosa>=0.10.0",
-  "soundfile>=0.12.0",
+  "librosa>=0.10",
+  "soundfile>=0.12",
   "scipy>=1.10",
   "pretty_midi>=0.2.10",
   "mido>=1.2.10,<1.3",
@@ -79,9 +67,7 @@ groove = [
 gui = ["streamlit", "plotly"]
 rnn = ["torch==2.3.0", "pytorch_lightning==2.2.4", "optuna==3.6.1"]
 live = ["mido>=1.2.10,<1.3", "python-rtmidi>=1.5"]
-ml = [
-  "scikit-learn>=1.3.0",
-]
+ml = ["scikit-learn>=1.3.0"]
 ai = [
   "transformers>=4.43",
   "accelerate",
@@ -100,75 +86,41 @@ plugin = [
   "ninja",
 ]
 
-all = [
-  "pytest",
-  "mypy",
-  "ruff",
-  "librosa>=0.10",
-  "soundfile>=0.12",
-  "fluidsynth",
-  "tqdm",
-  "numpy>=1.24",
-  "scipy>=1.10",
-  "pretty_midi>=0.2.10",
-  "music21>=9.1",
-  "mido>=1.2.10,<1.3",
-  "python-rtmidi",
-  "hdbscan>=0.8",
-  "streamlit",
-  "plotly",
-  "torch==2.3.0",
-  "pytorch_lightning==2.2.4",
-  "optuna==3.6.1",
-  "mido>=1.2.10,<1.3",
-  "python-rtmidi>=1.5",
-  "transformers>=4.43",
-  "accelerate",
-  "sentencepiece",
-  "hmmlearn>=0.3",
-  "pybind11>=2.10",
-  "cmake",
-  "ninja",
-]
-
 [tool.hatch.version]
 path = "modular_composer/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["modular_composer", "utilities"]
 
-[project.scripts]
-modcompose = "modular_composer.cli:main"
-
 [tool.poetry.scripts]
+modcompose = "modular_composer.cli:main"
 train-velocity = "scripts.train_velocity:main"
 
 [tool.ruff]
 target-version = "py310"
-
 select = ["E", "F", "I", "UP"]
 fix = true
 line-length = 100
 extend-exclude = [
-    "generator/*",
-    "utilities/*",
-    "tests/*",
-    "data/*",
-    "Backup/*",
-    "docs/*",
-    "config/*",
-    "midi_output/*",
-    "scripts/*",
-    "tools/*",
-    "wheelhouse/*",
-    "modular_composer.py",
-    "emotion_humanizer.py",
-    "groove_profile.py",
-    "build_all_json.py",
-    "run_generate_demo.sh",
-    "setup.sh",
-    "setup_project.sh",
-    "streamlit_app/*",
+  "generator/*",
+  "utilities/*",
+  "tests/*",
+  "data/*",
+  "Backup/*",
+  "docs/*",
+  "config/*",
+  "midi_output/*",
+  "scripts/*",
+  "tools/*",
+  "wheelhouse/*",
+  "modular_composer.py",
+  "emotion_humanizer.py",
+  "groove_profile.py",
+  "build_all_json.py",
+  "run_generate_demo.sh",
+  "setup.sh",
+  "setup_project.sh",
+  "streamlit_app/*",
 ]
 
 [tool.ruff.lint]
@@ -189,12 +141,10 @@ ignore_missing_imports = true
 module = ["plotly.*", "streamlit.*", "sounddevice.*"]
 ignore_missing_imports = true
 
-
 [tool.pytest.ini_options]
 markers = [
-    "ci_perf: performance gate",
-    "stretch: stretch smoke tests",
-    "packaging: packaging checks",
-    "docs: documentation build",
+  "ci_perf: performance gate",
+  "stretch: stretch smoke tests",
+  "packaging: packaging checks",
+  "docs: documentation build",
 ]
-

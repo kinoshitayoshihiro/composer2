@@ -3,6 +3,8 @@
 [![Nightly](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml)
 [![PyPI](https://img.shields.io/pypi/v/modular-composer.svg)](https://pypi.org/project/modular-composer/)
 [![Contributing](https://img.shields.io/badge/CONTRIBUTING-guide-blue.svg)](CONTRIBUTING.md)
+[![Plugin Build](https://github.com/OpenAI/modular_composer/actions/workflows/plugin.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/plugin.yml)
+[![GUI Build](https://github.com/OpenAI/modular_composer/actions/workflows/gui.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/gui.yml)
 
 
 This project blends poetic Japanese narration with emotive musical arrangements.
@@ -25,6 +27,7 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Vocal Generator](docs/vocal_generator.md)
 - [Sax Generator](docs/sax_generator.md)
 - [Realtime WebSocket Streaming](docs/realtime_ws.md)
+- [Plugin & GUI](docs/plugin_gui.md)
 
 
 ## Setup

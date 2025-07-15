@@ -42,3 +42,9 @@ vocal MIDI -> analyse_section -> {onsets, rests, peaks}
         \-> BassGenerator/PianoGenerator
 ```
 
+## Tempo map data flow
+
+```
+section.tempo_map -> export_song -> merged PrettyMIDI
+```
+

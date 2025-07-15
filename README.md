@@ -1003,6 +1003,8 @@ The JSON output now includes ``hand`` and ``pedal`` fields.
 
 Adjust density with ``--intensity``.
 
+Set ``piano.anticipatory_chord`` to ``true`` in your ``main_cfg`` to insert a gentle chord an eighth-note before each vocal re‑entry.
+
 ## PianoGenerator ML
 
 Phase γ introduces a transformer-based voicing model.

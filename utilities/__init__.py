@@ -343,6 +343,7 @@ __all__ += [
     "build_arrangement",
     "score_to_pretty_midi",
     "get_progressions",
+    "get_rest_windows",
     "vocal_sync",
 ]
 

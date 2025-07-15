@@ -6,6 +6,12 @@ from pathlib import Path
 
 from omegaconf import DictConfig
 
+if len(sys.argv) > 1 and sys.argv[1] == "build-velocity-csv":
+    from scripts.audio_to_velocity_csv import main as build_velocity_csv
+
+    build_velocity_csv(sys.argv[2:])
+    raise SystemExit(0)
+
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--max-epochs", type=int)
 parser.add_argument("--out", type=str)

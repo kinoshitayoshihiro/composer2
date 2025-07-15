@@ -9,6 +9,12 @@ python -m modcompose.train config.yaml
 python -m modcompose.play live
 ```
 
+Train the velocity model used for expressive playback:
+
+```bash
+train-velocity --help
+```
+
 For live playback, run:
 
 ```bash

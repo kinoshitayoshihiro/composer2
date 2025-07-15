@@ -48,7 +48,10 @@ jobs:
       - name: Install dependencies
         run: |
           poetry install --no-root
-          poetry run pip install pytest-cov
+          poetry run pip install pytest-cov pretty_midi soundfile
+
+      - name: Verify train-velocity CLI
+        run: poetry run train-velocity --help
 
       - name: Run tests
         run: poetry run pytest --cov=. -q

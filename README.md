@@ -573,6 +573,14 @@ modcompose render spec.yml --velocity-hist groove_hist.pkl \
 ```
 Specifying ``--seed`` makes velocity sampling reproducible.
 
+### Velocity Model Training
+
+Use the ``train-velocity`` script to fit a simple KDE-based velocity model:
+
+```bash
+train-velocity --epochs 5 --out checkpoints/last.ckpt
+```
+
 ### Sampling API
 
 The helper ``generate_bar`` yields one bar at a time and updates the history

@@ -95,9 +95,10 @@ class LightningModule(pl.LightningModule if pl is not None else object):
 
 
 @hydra.main(config_path="../configs", config_name="velocity_model.yaml")
-def main(cfg: DictConfig) -> None:
+def main(cfg: DictConfig) -> int:
     if pl is None or torch is None:
-        raise RuntimeError("PyTorch Lightning required")
+        print("PyTorch Lightning required", file=sys.stderr)
+        return 1
     train_ds = CsvDataset(cfg.data.train, cfg.input_dim)
     val_ds = CsvDataset(cfg.data.val, cfg.input_dim)
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers)
@@ -115,7 +116,8 @@ def main(cfg: DictConfig) -> None:
     trainer.fit(module, train_loader, val_loader)
     Path("checkpoints").mkdir(exist_ok=True)
     trainer.save_checkpoint("checkpoints/last.ckpt")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

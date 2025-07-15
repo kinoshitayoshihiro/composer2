@@ -24,6 +24,7 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Effects & Automation](docs/effects.md)
 - [Vocal Generator](docs/vocal_generator.md)
 - [Sax Generator](docs/sax_generator.md)
+- [Realtime WebSocket Streaming](docs/realtime_ws.md)
 
 
 ## Setup
@@ -574,6 +575,14 @@ modcompose render spec.yml --velocity-hist groove_hist.pkl \
     --humanize-velocity 1.0 --ema-alpha 0.2 --humanize-timing 1.0 --seed 42
 ```
 Specifying ``--seed`` makes velocity sampling reproducible.
+
+### Velocity Model Training
+
+Use the ``train-velocity`` script to fit a simple KDE-based velocity model:
+
+```bash
+train-velocity --epochs 5 --out checkpoints/last.ckpt
+```
 
 ### Sampling API
 

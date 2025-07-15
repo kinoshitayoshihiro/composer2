@@ -94,6 +94,7 @@ packages = ["modular_composer", "utilities"]
 
 [tool.poetry.scripts]
 modcompose = "modular_composer.cli:main"
+dump-tree = "modular_composer.cli:main"
 train-velocity = "scripts.train_velocity:main"
 
 [tool.ruff]

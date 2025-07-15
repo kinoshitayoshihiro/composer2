@@ -2489,6 +2489,27 @@ class DrumGenerator(BasePartGenerator):
         )
         return part
 
+    @staticmethod
+    def merge_perc_events(events_drum: list[dict], events_perc: list[dict]) -> list[dict]:
+        """Merge percussion events with drum events.
+
+        Percussion hits colliding with kick or snare on the same tick are shifted
+        by one tick to avoid overlap.
+        """
+        merged = list(events_drum)
+        for ev in events_perc:
+            tick = ev.get("offset", 0.0)
+            if any(
+                abs(d.get("offset", 0.0) - tick) <= 1e-6
+                and d.get("instrument") in {"kick", "snare"}
+                for d in merged
+            ):
+                ev = dict(ev)
+                ev["offset"] = tick + (1 / RESOLUTION)
+            merged.append(ev)
+        merged.sort(key=lambda e: e.get("offset", 0.0))
+        return merged
+
 
 __all__ = ["DrumGenerator", "GM_DRUM_MAP"]
 

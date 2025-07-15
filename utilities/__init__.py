@@ -21,8 +21,6 @@ import importlib
 import importlib.util as importlib_util
 from typing import TYPE_CHECKING, Any
 
-from .progression_templates import get_progressions
-
 __all__: list[str] = []
 
 _HAS_MUSIC21 = importlib_util.find_spec("music21") is not None

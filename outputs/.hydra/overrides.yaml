@@ -1,0 +1,4 @@
+- +training.epochs=30
+- +out.ckpt=ckpt_vscode.pt
+- +device=mps
+- data.train=/data/velocity.csv

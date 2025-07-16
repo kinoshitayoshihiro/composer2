@@ -185,7 +185,7 @@ def convert_wav_to_midi(
 
 def midi_to_events(pm: "pretty_midi.PrettyMIDI") -> List[Tuple[float, int]]:
     """Extract ``(beat, pitch)`` tuples from a PrettyMIDI drum track."""
-    tempo_arr = pm.get_tempo_changes()[1]
+    tempo_arr = pm.get_tempo_changes()[0]
     tempo = float(tempo_arr[0]) if tempo_arr.size else 120.0
     sec_per_beat = 60.0 / tempo
 

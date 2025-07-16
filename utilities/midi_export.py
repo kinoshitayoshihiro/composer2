@@ -6,6 +6,7 @@ import importlib
 import io
 import json
 from collections.abc import Callable
+import sitecustomize  # noqa: F401
 from pathlib import Path
 from typing import Any
 
@@ -83,17 +84,13 @@ def music21_to_mido(part: stream.Part) -> "mido.MidiFile":
 def apply_tempo_map(
     pm: "pretty_midi.PrettyMIDI", tempo_map: list[tuple[float, float]] | None
 ) -> None:
-    """Apply a tempo map to ``pm`` using PrettyMIDI's private API."""
+    """Apply a tempo map to ``pm`` using PrettyMIDI's public API."""
     if tempo_map is None:
         return
-    pm._tick_scales = []
-    for beat, bpm in tempo_map:
-        pm._tick_scales.append(
-            (
-                int(round(float(beat) * pm.resolution)),
-                60.0 / (float(bpm) * pm.resolution),
-            )
-        )
+    tempo_map = sorted((float(b), float(t)) for b, t in tempo_map)
+    tempi = [bpm for _, bpm in tempo_map]
+    times = [tempo_utils.beat_to_seconds(b, tempo_map) for b, _ in tempo_map]
+    pm.set_tempo_changes(tempi, times)
 
 
 def export_song(
@@ -177,7 +174,6 @@ def export_song(
             all_tempos = list(tempo_map)
         all_tempos.sort(key=lambda x: float(x[0]))
         if all_tempos:
-            master._tick_scales = []  # avoid double scaling
             apply_tempo_map(master, all_tempos)
 
     master.write(str(out_path))

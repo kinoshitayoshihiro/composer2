@@ -52,11 +52,10 @@ jobs:
           key: torch-${{ runner.os }}-${{ hashFiles('utilities/groove_transformer.py') }}
           restore-keys: torch-${{ runner.os }}-
 
-      - name: Install dependencies
+      - name: Install extras and deps
         run: |
-          poetry install --no-root
-          poetry run pip install .[test]
-          poetry run pip install pytest-cov pretty_midi soundfile
+          poetry install --no-root --extras test
+          poetry run pip install numpy
 
       - name: Verify train-velocity CLI
         run: poetry run train-velocity --help

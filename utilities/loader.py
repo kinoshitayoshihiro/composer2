@@ -11,12 +11,9 @@ def load_chordmap(path: str | Path) -> dict[str, Any]:
     p = Path(path).expanduser().resolve()
     data: dict[str, Any] = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     sections = data.get("sections")
-    if sections is None:
-        sections = data.get("global_settings", {}).get("sections")
-        if isinstance(sections, dict):
-            data["sections"] = sections
-    if sections is None:
-        sections = {}
+    if not isinstance(sections, dict):
+        sections = data.get("global_settings", {}).get("sections", {})
+    data["sections"] = sections if isinstance(sections, dict) else {}
     if isinstance(sections, dict):
         for name, sec in sections.items():
             if not isinstance(sec, dict):

@@ -144,17 +144,17 @@ class PianoGenerator(BasePartGenerator):
         input_series:
             Sequence of melody pitches to mirror.
         delay_beats:
-            Offset in beats before the first echo. Defaults to ``0.5`` when
-            omitted.
+            Beat offset before the first echo. If omitted, defaults to ``0.5``.
         echo_factor:
-            Velocity multiplier applied per echo iteration.
+            Multiplier applied to velocity for each successive echo.
         num_echoes:
-            Number of echoes to produce.
+            Number of echoes to generate.
 
         Returns
         -------
         list[note.Note]
-            Echo notes positioned and scaled by ``echo_factor``.
+            Echo notes positioned at ``delay_beats`` intervals and scaled by
+            ``echo_factor``.
         """
 
         delay = float(delay_beats or 0.5)

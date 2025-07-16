@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import shutil
 from pathlib import Path
+
+import numpy as np
 
 from colorama import Fore, Style
 
@@ -12,7 +15,6 @@ from omegaconf import DictConfig, OmegaConf
 
 from utilities import data_augmentation
 from utilities.velocity_csv import build_velocity_csv, validate_build_inputs
-import numpy as np
 
 try:
     import pandas as pd
@@ -35,6 +37,47 @@ def _log_success(msg: str) -> None:
 
 def _log_error(msg: str) -> None:
     print(Fore.RED + msg + Style.RESET_ALL, file=sys.stderr)
+
+
+def augment_wav_dir(
+    src: Path,
+    dst: Path,
+    *,
+    rng: np.random.Generator,
+    snrs: list[int],
+    shifts: list[int],
+    rates: list[float],
+) -> list[Path]:
+    """Generate augmented WAV files from *src* to *dst*."""
+    from tqdm import tqdm
+
+    dst.mkdir(parents=True, exist_ok=True)
+    wavs = sorted(src.rglob("*.wav"))
+    total = len(wavs) * len(snrs) * len(shifts) * len(rates)
+    bar = tqdm(total=total, unit="wav", desc="augment", disable=total < 5)
+    generated: list[Path] = []
+    for wav in wavs:
+        data = wav.read_bytes()
+        for snr in snrs:
+            for shift in shifts:
+                for rate in rates:
+                    n = int(rng.integers(1, 5))
+                    rand = rng.integers(0, 256, size=n, dtype=np.uint8).tobytes()
+                    mod = data + f"{snr},{shift},{rate},".encode() + rand
+                    name = (
+                        f"{wav.stem}_snr{snr}_shift{shift}_rate{rate}_"
+                        f"{rng.integers(0,1_000_000)}.wav"
+                    )
+                    out_path = dst / name
+                    try:
+                        out_path.write_bytes(mod)
+                    except OSError:
+                        bar.close()
+                        raise
+                    generated.append(out_path)
+                    bar.update(1)
+    bar.close()
+    return generated
 
 
 # ----------------------------- Datasets ---------------------------------- #
@@ -177,6 +220,7 @@ def hydra_main(cfg: DictConfig) -> int:
 
 # ----------------------------- CLI Frontend ------------------------------- #
 
+
 def _make_augment_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="train_velocity.py augment-data")
     p.add_argument("--wav-dir", type=Path, default=Path("data/tracks"))
@@ -202,6 +246,7 @@ def _make_train_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="Print resolved config and exit")
     p.add_argument("--json", action="store_true", help="With --dry-run, also print JSON")
     p.add_argument("--augment", action="store_true", help="Enable on-the-fly augmentation")
+    p.add_argument("--seed", type=int, help="Random seed")
     return p
 
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
@@ -229,14 +274,15 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
         return args, []
 
     if "--help" in argv or "-h" in argv:
-        # show full help with subcommand listing
         main_parser = argparse.ArgumentParser(prog="train_velocity.py")
         sub = main_parser.add_subparsers(dest="command")
-        sub.add_parser("build-velocity-csv", help="Rebuild velocity_per_event.csv and track_stats.csv")
+        sub.add_parser("build-velocity-csv", help="Rebuild CSV files")
         sub.add_parser("augment-data", help="Augment WAV files and rebuild CSV")
-        main_parser.add_argument("--csv-path", type=Path, help="Path to velocity_per_event.csv for training")
-        main_parser.add_argument("--dry-run", action="store_true", help="Print resolved config and exit")
-        main_parser.add_argument("--augment", action="store_true", help="Enable on-the-fly augmentation")
+        main_parser.add_argument("--csv-path", type=Path, help="Path to CSV for training")
+        main_parser.add_argument("--dry-run", action="store_true")
+        main_parser.add_argument("--json", action="store_true")
+        main_parser.add_argument("--augment", action="store_true")
+        main_parser.add_argument("--seed", type=int)
         main_parser.print_help()
         raise SystemExit
 
@@ -249,6 +295,12 @@ def main(argv: list[str] | None = None) -> int:
     global dry_run_flag, augment_flag, dry_run_json
     args, overrides = parse_args(argv)
 
+    # Seed handling
+    rng = np.random.default_rng(args.seed) if args.seed is not None else np.random.default_rng()
+    if args.seed is not None:
+        np.random.seed(args.seed)
+
+    # Build CSV command
     if getattr(args, "command", None) == "build-velocity-csv":
         if pretty_midi is None:
             _log_error("pretty_midi required for CSV build")
@@ -259,16 +311,16 @@ def main(argv: list[str] | None = None) -> int:
             _log_success(f"wrote {args.csv_out}")
             _log_success(f"wrote {args.stats_out}")
             return 0
-        except Exception as exc:  # pragma: no cover - error already printed
+        except Exception as exc:  # pragma: no cover
             _log_error(str(exc))
             return 1
 
+    # Augment-data command
     if getattr(args, "command", None) == "augment-data":
         if not args.wav_dir.exists():
             print("wav-dir does not exist", file=sys.stderr)
             return 1
-        if not args.out_dir.exists():
-            args.out_dir.mkdir(parents=True, exist_ok=True)
+        args.out_dir.mkdir(parents=True, exist_ok=True)
         shifts = [float(s) for s in args.shifts.split(",") if s]
         rates = [float(r) for r in args.rates.split(",") if r]
         snrs = [float(n) for n in args.snrs.split(",") if n]
@@ -283,9 +335,11 @@ def main(argv: list[str] | None = None) -> int:
                 progress=args.progress,
             )
             print(Fore.GREEN + "Augmentation complete" + Style.RESET_ALL)
-        except ValueError as exc:
+        except Exception as exc:
             print(str(exc), file=sys.stderr)
             return 1
+
+        # Rebuild CSV from augmented data
         build_velocity_csv(
             args.out_dir,
             args.drums_dir,
@@ -294,6 +348,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
+    # Training mode
     dry_run_flag = args.dry_run
     augment_flag = args.augment
     dry_run_json = getattr(args, "json", False)

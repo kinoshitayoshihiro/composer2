@@ -129,8 +129,7 @@ class LightningModule(pl.LightningModule if pl is not None else object):
 dry_run_flag = False
 
 
-@hydra.main(config_path="../configs", config_name="velocity_model.yaml")
-def hydra_main(cfg: DictConfig) -> int:
+def run(cfg: DictConfig) -> int:
     if dry_run_flag:
         print(OmegaConf.to_yaml(cfg))
         return 0
@@ -191,37 +190,57 @@ def hydra_main(cfg: DictConfig) -> int:
     return 0
 
 
+@hydra.main(config_path="../configs", config_name="velocity_model.yaml", version_base="1.3")
+def hydra_main(cfg: DictConfig) -> int:
+    return run(cfg)
+
+
 # ----------------------------- CLI Frontend ------------------------------- #
 
+def _make_build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="train_velocity.py build-velocity-csv")
+    p.add_argument("--tracks-dir", type=Path, default=Path("data/tracks"))
+    p.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
+    p.add_argument("--csv-out", type=Path, default=Path("data/csv/velocity_per_event.csv"))
+    p.add_argument("--stats-out", type=Path, default=Path("data/csv/track_stats.csv"))
+    return p
+
+
+def _make_train_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="train_velocity.py")
+    p.add_argument("--csv-path", type=Path, help="Path to velocity_per_event.csv for training")
+    p.add_argument("--dry-run", action="store_true", help="Print resolved config and exit")
+    return p
+
+
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
-    parser = argparse.ArgumentParser(prog="train_velocity.py")
-    sub = parser.add_subparsers(dest="command")
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        parser = _make_train_parser()
+        return parser.parse_known_args(argv)
 
-    build = sub.add_parser(
-        "build-velocity-csv",
-        help="Rebuild velocity_per_event.csv and track_stats.csv",
-    )
-    build.add_argument("--tracks-dir", type=Path, default=Path("data/tracks"))
-    build.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
-    build.add_argument(
-        "--csv-out", type=Path, default=Path("data/csv/velocity_per_event.csv")
-    )
-    build.add_argument(
-        "--stats-out", type=Path, default=Path("data/csv/track_stats.csv")
-    )
+    if argv[0] == "build-velocity-csv":
+        parser = _make_build_parser()
+        if "--help" in argv or "-h" in argv:
+            parser.print_help()
+            raise SystemExit
+        args = parser.parse_args(argv[1:])
+        args.command = "build-velocity-csv"
+        return args, []
 
-    parser.add_argument(
-        "--csv-path",
-        type=Path,
-        help="Path to velocity_per_event.csv for training",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print resolved config and exit",
-    )
+    if "--help" in argv or "-h" in argv:
+        # show full help with subcommand listing
+        main_parser = argparse.ArgumentParser(prog="train_velocity.py")
+        sub = main_parser.add_subparsers(dest="command")
+        sub.add_parser("build-velocity-csv", help="Rebuild velocity_per_event.csv and track_stats.csv")
+        main_parser.add_argument("--csv-path", type=Path, help="Path to velocity_per_event.csv for training")
+        main_parser.add_argument("--dry-run", action="store_true", help="Print resolved config and exit")
+        main_parser.print_help()
+        raise SystemExit
 
+    parser = _make_train_parser()
     args, overrides = parser.parse_known_args(argv)
+    args.command = None
     return args, overrides
 
 
@@ -229,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     global dry_run_flag
     args, overrides = parse_args(argv)
 
-    if args.command == "build-velocity-csv":
+    if getattr(args, "command", None) == "build-velocity-csv":
         if pretty_midi is None:
             print("pretty_midi required for CSV build", file=sys.stderr)
             return 1
@@ -241,7 +260,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.csv_path is not None:
         overrides.append(f"+csv.path={args.csv_path}")
 
-    sys.argv = [sys.argv[0]] + overrides
+    if overrides:
+        from hydra import compose, initialize
+
+        with initialize(config_path="../configs", version_base="1.3"):
+            cfg = compose(config_name="velocity_model.yaml", overrides=overrides)
+        return run(cfg)
+
     return hydra_main()
 
 

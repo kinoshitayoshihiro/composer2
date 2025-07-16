@@ -222,3 +222,25 @@ Start the server with:
 uvicorn my_server:app --reload
 ```
 
+## Phase 3: Data Augmentation
+
+Use the new augmentation CLI to expand the training data.
+
+Run augmentation and rebuild the velocity CSV:
+
+```bash
+python scripts/train_velocity.py augment-data \
+  --wav-dir data/tracks \
+  --out-dir data/tracks_aug \
+  --drums-dir data/loops/drums \
+  --shifts -2,0,2 \
+  --rates 0.8,1.2 \
+  --snrs 20,10
+```
+
+- `--shifts`: pitch shift amounts in semitones
+- `--rates`: time stretch rates
+- `--snrs`: signal-to-noise ratios for added noise
+- `--drums-dir`: directory containing drum loops for CSV rebuild
+
+Training with `--augment` applies random transforms on the fly.

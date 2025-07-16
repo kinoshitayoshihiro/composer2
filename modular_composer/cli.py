@@ -1258,10 +1258,19 @@ def _dump_tree(root: Path, version: int) -> Path:
 
 
 @cli.command(
-    "dump-tree", help="Generate tree.md from ROOT directory (Project Tree v3)"
+    "dump-tree",
+    help=(
+        "Write tree.md inside ROOT using the Project Tree v3 specification"
+    ),
 )
 @click.argument("root", type=Path)
-@click.option("--version", type=int, default=3, show_default=True)
+@click.option(
+    "--version",
+    type=int,
+    default=3,
+    show_default=True,
+    help="Tree specification version (only 3 supported)",
+)
 def dump_tree_cmd(root: Path, version: int) -> None:
     out = _dump_tree(root, version)
     click.echo(str(out))

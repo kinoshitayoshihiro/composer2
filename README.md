@@ -83,6 +83,7 @@ Without these packages `pytest` and the composer modules will fail to import.
 - **mido** – MIDI utilities
 - **scipy** – signal processing helpers
 - **tqdm** – progress bars
+- **colorama** – colored CLI output
 - **tomli** – TOML parser
 - **pytest** – test runner
 

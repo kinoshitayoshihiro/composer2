@@ -206,3 +206,16 @@ modcompose dump-tree my_project --version 3
 ```
 
 The file `tree.md` appears inside `my_project`.
+
+## SunoAI Stem Randomizer
+
+```bash
+modcompose randomize-stem --input stem.wav --cents 50 --formant 0 -o stem_shifted.wav
+```
+
+- `--input`  : Input WAV/MP3 file  
+- `--cents`  : Pitch shift in cents  
+- `--formant`: Formant shift in semitones  
+
+Requires: `poetry install --extras audio`
+

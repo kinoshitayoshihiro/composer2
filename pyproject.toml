@@ -46,8 +46,6 @@ test = [
   "ruff",
   "music21",
   "scikit-learn",
-  "librosa",
-  "soundfile",
   "scipy",
   "pretty_midi",
   "mido",
@@ -56,7 +54,7 @@ test = [
   "PyYAML",
   "websockets",
 ]
-audio = ["sunoai"]
+audio = ["librosa", "soundfile"]
 velocity = [
   "numpy",
   "scipy",
@@ -97,7 +95,7 @@ packages = ["modular_composer", "utilities"]
 modcompose = "modular_composer.cli:main"
 train-velocity = "scripts.train_velocity:main"
 dump-tree = "modular_composer.cli:dump_tree_cmd"
-train-velocity = "scripts.train_velocity:main"
+randomize-stem = "modular_composer.cli:randomize_stem"
 
 [tool.ruff]
 target-version = "py310"

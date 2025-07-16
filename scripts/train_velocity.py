@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import argparse
-import csv
+import json
 import sys
 from pathlib import Path
 
+from colorama import Fore, Style
+
 import hydra
 from omegaconf import DictConfig, OmegaConf
+
+from utilities.velocity_csv import build_velocity_csv, validate_build_inputs
 
 try:
     import pandas as pd
@@ -23,53 +27,12 @@ except Exception:  # pragma: no cover - optional
     DataLoader = object  # type: ignore
 
 
-# ----------------------------- CSV Utilities ----------------------------- #
-
-def _scan_midi_files(paths: list[Path]) -> tuple[list[list[float]], list[list[str]]]:
-    """Return per-note velocity rows and simple track statistics."""
-    rows: list[list[float]] = []
-    stats: list[list[str]] = []
-    for path in paths:
-        try:
-            pm = pretty_midi.PrettyMIDI(str(path))  # type: ignore[arg-type]
-        except Exception:
-            continue
-        total = 0
-        prev_vel = 64
-        for inst in pm.instruments:
-            for note in inst.notes:
-                rows.append([
-                    note.pitch,
-                    note.end - note.start,
-                    prev_vel,
-                    note.velocity,
-                ])
-                prev_vel = note.velocity
-                total += 1
-        stats.append([path.name, str(total)])
-    return rows, stats
+def _log_success(msg: str) -> None:
+    print(Fore.GREEN + msg + Style.RESET_ALL)
 
 
-def build_velocity_csv(
-    tracks_dir: Path,
-    drums_dir: Path,
-    csv_out: Path,
-    stats_out: Path,
-) -> None:
-    midi_paths = sorted(tracks_dir.rglob("*.mid")) + sorted(drums_dir.rglob("*.mid"))
-    rows, stats = _scan_midi_files(midi_paths)
-    csv_out.parent.mkdir(parents=True, exist_ok=True)
-    with csv_out.open("w", newline="") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(["pitch", "duration", "prev_vel", "velocity"])
-        writer.writerows(rows)
-    stats_out.parent.mkdir(parents=True, exist_ok=True)
-    with stats_out.open("w", newline="") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(["file", "events"])
-        writer.writerows(stats)
-    print(f"wrote {csv_out}")
-    print(f"wrote {stats_out}")
+def _log_error(msg: str) -> None:
+    print(Fore.RED + msg + Style.RESET_ALL, file=sys.stderr)
 
 
 # ----------------------------- Datasets ---------------------------------- #
@@ -127,11 +90,14 @@ class LightningModule(pl.LightningModule if pl is not None else object):
 # ----------------------------- Hydra Entry -------------------------------- #
 
 dry_run_flag = False
+dry_run_json = False
 
 
 def run(cfg: DictConfig) -> int:
     if dry_run_flag:
         print(OmegaConf.to_yaml(cfg))
+        if dry_run_json:
+            print(json.dumps(OmegaConf.to_container(cfg, resolve=False), indent=2))
         return 0
 
     if pl is None or torch is None:
@@ -197,67 +163,51 @@ def hydra_main(cfg: DictConfig) -> int:
 
 # ----------------------------- CLI Frontend ------------------------------- #
 
-def _make_build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="train_velocity.py build-velocity-csv")
-    p.add_argument("--tracks-dir", type=Path, default=Path("data/tracks"))
-    p.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
-    p.add_argument("--csv-out", type=Path, default=Path("data/csv/velocity_per_event.csv"))
-    p.add_argument("--stats-out", type=Path, default=Path("data/csv/track_stats.csv"))
-    return p
-
-
-def _make_train_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="train_velocity.py")
-    p.add_argument("--csv-path", type=Path, help="Path to velocity_per_event.csv for training")
-    p.add_argument("--dry-run", action="store_true", help="Print resolved config and exit")
-    return p
-
-
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv:
-        parser = _make_train_parser()
-        return parser.parse_known_args(argv)
+    parser = argparse.ArgumentParser(prog="train_velocity.py")
+    sub = parser.add_subparsers(dest="command")
 
-    if argv[0] == "build-velocity-csv":
-        parser = _make_build_parser()
-        if "--help" in argv or "-h" in argv:
-            parser.print_help()
-            raise SystemExit
-        args = parser.parse_args(argv[1:])
-        args.command = "build-velocity-csv"
-        return args, []
+    build = sub.add_parser(
+        "build-velocity-csv", help="Rebuild velocity_per_event.csv and track_stats.csv"
+    )
+    build.add_argument("--tracks-dir", type=Path, default=Path("data/tracks"))
+    build.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
+    build.add_argument("--csv-out", type=Path, default=Path("data/csv/velocity_per_event.csv"))
+    build.add_argument("--stats-out", type=Path, default=Path("data/csv/track_stats.csv"))
 
-    if "--help" in argv or "-h" in argv:
-        # show full help with subcommand listing
-        main_parser = argparse.ArgumentParser(prog="train_velocity.py")
-        sub = main_parser.add_subparsers(dest="command")
-        sub.add_parser("build-velocity-csv", help="Rebuild velocity_per_event.csv and track_stats.csv")
-        main_parser.add_argument("--csv-path", type=Path, help="Path to velocity_per_event.csv for training")
-        main_parser.add_argument("--dry-run", action="store_true", help="Print resolved config and exit")
-        main_parser.print_help()
-        raise SystemExit
+    parser.add_argument("--csv-path", type=Path, help="Path to velocity_per_event.csv for training")
+    parser.add_argument("--dry-run", action="store_true", help="Print resolved config and exit")
+    parser.add_argument("--json", action="store_true", help="With --dry-run, also print JSON")
 
-    parser = _make_train_parser()
     args, overrides = parser.parse_known_args(argv)
-    args.command = None
     return args, overrides
 
 
 def main(argv: list[str] | None = None) -> int:
-    global dry_run_flag
+    global dry_run_flag, dry_run_json
     args, overrides = parse_args(argv)
 
     if getattr(args, "command", None) == "build-velocity-csv":
         if pretty_midi is None:
-            print("pretty_midi required for CSV build", file=sys.stderr)
+            _log_error("pretty_midi required for CSV build")
             return 1
-        build_velocity_csv(args.tracks_dir, args.drums_dir, args.csv_out, args.stats_out)
-        return 0
+        try:
+            validate_build_inputs(args.tracks_dir, args.drums_dir, args.csv_out, args.stats_out)
+            build_velocity_csv(args.tracks_dir, args.drums_dir, args.csv_out, args.stats_out)
+            _log_success(f"wrote {args.csv_out}")
+            _log_success(f"wrote {args.stats_out}")
+            return 0
+        except Exception as exc:  # pragma: no cover - error already printed
+            _log_error(str(exc))
+            return 1
 
     dry_run_flag = args.dry_run
+    dry_run_json = args.json
 
     if args.csv_path is not None:
+        if not args.csv_path.exists():
+            _log_error(f"CSV path not found: {args.csv_path}")
+            return 1
         overrides.append(f"+csv.path={args.csv_path}")
 
     if overrides:

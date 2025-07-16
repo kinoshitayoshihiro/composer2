@@ -219,3 +219,13 @@ modcompose randomize-stem --input stem.wav --cents 50 --formant 0 -o stem_shifte
 
 Requires: `poetry install --extras audio`
 
+## Tempo Changes (PrettyMIDI)
+
+```python
+pm = PrettyMIDI()
+pm.set_tempo_changes([120, 130, 140], [0.0, 10.0, 20.0])
+```
+
+Using the official API avoids relying on private internals for tempo maps.
+
+

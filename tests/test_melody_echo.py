@@ -100,3 +100,18 @@ def test_post_process_generated_part() -> None:
     notes_with_echo = len(part["piano_rh"].notes)
 
     assert notes_with_echo > notes_no_echo
+
+
+def test_post_process_default_delay() -> None:
+    section = {
+        "section_name": "A",
+        "absolute_offset": 0.0,
+        "q_length": 1.0,
+        "chord_symbol_for_voicing": "C",
+        "melody": [(0.0, 60, 1.0)],
+    }
+    gen = make_gen({"piano": {"enable_echo": True}})
+    part = gen.compose(section_data=section)
+    rh = part["piano_rh"]
+    offsets = [n.offset for n in rh.notes if n.offset > 0]
+    assert 0.5 in offsets

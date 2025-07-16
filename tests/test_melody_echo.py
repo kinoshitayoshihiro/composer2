@@ -44,6 +44,25 @@ def test_apply_melody_echo_amplify() -> None:
     assert notes[1].volume.velocity > notes[0].volume.velocity
 
 
+def test_apply_melody_echo_many() -> None:
+    gen = make_gen()
+    series = [pitch.Pitch("C4"), pitch.Pitch("D4")]
+    notes = gen.apply_melody_echo(series, delay_beats=0.5, echo_factor=0.7, num_echoes=4)
+    assert len(notes) == 8
+    offs = [n.offset for n in notes[::2]]
+    assert offs == [0.5, 1.0, 1.5, 2.0]
+    vels = [n.volume.velocity for n in notes[::2]]
+    assert vels[0] > vels[1] > vels[2] > vels[3]
+
+
+def test_apply_melody_echo_amplify_curve() -> None:
+    gen = make_gen()
+    notes = gen.apply_melody_echo([pitch.Pitch("E4")], delay_beats=0.25, echo_factor=1.3, num_echoes=3)
+    assert len(notes) == 3
+    assert [n.offset for n in notes] == [0.25, 0.5, 0.75]
+    assert notes[2].volume.velocity > notes[1].volume.velocity > notes[0].volume.velocity
+
+
 def test_default_echo_count() -> None:
     gen = make_gen()
     series = [pitch.Pitch("C4"), pitch.Pitch("D4")]

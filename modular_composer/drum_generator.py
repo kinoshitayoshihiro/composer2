@@ -20,7 +20,7 @@ class DrumGenerator:
         self.model_path = Path(model)
         self.backend = backend
         if backend == "transformer":
-            self.model = transformer_sampler.load(self.model_path)
+            self.model: Any = transformer_sampler.load(self.model_path)
         else:
             self.model = groove_sampler_v2.load(self.model_path)
         self.cond: Dict[str, str] = cond or {}

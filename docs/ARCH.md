@@ -6,11 +6,18 @@ The output shows the directory hierarchy wrapped in a fenced code block.
 Example usage:
 
 ```bash
-$ modcompose dump-tree ./my_project --version 3
+modcompose dump-tree ./my_project --version 3
 ```
 
 Sample output begins with the header:
 
 ```markdown
 # Project Tree v3
+```
+```text
+my_project/
+├── configs/
+│   └── section.yaml
+└── outputs/
+    └── demo.mid
 ```

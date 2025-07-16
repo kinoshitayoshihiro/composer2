@@ -176,3 +176,49 @@ Sample a short phrase:
 python -m utilities.transformer_sampler sample models/groove_transformer.ckpt --parts drums,bass --length 8
 ```
 
+## Vocal Synthesis Integration
+
+Install system library and extras:
+
+```bash
+sudo apt-get install -y libsndfile1
+poetry install .[audio]
+```
+
+Train a vocal model:
+
+```bash
+python -m tools.train_vocal_model \
+  --lyrics "Hello world" \
+  --model-output models/vocal.ckpt
+```
+
+Synthesize vocals from the model:
+
+```bash
+python utilities/vocal_synth.py \
+  --model models/vocal.ckpt \
+  --output out.wav
+```
+
+Run as a FastAPI server:
+
+```python
+from fastapi import FastAPI, Response
+from utilities.vocal_synth import synthesize
+
+app = FastAPI()
+
+@app.post("/vocal")
+async def vocal_endpoint():
+    audio = synthesize("models/vocal.ckpt")
+    return Response(content=audio, media_type="audio/wav")
+
+```
+
+Start the server with:
+
+```bash
+uvicorn my_server:app --reload
+```
+

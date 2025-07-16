@@ -26,9 +26,11 @@ music21 = ">=9.1"
 numpy = ">=1.24"
 pretty_midi = "^0.2"
 pydantic = ">=2.7"
-pydub = ">=0.25"
+pydub = "^0.25"
 PyYAML = "^6.0"
-soundfile = ">=0.12"
+soundfile = "^0.12"
+fastapi = "^0.95"
+uvicorn = "^0.22"
 tomli = ">=2.0"
 setuptools = "*"
 websockets = ">=12.0"
@@ -54,10 +56,7 @@ test = [
   "PyYAML",
   "websockets",
 ]
-audio = [
-  "soundfile",
-  "scipy",
-]
+audio = ["sunoai"]
 velocity = [
   "numpy",
   "scipy",
@@ -96,7 +95,6 @@ packages = ["modular_composer", "utilities"]
 
 [tool.poetry.scripts]
 modcompose = "modular_composer.cli:main"
-dump-tree = "modular_composer.cli:main"
 train-velocity = "scripts.train_velocity:main"
 dump-tree = "modular_composer.cli:dump_tree_cmd"
 

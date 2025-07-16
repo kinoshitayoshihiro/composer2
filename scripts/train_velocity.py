@@ -1,57 +1,81 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import sys
 from pathlib import Path
 
-from omegaconf import DictConfig
-
-if len(sys.argv) > 1 and sys.argv[1] == "build-velocity-csv":
-    from scripts.audio_to_velocity_csv import main as build_velocity_csv
-
-    build_velocity_csv(sys.argv[2:])
-    raise SystemExit(0)
-
-parser = argparse.ArgumentParser(add_help=False)
-parser.add_argument("--max-epochs", type=int)
-parser.add_argument("--out", type=str)
-parser.add_argument("--run-dir", type=str)
-
-if "-h" in sys.argv or "--help" in sys.argv:
-    parser.print_help()
-    print()
-
-parsed_args, remaining_argv = parser.parse_known_args()
-sys.argv = sys.argv[:1] + remaining_argv
-extra_overrides: list[str] = []
-if parsed_args.max_epochs is not None:
-    extra_overrides.append(f"trainer.max_epochs={parsed_args.max_epochs}")
-if parsed_args.out is not None:
-    extra_overrides.append(f"trainer.checkpoint_path={parsed_args.out}")
-if parsed_args.run_dir is not None:
-    extra_overrides.append(f"hydra.run.dir={parsed_args.run_dir}")
-if extra_overrides:
-    sys.argv += extra_overrides
-
 import hydra
+from omegaconf import DictConfig, OmegaConf
 
 try:
-    import pytorch_lightning as pl
-    from torch.utils.data import DataLoader, Dataset
-    import torch
     import pandas as pd
+    import pretty_midi
+    import pytorch_lightning as pl
+    import torch
+    from torch.utils.data import DataLoader, Dataset
 except Exception:  # pragma: no cover - optional
-    pl = None  # type: ignore
-    DataLoader = object  # type: ignore
-    Dataset = object  # type: ignore
-    torch = None  # type: ignore
     pd = None  # type: ignore
+    pretty_midi = None  # type: ignore
+    pl = None  # type: ignore
+    torch = None  # type: ignore
+    Dataset = object  # type: ignore
+    DataLoader = object  # type: ignore
 
-from utilities.ml_velocity import MLVelocityModel, velocity_loss
 
+# ----------------------------- CSV Utilities ----------------------------- #
+
+def _scan_midi_files(paths: list[Path]) -> tuple[list[list[float]], list[list[str]]]:
+    """Return per-note velocity rows and simple track statistics."""
+    rows: list[list[float]] = []
+    stats: list[list[str]] = []
+    for path in paths:
+        try:
+            pm = pretty_midi.PrettyMIDI(str(path))  # type: ignore[arg-type]
+        except Exception:
+            continue
+        total = 0
+        prev_vel = 64
+        for inst in pm.instruments:
+            for note in inst.notes:
+                rows.append([
+                    note.pitch,
+                    note.end - note.start,
+                    prev_vel,
+                    note.velocity,
+                ])
+                prev_vel = note.velocity
+                total += 1
+        stats.append([path.name, str(total)])
+    return rows, stats
+
+
+def build_velocity_csv(
+    tracks_dir: Path,
+    drums_dir: Path,
+    csv_out: Path,
+    stats_out: Path,
+) -> None:
+    midi_paths = sorted(tracks_dir.rglob("*.mid")) + sorted(drums_dir.rglob("*.mid"))
+    rows, stats = _scan_midi_files(midi_paths)
+    csv_out.parent.mkdir(parents=True, exist_ok=True)
+    with csv_out.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["pitch", "duration", "prev_vel", "velocity"])
+        writer.writerows(rows)
+    stats_out.parent.mkdir(parents=True, exist_ok=True)
+    with stats_out.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["file", "events"])
+        writer.writerows(stats)
+    print(f"wrote {csv_out}")
+    print(f"wrote {stats_out}")
+
+
+# ----------------------------- Datasets ---------------------------------- #
 
 class CsvDataset(Dataset):
-    def __init__(self, path: str, input_dim: int) -> None:
+    def __init__(self, path: Path, input_dim: int) -> None:
         if pd is None:
             raise RuntimeError("pandas required")
         df = pd.read_csv(path)
@@ -62,10 +86,7 @@ class CsvDataset(Dataset):
         return len(self.y)
 
     def __getitem__(self, idx: int):
-        return (
-            torch.tensor(self.x[idx]),
-            torch.tensor(self.y[idx]),
-        )
+        return torch.tensor(self.x[idx]), torch.tensor(self.y[idx])
 
 
 class LightningModule(pl.LightningModule if pl is not None else object):
@@ -73,7 +94,10 @@ class LightningModule(pl.LightningModule if pl is not None else object):
         if pl is None or torch is None:
             raise RuntimeError("PyTorch Lightning required")
         super().__init__()
+        from utilities.ml_velocity import MLVelocityModel, velocity_loss
+
         self.model = MLVelocityModel(cfg.input_dim)
+        self.loss_fn = velocity_loss
         self.lr = cfg.learning_rate
 
     def forward(self, x):
@@ -82,7 +106,7 @@ class LightningModule(pl.LightningModule if pl is not None else object):
     def training_step(self, batch, batch_idx):
         x, y = batch
         pred = self(x.unsqueeze(0))
-        loss = velocity_loss(pred.squeeze(0), y)
+        loss = self.loss_fn(pred.squeeze(0), y)
         mse = torch.mean((pred.squeeze(0) - y) ** 2)
         self.log("train_loss", loss)
         self.log("train_MSE", mse)
@@ -91,7 +115,7 @@ class LightningModule(pl.LightningModule if pl is not None else object):
     def validation_step(self, batch, batch_idx):
         x, y = batch
         pred = self(x.unsqueeze(0))
-        loss = velocity_loss(pred.squeeze(0), y)
+        loss = self.loss_fn(pred.squeeze(0), y)
         mse = torch.mean((pred.squeeze(0) - y) ** 2)
         self.log("val_loss", loss, prog_bar=True)
         self.log("val_MSE", mse, prog_bar=True)
@@ -100,19 +124,30 @@ class LightningModule(pl.LightningModule if pl is not None else object):
         return torch.optim.Adam(self.parameters(), lr=self.lr)
 
 
+# ----------------------------- Hydra Entry -------------------------------- #
+
+dry_run_flag = False
+
+
 @hydra.main(config_path="../configs", config_name="velocity_model.yaml")
-def main(cfg: DictConfig) -> int:
+def hydra_main(cfg: DictConfig) -> int:
+    if dry_run_flag:
+        print(OmegaConf.to_yaml(cfg))
+        return 0
+
     if pl is None or torch is None:
         print("PyTorch Lightning required", file=sys.stderr)
         return 1
-    train_ds = CsvDataset(cfg.data.train, cfg.input_dim)
-    val_ds = CsvDataset(cfg.data.val, cfg.input_dim)
+
+    csv_file = cfg.get("csv", {}).get("path") or cfg.data.train
+    train_ds = CsvDataset(Path(csv_file), cfg.input_dim)
+    val_ds = CsvDataset(Path(csv_file), cfg.input_dim)
+
     train_loader = DataLoader(
         train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers
     )
-    val_loader = DataLoader(
-        val_ds, batch_size=cfg.batch_size, num_workers=cfg.num_workers
-    )
+    val_loader = DataLoader(val_ds, batch_size=cfg.batch_size, num_workers=cfg.num_workers)
+
     callbacks = []
     if "callbacks" in cfg.trainer and "early_stopping" in cfg.trainer.callbacks:
         es_cfg = cfg.trainer.callbacks.early_stopping
@@ -124,6 +159,7 @@ def main(cfg: DictConfig) -> int:
                 stopping_threshold=es_cfg.stopping_threshold,
             )
         )
+
     logger = False
     if "logger" in cfg.trainer and cfg.trainer.logger.use_wandb:
         from pytorch_lightning.loggers import WandbLogger
@@ -135,17 +171,79 @@ def main(cfg: DictConfig) -> int:
         for k, v in cfg.trainer.items()
         if k not in {"logger", "callbacks", "checkpoint_path"}
     }
+
+    device = cfg.get("device")
+    if device:
+        trainer_kwargs.setdefault("accelerator", device)
+        trainer_kwargs.setdefault("devices", 1)
+
     trainer = pl.Trainer(**trainer_kwargs, callbacks=callbacks, logger=logger)
     module = LightningModule(cfg)
     trainer.fit(module, train_loader, val_loader)
-    Path("checkpoints").mkdir(exist_ok=True)
-    trainer.save_checkpoint("checkpoints/last.ckpt")
+
+    ckpt = cfg.get("model", {}).get("checkpoint")
+    if ckpt:
+        Path(ckpt).parent.mkdir(parents=True, exist_ok=True)
+        trainer.save_checkpoint(ckpt)
+    else:
+        Path("checkpoints").mkdir(exist_ok=True)
+        trainer.save_checkpoint("checkpoints/last.ckpt")
     return 0
-    checkpoint_path = cfg.trainer.get("checkpoint_path", getattr(cfg, "out", None))
-    if checkpoint_path:
-        Path(checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
-        trainer.save_checkpoint(checkpoint_path)
 
 
-if __name__ == "__main__":
+# ----------------------------- CLI Frontend ------------------------------- #
+
+def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
+    parser = argparse.ArgumentParser(prog="train_velocity.py")
+    sub = parser.add_subparsers(dest="command")
+
+    build = sub.add_parser(
+        "build-velocity-csv",
+        help="Rebuild velocity_per_event.csv and track_stats.csv",
+    )
+    build.add_argument("--tracks-dir", type=Path, default=Path("data/tracks"))
+    build.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
+    build.add_argument(
+        "--csv-out", type=Path, default=Path("data/csv/velocity_per_event.csv")
+    )
+    build.add_argument(
+        "--stats-out", type=Path, default=Path("data/csv/track_stats.csv")
+    )
+
+    parser.add_argument(
+        "--csv-path",
+        type=Path,
+        help="Path to velocity_per_event.csv for training",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print resolved config and exit",
+    )
+
+    args, overrides = parser.parse_known_args(argv)
+    return args, overrides
+
+
+def main(argv: list[str] | None = None) -> int:
+    global dry_run_flag
+    args, overrides = parse_args(argv)
+
+    if args.command == "build-velocity-csv":
+        if pretty_midi is None:
+            print("pretty_midi required for CSV build", file=sys.stderr)
+            return 1
+        build_velocity_csv(args.tracks_dir, args.drums_dir, args.csv_out, args.stats_out)
+        return 0
+
+    dry_run_flag = args.dry_run
+
+    if args.csv_path is not None:
+        overrides.append(f"+csv.path={args.csv_path}")
+
+    sys.argv = [sys.argv[0]] + overrides
+    return hydra_main()
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry
     raise SystemExit(main())

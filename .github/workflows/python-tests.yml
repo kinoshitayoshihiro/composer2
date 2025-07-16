@@ -54,7 +54,7 @@ jobs:
 
       - name: Install extras and deps
         run: |
-          poetry install --no-root --extras test
+          poetry install --no-root --extras test --extras audio
           poetry run pip install numpy
 
       - name: Verify train-velocity CLI

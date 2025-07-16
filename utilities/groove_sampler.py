@@ -61,9 +61,8 @@ def _iter_drum_notes(midi_path: Path) -> list[tuple[float, int]]:
     for inst in pm.instruments:
         if not inst.is_drum:
             continue
-        tempo = (
-            pm.get_tempo_changes()[1][0] if pm.get_tempo_changes()[1].size else 120.0
-        )
+        tempo_arr = pm.get_tempo_changes()[0]
+        tempo = float(tempo_arr[0]) if tempo_arr.size else 120.0
         sec_per_beat = 60.0 / tempo
         for n in inst.notes:
             beat = n.start / sec_per_beat

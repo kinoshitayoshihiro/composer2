@@ -21,4 +21,5 @@ def test_export_song(tmp_path: Path) -> None:
     )
     assert out.exists()
     assert len(pm.instruments) == 1
-    assert len(pm._tick_scales) == 3
+    tempi, _times = pm.get_tempo_changes()
+    assert list(tempi) == [120, 90, 140]

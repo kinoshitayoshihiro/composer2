@@ -139,7 +139,7 @@ def _scan_midi(path: Path, resolution: int, ppq: int, *, part: str = "drums") ->
     pm = _load_pretty_midi(path)
     if pm is None:
         return None
-    tempo = pm.get_tempo_changes()[1]
+    tempo = pm.get_tempo_changes()[0]
     bpm = float(tempo[0]) if tempo.size else 120.0
     sec_per_beat = 60.0 / bpm
     bar_beats = max(1, int(round(pm.get_end_time() / sec_per_beat)))

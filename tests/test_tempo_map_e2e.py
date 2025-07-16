@@ -47,7 +47,7 @@ def test_tempo_map_e2e(tmp_path: Path) -> None:
         out_path=out,
     )
     assert out.exists()
-    times, bpms = pm.get_tempo_changes()
+    bpms, _times = pm.get_tempo_changes()
     assert list(bpms) == [120, 90, 140]
     # Reload file so tempo map affects timing
     pm2 = pretty_midi.PrettyMIDI(str(out))

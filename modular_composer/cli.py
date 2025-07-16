@@ -1257,6 +1257,23 @@ def _dump_tree(root: Path, version: int) -> Path:
     return dump_main(root, version=version)
 
 
+def _randomize_stem(input_path: Path, cents: float, formant: int, out: Path) -> int:
+    from scripts.randomize_stem_cli import main as rand_main
+
+    return rand_main(
+        [
+            "--input",
+            str(input_path),
+            "--cents",
+            str(cents),
+            "--formant",
+            str(formant),
+            "--out",
+            str(out),
+        ]
+    )
+
+
 @cli.command(
     "dump-tree",
     help=(
@@ -1274,6 +1291,46 @@ def _dump_tree(root: Path, version: int) -> Path:
 def dump_tree_cmd(root: Path, version: int) -> None:
     out = _dump_tree(root, version)
     click.echo(str(out))
+
+
+@cli.command(
+    "randomize-stem",
+    help="Apply pitch shift in cents and formant shift in semitones to an audio stem",
+)
+@click.option(
+    "--input",
+    "input_path",
+    type=Path,
+    required=True,
+    help="Input WAV/MP3 file",
+)
+@click.option(
+    "--cents",
+    type=float,
+    required=True,
+    help="Pitch shift in cents",
+)
+@click.option(
+    "--formant",
+    type=int,
+    required=True,
+    help="Formant shift in semitones",
+)
+@click.option(
+    "-o",
+    "--out",
+    type=Path,
+    required=True,
+    help="Output file path",
+)
+def randomize_stem(
+    input_path: Path, cents: float, formant: int, out: Path
+) -> None:
+    code = _randomize_stem(input_path, cents, formant, out)
+    if code == 0:
+        click.echo(str(out))
+    else:
+        raise click.ClickException("randomize-stem failed")
 
 
 

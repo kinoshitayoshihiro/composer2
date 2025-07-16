@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
+
+from colorama import Fore, Style
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from utilities import data_augmentation
-from utilities.velocity_csv import build_velocity_csv
+from utilities.velocity_csv import build_velocity_csv, validate_build_inputs
 import numpy as np
-from colorama import Fore, Style
 
 try:
     import pandas as pd
@@ -27,9 +29,12 @@ except Exception:  # pragma: no cover - optional
     DataLoader = object  # type: ignore
 
 
-# ----------------------------- CSV Utilities ----------------------------- #
+def _log_success(msg: str) -> None:
+    print(Fore.GREEN + msg + Style.RESET_ALL)
 
-# build_velocity_csv now lives in ``utilities.velocity_csv``
+
+def _log_error(msg: str) -> None:
+    print(Fore.RED + msg + Style.RESET_ALL, file=sys.stderr)
 
 
 # ----------------------------- Datasets ---------------------------------- #
@@ -92,11 +97,14 @@ class LightningModule(pl.LightningModule if pl is not None else object):
 
 dry_run_flag = False
 augment_flag = False
+dry_run_json = False
 
 
 def run(cfg: DictConfig) -> int:
     if dry_run_flag:
         print(OmegaConf.to_yaml(cfg))
+        if dry_run_json:
+            print(json.dumps(OmegaConf.to_container(cfg, resolve=False), indent=2))
         return 0
 
     if pl is None or torch is None:
@@ -169,15 +177,6 @@ def hydra_main(cfg: DictConfig) -> int:
 
 # ----------------------------- CLI Frontend ------------------------------- #
 
-def _make_build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="train_velocity.py build-velocity-csv")
-    p.add_argument("--tracks-dir", type=Path, default=Path("data/tracks"))
-    p.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
-    p.add_argument("--csv-out", type=Path, default=Path("data/csv/velocity_per_event.csv"))
-    p.add_argument("--stats-out", type=Path, default=Path("data/csv/track_stats.csv"))
-    return p
-
-
 def _make_augment_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="train_velocity.py augment-data")
     p.add_argument("--wav-dir", type=Path, default=Path("data/tracks"))
@@ -189,14 +188,21 @@ def _make_augment_parser() -> argparse.ArgumentParser:
     p.add_argument("--progress", action="store_true", help="Show progress bar")
     return p
 
+def _make_build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="train_velocity.py build-velocity-csv")
+    p.add_argument("--tracks-dir", type=Path, default=Path("data/tracks"))
+    p.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
+    p.add_argument("--csv-out", type=Path, default=Path("data/csv/velocity_per_event.csv"))
+    p.add_argument("--stats-out", type=Path, default=Path("data/csv/track_stats.csv"))
+    return p
 
 def _make_train_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="train_velocity.py")
     p.add_argument("--csv-path", type=Path, help="Path to velocity_per_event.csv for training")
     p.add_argument("--dry-run", action="store_true", help="Print resolved config and exit")
+    p.add_argument("--json", action="store_true", help="With --dry-run, also print JSON")
     p.add_argument("--augment", action="store_true", help="Enable on-the-fly augmentation")
     return p
-
 
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -236,20 +242,26 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 
     parser = _make_train_parser()
     args, overrides = parser.parse_known_args(argv)
-    args.command = None
     return args, overrides
 
 
 def main(argv: list[str] | None = None) -> int:
-    global dry_run_flag, augment_flag
+    global dry_run_flag, augment_flag, dry_run_json
     args, overrides = parse_args(argv)
 
     if getattr(args, "command", None) == "build-velocity-csv":
         if pretty_midi is None:
-            print("pretty_midi required for CSV build", file=sys.stderr)
+            _log_error("pretty_midi required for CSV build")
             return 1
-        build_velocity_csv(args.tracks_dir, args.drums_dir, args.csv_out, args.stats_out)
-        return 0
+        try:
+            validate_build_inputs(args.tracks_dir, args.drums_dir, args.csv_out, args.stats_out)
+            build_velocity_csv(args.tracks_dir, args.drums_dir, args.csv_out, args.stats_out)
+            _log_success(f"wrote {args.csv_out}")
+            _log_success(f"wrote {args.stats_out}")
+            return 0
+        except Exception as exc:  # pragma: no cover - error already printed
+            _log_error(str(exc))
+            return 1
 
     if getattr(args, "command", None) == "augment-data":
         if not args.wav_dir.exists():
@@ -284,8 +296,12 @@ def main(argv: list[str] | None = None) -> int:
 
     dry_run_flag = args.dry_run
     augment_flag = args.augment
+    dry_run_json = getattr(args, "json", False)
 
     if args.csv_path is not None:
+        if not args.csv_path.exists():
+            _log_error(f"CSV path not found: {args.csv_path}")
+            return 1
         overrides.append(f"+csv.path={args.csv_path}")
 
     if overrides:

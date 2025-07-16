@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import sys
 from pathlib import Path
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
+
+from utilities import data_augmentation
+from utilities.velocity_csv import build_velocity_csv
+import numpy as np
+from colorama import Fore, Style
 
 try:
     import pandas as pd
@@ -25,68 +29,28 @@ except Exception:  # pragma: no cover - optional
 
 # ----------------------------- CSV Utilities ----------------------------- #
 
-def _scan_midi_files(paths: list[Path]) -> tuple[list[list[float]], list[list[str]]]:
-    """Return per-note velocity rows and simple track statistics."""
-    rows: list[list[float]] = []
-    stats: list[list[str]] = []
-    for path in paths:
-        try:
-            pm = pretty_midi.PrettyMIDI(str(path))  # type: ignore[arg-type]
-        except Exception:
-            continue
-        total = 0
-        prev_vel = 64
-        for inst in pm.instruments:
-            for note in inst.notes:
-                rows.append([
-                    note.pitch,
-                    note.end - note.start,
-                    prev_vel,
-                    note.velocity,
-                ])
-                prev_vel = note.velocity
-                total += 1
-        stats.append([path.name, str(total)])
-    return rows, stats
-
-
-def build_velocity_csv(
-    tracks_dir: Path,
-    drums_dir: Path,
-    csv_out: Path,
-    stats_out: Path,
-) -> None:
-    midi_paths = sorted(tracks_dir.rglob("*.mid")) + sorted(drums_dir.rglob("*.mid"))
-    rows, stats = _scan_midi_files(midi_paths)
-    csv_out.parent.mkdir(parents=True, exist_ok=True)
-    with csv_out.open("w", newline="") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(["pitch", "duration", "prev_vel", "velocity"])
-        writer.writerows(rows)
-    stats_out.parent.mkdir(parents=True, exist_ok=True)
-    with stats_out.open("w", newline="") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(["file", "events"])
-        writer.writerows(stats)
-    print(f"wrote {csv_out}")
-    print(f"wrote {stats_out}")
+# build_velocity_csv now lives in ``utilities.velocity_csv``
 
 
 # ----------------------------- Datasets ---------------------------------- #
 
 class CsvDataset(Dataset):
-    def __init__(self, path: Path, input_dim: int) -> None:
+    def __init__(self, path: Path, input_dim: int, transform=None) -> None:
         if pd is None:
             raise RuntimeError("pandas required")
         df = pd.read_csv(path)
         self.x = df.iloc[:, :input_dim].values.astype("float32")
         self.y = df["velocity"].values.astype("float32")
+        self.transform = transform
 
     def __len__(self) -> int:
         return len(self.y)
 
     def __getitem__(self, idx: int):
-        return torch.tensor(self.x[idx]), torch.tensor(self.y[idx])
+        x = self.x[idx]
+        if self.transform is not None:
+            x = self.transform(x)
+        return torch.tensor(x), torch.tensor(self.y[idx])
 
 
 class LightningModule(pl.LightningModule if pl is not None else object):
@@ -127,6 +91,7 @@ class LightningModule(pl.LightningModule if pl is not None else object):
 # ----------------------------- Hydra Entry -------------------------------- #
 
 dry_run_flag = False
+augment_flag = False
 
 
 def run(cfg: DictConfig) -> int:
@@ -139,7 +104,14 @@ def run(cfg: DictConfig) -> int:
         return 1
 
     csv_file = cfg.get("csv", {}).get("path") or cfg.data.train
-    train_ds = CsvDataset(Path(csv_file), cfg.input_dim)
+
+    def _transform(x):
+        if not augment_flag:
+            return x
+        noise = np.random.normal(scale=0.01, size=x.shape)
+        return x + noise.astype("float32")
+
+    train_ds = CsvDataset(Path(csv_file), cfg.input_dim, transform=_transform if augment_flag else None)
     val_ds = CsvDataset(Path(csv_file), cfg.input_dim)
 
     train_loader = DataLoader(
@@ -206,10 +178,23 @@ def _make_build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _make_augment_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="train_velocity.py augment-data")
+    p.add_argument("--wav-dir", type=Path, default=Path("data/tracks"))
+    p.add_argument("--out-dir", type=Path, default=Path("data/tracks_aug"))
+    p.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
+    p.add_argument("--shifts", default="-2,0,2")
+    p.add_argument("--rates", default="0.8,1.2")
+    p.add_argument("--snrs", default="20,10")
+    p.add_argument("--progress", action="store_true", help="Show progress bar")
+    return p
+
+
 def _make_train_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="train_velocity.py")
     p.add_argument("--csv-path", type=Path, help="Path to velocity_per_event.csv for training")
     p.add_argument("--dry-run", action="store_true", help="Print resolved config and exit")
+    p.add_argument("--augment", action="store_true", help="Enable on-the-fly augmentation")
     return p
 
 
@@ -228,13 +213,24 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
         args.command = "build-velocity-csv"
         return args, []
 
+    if argv[0] == "augment-data":
+        parser = _make_augment_parser()
+        if "--help" in argv or "-h" in argv:
+            parser.print_help()
+            raise SystemExit
+        args = parser.parse_args(argv[1:])
+        args.command = "augment-data"
+        return args, []
+
     if "--help" in argv or "-h" in argv:
         # show full help with subcommand listing
         main_parser = argparse.ArgumentParser(prog="train_velocity.py")
         sub = main_parser.add_subparsers(dest="command")
         sub.add_parser("build-velocity-csv", help="Rebuild velocity_per_event.csv and track_stats.csv")
+        sub.add_parser("augment-data", help="Augment WAV files and rebuild CSV")
         main_parser.add_argument("--csv-path", type=Path, help="Path to velocity_per_event.csv for training")
         main_parser.add_argument("--dry-run", action="store_true", help="Print resolved config and exit")
+        main_parser.add_argument("--augment", action="store_true", help="Enable on-the-fly augmentation")
         main_parser.print_help()
         raise SystemExit
 
@@ -245,7 +241,7 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 
 
 def main(argv: list[str] | None = None) -> int:
-    global dry_run_flag
+    global dry_run_flag, augment_flag
     args, overrides = parse_args(argv)
 
     if getattr(args, "command", None) == "build-velocity-csv":
@@ -255,7 +251,39 @@ def main(argv: list[str] | None = None) -> int:
         build_velocity_csv(args.tracks_dir, args.drums_dir, args.csv_out, args.stats_out)
         return 0
 
+    if getattr(args, "command", None) == "augment-data":
+        if not args.wav_dir.exists():
+            print("wav-dir does not exist", file=sys.stderr)
+            return 1
+        if not args.out_dir.exists():
+            args.out_dir.mkdir(parents=True, exist_ok=True)
+        shifts = [float(s) for s in args.shifts.split(",") if s]
+        rates = [float(r) for r in args.rates.split(",") if r]
+        snrs = [float(n) for n in args.snrs.split(",") if n]
+        try:
+            print(Fore.YELLOW + "Starting augmentation" + Style.RESET_ALL)
+            data_augmentation.augment_wav_dir(
+                args.wav_dir,
+                args.out_dir,
+                shifts,
+                rates,
+                snrs,
+                progress=args.progress,
+            )
+            print(Fore.GREEN + "Augmentation complete" + Style.RESET_ALL)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        build_velocity_csv(
+            args.out_dir,
+            args.drums_dir,
+            Path("data/csv/velocity_per_event.csv"),
+            Path("data/csv/track_stats.csv"),
+        )
+        return 0
+
     dry_run_flag = args.dry_run
+    augment_flag = args.augment
 
     if args.csv_path is not None:
         overrides.append(f"+csv.path={args.csv_path}")

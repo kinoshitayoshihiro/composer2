@@ -42,6 +42,18 @@ Generate a directory tree summary:
 modcompose dump-tree <root> --version 3
 ```
 
+### Piano echo configuration
+
+Enable simple melodic echoes in the piano part:
+
+```yaml
+piano:
+  enable_echo: true      # Boolean
+  echo_delay_beats: 1.0  # Float
+  echo_factor: 0.8       # Float (decay or amplification)
+  echo_count: 2          # Integer (number of echoes)
+```
+
 ### Arpeggio Pattern DSL
 
 You can specify an arpeggio note order directly in your rhythm library using

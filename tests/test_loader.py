@@ -35,3 +35,13 @@ def test_load_chordmap_defaults(tmp_path: Path) -> None:
     sec = loaded["sections"]["A"]
     assert sec["vocal_midi_path"] == str((tmp_path / "A_vocal.mid").resolve())
     assert sec["consonant_json"] is None
+
+
+def test_load_chordmap_no_global_settings(tmp_path: Path) -> None:
+    data = {"sections": {"B": {"order": 1, "length_in_measures": 1}}}
+    path = tmp_path / "chordmap.yaml"
+    path.write_text(yaml.safe_dump(data))
+    loaded = load_chordmap(path)
+    sec = loaded["sections"]["B"]
+    assert sec["vocal_midi_path"].endswith("B_vocal.mid")
+    assert sec["consonant_json"] is None

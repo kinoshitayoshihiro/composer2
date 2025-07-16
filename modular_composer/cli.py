@@ -382,20 +382,6 @@ def hyperopt_cmd(model: Path, trials: int, skip_if_no_optuna: bool) -> None:
     click.echo(json.dumps(study.best_params))
 
 
-@cli.command("dump-tree", help="Write a Markdown tree of ROOT")
-@click.argument("root", type=Path)
-@click.option("--version", type=int, default=3, show_default=True)
-def dump_tree_cmd(root: Path, version: int) -> None:
-    """Dump directory tree as ``tree.md`` under ROOT."""
-    if version != 3:
-        raise click.BadParameter("unsupported version")
-    from scripts.dump_tree_v3 import main as dump_main  # noqa: E402
-
-    out = dump_main(root)
-    click.echo(str(out))
-
-
-
 @cli.group()
 def fx() -> None:
     """Effects and rendering commands."""
@@ -1268,25 +1254,18 @@ def _dump_tree(root: Path, version: int) -> Path:
         raise SystemExit("unsupported version")
     from scripts.dump_tree_v3 import main as dump_main
 
-    return dump_main(root)
+    return dump_main(root, version=version)
 
 
-@cli.command("dump-tree", help="Generate tree.md from ROOT directory")
+@cli.command(
+    "dump-tree", help="Generate tree.md from ROOT directory (Project Tree v3)"
+)
 @click.argument("root", type=Path)
 @click.option("--version", type=int, default=3, show_default=True)
 def dump_tree_cmd(root: Path, version: int) -> None:
     out = _dump_tree(root, version)
     click.echo(str(out))
 
-
-def _cmd_dump_tree(args: list[str]) -> None:
-    ap = argparse.ArgumentParser(prog="modcompose dump-tree")
-    ap.add_argument("root", type=Path, help="Project root")
-    ap.add_argument("--version", type=int, default=3, help="Format version")
-    ns = ap.parse_args(args)
-    out = _dump_tree(ns.root, ns.version)
-
-    print(out)
 
 
 

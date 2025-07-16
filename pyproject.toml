@@ -96,9 +96,8 @@ packages = ["modular_composer", "utilities"]
 
 [tool.poetry.scripts]
 modcompose = "modular_composer.cli:main"
-dump-tree = "modular_composer.cli:main"
-train-velocity = "scripts.train_velocity:main"
 dump-tree = "modular_composer.cli:dump_tree_cmd"
+train-velocity = "scripts.train_velocity:main"
 
 [tool.ruff]
 target-version = "py310"

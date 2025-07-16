@@ -131,16 +131,42 @@ class PianoGenerator(BasePartGenerator):
         # ...他の初期化処理...
 
     def apply_melody_echo(
-        self, input_series: list[pitch.Pitch], delay_beats: float
+        self,
+        input_series: list[pitch.Pitch],
+        delay_beats: float | None = None,
+        echo_factor: float = 0.8,
+        num_echoes: int = 2,
     ) -> list[note.Note]:
-        """Return a delayed mirror of ``input_series`` as piano notes."""
+        """Generate echo notes for ``input_series``.
+
+        Parameters
+        ----------
+        input_series:
+            Sequence of melody pitches to mirror.
+        delay_beats:
+            Offset in beats before the first echo. Defaults to ``0.5`` when
+            omitted.
+        echo_factor:
+            Velocity multiplier applied per echo iteration.
+        num_echoes:
+            Number of echoes to produce.
+
+        Returns
+        -------
+        list[note.Note]
+            Echo notes positioned and scaled by ``echo_factor``.
+        """
+
+        delay = float(delay_beats or 0.5)
         notes: list[note.Note] = []
-        off = float(delay_beats)
-        for p in input_series:
-            n = note.Note(p, quarterLength=1.0)
-            n.offset = off
-            off += 1.0
-            notes.append(n)
+        for echo_idx in range(num_echoes):
+            base_off = delay * (echo_idx + 1)
+            vel = max(1, min(127, int(64 * (echo_factor**echo_idx))))
+            for idx, p in enumerate(input_series):
+                n = note.Note(p, quarterLength=1.0)
+                n.offset = base_off + float(idx)
+                n.volume = m21volume.Volume(velocity=vel)
+                notes.append(n)
         return notes
 
     def _find_pattern_by_tags(self, tags: list[str], hand: str) -> str | None:
@@ -797,3 +823,34 @@ class PianoGenerator(BasePartGenerator):
                         rh_part.insert(b + 0.5, n)
 
         return {"piano_rh": rh_part, "piano_lh": lh_part}
+
+    def _post_process_generated_part(
+        self, part: stream.Part, section: dict[str, Any], ratio: float | None
+    ) -> None:
+        """Insert echo notes into ``part`` if enabled in configuration."""
+
+        cfg_piano = (self.main_cfg or {}).get("piano", {})
+        if not cfg_piano.get("enable_echo", False):
+            return
+        pid = getattr(part, "id", "").lower()
+        if "rh" not in pid:
+            return
+        melody = section.get("melody")
+        if not melody:
+            return
+        pitches: list[pitch.Pitch] = []
+        for m in melody:
+            if isinstance(m, pitch.Pitch):
+                pitches.append(m)
+            elif isinstance(m, (list | tuple)) and len(m) >= 2:
+                try:
+                    pitches.append(pitch.Pitch(m[1]))
+                except Exception:
+                    continue
+        if not pitches:
+            return
+        delay = float(cfg_piano.get("echo_delay_beats", 0.5))
+        factor = float(cfg_piano.get("echo_factor", 0.8))
+        count = int(cfg_piano.get("echo_count", 2))
+        for n in self.apply_melody_echo(pitches, delay, factor, count):
+            part.insert(n.offset, n)

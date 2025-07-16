@@ -824,33 +824,60 @@ class PianoGenerator(BasePartGenerator):
 
         return {"piano_rh": rh_part, "piano_lh": lh_part}
 
-    def _post_process_generated_part(
-        self, part: stream.Part, section: dict[str, Any], ratio: float | None
-    ) -> None:
-        """Insert echo notes into ``part`` if enabled in configuration."""
+    def compose(
+        self,
+        *,
+        section_data: dict[str, Any],
+        overrides_root: Any | None = None,
+        groove_profile_path: str | None = None,
+        next_section_data: dict[str, Any] | None = None,
+        part_specific_humanize_params: dict[str, Any] | None = None,
+        shared_tracks: dict[str, Any] | None = None,
+        vocal_metrics: dict | None = None,
+    ) -> stream.Part | dict[str, stream.Part]:
+        result = super().compose(
+            section_data=section_data,
+            overrides_root=overrides_root,
+            groove_profile_path=groove_profile_path,
+            next_section_data=next_section_data,
+            part_specific_humanize_params=part_specific_humanize_params,
+            shared_tracks=shared_tracks,
+            vocal_metrics=vocal_metrics,
+        )
 
         cfg_piano = (self.main_cfg or {}).get("piano", {})
         if not cfg_piano.get("enable_echo", False):
-            return
-        pid = getattr(part, "id", "").lower()
-        if "rh" not in pid:
-            return
-        melody = section.get("melody")
+            return result
+
+        melody = section_data.get("melody")
         if not melody:
-            return
+            return result
         pitches: list[pitch.Pitch] = []
         for m in melody:
             if isinstance(m, pitch.Pitch):
                 pitches.append(m)
-            elif isinstance(m, (list | tuple)) and len(m) >= 2:
+            elif isinstance(m, (list, tuple)) and len(m) >= 2:
                 try:
                     pitches.append(pitch.Pitch(m[1]))
                 except Exception:
                     continue
         if not pitches:
-            return
+            return result
+
         delay = float(cfg_piano.get("echo_delay_beats", 0.5))
         factor = float(cfg_piano.get("echo_factor", 0.8))
         count = int(cfg_piano.get("echo_count", 2))
-        for n in self.apply_melody_echo(pitches, delay, factor, count):
-            part.insert(n.offset, n)
+
+        def add_echo(p: stream.Part) -> None:
+            for n in self.apply_melody_echo(pitches, delay, factor, count):
+                p.insert(n.offset, n)
+
+        if isinstance(result, dict):
+            for p in result.values():
+                if "rh" in getattr(p, "id", "").lower():
+                    add_echo(p)
+        else:
+            if "rh" in getattr(result, "id", "").lower():
+                add_echo(result)
+        return result
+

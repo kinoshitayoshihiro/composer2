@@ -373,6 +373,19 @@ packages are installed you can verify the build with:
 pytest -q
 ```
 
+If you encounter an error mentioning `starlette.testclient` or `httpx`,
+install the dev extras:
+
+```bash
+pip install -e .[dev]
+```
+
+Phase 3 のテストを実行するには次のように追加の依存関係を入れてください:
+
+```bash
+pip install -e '.[audio,test]'
+```
+
 Running the tests confirms that chord generation and instrument mappings behave as expected.
 
 Golden MIDI regression files are stored as base64 text under [`data/golden/`](data/golden/).

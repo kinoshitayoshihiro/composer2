@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import os
 from pathlib import Path
-from typing import Iterable
+from typing import List, Tuple, Iterable
 
 try:
     import pretty_midi
@@ -68,3 +68,6 @@ def build_velocity_csv(
         writer = csv.writer(fh)
         writer.writerow(["file", "events"])
         writer.writerows(stats)
+
+
+__all__ = ["build_velocity_csv"]

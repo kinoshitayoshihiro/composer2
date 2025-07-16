@@ -76,5 +76,40 @@ try:
     if (major, minor) < (0, 3):
         pretty_midi.__version__ = "0.3.0"
         print("sitecustomize: patched pretty_midi version", file=sys.stderr)
+        if not hasattr(pretty_midi.PrettyMIDI, "set_tempo_changes"):
+            import numpy as _np
+
+            _orig_get = pretty_midi.PrettyMIDI.get_tempo_changes
+
+            def _set_tempo_changes(
+                self: pretty_midi.PrettyMIDI,
+                tempo: _np.ndarray[Any, _np.dtype[Any]] | float,
+                times: _np.ndarray[Any, _np.dtype[Any]] | float,
+            ) -> None:  # noqa: D401
+                tempi = _np.atleast_1d(tempo).astype(float)
+                secs = _np.atleast_1d(times).astype(float)
+                if tempi.shape != secs.shape:
+                    raise ValueError("tempo and times must have same length")
+                if len(secs) == 0 or secs[0] != 0.0:
+                    raise ValueError("first tempo change must start at 0.0")
+                self._tick_scales = [
+                    (
+                        int(round(t * self.resolution)),
+                        60.0 / (b * self.resolution),
+                    )
+                    for b, t in zip(tempi, secs)
+                ]
+
+            def _get_tempo_changes(
+                self: pretty_midi.PrettyMIDI,
+            ) -> tuple[
+                _np.ndarray[Any, _np.dtype[Any]],
+                _np.ndarray[Any, _np.dtype[Any]],
+            ]:
+                tempi_times = _orig_get(self)
+                return tempi_times[1], tempi_times[0]
+
+            pretty_midi.PrettyMIDI.set_tempo_changes = _set_tempo_changes
+            pretty_midi.PrettyMIDI.get_tempo_changes = _get_tempo_changes
 except Exception:
     pass

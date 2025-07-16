@@ -19,7 +19,7 @@ def extract_features(midi_path: str | Path) -> Dict[str, float]:
     notes = [n for inst in pm.instruments for n in inst.notes]
     total_notes = len(notes)
     mean_velocity = float(sum(n.velocity for n in notes) / total_notes) if notes else 0.0
-    times, tempi = pm.get_tempo_changes()
+    tempi, _times = pm.get_tempo_changes()
     tempo = float(sum(tempi) / len(tempi)) if len(tempi) else 0.0
     length = pm.get_end_time() or 1.0
     density = float(total_notes) / length

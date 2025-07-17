@@ -365,6 +365,14 @@ tom_run_short:
 
 ## Running Tests
 
+
+Before running the tests make sure the requirements are installed:
+
+```bash
+bash setup.sh
+```
+
+With the dependencies available you can verify the build with:
 Install the core requirements and the additional test packages before
 running any tests:
 

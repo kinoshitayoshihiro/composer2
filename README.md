@@ -365,6 +365,7 @@ tom_run_short:
 
 ## Running Tests
 
+
 Before running the tests make sure the requirements are installed:
 
 ```bash
@@ -372,9 +373,25 @@ bash setup.sh
 ```
 
 With the dependencies available you can verify the build with:
+Install the core requirements and the additional test packages before
+running any tests:
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements-test.txt
+```
+
+Then verify the build with:
 
 ```bash
 pytest -q
+```
+
+You can also run the suite via `tox` to test against multiple
+Python versions if available:
+
+```bash
+tox -q
 ```
 
 If you encounter an error mentioning `starlette.testclient` or `httpx`,
@@ -605,6 +622,22 @@ Use the ``train-velocity`` script to fit a simple KDE-based velocity model:
 train-velocity --epochs 5 --out checkpoints/last.ckpt
 ```
 
+### Velocity CLI Commands
+
+| Command | Purpose |
+| ------- | ------- |
+| `train-velocity build-velocity-csv` | Scan MIDI tracks and drums to create a velocity CSV dataset. |
+| `train-velocity augment-data` | Augment WAV loops and rebuild the CSV file. |
+| `train-velocity` | Train the ML velocity model from a CSV file. |
+
+**Key flags**
+
+- `--csv-path` – path to the training CSV file.
+- `--augment` – enable on-the-fly augmentation during training.
+- `--seed` – RNG seed for reproducible runs.
+
+See [docs/ml_velocity.md](docs/ml_velocity.md) for advanced settings.
+
 ### Sampling API
 
 The helper ``generate_bar`` yields one bar at a time and updates the history
@@ -815,6 +848,28 @@ section = {
     "groove_kicks": [0, 1, 2, 3],
 }
 part = gen.render_part(section)
+```
+
+### Emotion Profile Format
+
+[`data/emotion_profile.yaml`](data/emotion_profile.yaml) maps emotion names to
+generator settings. Each entry must provide:
+
+* `bass_patterns` – riffs with optional velocity and swing hints
+* `octave_pref` – preferred octave region (`low`, `mid` or `high`)
+* `length_beats` – number of beats the pattern spans
+
+Generators look up the current section's emotion and apply these values when
+creating parts.
+
+```yaml
+joy:
+  bass_patterns:
+    - riff: [1, b3, 5, 6]
+      velocity: mid
+      swing: off
+  octave_pref: mid
+  length_beats: 4
 ```
 
 ### Kick-Lock → Mirror-Melody

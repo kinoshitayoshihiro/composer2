@@ -365,12 +365,25 @@ tom_run_short:
 
 ## Running Tests
 
-Be sure you have installed the requirements via `bash setup.sh` (or
-`pip install -r requirements.txt`) before running any tests.  Once the
-packages are installed you can verify the build with:
+Install the core requirements and the additional test packages before
+running any tests:
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements-test.txt
+```
+
+Then verify the build with:
 
 ```bash
 pytest -q
+```
+
+You can also run the suite via `tox` to test against multiple
+Python versions if available:
+
+```bash
+tox -q
 ```
 
 If you encounter an error mentioning `starlette.testclient` or `httpx`,

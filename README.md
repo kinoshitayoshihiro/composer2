@@ -601,6 +601,22 @@ Use the ``train-velocity`` script to fit a simple KDE-based velocity model:
 train-velocity --epochs 5 --out checkpoints/last.ckpt
 ```
 
+### Velocity CLI Commands
+
+| Command | Purpose |
+| ------- | ------- |
+| `train-velocity build-velocity-csv` | Scan MIDI tracks and drums to create a velocity CSV dataset. |
+| `train-velocity augment-data` | Augment WAV loops and rebuild the CSV file. |
+| `train-velocity` | Train the ML velocity model from a CSV file. |
+
+**Key flags**
+
+- `--csv-path` – path to the training CSV file.
+- `--augment` – enable on-the-fly augmentation during training.
+- `--seed` – RNG seed for reproducible runs.
+
+See [docs/ml_velocity.md](docs/ml_velocity.md) for advanced settings.
+
 ### Sampling API
 
 The helper ``generate_bar`` yields one bar at a time and updates the history

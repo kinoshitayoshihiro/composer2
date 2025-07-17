@@ -813,6 +813,28 @@ section = {
 part = gen.render_part(section)
 ```
 
+### Emotion Profile Format
+
+[`data/emotion_profile.yaml`](data/emotion_profile.yaml) maps emotion names to
+generator settings. Each entry must provide:
+
+* `bass_patterns` – riffs with optional velocity and swing hints
+* `octave_pref` – preferred octave region (`low`, `mid` or `high`)
+* `length_beats` – number of beats the pattern spans
+
+Generators look up the current section's emotion and apply these values when
+creating parts.
+
+```yaml
+joy:
+  bass_patterns:
+    - riff: [1, b3, 5, 6]
+      velocity: mid
+      swing: off
+  octave_pref: mid
+  length_beats: 4
+```
+
 ### Kick-Lock → Mirror-Melody
 
 The first beat snaps to the nearest kick within the opening eighth note, then

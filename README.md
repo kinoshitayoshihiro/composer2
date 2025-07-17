@@ -365,9 +365,13 @@ tom_run_short:
 
 ## Running Tests
 
-Be sure you have installed the requirements via `bash setup.sh` (or
-`pip install -r requirements.txt`) before running any tests.  Once the
-packages are installed you can verify the build with:
+Before running the tests make sure the requirements are installed:
+
+```bash
+bash setup.sh
+```
+
+With the dependencies available you can verify the build with:
 
 ```bash
 pytest -q

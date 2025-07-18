@@ -12,33 +12,37 @@ from pathlib import Path
 
 try:
     import torch
-    from torch.utils.data import DataLoader, Dataset
+    from torch.utils.data import IterableDataset
     from transformers import Trainer, TrainingArguments
 except Exception:  # pragma: no cover - optional
     torch = None  # type: ignore
-    Dataset = object  # type: ignore
-    DataLoader = object  # type: ignore
+    IterableDataset = object  # type: ignore
     Trainer = object  # type: ignore
     TrainingArguments = object  # type: ignore
 
 from transformer.sax_transformer import SaxTransformer
 from transformer.sax_tokenizer import SaxTokenizer
+from scripts.evaluate_piano_model import evaluate_dirs as eval_piano
 
 
-class JsonlDataset(Dataset):
+class JsonlDataset(IterableDataset):
     def __init__(self, path: Path) -> None:
-        self.items: list[list[int]] = []
-        for line in path.read_text().splitlines():
-            obj = json.loads(line)
-            tokens = obj.get("ids") or obj.get("tokens")
-            if tokens is not None:
-                self.items.append(tokens)
+        self.path = path
+        self._len: int | None = None
 
     def __len__(self) -> int:  # pragma: no cover - simple container
-        return len(self.items)
+        if self._len is None:
+            with self.path.open() as f:
+                self._len = sum(1 for _ in f)
+        return self._len
 
-    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:  # pragma: no cover - simple container
-        return {"input_ids": torch.tensor(self.items[idx], dtype=torch.long)}
+    def __iter__(self):  # pragma: no cover - simple container
+        with self.path.open() as f:
+            for line in f:
+                obj = json.loads(line)
+                tokens = obj.get("ids") or obj.get("tokens")
+                if tokens is not None:
+                    yield {"input_ids": torch.tensor(tokens, dtype=torch.long)}
 
 
 def collate_fn(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:  # pragma: no cover - simple
@@ -70,6 +74,13 @@ def main() -> None:
         action="store_true",
         help="auto scale LoRA rank and steps based on dataset size",
     )
+    parser.add_argument(
+        "--eval",
+        action="store_true",
+        help="evaluate generated MIDIs using piano evaluation script",
+    )
+    parser.add_argument("--eval-ref", type=Path, default=None, help="reference MIDI directory")
+    parser.add_argument("--eval-gen", type=Path, default=None, help="generated MIDI directory")
     args = parser.parse_args()
 
     n_samples = sum(1 for _ in open(args.data))
@@ -107,6 +118,10 @@ def main() -> None:
     )
     trainer.train()
     model.model.save_pretrained(str(args.out))
+    if args.eval:
+        if args.eval_ref is None or args.eval_gen is None:
+            raise ValueError("--eval requires --eval-ref and --eval-gen")
+        eval_piano(args.eval_ref, args.eval_gen, out_dir=args.out / "eval")
 
 
 if __name__ == "__main__":

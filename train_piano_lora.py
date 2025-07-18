@@ -6,12 +6,11 @@ from pathlib import Path
 
 try:
     import torch
-    from torch.utils.data import DataLoader, Dataset
+    from torch.utils.data import IterableDataset
     from transformers import Trainer, TrainingArguments
 except Exception:  # pragma: no cover - optional
     torch = None  # type: ignore
-    Dataset = object  # type: ignore
-    DataLoader = object  # type: ignore
+    IterableDataset = object  # type: ignore
     Trainer = object  # type: ignore
     TrainingArguments = object  # type: ignore
 
@@ -19,20 +18,24 @@ from transformer.piano_transformer import PianoTransformer
 from transformer.tokenizer_piano import PianoTokenizer
 
 
-class JsonlDataset(Dataset):
+class JsonlDataset(IterableDataset):
     def __init__(self, path: Path) -> None:
-        self.items: list[list[int]] = []
-        for line in path.read_text().splitlines():
-            obj = json.loads(line)
-            tokens = obj.get("ids") or obj.get("tokens")
-            if tokens is not None:
-                self.items.append(tokens)
+        self.path = path
+        self._len: int | None = None
 
     def __len__(self) -> int:
-        return len(self.items)
+        if self._len is None:
+            with self.path.open() as f:
+                self._len = sum(1 for _ in f)
+        return self._len
 
-    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        return {"input_ids": torch.tensor(self.items[idx], dtype=torch.long)}
+    def __iter__(self):
+        with self.path.open() as f:
+            for line in f:
+                obj = json.loads(line)
+                tokens = obj.get("ids") or obj.get("tokens")
+                if tokens is not None:
+                    yield {"input_ids": torch.tensor(tokens, dtype=torch.long)}
 
 
 def collate_fn(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:

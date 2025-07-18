@@ -49,12 +49,13 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/torch_models
-          key: torch-${{ runner.os }}-${{ hashFiles('utilities/groove_transformer.py') }}
-          restore-keys: torch-${{ runner.os }}-
+          key: torch-${{ runner.os }}-${{ github.run_id }}-${{ hashFiles('utilities/groove_transformer.py') }}
+          restore-keys: |
+            torch-${{ runner.os }}-
 
       - name: Install extras and deps
         run: |
-          poetry install --no-root --extras test --extras audio
+          poetry install --no-root --extras test --extras audio --extras ml
           poetry run pip install numpy
 
       - name: Verify train-velocity CLI
@@ -62,6 +63,9 @@ jobs:
 
       - name: Run tests
         run: poetry run pytest --cov=. -q
+
+      - name: Run LoRA CLI smoke tests
+        run: poetry run pytest tests/test_lora_cli_smoke.py -q
 
       - name: Run transformer integration test
         run: poetry run pytest tests/test_transformer_integration.py -q

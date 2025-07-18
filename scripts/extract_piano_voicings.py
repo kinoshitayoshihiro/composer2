@@ -33,6 +33,8 @@ def load_events(path: Path) -> list[dict[str, object]]:
     pm = pretty_midi.PrettyMIDI(str(path))
     times, tempi = pm.get_tempo_changes()
     tempo = float(tempi[0]) if len(tempi) else 120.0
+    if tempo <= 0:
+        tempo = 120.0
     beat_dur = 60.0 / tempo
     events: list[dict[str, object]] = []
     for inst in pm.instruments:

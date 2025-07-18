@@ -23,20 +23,20 @@ global_settings:
 
   # 外部プロファイル / マップ
   groove_profile_path: "../data/groove_profile.json" # 微小タイミング揺らぎの統計
-  groove_strength: 1.0  # 0.0-1.0 のスケールで強度調整
+  groove_strength: 1.0 # 0.0-1.0 のスケールで強度調整
   tempo_map_path: "../data/tempo_map.json" # rit. / accel. を含む細粒度 BPM 変化
   onset_heatmap_json: "../data/vocal_onset_heatmap.json" # ボーカル発音のヒートマップ
   heatmap_resolution: 16 # ヒートマップ解像度（省略可）
-  heatmap_threshold: 2  # 強度判定の閾値（省略可）
+  heatmap_threshold: 2 # 強度判定の閾値（省略可）
   accent_threshold: 0.6
   ghost_density_range: [0.3, 0.8]
-  random_walk_step: 8  # ±8 の範囲で bar ごとに揺らぐ
+  random_walk_step: 8 # ±8 の範囲で bar ごとに揺らぐ
   # ベース音域の上限を変更したい場合は bass_range_hi を指定 (デフォルト72)
   bass_range_hi: 64
   fill_emotion_threshold: 0.8
   fill_fade_beats: 2.0
   use_consonant_sync: true
-  consonant_sync_mode: bar  # 'bar' or 'note'
+  consonant_sync_mode: bar # 'bar' or 'note'
 
 # ------------------- 2. Paths -----------------------
 paths:
@@ -69,6 +69,7 @@ part_defaults:
     dynamics_profile: ""
     articulation: "sustain"
     anticipatory_chord: false
+    ml_velocity_model_path: "outputs/checkpoints/last.ckpt"
 
   guitar:
     rhythm_key: "guitar_ballad_arpeggio"
@@ -78,6 +79,7 @@ part_defaults:
     humanize_profile: ""
     dynamics_profile: ""
     articulation: "fingerstyle"
+    ml_velocity_model_path: "outputs/checkpoints/last.ckpt"
 
   bass:
     rhythm_key: "bass_pump_8th_octaves"
@@ -87,6 +89,7 @@ part_defaults:
     humanize_profile: ""
     dynamics_profile: ""
     articulation: "finger"
+    ml_velocity_model_path: "outputs/checkpoints/last.ckpt"
 
   drums:
     style_key: "ballad_soft_kick_snare_8th_hat"
@@ -94,21 +97,20 @@ part_defaults:
     additional_kick_density: 0.2
     humanize_profile: ""
     dynamics_profile: ""
-    cond: {style: funk}
-
-  percussion:
-    cond: {style: lofi}
+    cond: { style: funk }
+    ml_velocity_model_path: "outputs/checkpoints/last.ckpt"
 
   strings:
     role: "pad"
     instrument_name: "Orchestral Strings" # ← 追加
     rhythm_key: "strings_melody_basic"
     humanize_profile: "gentle_push"
+    ml_velocity_model_path: "outputs/checkpoints/last.ckpt"
 
   percussion:
+    cond: { style: lofi }
     backend: perc_ngram
     model_path: models/perc_ngram.pkl
-
 
 # ---------- 4. Section Overrides (拍子/テンポ/HZ) ----------
 # processed_chordmap_with_emotion.yaml でセクションを定義している場合、

@@ -23,7 +23,6 @@ except Exception:  # pragma: no cover – optional deps
 
 from transformer.sax_tokenizer import SaxTokenizer
 from transformer.sax_transformer import SaxTransformer
-from scripts.evaluate_piano_model import evaluate_dirs as eval_piano
 
 
 # --------------------------------------------------------------------------- #
@@ -63,7 +62,7 @@ def collate_fn(
 ) -> dict[str, torch.Tensor]:  # pragma: no cover – simple
     lengths = [len(x["input_ids"]) for x in batch]
     max_len = max(lengths)
-    pad_id = getattr(tokenizer, "pad_id", 0)
+    pad_id = getattr(tokenizer, "pad_id", tokenizer.vocab.get("<pad>", 0))
 
     input_ids = torch.full((len(batch), max_len), pad_id, dtype=torch.long)
     for i, x in enumerate(batch):
@@ -91,9 +90,15 @@ def main() -> None:  # noqa: C901 – top‑level script
     parser.add_argument("--data", type=Path, required=True, help="JSONL corpus")
     parser.add_argument("--out", type=Path, required=True, help="checkpoint dir")
     parser.add_argument("--rank", type=int, default=4, help="LoRA rank")
-    parser.add_argument("--lora_alpha", type=int, default=None, help="LoRA α (default: rank*2)")
-    parser.add_argument("--steps", type=int, default=800, help="training steps (overridden by --epochs)")
-    parser.add_argument("--epochs", type=int, default=None, help="epochs (overrides --steps)")
+    parser.add_argument(
+        "--lora_alpha", type=int, default=None, help="LoRA α (default: rank*2)"
+    )
+    parser.add_argument(
+        "--steps", type=int, default=800, help="training steps (overridden by --epochs)"
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=None, help="epochs (overrides --steps)"
+    )
     parser.add_argument(
         "--auto-hparam",
         action="store_true",
@@ -102,9 +107,18 @@ def main() -> None:  # noqa: C901 – top‑level script
             "(<10k: rank=4/800; <30k: rank=8/1200; else: rank=16/2000)"
         ),
     )
-    parser.add_argument("--eval", action="store_true", help="run piano‑style evaluation")
-    parser.add_argument("--eval-ref", type=Path, default=None, help="reference MIDI dir")
-    parser.add_argument("--eval-gen", type=Path, default=None, help="generated MIDI dir")
+    parser.add_argument(
+        "--eval", action="store_true", help="run piano‑style evaluation"
+    )
+    parser.add_argument(
+        "--eval-ref", type=Path, default=None, help="reference MIDI dir"
+    )
+    parser.add_argument(
+        "--eval-gen", type=Path, default=None, help="generated MIDI dir"
+    )
+    parser.add_argument(
+        "--safe", action="store_true", help="save adapters with .safetensors"
+    )
     args = parser.parse_args()
 
     # ---------- Hyper‑param autoscale ----------
@@ -151,10 +165,12 @@ def main() -> None:  # noqa: C901 – top‑level script
     trainer.train()
 
     # ---------- Save ----------
-    model.model.save_pretrained(str(args.out), safe_serialization=True)
+    model.model.save_pretrained(str(args.out), safe_serialization=args.safe)
 
     # ---------- Eval ----------
     if args.eval:
+        from scripts.evaluate_piano_model import evaluate_dirs as eval_piano
+
         if args.eval_ref is not None and args.eval_gen is not None:
             # user‑specified directories
             eval_piano(args.eval_ref, args.eval_gen, out_dir=args.out / "eval")
@@ -164,3 +180,4 @@ def main() -> None:  # noqa: C901 – top‑level script
 
 
 if __name__ == "__main__":
+    main()

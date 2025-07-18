@@ -42,6 +42,7 @@ or equivalently
 ```bash
 pip install -r requirements.txt      # core + music21
 pip install -e .[gui]                # optional GUI
+pip install -r requirements/base.txt -r requirements/extra-ml.txt
 ```
 
 See [v3 upgrade guide](docs/v3_upgrade.md) for migrating from the previous version.
@@ -65,7 +66,7 @@ ML 機能は PyTorch が必須です。
 追加機能（RNN 学習や GUI、外部 MIDI 同期）を利用する場合は
 
 ```bash
-pip install -r requirements-extra.txt    # or: pip install 'modular-composer[rnn,gui,live]'
+pip install -r requirements/base.txt -r requirements/extra-ml.txt    # or: pip install 'modular-composer[rnn,gui,live]'
 ```
 
 RNN features require `pip install 'modular-composer[rnn]'`.
@@ -1118,13 +1119,19 @@ Follow the quickstart below or see
 python scripts/extract_piano_voicings.py --midi-dir midi/ --out piano.jsonl
 
 # train the LoRA model
-python train_piano_lora.py --data piano.jsonl --out piano_model
+python train_piano_lora.py --data piano.jsonl --out piano_model --safe --eval
 # auto scale hyperparams based on dataset size
 python train_piano_lora.py --data piano.jsonl --out piano_model --auto-hparam
 
 # sample with the ML backend
 modcompose sample dummy.pkl --backend piano_ml --model piano_model --temperature 0.9
 ```
+# 最小ステップ実行例 (テスト用)
+python train_piano_lora.py --data piano.jsonl --out /tmp/piano_test --steps 1 --safe
+
+--eval を使う場合は，下記のオプション実行後：
+    pip install -r requirements/extra-ml.txt
+
 ![training](docs/img/piano_gamma_demo.png)
 
 

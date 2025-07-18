@@ -35,12 +35,6 @@ models/
 venv/
 env/
 
-outputs/checkpoints/*.ckpt
-# ML Training Checkpoints
-outputs/checkpoints/*.ckpt
-checkpoints/*.ckpt
-*.ckpt
-
 # Large audio and MIDI files
 data/tracks/
 data/loops_converted/

@@ -1,6 +1,11 @@
-import numpy as np
-import soundfile as sf
 from pathlib import Path
+
+import numpy as np
+import pytest
+
+pytest.importorskip("librosa")
+pytest.importorskip("soundfile")
+import soundfile as sf
 
 from utilities import audio_analysis
 
@@ -35,4 +40,3 @@ def test_pitch_shift_detection(tmp_path: Path) -> None:
 
     expected = base * 2 ** (2 / 12)
     assert abs(shifted_mean - expected) < 10
-

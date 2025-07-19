@@ -1,6 +1,11 @@
-import numpy as np
-import soundfile as sf
 from pathlib import Path
+
+import numpy as np
+import pytest
+
+pytest.importorskip("librosa")
+pytest.importorskip("soundfile")
+import soundfile as sf
 
 from utilities import data_augmentation
 
@@ -21,4 +26,3 @@ def test_augment_wav_dir(tmp_path: Path) -> None:
     for f in files:
         data, sr2 = sf.read(f)
         assert abs(len(data) - len(y)) <= sr * 0.1
-

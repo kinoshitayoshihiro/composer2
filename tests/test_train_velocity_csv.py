@@ -1,8 +1,12 @@
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pretty_midi
+import pytest
+
+pytest.importorskip("colorama")
+pytest.importorskip("hydra")
 from scripts import train_velocity
 
 
@@ -25,17 +29,19 @@ def test_build_velocity_csv_success(tmp_path: Path) -> None:
     stats_out = tmp_path / "stats.csv"
 
     train_velocity.pretty_midi = pretty_midi
-    rc = train_velocity.main([
-        "build-velocity-csv",
-        "--tracks-dir",
-        str(tracks),
-        "--drums-dir",
-        str(drums),
-        "--csv-out",
-        str(csv_out),
-        "--stats-out",
-        str(stats_out),
-    ])
+    rc = train_velocity.main(
+        [
+            "build-velocity-csv",
+            "--tracks-dir",
+            str(tracks),
+            "--drums-dir",
+            str(drums),
+            "--csv-out",
+            str(csv_out),
+            "--stats-out",
+            str(stats_out),
+        ]
+    )
     assert rc == 0
     assert csv_out.exists()
     assert stats_out.exists()
@@ -47,17 +53,19 @@ def test_build_velocity_csv_error(tmp_path: Path) -> None:
     csv_out = tmp_path / "out.csv"
     stats_out = tmp_path / "stats.csv"
     train_velocity.pretty_midi = pretty_midi
-    rc = train_velocity.main([
-        "build-velocity-csv",
-        "--tracks-dir",
-        str(tmp_path / "missing"),
-        "--drums-dir",
-        str(drums),
-        "--csv-out",
-        str(csv_out),
-        "--stats-out",
-        str(stats_out),
-    ])
+    rc = train_velocity.main(
+        [
+            "build-velocity-csv",
+            "--tracks-dir",
+            str(tmp_path / "missing"),
+            "--drums-dir",
+            str(drums),
+            "--csv-out",
+            str(csv_out),
+            "--stats-out",
+            str(stats_out),
+        ]
+    )
     assert rc == 1
 
 
@@ -70,8 +78,11 @@ def test_dry_run_output_formats(capsys) -> None:
     train_velocity.dry_run_flag = True
     train_velocity.dry_run_json = True
     from hydra import compose, initialize_config_dir
+
     cfg_dir = (Path(__file__).resolve().parents[1] / "configs").resolve()
-    with initialize_config_dir(config_dir=str(cfg_dir), job_name="test", version_base="1.3"):
+    with initialize_config_dir(
+        config_dir=str(cfg_dir), job_name="test", version_base="1.3"
+    ):
         cfg = compose(config_name="velocity_model.yaml")
         rc = train_velocity.run(cfg)
     out = capsys.readouterr().out

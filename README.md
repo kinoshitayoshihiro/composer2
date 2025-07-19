@@ -36,13 +36,17 @@ Before running any tests or generation scripts you must install the project depe
 ```bash
 bash setup.sh
 ```
+For lightweight tests run:
+```bash
+LIGHT=1 bash setup.sh
+```
 
 or equivalently
 
 ```bash
-pip install -r requirements.txt      # core + music21
-pip install -e .[gui]                # optional GUI
-pip install -r requirements/base.txt -r requirements/extra-ml.txt
+pip install -r requirements/base.txt  # + optional extras
+pip install -e .[gui]                 # optional GUI
+pip install -r requirements/extra-ml.txt
 ```
 
 See [v3 upgrade guide](docs/v3_upgrade.md) for migrating from the previous version.
@@ -114,7 +118,7 @@ when rendering MIDI with `utilities.synth.render_midi`.
 bash setup.sh
 
 # or equivalently
-pip install -r requirements.txt
+pip install -r requirements/base.txt
 ```
 
 ## Configuration Files
@@ -155,7 +159,7 @@ Chord progressions are defined in `utilities/progression_templates.yaml`. Append
 
 ## Generating MIDI
 Before generating any MIDI ensure the requirements are installed with
-`bash setup.sh` (or `pip install -r requirements.txt`).
+`bash setup.sh` (or `pip install -r requirements/base.txt`).
 Run the main script with the configuration file:
 
 ```bash
@@ -378,7 +382,7 @@ Install the core requirements and the additional test packages before
 running any tests:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements/base.txt
 pip install -r requirements-test.txt
 ```
 

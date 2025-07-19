@@ -14,6 +14,8 @@ jobs:
         os: [ubuntu-latest]
         python-version: ['3.10', '3.11']
         light: ['1', '0']
+    env:
+      LIGHT: ${{ matrix.light }}
 
     steps:
       - uses: actions/checkout@v4
@@ -73,12 +75,15 @@ jobs:
         run: poetry run pytest tests/test_lora_cli_smoke.py -q
 
       - name: Run transformer integration test
+        if: matrix.light == '0'
         run: poetry run pytest tests/test_transformer_integration.py -q
 
       - name: Run audio-to-MIDI tests
+        if: matrix.light == '0'
         run: poetry run pytest tests/audio_to_midi -q
 
       - name: Run demo
+        if: matrix.light == '0'
         run: poetry run make demo
         continue-on-error: true
 

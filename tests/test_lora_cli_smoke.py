@@ -25,12 +25,9 @@ def test_piano_lora_smoke(tmp_path: Path):
             str(out),
             "--steps",
             "2",
-            "--safe",
         ]
     )
-    assert (out / "adapter_model.safetensors").exists() or (
-        out / "adapter_model.bin"
-    ).exists()
+    assert (out / "adapter_model.bin").exists()
 
 
 @pytest.mark.skipif(torch is None, reason="requires torch")

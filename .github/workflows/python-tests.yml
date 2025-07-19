@@ -13,6 +13,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python-version: ['3.10', '3.11']
+        light: ['1', '0']
 
     steps:
       - uses: actions/checkout@v4
@@ -49,14 +50,17 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/torch_models
-          key: torch-${{ runner.os }}-${{ github.run_id }}-${{ hashFiles('utilities/groove_transformer.py') }}
+          key: torch-${{ runner.os }}-${{ hashFiles('requirements/extra-ml.txt') }}
           restore-keys: |
             torch-${{ runner.os }}-
 
-      - name: Install extras and deps
+      - name: Install deps
         run: |
-          poetry install --no-root --extras test --extras audio --extras ml
-          poetry run pip install numpy
+          extras="--extras test --extras audio"
+          if [ "${{ matrix.light }}" = '0' ]; then
+            extras="$extras --extras ml"
+          fi
+          poetry install --no-root $extras
 
       - name: Verify train-velocity CLI
         run: poetry run train-velocity --help
@@ -65,6 +69,7 @@ jobs:
         run: poetry run pytest --cov=. -q
 
       - name: Run LoRA CLI smoke tests
+        if: matrix.light == '0'
         run: poetry run pytest tests/test_lora_cli_smoke.py -q
 
       - name: Run transformer integration test

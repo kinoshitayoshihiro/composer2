@@ -18,7 +18,7 @@ python train_sax_lora.py --data sax.jsonl --out sax_model --safe --eval
 Install optional dependencies with:
 
 ```bash
-pip install -r requirements/base.txt -r requirements/extra-ml.txt
+pip install -r requirements/base.txt -r requirements/extra-ml.txt -r requirements/extra-audio.txt
 ```
 
 Using `--eval` requires optional packages from `requirements/extra-ml.txt`.

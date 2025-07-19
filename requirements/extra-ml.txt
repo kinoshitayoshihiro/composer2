@@ -7,3 +7,5 @@ uvicorn>=0.29
 streamlit>=1.32
 soundfile>=0.12
 joblib>=1.3
+audioread>=2.1.9
+pydub>=0.25

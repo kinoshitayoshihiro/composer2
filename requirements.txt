@@ -1,3 +1,4 @@
 -r requirements/base.txt
 # Optional ML/Audio extras
 -r requirements/extra-ml.txt
+-r requirements/extra-audio.txt

@@ -45,8 +45,9 @@ or equivalently
 
 ```bash
 pip install -r requirements/base.txt  # + optional extras
-pip install -e .[gui]                 # optional GUI
 pip install -r requirements/extra-ml.txt
+pip install -r requirements/extra-audio.txt
+pip install -e .[gui]                 # optional GUI
 ```
 
 See [v3 upgrade guide](docs/v3_upgrade.md) for migrating from the previous version.
@@ -58,9 +59,9 @@ Install AI and audio extras for transformer-based generation:
 ```bash
 pip install 'modular-composer[ai,audio]'
 ```
-# or, with the new split requirements:
+# **New split**
 ```bash
-pip install -r requirements/base.txt -r requirements/extra-ml.txt
+pip install -r requirements/base.txt -r requirements/extra-ml.txt -r requirements/extra-audio.txt
 ```
 Run the REST API demo with Docker Compose:
 
@@ -74,7 +75,7 @@ ML 機能は PyTorch が必須です。
 追加機能（RNN 学習や GUI、外部 MIDI 同期）を利用する場合は
 
 ```bash
-pip install -r requirements/base.txt -r requirements/extra-ml.txt    # or: pip install 'modular-composer[rnn,gui,live]'
+pip install -r requirements/base.txt -r requirements/extra-ml.txt -r requirements/extra-audio.txt    # or: pip install 'modular-composer[rnn,gui,live]'
 ```
 
 RNN features require `pip install 'modular-composer[rnn]'`.
@@ -1138,7 +1139,7 @@ modcompose sample dummy.pkl --backend piano_ml --model piano_model --temperature
 python train_piano_lora.py --data piano.jsonl --out /tmp/piano_test --steps 1 --safe
 
 --eval を使う場合は，下記のオプション実行後：
-    pip install -r requirements/extra-ml.txt
+    pip install -r requirements/extra-ml.txt -r requirements/extra-audio.txt
 
 ![training](docs/img/piano_gamma_demo.png)
 

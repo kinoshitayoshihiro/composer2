@@ -58,6 +58,10 @@ Install AI and audio extras for transformer-based generation:
 ```bash
 pip install 'modular-composer[ai,audio]'
 ```
+# or, with the new split requirements:
+```bash
+pip install -r requirements/base.txt -r requirements/extra-ml.txt
+```
 Run the REST API demo with Docker Compose:
 
 ```bash

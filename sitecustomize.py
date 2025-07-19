@@ -6,6 +6,7 @@ CI / minimal-env 用スタブ:
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 import types
@@ -66,7 +67,26 @@ if "build" not in sys.modules:
     sys.modules["build.__main__"] = main_mod
 
 # ---------------------------------------------------------------------------
-# 3. pretty_midi version shim
+# 3. scipy stub for LIGHT mode
+# ---------------------------------------------------------------------------
+if importlib.util.find_spec("scipy") is None:
+    scipy_mod = types.ModuleType("scipy")
+    signal_mod = types.ModuleType("scipy.signal")
+
+    def resample_poly(x, up, down, axis=0):
+        import numpy as _np
+
+        x = _np.asarray(x)
+        out = _np.repeat(x, up, axis=axis)
+        return out[::down]
+
+    signal_mod.resample_poly = resample_poly
+    scipy_mod.signal = signal_mod
+    sys.modules["scipy"] = scipy_mod
+    sys.modules["scipy.signal"] = signal_mod
+
+# ---------------------------------------------------------------------------
+# 4. pretty_midi version shim
 # ---------------------------------------------------------------------------
 try:
     import pretty_midi

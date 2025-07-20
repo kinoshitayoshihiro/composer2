@@ -1,0 +1,7 @@
+legato: 0
+staccato: 1
+accent: 2
+tenuto: 3
+marcato: 4
+trill: 5
+sustain_pedal: 6

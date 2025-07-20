@@ -39,7 +39,11 @@ jobs:
       - name: Run tests
         id: run_tests
         shell: bash
-        run: make test
+        run: |
+          coverage run -m pytest -q
+          coverage report --fail-under=95
+      - name: Type check
+        run: mypy --strict scripts/*.py utilities/*.py ml_models/*.py
       - name: Generate demo MIDI
         if: ${{ always() }}
         shell: bash

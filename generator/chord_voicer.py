@@ -843,17 +843,4 @@ class ChordVoicer:
         )
         return chord_part
 
-
-class PianoGenerator(BasePartGenerator):
-    def __init__(self, rhythm_lib, chord_voicer=None, main_cfg=None, **kwargs):
-        super().__init__("piano", rhythm_lib)
-        # Safe-fallback chord voicer
-        if chord_voicer is None:
-            from chord_voicer import ChordVoicer  # 軽量ヘルパー
-
-            chord_voicer = ChordVoicer(mode="triad_drop2")
-        self.chord_voicer = chord_voicer
-        self.main_cfg = main_cfg or {}
-
-
 # --- END OF FILE generators/chord_voicer.py ---

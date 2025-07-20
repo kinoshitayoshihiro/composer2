@@ -397,14 +397,6 @@ class MelodyGenerator(BasePartGenerator):
         part.write("midi", fp=str(out_path))
         return out_path
 
-
-class PianoGenerator(BasePartGenerator):
-    def __init__(self, *args, main_cfg=None, **kwargs):
-        self.main_cfg = main_cfg
-        super().__init__(*args, **kwargs)
-        # ...他の初期化処理...
-
-
 # --- Debug / manual test (REMOVE IN PRODUCTION) -----------------
 if __name__ == "__main__":
     # ここにテスト用の score, out_path の定義が必要です

@@ -42,17 +42,26 @@ checkpoints/*.ckpt
 
 # Large audio and MIDI files
 data/tracks/
-data/loops_converted/
+# data/loops_converted/
 *.wav
 *.mp3
 *.flac
 *.aif
 *.aiff
-
+q
 # Large CSV files (training data)
 data/velocity.csv
 data/velocity_*.csv
 
 # Large datasets
-data/duration_*.csv
-data/maestro_v3_midi/
+# data/duration_*.csv
+# data/maestro_v3_midi/
+# これまで隠れていたファイルを確認
+ls -lh data/duration*.csv
+ls -la data/maestro_v3_midi/ | head -5
+ls -la data/loops_converted/ | head -5
+
+# utilities/duration_csv.pyの確認
+ls -la utilities/duration_csv.py
+q
+

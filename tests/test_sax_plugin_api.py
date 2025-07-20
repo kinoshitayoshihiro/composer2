@@ -1,9 +1,13 @@
 import importlib
-from fastapi.testclient import TestClient
 
-import types
-import sys
 import pytest
+
+fastapi = pytest.importorskip("fastapi")
+import sys
+import types
+
+import pytest
+from fastapi.testclient import TestClient
 
 
 def test_stub_generation() -> None:
@@ -14,6 +18,7 @@ def test_stub_generation() -> None:
 
 def test_api_endpoint() -> None:
     from api.sax_server import app
+
     client = TestClient(app)
     resp = client.post("/generate_sax", json={"growl": False, "altissimo": True})
     assert resp.status_code == 200
@@ -24,6 +29,7 @@ def test_api_endpoint() -> None:
 
 def test_validation_error() -> None:
     from api.sax_server import app
+
     client = TestClient(app)
     resp = client.post("/generate_sax", json={"growl": True, "unknown": 1})
     assert resp.status_code == 422
@@ -37,10 +43,13 @@ def test_plugin_failure(monkeypatch) -> None:
     fake_mod.generate_notes = bad_generate
     monkeypatch.setitem(sys.modules, "plugins.sax_companion_stub", fake_mod)
     import plugins
+
     monkeypatch.setattr(plugins, "sax_companion_stub", fake_mod, raising=False)
     import importlib
+
     sys.modules.pop("api.sax_server", None)
     import api.sax_server as sax_server
+
     client = TestClient(sax_server.app)
     resp = client.post("/generate_sax", json={"growl": True})
     assert resp.status_code == 500

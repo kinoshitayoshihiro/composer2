@@ -2,7 +2,9 @@ import importlib.util
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
+import pytest
+
+pd = pytest.importorskip("pandas")
 
 
 def load_module():
@@ -16,12 +18,14 @@ def load_module():
 def test_on_the_fly_augmentation(tmp_path: Path, monkeypatch) -> None:
     module = load_module()
     csv = tmp_path / "v.csv"
-    pd.DataFrame({
-        "pitch": [60],
-        "duration": [1.0],
-        "prev_vel": [64],
-        "velocity": [70],
-    }).to_csv(csv, index=False)
+    pd.DataFrame(
+        {
+            "pitch": [60],
+            "duration": [1.0],
+            "prev_vel": [64],
+            "velocity": [70],
+        }
+    ).to_csv(csv, index=False)
 
     noise = np.array([0.1, 0.1, 0.1], dtype=np.float32)
 
@@ -37,7 +41,11 @@ def test_on_the_fly_augmentation(tmp_path: Path, monkeypatch) -> None:
 
     module.torch = DummyTorch()
 
-    ds = module.CsvDataset(csv, 3, transform=lambda x: x + module.np.random.normal(scale=0.01, size=x.shape))
+    ds = module.CsvDataset(
+        csv,
+        3,
+        transform=lambda x: x + module.np.random.normal(scale=0.01, size=x.shape),
+    )
     x, y = ds[0]
     assert np.allclose(x, module.np.array([60, 1.0, 64]) + noise)
     assert y == 70

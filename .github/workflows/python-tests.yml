@@ -13,6 +13,9 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python-version: ['3.10', '3.11']
+        light: ['1', '0']
+    env:
+      LIGHT: ${{ matrix.light }}
 
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +27,7 @@ jobs:
           cache: 'pip'
 
       - name: Install system libs for soundfile
+        if: matrix.light == '0'
         run: sudo apt-get update && sudo apt-get install -y libsndfile1
 
       - name: Install Poetry
@@ -39,6 +43,7 @@ jobs:
           restore-keys: ${{ runner.os }}-poetry-
 
       - name: Cache BasicPitch
+        if: matrix.light == '0'
         uses: actions/cache@v3
         with:
           path: ~/.cache/basic_pitch
@@ -49,13 +54,17 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/torch_models
-          key: torch-${{ runner.os }}-${{ hashFiles('utilities/groove_transformer.py') }}
-          restore-keys: torch-${{ runner.os }}-
+          key: torch-${{ runner.os }}-${{ hashFiles('requirements/extra-ml.txt') }}
+          restore-keys: |
+            torch-${{ runner.os }}-
 
-      - name: Install extras and deps
+      - name: Install deps
         run: |
-          poetry install --no-root --extras test --extras audio
-          poetry run pip install numpy
+          extras="--extras test"
+          if [ "${{ matrix.light }}" = '0' ]; then
+            extras="$extras --extras audio --extras ml"
+          fi
+          poetry install --no-root $extras
 
       - name: Verify train-velocity CLI
         run: poetry run train-velocity --help
@@ -63,13 +72,20 @@ jobs:
       - name: Run tests
         run: poetry run pytest --cov=. -q
 
+      - name: Run LoRA CLI smoke tests
+        if: matrix.light == '0'
+        run: poetry run pytest tests/test_lora_cli_smoke.py -q
+
       - name: Run transformer integration test
+        if: matrix.light == '0'
         run: poetry run pytest tests/test_transformer_integration.py -q
 
       - name: Run audio-to-MIDI tests
+        if: matrix.light == '0'
         run: poetry run pytest tests/audio_to_midi -q
 
       - name: Run demo
+        if: matrix.light == '0'
         run: poetry run make demo
         continue-on-error: true
 

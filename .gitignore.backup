@@ -1,0 +1,58 @@
+__pycache__/
+*.pyc
+midi_output/*.mid
+
+# MacOS metadata and other OS-generated files
+.DS_Store
+
+# Backup and temporary files
+*.bak
+*.tmp
+*~
+
+# Generated file lists or temporary scripts
+filelist.txt
+
+heatmap.json
+modular_composer.egg-info/
+.DS_Store
+.hypothesis/
+setup.cfg
+site/
+
+docs/examples/loops/*.mid
+docs/assets/*.mp4
+data/irs/*.wav
+
+
+# Large model files (>100MB)
+*.pkl
+model/
+models/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# ML Training Checkpoints
+outputs/checkpoints/*.ckpt
+checkpoints/*.ckpt
+*.ckpt
+
+# Large audio and MIDI files
+data/tracks/
+data/loops_converted/
+*.wav
+*.mp3
+*.flac
+*.aif
+*.aiff
+
+# Large CSV files (training data)
+data/velocity.csv
+data/velocity_*.csv
+
+# Large datasets
+data/duration_*.csv
+data/maestro_v3_midi/

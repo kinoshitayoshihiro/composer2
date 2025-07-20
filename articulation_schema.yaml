@@ -4,4 +4,7 @@ accent: 2
 tenuto: 3
 marcato: 4
 trill: 5
+tremolo: 6
+sustain_pedal: 7
+none: 8
 sustain_pedal: 6

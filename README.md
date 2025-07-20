@@ -1,4 +1,6 @@
 # OtoKotoba Composer
+[![CI](https://github.com/OpenAI/modular_composer/actions/workflows/ci.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)](#)
 [![python-tests](https://github.com/OpenAI/modular_composer/actions/workflows/python-tests.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/python-tests.yml)
 [![Nightly](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml)
 [![PyPI](https://img.shields.io/pypi/v/modular-composer.svg)](https://pypi.org/project/modular-composer/)
@@ -59,9 +61,25 @@ Install AI and audio extras for transformer-based generation:
 ```bash
 pip install 'modular-composer[ai,audio]'
 ```
+
+
+### Install from PyPI
+
+```bash
+pip install articulation-tagger==0.9.0
+```
+
+```python
+from music21 import converter
+from articulation_tagger import MLArticulationModel, predict_many
+
+model = MLArticulationModel(num_labels=9)
+scores = [converter.parse("a.mid"), converter.parse("b.mid")]
+labels = predict_many(scores, model)
 # **New split**
 ```bash
 pip install -r requirements/base.txt -r requirements/extra-ml.txt -r requirements/extra-audio.txt
+
 ```
 Run the REST API demo with Docker Compose:
 

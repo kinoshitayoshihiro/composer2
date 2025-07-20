@@ -3,6 +3,8 @@ name: Sax CI
 on:
   push:
   pull_request:
+  schedule:
+    - cron: '0 0 * * *'
 
 jobs:
   build:
@@ -20,8 +22,7 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          pip install -r requirements.txt
-          pip install -e .[test]
+          pip install -r requirements-dev.txt
           pip install mkdocs mkdocs-material mkdocstrings[python]
       - name: Build SaxPlugin
         shell: bash
@@ -39,7 +40,7 @@ jobs:
       - name: Run tests
         id: run_tests
         shell: bash
-        run: make test
+        run: pytest -m "not slow" --cov=.
       - name: Generate demo MIDI
         if: ${{ always() }}
         shell: bash
@@ -71,3 +72,17 @@ jobs:
           tests/test_vibrato_engine.py \
           tests/test_vocal_articulation_integration.py \
           tests/test_cli_vocal_articulation.py -q
+
+  nightly:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-dev.txt
+      - name: Run full tests
+        run: pytest -q

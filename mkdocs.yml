@@ -8,6 +8,7 @@ theme:
         icon: material/weather-sunny
         name: Switch to dark mode
     - scheme: slate
+      media: "(prefers-color-scheme: dark)"
       toggle:
         icon: material/weather-night
         name: Switch to light mode

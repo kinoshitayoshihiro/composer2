@@ -1,3 +1,9 @@
+
+_target_: data.articulation_datamodule.ArticulationDataModule
+csv_path: data/train.csv
+batch_size: 16
+weighted: true
+val_pct: 0.1
 batch_size: 8
 train_pct: 0.8
 num_workers: 0

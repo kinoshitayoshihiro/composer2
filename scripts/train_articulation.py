@@ -1,21 +1,24 @@
 from __future__ import annotations
-
 from pathlib import Path
-
 from pytorch_lightning.cli import LightningCLI
 
-from data.articulation_data import ArticulationDataModule
-from ml_models.articulation_tagger import ArticulationTagger
+from data.articulation_datamodule import ArticulationDataModule
+from ml_models.tagger_module import TaggerModule
 
 
 def main() -> None:
     LightningCLI(
-        ArticulationTagger,
+        TaggerModule,
         ArticulationDataModule,
         seed_everything_default=42,
-        parser_kwargs={"parser_mode": "omegaconf"},
+        parser_kwargs={
+            "parser_mode": "omegaconf",
+        },
+        save_config_callback=None,
         run=True,
-        config_path=str(Path(__file__).resolve().parent.parent / "conf"),
+        config_path=str(
+            Path(__file__).resolve().parent.parent / "conf"
+        ),
     )
 
 

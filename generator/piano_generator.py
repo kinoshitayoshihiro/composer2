@@ -856,11 +856,12 @@ class PianoGenerator(BasePartGenerator):
         for m in melody:
             if isinstance(m, pitch.Pitch):
                 pitches.append(m)
-            elif isinstance(m, (list, tuple)) and len(m) >= 2:
-                try:
-                    pitches.append(pitch.Pitch(m[1]))
-                except Exception:
-                    continue
+            elif isinstance(m, (list, tuple)):  # noqa: UP038
+                if len(m) >= 2:
+                    try:
+                        pitches.append(pitch.Pitch(m[1]))
+                    except Exception:
+                        continue
         if not pitches:
             return result
 
@@ -881,3 +882,29 @@ class PianoGenerator(BasePartGenerator):
                 add_echo(result)
         return result
 
+    def add_articulation(
+        self, part: stream.Part | dict[str, stream.Part], model_path: str | None
+    ) -> None:
+        """Annotate notes with articulation tags using ML model."""
+        if model_path is None:
+            return
+        try:
+            from utilities import ml_articulation
+        except Exception as exc:  # pragma: no cover - optional
+            self.logger.warning("ml_articulation unavailable: %s", exc)
+            return
+
+        model = ml_articulation.load(model_path)
+
+        def _apply(p: stream.Part) -> None:
+            score = stream.Score()
+            score.append(p.flat)
+            tags = ml_articulation.predict(score, model)
+            for n, t in zip(score.flat.notes, tags):
+                n.editorial.articulation_tag = int(t)
+
+        if isinstance(part, dict):
+            for p in part.values():
+                _apply(p)
+        else:
+            _apply(part)

@@ -36,12 +36,18 @@ Before running any tests or generation scripts you must install the project depe
 ```bash
 bash setup.sh
 ```
+For lightweight tests run:
+```bash
+LIGHT=1 bash setup.sh
+```
 
 or equivalently
 
 ```bash
-pip install -r requirements.txt      # core + music21
-pip install -e .[gui]                # optional GUI
+pip install -r requirements/base.txt  # + optional extras
+pip install -r requirements/extra-ml.txt
+pip install -r requirements/extra-audio.txt
+pip install -e .[gui]                 # optional GUI
 ```
 
 See [v3 upgrade guide](docs/v3_upgrade.md) for migrating from the previous version.
@@ -52,6 +58,10 @@ Install AI and audio extras for transformer-based generation:
 
 ```bash
 pip install 'modular-composer[ai,audio]'
+```
+# **New split**
+```bash
+pip install -r requirements/base.txt -r requirements/extra-ml.txt -r requirements/extra-audio.txt
 ```
 Run the REST API demo with Docker Compose:
 
@@ -65,7 +75,7 @@ ML 機能は PyTorch が必須です。
 追加機能（RNN 学習や GUI、外部 MIDI 同期）を利用する場合は
 
 ```bash
-pip install -r requirements-extra.txt    # or: pip install 'modular-composer[rnn,gui,live]'
+pip install -r requirements/base.txt -r requirements/extra-ml.txt -r requirements/extra-audio.txt    # or: pip install 'modular-composer[rnn,gui,live]'
 ```
 
 RNN features require `pip install 'modular-composer[rnn]'`.
@@ -113,7 +123,7 @@ when rendering MIDI with `utilities.synth.render_midi`.
 bash setup.sh
 
 # or equivalently
-pip install -r requirements.txt
+pip install -r requirements/base.txt
 ```
 
 ## Configuration Files
@@ -154,7 +164,7 @@ Chord progressions are defined in `utilities/progression_templates.yaml`. Append
 
 ## Generating MIDI
 Before generating any MIDI ensure the requirements are installed with
-`bash setup.sh` (or `pip install -r requirements.txt`).
+`bash setup.sh` (or `pip install -r requirements/base.txt`).
 Run the main script with the configuration file:
 
 ```bash
@@ -377,7 +387,7 @@ Install the core requirements and the additional test packages before
 running any tests:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements/base.txt
 pip install -r requirements-test.txt
 ```
 
@@ -1118,13 +1128,19 @@ Follow the quickstart below or see
 python scripts/extract_piano_voicings.py --midi-dir midi/ --out piano.jsonl
 
 # train the LoRA model
-python train_piano_lora.py --data piano.jsonl --out piano_model
+python train_piano_lora.py --data piano.jsonl --out piano_model --safe --eval
 # auto scale hyperparams based on dataset size
 python train_piano_lora.py --data piano.jsonl --out piano_model --auto-hparam
 
 # sample with the ML backend
 modcompose sample dummy.pkl --backend piano_ml --model piano_model --temperature 0.9
 ```
+# 最小ステップ実行例 (テスト用)
+python train_piano_lora.py --data piano.jsonl --out /tmp/piano_test --steps 1 --safe
+
+--eval を使う場合は，下記のオプション実行後：
+    pip install -r requirements/extra-ml.txt -r requirements/extra-audio.txt
+
 ![training](docs/img/piano_gamma_demo.png)
 
 

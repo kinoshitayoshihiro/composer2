@@ -6,6 +6,7 @@ CI / minimal-env 用スタブ:
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 import types
@@ -66,7 +67,85 @@ if "build" not in sys.modules:
     sys.modules["build.__main__"] = main_mod
 
 # ---------------------------------------------------------------------------
-# 3. pretty_midi version shim
+# 3. scipy stub for LIGHT mode
+# ---------------------------------------------------------------------------
+if importlib.util.find_spec("scipy") is None:
+    import importlib.machinery
+
+    scipy_mod = types.ModuleType("scipy")
+    scipy_mod.__spec__ = importlib.machinery.ModuleSpec("scipy", loader=None)
+    signal_mod = types.ModuleType("scipy.signal")
+    signal_mod.__spec__ = importlib.machinery.ModuleSpec("scipy.signal", loader=None)
+    stats_mod = types.ModuleType("scipy.stats")
+    stats_mod.__spec__ = importlib.machinery.ModuleSpec("scipy.stats", loader=None)
+
+    try:
+        import numpy as _np
+    except ImportError:  # fallback if numpy is absent
+        _np = types.ModuleType("numpy")
+        _np.asarray = lambda x, *a, **k: x  # type: ignore[attr-defined]
+        _np.repeat = lambda x, up, axis=0: x  # type: ignore[attr-defined]
+
+    def resample_poly(x, up, down, axis=0):
+        x = _np.asarray(x)
+        out = _np.repeat(x, up, axis=axis)
+        return out[::down]
+
+    signal_mod.resample_poly = resample_poly
+
+    def entropy(p, q):
+        p = _np.asarray(p)
+        q = _np.asarray(q)
+        return float(_np.sum(_np.where(p > 0, p * _np.log(p / q), 0.0)))
+
+    def ks_2samp(a, b):
+        a = _np.asarray(a)
+        b = _np.asarray(b)
+        n1 = len(a)
+        n2 = len(b)
+        return (0.0, 1.0) if n1 == 0 or n2 == 0 else (0.0, 1.0)
+
+    stats_mod.entropy = entropy
+    stats_mod.ks_2samp = ks_2samp
+
+    scipy_mod.signal = signal_mod
+    scipy_mod.stats = stats_mod
+    sys.modules["scipy"] = scipy_mod
+    sys.modules["scipy.signal"] = signal_mod
+    sys.modules["scipy.stats"] = stats_mod
+
+# ---------------------------------------------------------------------------
+# 4. soundfile stub for LIGHT mode
+# ---------------------------------------------------------------------------
+if importlib.util.find_spec("soundfile") is None:
+    import importlib.machinery
+
+    sf_mod = types.ModuleType("soundfile")
+    sf_mod.__spec__ = importlib.machinery.ModuleSpec("soundfile", loader=None)
+
+    def write(path, data, samplerate, *args, **kwargs):  # type: ignore[unused-argument]
+        Path(path).touch()
+
+    def read(path, *args, **kwargs):  # type: ignore[unused-argument]
+        return _np.zeros(1), 44100
+
+    sf_mod.write = write
+    sf_mod.read = read
+    sys.modules["soundfile"] = sf_mod
+
+# ---------------------------------------------------------------------------
+# 5. colorama stub for LIGHT mode
+# ---------------------------------------------------------------------------
+if importlib.util.find_spec("colorama") is None:
+    col_mod = types.ModuleType("colorama")
+    Style = types.SimpleNamespace(RESET_ALL="")
+    Fore = types.SimpleNamespace(RED="", GREEN="", YELLOW="")
+    col_mod.Style = Style
+    col_mod.Fore = Fore
+    sys.modules["colorama"] = col_mod
+
+# ---------------------------------------------------------------------------
+# 4. pretty_midi version shim
 # ---------------------------------------------------------------------------
 try:
     import pretty_midi

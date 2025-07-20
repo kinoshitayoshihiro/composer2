@@ -52,3 +52,7 @@ data/loops_converted/
 # Large CSV files (training data)
 data/velocity.csv
 data/velocity_*.csv
+
+# Large datasets
+data/duration_*.csv
+data/maestro_v3_midi/

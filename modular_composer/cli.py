@@ -40,7 +40,10 @@ except Exception:
     groove_rnn_v2 = None
 from utilities.golden import compare_midi, update_golden  # noqa: E402
 from utilities.groove_sampler_ngram import Event, State  # noqa: E402
-from utilities.groove_sampler_v2 import generate_events, load, save, train  # noqa: F401,E402
+from utilities.groove_sampler_v2 import (  # noqa: E402
+    generate_events,
+    load,
+)  # noqa: F401
 from utilities.peak_synchroniser import PeakSynchroniser  # noqa: E402
 from utilities.realtime_engine import RealtimeEngine  # noqa: E402
 
@@ -58,7 +61,9 @@ def _schema_to_swing(schema: str | None) -> float | None:
 
 
 from utilities.tempo_utils import beat_to_seconds  # noqa: E402
-from utilities.tempo_utils import load_tempo_curve as load_tempo_curve_simple  # noqa: E402
+from utilities.tempo_utils import (  # noqa: E402
+    load_tempo_curve as load_tempo_curve_simple,
+)  # noqa: E402
 
 
 def _lazy_import_groove_rnn() -> ModuleType | None:
@@ -134,7 +139,6 @@ def eval_metrics(midi: Path, ref_midi: Path | None) -> None:
 
     When ``--ref`` is supplied, also compute ``blec`` between the files.
     """
-
 
     pm = pretty_midi.PrettyMIDI(str(midi))
     tempo = pm.get_tempo_changes()[1]
@@ -287,7 +291,10 @@ def render_audio_cmd(
     if not has_fluidsynth():
         raise click.ClickException("fluidsynth not found")
     if soundfont is None and use_default_sf2:
-        soundfont = Path(pretty_midi.__file__).resolve().parent / pretty_midi.instrument.DEFAULT_SF2
+        soundfont = (
+            Path(pretty_midi.__file__).resolve().parent
+            / pretty_midi.instrument.DEFAULT_SF2
+        )
     synth.export_audio(midi, out, soundfont=soundfont)
     click.echo(str(out))
 
@@ -328,7 +335,6 @@ def evaluate_cmd(midi: Path, ref_midi: Path | None) -> None:
 @click.option("--out", type=Path, default=None)
 def visualize_cmd(model: Path, out: Path | None) -> None:
     """Plot a simple n-gram heatmap from ``model``."""
-
 
     mdl = groove_sampler_ngram.load(model)
     freq = mdl.get("freq", {}).get(0, {}).get((), Counter())
@@ -434,7 +440,9 @@ def fx_cc() -> None:
     type=click.Choice(["ngram", "rnn", "realtime", "piano_ml"]),
     default="ngram",
 )
-@click.option("--stream", type=click.Choice(["rtmidi"]), default="rtmidi", show_default=True)
+@click.option(
+    "--stream", type=click.Choice(["rtmidi"]), default="rtmidi", show_default=True
+)
 @click.option(
     "--ai-backend",
     type=click.Choice(["ngram", "rnn", "transformer"]),
@@ -605,6 +613,13 @@ def _cmd_demo(args: list[str]) -> None:
     ap = argparse.ArgumentParser(prog="modcompose demo")
     ap.add_argument("-o", "--out", type=Path, default=Path("demo.mid"))
     ap.add_argument("--tempo-curve", type=Path)
+    ap.add_argument(
+        "--artic-model",
+        dest="artic_model",
+        type=Path,
+        default=None,
+        help="Path to articulation model checkpoint",
+    )
     ap.add_argument("--seed", type=int, default=None)
     ns = ap.parse_args(args)
     if ns.seed is not None:
@@ -621,7 +636,9 @@ def _cmd_demo(args: list[str]) -> None:
     for i in range(16):
         start = beat_to_seconds(float(i), curve)
         end = beat_to_seconds(float(i + 1), curve)
-        inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=start, end=end))
+        inst.notes.append(
+            pretty_midi.Note(velocity=100, pitch=60, start=start, end=end)
+        )
     pm.instruments.append(inst)
     pm.write(str(ns.out))
     print(f"[demo] wrote {ns.out}")
@@ -753,6 +770,8 @@ def _cmd_sample(args: list[str]) -> None:
             "use_pedal": True,
         }
         parts = gen.compose(section_data=section)
+        if ns.artic_model:
+            gen.add_articulation(parts, ns.artic_model)
         if ns.counterline and isinstance(parts, dict) and "piano_rh" in parts:
             from generator.counter_line import CounterLineGenerator
 
@@ -912,16 +931,22 @@ def _cmd_render(args: list[str]) -> None:
             lag_ms=10.0,
         )
 
-    pm = pretty_midi.PrettyMIDI(initial_tempo=tempo_curve[0]["bpm"] if tempo_curve else 120)
+    pm = pretty_midi.PrettyMIDI(
+        initial_tempo=tempo_curve[0]["bpm"] if tempo_curve else 120
+    )
     inst = pretty_midi.Instrument(program=0, name="drums")
     pitch_map = {"kick": 36, "snare": 38, "hh_pedal": 44, "ohh": 46}
     for ev in events:
         start = beat_to_seconds(float(ev.get("offset", 0.0)), tempo_curve)
         dur = float(ev.get("duration", 0.25))
-        end = start + beat_to_seconds(dur, tempo_curve) - beat_to_seconds(0, tempo_curve)
+        end = (
+            start + beat_to_seconds(dur, tempo_curve) - beat_to_seconds(0, tempo_curve)
+        )
         pitch = pitch_map.get(ev.get("instrument", "kick"), 60)
         vel = int(ev.get("velocity", 100))
-        inst.notes.append(pretty_midi.Note(start=start, end=end, pitch=pitch, velocity=vel))
+        inst.notes.append(
+            pretty_midi.Note(start=start, end=end, pitch=pitch, velocity=vel)
+        )
 
     if ns.velocity_hist:
         with open(ns.velocity_hist, "rb") as fh:
@@ -953,6 +978,7 @@ def _cmd_render(args: list[str]) -> None:
         if ns.normalize_lufs is not None:
             import importlib.util
             import sys
+
             if importlib.util.find_spec("pyloudnorm") is None:
                 print(
                     "pyloudnorm not installed; skipping LUFS normalization",
@@ -1099,8 +1125,12 @@ def _cmd_realtime(args: list[str]) -> None:
             def feed_history(self, events: list[State]) -> None:
                 self.history.extend(events)
 
-            def next_step(self, *, cond: dict[str, object] | None, rng: random.Random) -> Event:
-                return groove_sampler_rnn.sample(model, meta, bars=1, temperature=1.0, rng=rng)[0]
+            def next_step(
+                self, *, cond: dict[str, object] | None, rng: random.Random
+            ) -> Event:
+                return groove_sampler_rnn.sample(
+                    model, meta, bars=1, temperature=1.0, rng=rng
+                )[0]
 
         sampler: streaming_sampler.BaseSampler = _WrapR()
     else:
@@ -1114,9 +1144,13 @@ def _cmd_realtime(args: list[str]) -> None:
             def feed_history(self, events: list[State]) -> None:
                 self.hist.extend(events)
 
-            def next_step(self, *, cond: dict[str, object] | None, rng: random.Random) -> Event:
+            def next_step(
+                self, *, cond: dict[str, object] | None, rng: random.Random
+            ) -> Event:
                 if not self.buf:
-                    self.buf, self.hist = groove_sampler_ngram._generate_bar(self.hist, m, rng=rng)
+                    self.buf, self.hist = groove_sampler_ngram._generate_bar(
+                        self.hist, m, rng=rng
+                    )
                 return self.buf.pop(0)
 
         sampler = _WrapN()
@@ -1247,8 +1281,6 @@ def _cmd_augment(args: list[str]) -> None:
     print(f"wrote {ns.out}")
 
 
-
-
 def _dump_tree(root: Path, version: int) -> Path:
     if version != 3:
         raise SystemExit("unsupported version")
@@ -1276,9 +1308,7 @@ def _randomize_stem(input_path: Path, cents: float, formant: int, out: Path) -> 
 
 @cli.command(
     "dump-tree",
-    help=(
-        "Write tree.md inside ROOT using the Project Tree v3 specification"
-    ),
+    help=("Write tree.md inside ROOT using the Project Tree v3 specification"),
 )
 @click.argument("root", type=Path)
 @click.option(
@@ -1323,16 +1353,12 @@ def dump_tree_cmd(root: Path, version: int) -> None:
     required=True,
     help="Output file path",
 )
-def randomize_stem(
-    input_path: Path, cents: float, formant: int, out: Path
-) -> None:
+def randomize_stem(input_path: Path, cents: float, formant: int, out: Path) -> None:
     code = _randomize_stem(input_path, cents, formant, out)
     if code == 0:
         click.echo(str(out))
     else:
         raise click.ClickException("randomize-stem failed")
-
-
 
 
 def main(argv: list[str] | None = None) -> None:

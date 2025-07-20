@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pretty_midi
@@ -9,15 +8,15 @@ import pretty_midi
 from .duration_bucket import to_bucket
 from .time_utils import seconds_to_qlen
 
+__all__ = ["extract_from_midi", "main"]
+
 
 def extract_from_midi(src: Path | pretty_midi.PrettyMIDI) -> pd.DataFrame:
     """Return note features for ML training from a MIDI file or object."""
-    pm = (
-        src
-        if isinstance(src, pretty_midi.PrettyMIDI)
-        else pretty_midi.PrettyMIDI(str(src))
-    )
+    # Load PrettyMIDI object if a file path is provided
+    pm = src if isinstance(src, pretty_midi.PrettyMIDI) else pretty_midi.PrettyMIDI(str(src))
 
+    # Collect and sort sustain pedal events (CC #64)
     pedal_events = [
         cc for inst in pm.instruments for cc in inst.control_changes if cc.number == 64
     ]
@@ -25,53 +24,58 @@ def extract_from_midi(src: Path | pretty_midi.PrettyMIDI) -> pd.DataFrame:
     pedal_times = np.array([cc.time for cc in pedal_events])
     pedal_vals = np.array([cc.value for cc in pedal_events])
 
-    rows: list[dict[str, float | int | None]] = []
-    for tid, inst in enumerate(pm.instruments):
+    rows: list[dict[str, float | int]] = []
+    for track_id, inst in enumerate(pm.instruments):
         for note in inst.notes:
+            # Compute onset and duration in quarterLength
             onset = seconds_to_qlen(pm, note.start)
             qlen = seconds_to_qlen(pm, note.end) - onset
-            cc_idx = np.searchsorted(pedal_times, note.start, side="right") - 1
-            val = pedal_vals[cc_idx] if cc_idx >= 0 else 0
+
+            # Determine pedal state at note onset
+            idx = np.searchsorted(pedal_times, note.start, side="right") - 1
+            val = pedal_vals[idx] if idx >= 0 else 0
             if val >= 64:
                 pedal_state = 1
             elif val >= 40:
                 pedal_state = 2
             else:
                 pedal_state = 0
-            rows.append(
-                {
-                    "track_id": tid,
-                    "pitch": note.pitch,
-                    "onset": onset,
-                    "duration": qlen,
-                    "velocity": note.velocity / 127.0,
-                    "pedal_state": pedal_state,
-                    "bucket": to_bucket(qlen),
-                    "articulation_label": None,
-                }
-            )
+
+            rows.append({
+                "track_id": track_id,
+                "pitch": note.pitch,
+                "onset": onset,
+                "duration": qlen,
+                "velocity": note.velocity / 127.0,
+                "pedal_state": pedal_state,
+                "bucket": to_bucket(qlen),
+                "articulation_label": None,
+            })
 
     return pd.DataFrame(rows)
 
 
-__all__ = ["extract_from_midi"]
-
-
-def _main() -> None:
+def main() -> None:
     import argparse
 
-    p = argparse.ArgumentParser(description="Extract articulation features")
-    p.add_argument("midi_dir", type=Path)
-    p.add_argument("--csv", type=Path, required=True)
-    args = p.parse_args()
+    parser = argparse.ArgumentParser(description="Extract articulation features from MIDI directory")
+    parser.add_argument("midi_dir", type=Path, help="Directory containing .mid files")
+    parser.add_argument("--csv", dest="csv_out", type=Path, required=True, help="Output CSV path")
+    args = parser.parse_args()
 
-    rows = []
-    for midi in sorted(args.midi_dir.glob("*.mid")):
-        df = extract_from_midi(midi)
-        rows.append(df)
-    if rows:
-        pd.concat(rows).to_csv(args.csv, index=False)
+    # Process all MIDI files in the directory
+    all_frames: list[pd.DataFrame] = []
+    for midi_file in sorted(args.midi_dir.glob("*.mid")):
+        df = extract_from_midi(midi_file)
+        all_frames.append(df)
+
+    if all_frames:
+        result = pd.concat(all_frames, ignore_index=True)
+        result.to_csv(args.csv_out, index=False)
+        print(f"Wrote {len(result)} rows to {args.csv_out}")
+    else:
+        print("No MIDI files found.")
 
 
-if __name__ == "__main__":  # pragma: no cover - CLI
-    _main()
+if __name__ == "__main__":  # pragma: no cover
+    main()

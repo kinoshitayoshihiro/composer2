@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 from functools import partial
+from pathlib import Path
 
 try:
     import torch
@@ -46,7 +46,7 @@ def collate_fn(
 ) -> dict[str, torch.Tensor]:
     lengths = [len(x["input_ids"]) for x in batch]
     max_len = max(lengths)
-    pad_id = getattr(tokenizer, "pad_id", 0)
+    pad_id = getattr(tokenizer, "pad_id", tokenizer.vocab.get("<pad>", 0))
     input_ids = torch.full((len(batch), max_len), pad_id, dtype=torch.long)
     for i, x in enumerate(batch):
         seq = x["input_ids"]
@@ -64,7 +64,12 @@ def main() -> None:
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--rank", type=int, default=4, help="LoRA rank")
-    parser.add_argument("--lora_alpha", type=int, default=None, help="LoRA scaling factor (default: rank*2)")
+    parser.add_argument(
+        "--lora_alpha",
+        type=int,
+        default=None,
+        help="LoRA scaling factor (default: rank*2)",
+    )
     parser.add_argument("--steps", type=int, default=800, help="Training steps")
     parser.add_argument("--epochs", type=int, default=None, help="Training epochs")
     parser.add_argument(
@@ -75,7 +80,12 @@ def main() -> None:
             "(<10k: rank=4, steps=800; <30k: rank=8, steps=1200; else: rank=16, steps=2000)"
         ),
     )
-    parser.add_argument("--eval", action="store_true", help="Run evaluation after training")
+    parser.add_argument(
+        "--eval", action="store_true", help="Run evaluation after training"
+    )
+    parser.add_argument(
+        "--safe", action="store_true", help="save adapters with .safetensors"
+    )
     args = parser.parse_args()
 
     # 行数を数えてハイパーパラメータの自動調整に使う
@@ -95,7 +105,9 @@ def main() -> None:
 
     dataset = JsonlDataset(args.data)
     tokenizer = PianoTokenizer()
-    model = PianoTransformer(vocab_size=len(tokenizer.vocab), rank=args.rank, lora_alpha=args.lora_alpha)
+    model = PianoTransformer(
+        vocab_size=len(tokenizer.vocab), rank=args.rank, lora_alpha=args.lora_alpha
+    )
 
     training_args = TrainingArguments(
         output_dir=str(args.out),
@@ -114,8 +126,8 @@ def main() -> None:
     )
     trainer.train()
 
-    # 重みを保存（safe_serialization=True で pytorch_model‑00001.safetensors）
-    model.model.save_pretrained(str(args.out), safe_serialization=True)
+    # 重みを保存（--safe なら .safetensors 形式）
+    model.model.save_pretrained(str(args.out), safe_serialization=args.safe)
 
     if args.eval:
         from scripts.evaluate_piano_model import evaluate_dirs

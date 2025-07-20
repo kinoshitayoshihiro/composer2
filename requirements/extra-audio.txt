@@ -1,0 +1,4 @@
+soundfile>=0.12
+streamlit>=1.32
+audioread>=2.1.9
+pydub>=0.25

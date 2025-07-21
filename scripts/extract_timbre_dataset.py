@@ -11,6 +11,7 @@ for _n in ("yaml", "pkg_resources", "scipy", "scipy.signal"):
 # === end stub ===
 """CLI utility to generate a manifest of timbre-transfer training pairs."""
 
+
 from __future__ import annotations
 
 import argparse
@@ -30,7 +31,9 @@ from utilities.bass_timbre_dataset import BassTimbreDataset, TimbrePair, compute
 def _process(args: tuple[TimbrePair, str, int, Path]) -> tuple[str, str, str, int]:
     """Compute and save mel pair to ``out_dir``."""
     pair, src_suffix, max_len, out_dir = args
-    mel_src, mel_tgt = compute_mel_pair(pair.src_path, pair.tgt_path, pair.midi_path, max_len)
+    mel_src, mel_tgt = compute_mel_pair(
+        pair.src_path, pair.tgt_path, pair.midi_path, max_len
+    )
     out = out_dir / f"{pair.id}__{src_suffix}->{pair.tgt_suffix}.npy"
     np.save(out, np.stack([mel_src, mel_tgt]))
     return pair.id, src_suffix, pair.tgt_suffix, mel_src.shape[1]

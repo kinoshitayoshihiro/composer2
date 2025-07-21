@@ -63,9 +63,11 @@ def _unzip(src: Path, out_dir: Path) -> None:
                 shutil.copyfileobj(f, o)
 
 
-async def download_refs(csv_path: Path, out_dir: Path, *, timeout: int = 300) -> None:
+async def download_refs(
+    csv_path: Path, out_dir: Path, *, timeout: int = 300, concurrency: int = 4
+) -> None:
     rows = list(csv.DictReader(csv_path.open()))
-    sem = asyncio.Semaphore(4)
+    sem = asyncio.Semaphore(concurrency)
 
     async def handle(session: aiohttp.ClientSession, row: dict[str, str]) -> None:
         url = row["url"].strip()
@@ -96,7 +98,10 @@ async def download_refs(csv_path: Path, out_dir: Path, *, timeout: int = 300) ->
             _unzip(dest, track_dir / "stems")
 
     client_timeout = aiohttp.ClientTimeout(total=timeout)
-    async with aiohttp.ClientSession(timeout=client_timeout) as session:
+    connector = aiohttp.TCPConnector(limit=concurrency)
+    async with aiohttp.ClientSession(
+        timeout=client_timeout, connector=connector
+    ) as session:
         await asyncio.gather(*(handle(session, r) for r in rows))
 
 
@@ -105,8 +110,13 @@ def main() -> None:
     parser.add_argument("--csv", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=300)
+    parser.add_argument("--concurrency", type=int, default=4)
     args = parser.parse_args()
-    asyncio.run(download_refs(args.csv, args.out, timeout=args.timeout))
+    asyncio.run(
+        download_refs(
+            args.csv, args.out, timeout=args.timeout, concurrency=args.concurrency
+        )
+    )
 
 
 if __name__ == "__main__":

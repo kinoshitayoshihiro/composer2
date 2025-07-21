@@ -1,0 +1,10 @@
+defaults:
+  - override hydra/job_logging: rich
+  - override hydra/launcher: basic
+
+lr: 0.001
+batch_size: 32
+max_epochs: 50
+workers: 4
+timeout: 300
+

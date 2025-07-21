@@ -89,7 +89,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Extract audio features")
     parser.add_argument("root", type=Path)
     parser.add_argument("--out", type=Path, default=Path("mix_features.parquet"))
-    parser.add_argument("--workers", type=int, default=0)
+    parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
 
     audio_files = sorted(Path(args.root).rglob("*.wav"))

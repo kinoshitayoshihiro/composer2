@@ -10,11 +10,14 @@ except Exception:  # pragma: no cover
     pretty_midi = None  # type: ignore
 
 
-def scan_midi_files(paths: Iterable[Path]) -> list[list[float]]:
-    """Return rows of note durations in seconds."""
+def scan_midi_files(paths: Iterable[Path]) -> list[list]:
+    """Return rows of note data with duration, bar, and position."""
     if pretty_midi is None:
         raise RuntimeError("pretty_midi required")
-    rows: list[list[float]] = []
+    rows = []
+    bar_counter = 0
+    position_counter = 0
+
     for path in paths:
         try:
             pm = pretty_midi.PrettyMIDI(str(path))
@@ -22,29 +25,38 @@ def scan_midi_files(paths: Iterable[Path]) -> list[list[float]]:
             continue
         for inst in pm.instruments:
             for note in inst.notes:
-                rows.append([note.end - note.start])
+                duration = note.end - note.start
+                # Add bar and position information
+                rows.append([duration, bar_counter, position_counter])
+                position_counter += 1
+                # Every 16 notes, increment bar (adjustable)
+                if position_counter >= 16:
+                    position_counter = 0
+                    bar_counter += 1
     return rows
 
 
 def build_duration_csv(src: Path, out: Path) -> None:
-    """Extract durations from ``src`` MIDI folder into ``out`` CSV."""
+    """Extract durations from ``src`` MIDI folder into ``out`` CSV with bar/position info."""
     midi_paths = sorted(src.rglob("*.mid"))
     rows = scan_midi_files(midi_paths)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="") as fh:
         writer = csv.writer(fh)
-        writer.writerow(["duration"])
+        # Add the required columns
+        writer.writerow(["duration", "bar", "position"])
         writer.writerows(rows)
 
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    p = argparse.ArgumentParser(description="Build duration CSV")
+    p = argparse.ArgumentParser(description="Build duration CSV with bar/position info")
     p.add_argument("src", type=Path)
     p.add_argument("--out", type=Path, required=True)
     args = p.parse_args(argv)
     build_duration_csv(args.src, args.out)
+    print(f"✅ Duration CSV with bar/position info generated: {args.out}")
     return 0
 
 

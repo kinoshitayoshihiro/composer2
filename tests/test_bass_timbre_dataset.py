@@ -20,6 +20,12 @@ from utilities.bass_timbre_dataset import BassTimbreDataset, _normalize
 assert importlib.import_module("yaml")
 
 
+def test_yaml_importable() -> None:
+    import yaml
+
+    assert yaml is not None
+
+
 def _write_sine(path: Path, freq: float, sr: int = 24000, dur: float = 0.9) -> None:
     import soundfile as sf  # type: ignore[import]
 
@@ -34,7 +40,9 @@ def _write_midi(path: Path) -> None:
     pm = pretty_midi.PrettyMIDI()
     inst = pretty_midi.Instrument(0)
     for i, start in enumerate([0.0, 0.3, 0.6]):
-        note = pretty_midi.Note(velocity=100, pitch=60 + i, start=start, end=start + 0.1)
+        note = pretty_midi.Note(
+            velocity=100, pitch=60 + i, start=start, end=start + 0.1
+        )
         inst.notes.append(note)
     pm.instruments.append(inst)
     pm.write(str(path))
@@ -62,7 +70,9 @@ def test_bass_timbre_dataset(tmp_path: Path, cache: bool) -> None:
     assert abs(item["src"].shape[1] - 43) <= 5
 
     ds.write_cache()
-    ds_cached = BassTimbreDataset(root, src_suffix="wood", tgt_suffixes=["synth"], cache=True, max_len=50)
+    ds_cached = BassTimbreDataset(
+        root, src_suffix="wood", tgt_suffixes=["synth"], cache=True, max_len=50
+    )
     cached = ds_cached[0]
     assert torch.allclose(item["src"], cached["src"])
     assert torch.allclose(item["tgt"], cached["tgt"])

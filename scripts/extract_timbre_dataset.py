@@ -1,3 +1,12 @@
+# ruff: noqa: E402, F404
+# === local-stub (CLI) — precedes everything ===  # pragma: no cover
+import sys
+import types
+
+for _n in ("yaml", "pkg_resources"):
+    sys.modules.setdefault(_n, types.ModuleType(_n))
+# === end stub ===
+
 from __future__ import annotations
 
 import argparse
@@ -12,7 +21,9 @@ from utilities.bass_timbre_dataset import compute_mel_pair, find_pairs
 
 def _process(args: tuple) -> tuple[str, str, str, int]:
     pair, src_suffix, max_len, out_dir = args
-    mel_src, mel_tgt = compute_mel_pair(pair.src_path, pair.tgt_path, pair.midi_path, max_len)
+    mel_src, mel_tgt = compute_mel_pair(
+        pair.src_path, pair.tgt_path, pair.midi_path, max_len
+    )
     out = out_dir / f"{pair.id}__{src_suffix}->{pair.tgt_suffix}.npy"
     np.save(out, np.stack([mel_src, mel_tgt]))
     return pair.id, src_suffix, pair.tgt_suffix, mel_src.shape[1]

@@ -364,3 +364,6 @@ def __getattr__(name: str) -> Any:  # pragma: no cover - thin wrapper
 
 
 __all__ = list(dict.fromkeys(__all__))  # de-dup
+
+# Project version
+__version__ = "0.1.0"

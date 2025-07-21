@@ -11,7 +11,7 @@ except Exception:  # pragma: no cover
 
 
 def scan_midi_files(paths: Iterable[Path]) -> list[list]:
-    """Return rows of note data with duration, bar, and position."""
+    """Return rows of note data with duration, bar, position, pitch, and velocity."""
     if pretty_midi is None:
         raise RuntimeError("pretty_midi required")
     rows = []
@@ -26,8 +26,10 @@ def scan_midi_files(paths: Iterable[Path]) -> list[list]:
         for inst in pm.instruments:
             for note in inst.notes:
                 duration = note.end - note.start
-                # Add bar and position information
-                rows.append([duration, bar_counter, position_counter])
+                pitch = note.pitch  # 音高情報
+                velocity = note.velocity  # 音の強さ情報
+                # Add all required note information
+                rows.append([duration, bar_counter, position_counter, pitch, velocity])
                 position_counter += 1
                 # Every 16 notes, increment bar (adjustable)
                 if position_counter >= 16:
@@ -37,26 +39,28 @@ def scan_midi_files(paths: Iterable[Path]) -> list[list]:
 
 
 def build_duration_csv(src: Path, out: Path) -> None:
-    """Extract durations from ``src`` MIDI folder into ``out`` CSV with bar/position info."""
+    """Extract complete note data from ``src`` MIDI folder into ``out`` CSV."""
     midi_paths = sorted(src.rglob("*.mid"))
     rows = scan_midi_files(midi_paths)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="") as fh:
         writer = csv.writer(fh)
-        # Add the required columns
-        writer.writerow(["duration", "bar", "position"])
+        # Add all required columns including pitch and velocity
+        writer.writerow(["duration", "bar", "position", "pitch", "velocity"])
         writer.writerows(rows)
 
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    p = argparse.ArgumentParser(description="Build duration CSV with bar/position info")
+    p = argparse.ArgumentParser(
+        description="Build complete duration CSV with note data"
+    )
     p.add_argument("src", type=Path)
     p.add_argument("--out", type=Path, required=True)
     args = p.parse_args(argv)
     build_duration_csv(args.src, args.out)
-    print(f"✅ Duration CSV with bar/position info generated: {args.out}")
+    print(f"✅ Complete duration CSV with pitch/velocity generated: {args.out}")
     return 0
 
 

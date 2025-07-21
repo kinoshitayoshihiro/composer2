@@ -1,10 +1,29 @@
+# Fallback stub when sitecustomize is unreachable
+import importlib.machinery
 import importlib.util
+import sys
+import types
 import warnings
 from pathlib import Path
 
 import pytest
 
-from utilities.rhythm_library_loader import load_rhythm_library
+for _n in ("yaml", "pkg_resources", "scipy", "scipy.signal", "music21"):
+    mod = types.ModuleType(_n)
+    mod.__spec__ = importlib.machinery.ModuleSpec(_n, loader=None)
+    if _n == "yaml":
+        mod.safe_load = lambda *_a, **_k: {}  # type: ignore[attr-defined]
+    if _n == "music21":
+        class _Dummy:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+        mod.pitch = _Dummy
+        mod.harmony = _Dummy
+        mod.key = types.SimpleNamespace(Key=_Dummy)
+        mod.meter = types.SimpleNamespace(TimeSignature=_Dummy)
+        mod.interval = _Dummy
+    sys.modules.setdefault(_n, mod)  # pragma: no cover
 
 # Ensure sitecustomize stubs are loaded for environments missing optional tools
 
@@ -51,6 +70,8 @@ opt_pkgs_missing = importlib.util.find_spec("soundfile") is None
 
 @pytest.fixture(scope="session")
 def rhythm_library():
+    from utilities.rhythm_library_loader import load_rhythm_library
+
     path = Path(__file__).resolve().parents[1] / "data" / "rhythm_library.yml"
     return load_rhythm_library(path)
 

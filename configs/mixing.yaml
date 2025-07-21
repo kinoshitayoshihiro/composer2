@@ -7,4 +7,9 @@ batch_size: 32
 max_epochs: 50
 workers: 4
 timeout: 300
+concurrency: 4
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
 

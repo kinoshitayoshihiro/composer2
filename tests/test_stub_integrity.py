@@ -55,3 +55,11 @@ def test_scipy_signal_stub():
     assert callable(signal.hamming)
     assert callable(signal.butter)
     assert callable(signal.lfilter)
+
+
+def test_pretty_midi_and_soundfile_stubs():
+    import pretty_midi
+    import soundfile
+
+    assert hasattr(pretty_midi, "PrettyMIDI")
+    assert callable(soundfile.read)

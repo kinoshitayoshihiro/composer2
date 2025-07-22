@@ -12,10 +12,7 @@ if os.getenv("COMPOSER_CI_STUBS") == "1":
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)  # type: ignore[attr-defined]
-    module.install_stubs(
-        ["pkg_resources", "yaml", "scipy", "scipy.signal", "music21"],
-        force=True,
-    )
+    module.install_stubs(module.STUB_MODULES, force_names=["music21", "scipy"])
 
 REQUIRED_PACKAGES = ["music21", "pretty_midi", "mido"]
 missing = [pkg for pkg in REQUIRED_PACKAGES if importlib.util.find_spec(pkg) is None]

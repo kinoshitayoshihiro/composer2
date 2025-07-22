@@ -1,4 +1,4 @@
-torch==2.3.0
+-r gpu.txt
 pytorch_lightning==2.2.4
 optuna==3.6.1
 mido>=1.3

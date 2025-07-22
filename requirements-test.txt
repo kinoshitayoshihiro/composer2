@@ -18,3 +18,5 @@ hdbscan>=0.8
 python-rtmidi>=1.5
 pydub>=0.25
 pyloudnorm>=0.1
+colorama>=0.4
+numba==0.59.1

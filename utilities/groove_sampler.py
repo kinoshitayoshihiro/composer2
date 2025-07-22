@@ -63,6 +63,13 @@ def _iter_drum_notes(midi_path: Path) -> list[tuple[float, int]]:
             continue
         tempo_arr = pm.get_tempo_changes()[0]
         tempo = float(tempo_arr[0]) if tempo_arr.size else 120.0
+        if tempo <= 0:
+            logger.warning(
+                "Non-positive tempo %.2f detected in %s; using default.",
+                tempo,
+                midi_path,
+            )
+            tempo = 120.0
         sec_per_beat = 60.0 / tempo
         for n in inst.notes:
             beat = n.start / sec_per_beat

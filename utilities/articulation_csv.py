@@ -5,13 +5,29 @@ import numpy as np
 import pandas as pd
 import pretty_midi
 
+from dataclasses import dataclass
+
 from .duration_bucket import to_bucket
 from .time_utils import seconds_to_qlen
 
-__all__ = ["extract_from_midi", "main"]
+__all__ = ["ArticRow", "extract_from_midi", "main"]
 
 
-def extract_from_midi(src: Path | pretty_midi.PrettyMIDI) -> pd.DataFrame:
+@dataclass
+class ArticRow:
+    """Container for a single articulation training example."""
+
+    track_id: int
+    pitch: int
+    onset: float
+    duration: float
+    velocity: float
+    pedal_state: int
+    bucket: int
+    articulation_label: str | None
+
+
+def extract_from_midi(src: Path | pretty_midi.PrettyMIDI) -> list[ArticRow]:
     """Return note features for ML training from a MIDI file or object."""
     # Load PrettyMIDI object if a file path is provided
     pm = src if isinstance(src, pretty_midi.PrettyMIDI) else pretty_midi.PrettyMIDI(str(src))
@@ -24,7 +40,7 @@ def extract_from_midi(src: Path | pretty_midi.PrettyMIDI) -> pd.DataFrame:
     pedal_times = np.array([cc.time for cc in pedal_events])
     pedal_vals = np.array([cc.value for cc in pedal_events])
 
-    rows: list[dict[str, float | int]] = []
+    rows: list[ArticRow] = []
     for track_id, inst in enumerate(pm.instruments):
         for note in inst.notes:
             # Compute onset and duration in quarterLength
@@ -41,18 +57,20 @@ def extract_from_midi(src: Path | pretty_midi.PrettyMIDI) -> pd.DataFrame:
             else:
                 pedal_state = 0
 
-            rows.append({
-                "track_id": track_id,
-                "pitch": note.pitch,
-                "onset": onset,
-                "duration": qlen,
-                "velocity": note.velocity / 127.0,
-                "pedal_state": pedal_state,
-                "bucket": to_bucket(qlen),
-                "articulation_label": None,
-            })
+            rows.append(
+                ArticRow(
+                    track_id=track_id,
+                    pitch=note.pitch,
+                    onset=onset,
+                    duration=qlen,
+                    velocity=note.velocity / 127.0,
+                    pedal_state=pedal_state,
+                    bucket=to_bucket(qlen),
+                    articulation_label=None,
+                )
+            )
 
-    return pd.DataFrame(rows)
+    return rows
 
 
 def main() -> None:
@@ -64,13 +82,13 @@ def main() -> None:
     args = parser.parse_args()
 
     # Process all MIDI files in the directory
-    all_frames: list[pd.DataFrame] = []
+    all_rows: list[ArticRow] = []
     for midi_file in sorted(args.midi_dir.glob("*.mid")):
-        df = extract_from_midi(midi_file)
-        all_frames.append(df)
+        rows = extract_from_midi(midi_file)
+        all_rows.extend(rows)
 
-    if all_frames:
-        result = pd.concat(all_frames, ignore_index=True)
+    if all_rows:
+        result = pd.DataFrame([r.__dict__ for r in all_rows])
         result.to_csv(args.csv_out, index=False)
         print(f"Wrote {len(result)} rows to {args.csv_out}")
     else:

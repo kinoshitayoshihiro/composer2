@@ -29,3 +29,11 @@
 ### Fixed
 - Assorted stability fixes across generators and tests
 - フェーズ移行時の互換性バグを修正
+## [1.0.0] - 2025-07-22
+
+### Added
+- Breath Control module v1.0 with keep / attenuate / remove modes.
+- ONNX inference option & energy_percentile configurability.
+
+### Fixed
+- Pop artefacts on micro breath segments.

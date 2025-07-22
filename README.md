@@ -1,6 +1,6 @@
 # OtoKotoba Composer
 [![CI](https://github.com/OpenAI/modular_composer/actions/workflows/ci.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)](#)
+[![Coverage](https://img.shields.io/badge/coverage-97%25-brightgreen)](#)
 [![python-tests](https://github.com/OpenAI/modular_composer/actions/workflows/python-tests.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/python-tests.yml)
 [![Nightly](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml)
 [![PyPI](https://img.shields.io/pypi/v/modular-composer.svg)](https://pypi.org/project/modular-composer/)
@@ -17,6 +17,7 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Setup](#setup)
 - [Configuration Files](#configuration-files)
 - [Generating MIDI](#generating-midi)
+- [Breath Control](#breath-control)
 - [Demo MIDI Generation](#demo-midi-generation)
 - [Notebook Demo](#notebook-demo)
 - [Tone and Dynamics](docs/tone.md)
@@ -223,6 +224,30 @@ The same behaviour can be enabled with `global_settings.strict_drum_map: true` i
 global_settings:
   fill_fade_beats: 2.0 # デフォルトは2
 ```
+
+## Breath Control
+
+The rendering pipeline can process breaths automatically. Configure the
+behaviour via `configs/render.yaml` or override from the CLI:
+
+```bash
+python scripts/render_audio.py voice.wav -o clean.wav --breath-mode remove \
+  --log-level info
+```
+See [docs/render.md](docs/render.md) for the full option table.
+
+Config keys:
+
+| key | description | default |
+| --- | ----------- | ------- |
+| `breath_mode` | keep / attenuate / remove | `keep` |
+| `attenuate_gain_db` | gain applied in attenuate mode | `-15` |
+| `crossfade_ms` | remove mode crossfade length | `50` |
+| `hop_ms` | analysis hop size | `10` |
+| `thr_offset_db` | energy threshold offset | `-30` |
+| `energy_percentile` | percentile for threshold | `95` |
+| `log_level` | logging level | `WARN` |
+Deprecated `breath_threshold_offset_db` in configs is still accepted but will emit a warning.
 
 パターンオプションによるスタイルごとのオーバーライドは `options.fade_beats` を使います。
 

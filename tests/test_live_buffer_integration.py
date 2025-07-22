@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import pytest
 from music21 import note, stream, volume
 
-from utilities import rt_midi_streamer
+# Import the implementation module to patch the correct attributes
+from utilities import rtmidi_streamer as rt_midi_streamer
 from utilities.live_buffer import LiveBuffer
 
 

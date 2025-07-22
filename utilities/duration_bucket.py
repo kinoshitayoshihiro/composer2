@@ -1,81 +1,20 @@
 from __future__ import annotations
 
-from pathlib import Path
-import numpy as np
-import pandas as pd
-import pretty_midi
+"""Utilities for mapping note durations to discrete buckets."""
 
-from .duration_bucket import to_bucket
-from .time_utils import seconds_to_qlen
+# Duration boundaries in quarter lengths.  Durations fall into bucket ``i`` if
+# ``_BOUNDS[i-1] <= dur < _BOUNDS[i]``.  Values beyond the last bound map to the
+# final bucket.
+_BOUNDS: list[float] = [0.25, 0.5, 0.55, 1.0, 3.0, 5.0, 8.0]
 
-__all__ = ["extract_from_midi", "main"]
-
-
-def extract_from_midi(src: Path | pretty_midi.PrettyMIDI) -> pd.DataFrame:
-    """Return note features for ML training from a MIDI file or object."""
-    # Load PrettyMIDI object if a file path is provided
-    pm = src if isinstance(src, pretty_midi.PrettyMIDI) else pretty_midi.PrettyMIDI(str(src))
-
-    # Collect and sort sustain pedal events (CC #64)
-    pedal_events = [
-        cc for inst in pm.instruments for cc in inst.control_changes if cc.number == 64
-    ]
-    pedal_events.sort(key=lambda x: x.time)
-    pedal_times = np.array([cc.time for cc in pedal_events])
-    pedal_vals = np.array([cc.value for cc in pedal_events])
-
-    rows: list[dict[str, float | int]] = []
-    for track_id, inst in enumerate(pm.instruments):
-        for note in inst.notes:
-            # Compute onset and duration in quarterLength
-            onset = seconds_to_qlen(pm, note.start)
-            qlen = seconds_to_qlen(pm, note.end) - onset
-
-            # Determine pedal state at note onset
-            idx = np.searchsorted(pedal_times, note.start, side="right") - 1
-            val = pedal_vals[idx] if idx >= 0 else 0
-            if val >= 64:
-                pedal_state = 1
-            elif val >= 40:
-                pedal_state = 2
-            else:
-                pedal_state = 0
-
-            rows.append({
-                "track_id": track_id,
-                "pitch": note.pitch,
-                "onset": onset,
-                "duration": qlen,
-                "velocity": note.velocity / 127.0,
-                "pedal_state": pedal_state,
-                "bucket": to_bucket(qlen),
-                "articulation_label": None,
-            })
-
-    return pd.DataFrame(rows)
+__all__ = ["_BOUNDS", "to_bucket"]
 
 
-def main() -> None:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Extract articulation features from MIDI directory")
-    parser.add_argument("midi_dir", type=Path, help="Directory containing .mid files")
-    parser.add_argument("--csv", dest="csv_out", type=Path, required=True, help="Output CSV path")
-    args = parser.parse_args()
-
-    # Process all MIDI files in the directory
-    all_frames: list[pd.DataFrame] = []
-    for midi_file in sorted(args.midi_dir.glob("*.mid")):
-        df = extract_from_midi(midi_file)
-        all_frames.append(df)
-
-    if all_frames:
-        result = pd.concat(all_frames, ignore_index=True)
-        result.to_csv(args.csv_out, index=False)
-        print(f"Wrote {len(result)} rows to {args.csv_out}")
-    else:
-        print("No MIDI files found.")
+def to_bucket(dur: float) -> int:
+    """Return duration bucket index for ``dur`` measured in quarter lengths."""
+    for i, bound in enumerate(_BOUNDS):
+        if dur < bound:
+            return i
+    return len(_BOUNDS)
 
 
-if __name__ == "__main__":  # pragma: no cover
-    main()

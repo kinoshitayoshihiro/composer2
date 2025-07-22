@@ -24,7 +24,7 @@ audioread = ">=2.1.9"
 basic_pitch = { version = ">=0.3", python = "<3.12" }
 librosa = ">=0.10"
 mido = ">=1.2.10,<1.3"
-music21 = ">=9.1"
+music21 = "^9.1"
 numpy = ">=1.24"
 pretty_midi = "^0.2"
 pydantic = ">=2.7"
@@ -37,8 +37,9 @@ tomli = ">=2.0"
 setuptools = "*"
 websockets = ">=12.0"
 torch = "^2.0"
-pytorch-lightning = "^2.0"
-scipy = "^1.10"
+pytorch-lightning = "^2.3"
+scipy = "^1.13"
+torchmetrics = "^1.4"
 
 [tool.poetry.extras]
 test = [

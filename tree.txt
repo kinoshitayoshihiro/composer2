@@ -26,6 +26,7 @@
     │   ├── streamlit_app_v2.cpython-310.pyc
     │   ├── streamlit_app_v2.cpython-313.pyc
     │   ├── train_piano_lora.cpython-310.pyc
+    │   ├── train_piano_lora.cpython-313.pyc
     │   └── train_sax_lora.cpython-310.pyc
     ├── api
     │   ├── __pycache__
@@ -34,6 +35,8 @@
     │   ├── server.py
     │   ├── session_manager.py
     │   └── vocal_server.py
+    ├── articulation_tagger
+    │   └── __init__.py
     ├── bin
     │   ├── Activate.ps1
     │   ├── activate
@@ -46,15 +49,29 @@
     │   ├── python
     │   ├── python3
     │   └── python3.10
+    ├── checkpoints
+    │   ├── duration_earlystop.ckpt
+    │   ├── duration_extended.ckpt
+    │   ├── duration_fixed.ckpt
+    │   ├── epoch=0-step=2-v1.ckpt
+    │   ├── epoch=0-step=2.ckpt
+    │   └── last.ckpt
     ├── cli
     │   ├── __pycache__
     │   └── ir_render.py
+    ├── conf
+    │   ├── data.yaml
+    │   ├── eval.yaml
+    │   ├── model.yaml
+    │   └── trainer.yaml
     ├── config
     │   ├── drum_settings.yaml
     │   ├── main_cfg.yml
     │   ├── main_cfg_example.yml
     │   └── sax_demo.yml
     ├── configs
+    │   ├── duration_model.yaml
+    │   ├── mixing.yaml
     │   └── velocity_model.yaml
     ├── cyext
     │   ├── __pycache__
@@ -65,15 +82,30 @@
     │   └── humanize.pyx
     ├── data
     │   ├── __pycache__
+    │   ├── csv
     │   ├── golden
     │   ├── ir
     │   ├── loops
+    │   ├── loops_converted
+    │   ├── test_midi
+    │   ├── tracks
+    │   ├── __init__.py
     │   ├── amp_presets.yml
     │   ├── arrangement_overrides.json
+    │   ├── articulation_data.py
+    │   ├── articulation_datamodule.py
+    │   ├── articulation_dataset.py
     │   ├── cc_map.yml
     │   ├── chordmap.json
     │   ├── chordmap.yaml
     │   ├── drum_patterns.yml
+    │   ├── duration_all.csv
+    │   ├── duration_complete.csv
+    │   ├── duration_fixed.csv
+    │   ├── duration_found.csv
+    │   ├── duration_maestro.csv
+    │   ├── duration_sample.csv
+    │   ├── duration_test.csv
     │   ├── emotion_profile.yaml
     │   ├── export_pretty.py
     │   ├── expression_map.yml
@@ -87,6 +119,10 @@
     │   ├── tempo_curve.json
     │   ├── tempo_map.json
     │   ├── velocity.csv
+    │   ├── velocity_advanced.csv
+    │   ├── velocity_numeric.csv
+    │   ├── velocity_sample.csv
+    │   ├── velocity_with_midi.csv
     │   └── vocal_note_data_ore.json
     ├── data_ops
     │   ├── __pycache__
@@ -110,6 +146,7 @@
     │   ├── bass_advanced.md
     │   ├── changelog.md
     │   ├── config_reference.md
+    │   ├── data_articulation.md
     │   ├── diversity.md
     │   ├── effect_presets.md
     │   ├── effects.md
@@ -123,6 +160,10 @@
     │   ├── humanizer.md
     │   ├── index.md
     │   ├── live_tips.md
+    │   ├── lora_training.md
+    │   ├── ml_articulation.md
+    │   ├── ml_duration.md
+    │   ├── ml_pedal.md
     │   ├── ml_velocity.md
     │   ├── offline_ir.md
     │   ├── performance.md
@@ -130,6 +171,7 @@
     │   ├── piano_delta.md
     │   ├── piano_epsilon.md
     │   ├── piano_gamma.md
+    │   ├── plugin_gui.md
     │   ├── plugin_guide.md
     │   ├── quick_start.md
     │   ├── realtime_ws.md
@@ -147,6 +189,7 @@
     │   ├── latency.py
     │   └── metrics.py
     ├── examples
+    │   ├── live_set
     │   ├── README.md
     │   ├── drumgen_tempo_curve.ipynb
     │   ├── groove_sampler.ipynb
@@ -183,6 +226,10 @@
     │   ├── __pycache__
     │   ├── __init__.py
     │   └── loop_ingest.py
+    ├── gui
+    │   ├── public
+    │   ├── src
+    │   └── package.json
     ├── irs
     │   ├── blackface-clean.wav
     │   ├── fuzz-factory.wav
@@ -193,6 +240,16 @@
     ├── loaders
     │   ├── __pycache__
     │   └── section_loader.py
+    ├── mixing_assistant
+    │   ├── __init__.py
+    │   ├── download_ref_masters.py
+    │   └── feature_extractor.py
+    ├── ml_models
+    │   ├── __init__.py
+    │   ├── articulation_tagger.py
+    │   ├── note_feature.py
+    │   ├── pedal_model.py
+    │   └── tagger_module.py
     ├── model
     │   ├── groove_ngram.pkl
     │   └── groove_ngram_wav.pkl
@@ -207,8 +264,14 @@
     │   └── quick_start.ipynb
     ├── outputs
     │   ├── checkpoints
+    │   ├── lightning_logs
     │   ├── outputs
     │   └── train_velocity.log
+    ├── piano_model
+    ├── piano_model_test
+    ├── plugin
+    │   ├── Source
+    │   └── CMakeLists.txt
     ├── plugins
     │   ├── __pycache__
     │   ├── modcompose
@@ -227,8 +290,19 @@
     │   └── ws_vocal_bridge.py
     ├── recipe
     │   └── meta.yaml
+    ├── requirements
+    │   ├── base.txt
+    │   ├── common.txt
+    │   ├── cpu.txt
+    │   ├── extra-audio.txt
+    │   ├── extra-ml.txt
+    │   └── gpu.txt
+    ├── scipy
+    │   └── signal
     ├── scripts
     │   ├── __pycache__
+    │   ├── abx_articulation.py
+    │   ├── audio_to_velocity_csv.py
     │   ├── check_docs_snippets.py
     │   ├── ci_groove.sh
     │   ├── ci_groove_bass.sh
@@ -236,17 +310,27 @@
     │   ├── clean_wheels.py
     │   ├── dump_rhythm_library_map.py
     │   ├── dump_tree_v3.py
+    │   ├── emotion_arrange.py
+    │   ├── eval_articulation.py
     │   ├── evaluate_piano_model.py
     │   ├── extract_piano_voicings.py
+    │   ├── extract_timbre_dataset.py
+    │   ├── infer_duration.py
     │   ├── modcompose_batch_render.py
+    │   ├── randomize_stem_cli.py
     │   ├── setup_project.sh
     │   ├── synthesize_vocal.py
+    │   ├── train_articulation.py
+    │   ├── train_duration.py
+    │   ├── train_mixing_assistant.py
+    │   ├── train_pedal.py
     │   └── train_velocity.py
     ├── streamlit_app
     │   ├── __pycache__
     │   ├── __init__.py
     │   ├── gui.py
     │   └── visualise_groove.py
+    ├── temp_test_midi
     ├── tests
     │   ├── __pycache__
     │   ├── audio_to_midi
@@ -265,10 +349,14 @@
     │   ├── test_api_endpoints.py
     │   ├── test_api_vocal_endpoints.py
     │   ├── test_arrangement_builder.py
+    │   ├── test_artic_model.py
     │   ├── test_articulation_cc.py
+    │   ├── test_articulation_csv.py
     │   ├── test_articulation_mapper.py
+    │   ├── test_audio_analysis.py
     │   ├── test_audio_render.py
     │   ├── test_audio_spectrum.py
+    │   ├── test_audio_to_velocity_csv.py
     │   ├── test_augment.py
     │   ├── test_auto_tag.py
     │   ├── test_auto_tag_ngram.py
@@ -282,6 +370,7 @@
     │   ├── test_bass_pattern_selection.py
     │   ├── test_bass_quarters.py
     │   ├── test_bass_range.py
+    │   ├── test_bass_timbre_dataset.py
     │   ├── test_bass_velocity_swing.py
     │   ├── test_bass_walking.py
     │   ├── test_benchmark_compose.py
@@ -291,8 +380,10 @@
     │   ├── test_choose_preset_fallback.py
     │   ├── test_chord_generator_progression.py
     │   ├── test_chord_voicer_regex.py
+    │   ├── test_cli_augment_data.py
     │   ├── test_cli_fx.py
     │   ├── test_cli_groove_info.py
+    │   ├── test_cli_help.py
     │   ├── test_cli_hyperopt.py
     │   ├── test_cli_info.py
     │   ├── test_cli_ir_render.py
@@ -321,6 +412,7 @@
     │   ├── test_crescendo_helper.py
     │   ├── test_custom_phrase_template.py
     │   ├── test_cy_humanize_equiv.py
+    │   ├── test_data_augmentation.py
     │   ├── test_dataset_plural.py
     │   ├── test_default_drum_map.py
     │   ├── test_demo_script.py
@@ -351,6 +443,8 @@
     │   ├── test_drum_techniques.py
     │   ├── test_drum_velocity_curve.py
     │   ├── test_dump_tree_v3.py
+    │   ├── test_duration_boundaries.py
+    │   ├── test_duration_bucket.py
     │   ├── test_effect_cc.py
     │   ├── test_effect_preset_loader.py
     │   ├── test_element_insertion.py
@@ -359,15 +453,20 @@
     │   ├── test_emotion_arranger.py
     │   ├── test_empty_aux.py
     │   ├── test_empty_aux_backoff.py
+    │   ├── test_eval_script.py
     │   ├── test_eval_stub.py
     │   ├── test_export_audio.py
     │   ├── test_export_audio_ir.py
     │   ├── test_expression_phase5.py
     │   ├── test_external_sync.py
     │   ├── test_extract_piano_voicings.py
+    │   ├── test_extract_units.py
+    │   ├── test_feature_embedder.py
+    │   ├── test_feature_extractor.py
     │   ├── test_fill_dsl.py
     │   ├── test_fill_dsl_run.py
     │   ├── test_fill_inserter_modes.py
+    │   ├── test_formant_randomizer.py
     │   ├── test_fx_envelope.py
     │   ├── test_fx_pipeline.py
     │   ├── test_generate_bar_legacy.py
@@ -420,6 +519,7 @@
     │   ├── test_late_humanization.py
     │   ├── test_latency.py
     │   ├── test_latency_eval.py
+    │   ├── test_lightning_smoke.py
     │   ├── test_lin_prob_lru.py
     │   ├── test_live_buffer.py
     │   ├── test_live_buffer_integration.py
@@ -427,12 +527,14 @@
     │   ├── test_live_stub.py
     │   ├── test_loader.py
     │   ├── test_loop_ingest.py
+    │   ├── test_lora_cli_smoke.py
     │   ├── test_loudness_meter.py
     │   ├── test_loudness_norm.py
     │   ├── test_loudness_normalizer.py
     │   ├── test_measure_duration.py
     │   ├── test_melody_echo.py
     │   ├── test_melody_write_dirs.py
+    │   ├── test_merge_artic.py
     │   ├── test_metrics.py
     │   ├── test_midi_capture.py
     │   ├── test_midi_export.py
@@ -443,7 +545,9 @@
     │   ├── test_missing_prob_message.py
     │   ├── test_mix_profile.py
     │   ├── test_mix_roundtrip.py
+    │   ├── test_ml_duration.py
     │   ├── test_ml_velocity_integration.py
+    │   ├── test_model_mask.py
     │   ├── test_ngram_aux.py
     │   ├── test_ngram_aux_fallback.py
     │   ├── test_ngram_aux_unseen.py
@@ -454,12 +558,17 @@
     │   ├── test_ngram_speed.py
     │   ├── test_ngram_train_wav_skip.py
     │   ├── test_offset_profile.py
+    │   ├── test_on_the_fly.py
     │   ├── test_onnx_wrapper.py
     │   ├── test_onset_heatmap.py
+    │   ├── test_onset_tempo_change.py
+    │   ├── test_overfit.py
     │   ├── test_oversample_tail.py
     │   ├── test_parse_chord_symbol.py
     │   ├── test_peak_extractor.py
     │   ├── test_peak_synchroniser.py
+    │   ├── test_pedal_frames.py
+    │   ├── test_pedal_model.py
     │   ├── test_pedalizer.py
     │   ├── test_perc_generator.py
     │   ├── test_perf_budget.py
@@ -485,6 +594,8 @@
     │   ├── test_piano_voicing_style.py
     │   ├── test_plugin_stub.py
     │   ├── test_portamento_mapping.py
+    │   ├── test_predict_api.py
+    │   ├── test_predict_pair.py
     │   ├── test_preset_library.py
     │   ├── test_preset_manager.py
     │   ├── test_preview_fallback.py
@@ -503,6 +614,7 @@
     │   ├── test_rt_streamer_dummy.py
     │   ├── test_rtmidi_streamer.py
     │   ├── test_rtmidi_stub.py
+    │   ├── test_rubato_csv.py
     │   ├── test_sample_aux_fallback.py
     │   ├── test_sampler_cli_humanize.py
     │   ├── test_sampler_generate_bar.py
@@ -514,6 +626,9 @@
     │   ├── test_sax_plugin_api.py
     │   ├── test_sax_tokenizer.py
     │   ├── test_sax_transformer.py
+    │   ├── test_schema_consistency.py
+    │   ├── test_schema_roundtrip.py
+    │   ├── test_seq_dataset.py
     │   ├── test_step_guard.py
     │   ├── test_stream_latency.py
     │   ├── test_strings_articulation.py
@@ -538,6 +653,7 @@
     │   ├── test_synthesize_vocal.py
     │   ├── test_synthesize_vocal_cli.py
     │   ├── test_temperature_schedule.py
+    │   ├── test_tempo_changes.py
     │   ├── test_tempo_curve.py
     │   ├── test_tempo_map_e2e.py
     │   ├── test_tempo_utils.py
@@ -553,6 +669,9 @@
     │   ├── test_tone_shaper_integration.py
     │   ├── test_tone_shaper_reload.py
     │   ├── test_torch_download_retry.py
+    │   ├── test_train_duration_cli.py
+    │   ├── test_train_velocity_csv.py
+    │   ├── test_transformer_imports.py
     │   ├── test_transformer_integration.py
     │   ├── test_transformer_sample.py
     │   ├── test_user_history.py
@@ -571,6 +690,7 @@
     │   ├── test_vocal_sync.py
     │   ├── test_vocal_sync_integration.py
     │   ├── test_vocal_sync_rest.py
+    │   ├── test_vocal_synth.py
     │   ├── test_wheel_import.py
     │   ├── test_ws_echo.py
     │   ├── test_ws_latency.py
@@ -602,10 +722,13 @@
     │   ├── accent_mapper.py
     │   ├── ai_sampler.py
     │   ├── arrangement_builder.py
+    │   ├── articulation_csv.py
     │   ├── articulation_mapper.py
+    │   ├── audio_analysis.py
     │   ├── audio_env.py
     │   ├── audio_render.py
     │   ├── audio_to_midi_batch.py
+    │   ├── bass_timbre_dataset.py
     │   ├── bass_transformer.py
     │   ├── bass_utils.py
     │   ├── cc_map.py
@@ -616,10 +739,15 @@
     │   ├── convolver.py
     │   ├── core_music_utils.py
     │   ├── custom_types.py
+    │   ├── data_augmentation.py
     │   ├── dataset_preprocessor.py
     │   ├── drum_lint.py
     │   ├── drum_map.py
     │   ├── drum_map_registry.py
+    │   ├── duration_bucket.py
+    │   ├── duration_csv.py
+    │   ├── duration_datamodule.py
+    │   ├── duration_datamodule.py.backup
     │   ├── effect_preset_loader.py
     │   ├── emotion_arranger.py
     │   ├── emotion_profile_loader.py
@@ -649,14 +777,19 @@
     │   ├── loudness_meter.py
     │   ├── loudness_normalizer.py
     │   ├── memmap_utils.py
+    │   ├── merge_artic_features.py
     │   ├── midi_capture.py
     │   ├── midi_export.py
     │   ├── mix_profile.py
+    │   ├── ml_articulation.py
+    │   ├── ml_duration.py
+    │   ├── ml_pedal.py
     │   ├── ml_velocity.py
     │   ├── onset_heatmap.py
     │   ├── override_loader.py
     │   ├── peak_extractor.py
     │   ├── peak_synchroniser.py
+    │   ├── pedal_frames.py
     │   ├── pedalizer.py
     │   ├── perc_sampler_v1.py
     │   ├── phoneme_dict.json
@@ -674,20 +807,24 @@
     │   ├── ring_buffer.py
     │   ├── rt_midi_streamer.py
     │   ├── rtmidi_streamer.py
+    │   ├── rubato_csv.py
     │   ├── safe_get.py
     │   ├── scale_registry.py
+    │   ├── settings.py
     │   ├── streaming_sampler.py
     │   ├── style_db.py
     │   ├── synth.py
     │   ├── tempo_curve.py
     │   ├── tempo_loader.py
     │   ├── tempo_utils.py
+    │   ├── time_utils.py
     │   ├── timing_corrector.py
     │   ├── timing_utils.py
     │   ├── tone_shaper.py
     │   ├── transformer_sampler.py
     │   ├── types.py
     │   ├── user_history.py
+    │   ├── velocity_csv.py
     │   ├── velocity_curve.py
     │   ├── velocity_model.py
     │   ├── velocity_smoother.py
@@ -697,7 +834,14 @@
     │   ├── vocal_sync_backup.py
     │   ├── vocal_sync_fixed.py
     │   ├── vocal_sync_new.py
+    │   ├── vocal_synth.py
     │   └── ws_bridge.py
+    ├── venv
+    │   ├── bin
+    │   ├── include
+    │   ├── lib
+    │   ├── share
+    │   └── pyvenv.cfg
     ├── wheelhouse
     │   ├── PyYAML-6.0.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
     │   ├── PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -776,10 +920,12 @@
     ├── CMakeLists.txt
     ├── CONTRIBUTING.md
     ├── Dockerfile
+    ├── Dockerfile.artic
     ├── LICENSE
     ├── Makefile
     ├── NOTICE
     ├── README.md
+    ├── articulation_schema.yaml
     ├── build_all_json.py
     ├── codex.yaml
     ├── demo.mid
@@ -796,6 +942,11 @@
     ├── modular_composer.py
     ├── mypy.ini
     ├── pdoc.yml
+    ├── piano.jsonl
+    ├── piano_fixed.jsonl
+    ├── piano_loops.jsonl
+    ├── piano_small.jsonl
+    ├── piano_test.jsonl
     ├── pyproject.toml
     ├── pytest.ini
     ├── pyvenv.cfg
@@ -811,7 +962,9 @@
     ├── setup_project.sh
     ├── sitecustomize.py
     ├── streamlit_app_v2.py
+    ├── temp_midi_list.txt
     ├── train_piano_lora.py
     ├── train_sax_lora.py
     ├── train_velocity.py
-    └── tree.txt
+    ├── tree.txt
+    └── プロンプトで以下を入力して引用符を閉じる

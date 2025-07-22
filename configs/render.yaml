@@ -1,0 +1,7 @@
+render:
+  breath_mode: keep
+  attenuate_gain_db: -15
+  crossfade_ms: 50
+  hop_ms: 10
+  thr_offset_db: -30
+  log_level: WARN

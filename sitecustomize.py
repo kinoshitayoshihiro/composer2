@@ -1,13 +1,17 @@
 """Project-local stub loaded automatically by Python at start-up.
-Silences heavy optional dependencies in minimal CI environments.
-"""
-import importlib.machinery
-import importlib.util
-import sys
-import types  # pragma: no cover
+Silences heavy optional dependencies in minimal CI environments."""
 
-for _name in ("pkg_resources", "yaml", "scipy", "scipy.signal", "music21"):
-    if importlib.util.find_spec(_name) is None:
-        mod = types.ModuleType(_name)
-        mod.__spec__ = importlib.machinery.ModuleSpec(_name, loader=None)
-        sys.modules.setdefault(_name, mod)  # pragma: no cover
+import importlib.util
+import os
+from pathlib import Path
+
+if os.getenv("COMPOSER_CI_STUBS") == "1":
+    path = Path(__file__).resolve().parent / "utilities" / "stub_utils.py"
+    spec = importlib.util.spec_from_file_location("_stub_utils", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[attr-defined]
+    module.install_stubs(
+        ["pkg_resources", "yaml", "scipy", "scipy.signal", "music21"],
+        force=True,
+    )

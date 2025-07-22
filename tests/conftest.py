@@ -1,39 +1,30 @@
-# Fallback stub when sitecustomize is unreachable
 import importlib.machinery
 import importlib.util
-import sys
-import types
+import os
 import warnings
 from pathlib import Path
 
 import pytest
 
-for _n in ("yaml", "pkg_resources", "scipy", "scipy.signal", "music21"):
-    if importlib.util.find_spec(_n) is None:
-        mod = types.ModuleType(_n)
-        mod.__spec__ = importlib.machinery.ModuleSpec(_n, loader=None)
-        if _n == "yaml":
-            mod.safe_load = lambda *_a, **_k: {}  # type: ignore[attr-defined]
-        if _n == "music21":
-            class _Dummy:
-                def __init__(self, *args: object, **kwargs: object) -> None:
-                    pass
-
-            mod.pitch = _Dummy
-            mod.harmony = _Dummy
-            mod.key = types.SimpleNamespace(Key=_Dummy)
-            mod.meter = types.SimpleNamespace(TimeSignature=_Dummy)
-            mod.interval = _Dummy
-        sys.modules.setdefault(_n, mod)  # pragma: no cover
-
-# Ensure sitecustomize stubs are loaded for environments missing optional tools
+if os.getenv("COMPOSER_CI_STUBS") == "1":
+    path = Path(__file__).resolve().parents[1] / "utilities" / "stub_utils.py"
+    spec = importlib.util.spec_from_file_location("_stub_utils", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[attr-defined]
+    module.install_stubs(
+        ["pkg_resources", "yaml", "scipy", "scipy.signal", "music21"],
+        force=True,
+    )
 
 REQUIRED_PACKAGES = ["music21", "pretty_midi", "mido"]
 missing = [pkg for pkg in REQUIRED_PACKAGES if importlib.util.find_spec(pkg) is None]
 if missing:
-    pytest.skip(
-        "Missing packages: {}".format(", ".join(missing)),
-        allow_module_level=True,
+    pytest.exit(
+        "Missing packages: {}. Install them with 'bash setup.sh' or 'pip install -r requirements.txt'.".format(
+            ", ".join(missing)
+        ),
+        returncode=1,
     )
 
 
@@ -45,7 +36,6 @@ def pytest_configure(config):
             "'bash setup.sh' or 'pip install -r requirements.txt'."
         )
         warnings.warn(msg.format(", ".join(missing)))
-
 
 def pytest_addoption(parser):
     parser.addoption("--dry-run", action="store_true", help="Run tests in dry-run mode")

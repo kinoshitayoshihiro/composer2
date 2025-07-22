@@ -6,7 +6,18 @@ import importlib.machinery
 import importlib.util
 import sys
 import types
-from typing import List
+from typing import Callable, Iterable, List
+
+
+STUB_MODULES = [
+    "pkg_resources",
+    "yaml",
+    "scipy",
+    "scipy.signal",
+    "music21",
+    "pretty_midi",
+    "soundfile",
+]
 
 
 class _dummy_class:
@@ -18,13 +29,27 @@ class _dummy_class:
     def __getattr__(self, name: str):
         return self
 
+    def __call__(self, *args: object, **kwargs: object) -> "_dummy_class":
+        return self
+
+    def __iter__(self):
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+    def __repr__(self) -> str:
+        return f"<Dummy {self.__class__.__name__}>"
+
 
 class _dummy_module(types.ModuleType):
     """Module that returns itself for unknown attributes."""
 
     def __getattr__(self, name: str):
-        attr = _dummy_module(f"{self.__name__}.{name}")
+        attr_name = f"{self.__name__}.{name}"
+        attr = _dummy_module(attr_name)
         setattr(self, name, attr)
+        sys.modules[attr_name] = attr
         return attr
 
 
@@ -113,18 +138,35 @@ def _populate_scipy(mod: types.ModuleType) -> None:
     mod.signal = sig
 
 
+def _populate_pretty_midi(mod: types.ModuleType) -> None:
+    setattr(mod, "PrettyMIDI", _dummy_class)
+
+
+def _populate_soundfile(mod: types.ModuleType) -> None:
+    setattr(mod, "read", lambda *_a, **_k: ([], 44100))
+
+
 SPECIAL_POPULATORS = {
     "music21": _populate_music21,
     "scipy": _populate_scipy,
     "yaml": lambda m: setattr(m, "safe_load", lambda *_a, **_k: {}),
+    "pretty_midi": _populate_pretty_midi,
+    "soundfile": _populate_soundfile,
 }
 
 
-def install_stubs(names: List[str], force: bool = False) -> None:
+def register_populator(name: str, fn: Callable[[types.ModuleType], None]) -> None:
+    SPECIAL_POPULATORS[name] = fn
+
+
+def install_stubs(
+    names: List[str] = STUB_MODULES, force_names: Iterable[str] | None = None
+) -> None:
     """Install lightweight stub modules for missing packages."""
 
+    force_set = set(force_names or [])
     for name in names:
-        if importlib.util.find_spec(name) is not None and not force:
+        if importlib.util.find_spec(name) is not None and name not in force_set:
             continue
         mod = _ensure_module(name)
         pop = SPECIAL_POPULATORS.get(name)

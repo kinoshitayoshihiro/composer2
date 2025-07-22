@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 from music21 import note, stream, volume
 
-from utilities import rt_midi_streamer
+# Import the implementation module so monkeypatching works correctly
+from utilities import rtmidi_streamer as rt_midi_streamer
 
 
 class FlakyMidiOut:

@@ -9,21 +9,22 @@ from pathlib import Path
 import pytest
 
 for _n in ("yaml", "pkg_resources", "scipy", "scipy.signal", "music21"):
-    mod = types.ModuleType(_n)
-    mod.__spec__ = importlib.machinery.ModuleSpec(_n, loader=None)
-    if _n == "yaml":
-        mod.safe_load = lambda *_a, **_k: {}  # type: ignore[attr-defined]
-    if _n == "music21":
-        class _Dummy:
-            def __init__(self, *args: object, **kwargs: object) -> None:
-                pass
+    if importlib.util.find_spec(_n) is None:
+        mod = types.ModuleType(_n)
+        mod.__spec__ = importlib.machinery.ModuleSpec(_n, loader=None)
+        if _n == "yaml":
+            mod.safe_load = lambda *_a, **_k: {}  # type: ignore[attr-defined]
+        if _n == "music21":
+            class _Dummy:
+                def __init__(self, *args: object, **kwargs: object) -> None:
+                    pass
 
-        mod.pitch = _Dummy
-        mod.harmony = _Dummy
-        mod.key = types.SimpleNamespace(Key=_Dummy)
-        mod.meter = types.SimpleNamespace(TimeSignature=_Dummy)
-        mod.interval = _Dummy
-    sys.modules.setdefault(_n, mod)  # pragma: no cover
+            mod.pitch = _Dummy
+            mod.harmony = _Dummy
+            mod.key = types.SimpleNamespace(Key=_Dummy)
+            mod.meter = types.SimpleNamespace(TimeSignature=_Dummy)
+            mod.interval = _Dummy
+        sys.modules.setdefault(_n, mod)  # pragma: no cover
 
 # Ensure sitecustomize stubs are loaded for environments missing optional tools
 

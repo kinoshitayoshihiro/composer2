@@ -203,7 +203,8 @@ def _stub_pretty_midi() -> None:
 
     try:  # use the real package when available
         import pretty_midi as _pm  # noqa: F401
-        return
+        if _pm.__class__.__name__ != "_dummy_module":
+            return
     except Exception:  # pragma: no cover - optional dependency
         pass
 

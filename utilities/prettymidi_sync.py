@@ -66,7 +66,7 @@ from music21 import (
 ################################################################################
 # (変更なし)
 def _sec_per_subdivision(pm: "pretty_midi.PrettyMIDI", subdiv: int) -> float:
-    tempi = pm.get_tempo_changes()[0]
+    _times, tempi = pm.get_tempo_changes()
     bpm = tempi[0] if len(tempi) else 120.0
     sec_per_beat = 60.0 / bpm
     sec_per_sub = sec_per_beat / (subdiv / 4)
@@ -114,8 +114,8 @@ def extract_groove(pm: "pretty_midi.PrettyMIDI", subdiv: int) -> Dict:
         shifts.append(shift)
         bucket = f"{shift:.4f}"
         hist[bucket] = hist.get(bucket, 0) + 1
-    tempo_arr = pm.get_tempo_changes()[0]
-    bpm = tempo_arr[0] if tempo_arr.size else 120.0
+    _times, tempi = pm.get_tempo_changes()
+    bpm = tempi[0] if len(tempi) > 0 else 120.0
     return {
         "bpm": bpm,
         "subdiv": subdiv,

@@ -1,24 +1,24 @@
 from __future__ import annotations
 
+import concurrent.futures
 import glob
+import logging
 import pickle
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from statistics import mean
-from typing import TypedDict, Any
-
-import yaml
+from typing import Any, TypedDict
 
 import click
-import pretty_midi
 import mido
-import concurrent.futures
-import logging
+import pretty_midi
+import yaml
 
 logger = logging.getLogger(__name__)
 
 from .drum_map_registry import GM_DRUM_MAP
+from .midi_utils import safe_end_time
 from .types import Intensity
 
 try:  # optional dependency
@@ -149,7 +149,7 @@ def _scan_midi(
         )
         bpm = 120.0
     sec_per_beat = 60.0 / bpm
-    bar_beats = max(1, int(round(pm.get_end_time() / sec_per_beat)))
+    bar_beats = max(1, int(round(safe_end_time(pm) / sec_per_beat)))
     tokens: list[Token] = []
     for inst in pm.instruments:
         if not inst.is_drum:
@@ -175,8 +175,8 @@ def _scan_midi(
 def _scan_wav(
     path: Path, resolution: int, ppq: int, *, part: str = "drums"
 ) -> LoopEntry:
-    import soundfile as sf
     import numpy as np
+    import soundfile as sf
 
     y, sr = sf.read(path, dtype="float32")
     if y.ndim > 1:

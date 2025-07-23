@@ -57,6 +57,7 @@ from utilities.core_music_utils import (
 from utilities.effect_preset_loader import EffectPresetLoader
 from utilities.expression_map import load_expression_map, resolve_expression
 from utilities.harmonic_utils import apply_harmonic_notation, apply_harmonic_to_pitch
+from utilities.midi_utils import safe_end_time
 from utilities.velocity_curve import interpolate_7pt, resolve_velocity_curve
 from utilities.velocity_utils import scale_velocity  # noqa: E402
 
@@ -1552,7 +1553,7 @@ class StringsGenerator(BasePartGenerator):
         try:
             dry = pm.fluidsynth(fs=sample_rate)
         except Exception:
-            dur = int(pm.get_end_time() * sample_rate)
+            dur = int(safe_end_time(pm) * sample_rate)
             t = np.linspace(0, dur / sample_rate, dur, endpoint=False)
             dry = np.sin(2 * np.pi * 440 * t).astype(np.float32)
         ir_data, ir_sr = conv.load_ir(str(ir_path))

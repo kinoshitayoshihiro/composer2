@@ -11,6 +11,7 @@ def test_round_trip_with_artic() -> None:
     ids = tok.encode(events)
     decoded = tok.decode(ids)
     assert decoded == events
+    assert tok.encode(decoded) == ids
 
 
 def test_special_tokens_exist() -> None:

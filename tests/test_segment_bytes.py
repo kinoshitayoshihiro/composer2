@@ -58,14 +58,53 @@ def _stub_torch() -> None:
 
 _stub_torch()
 
-pd_mod = sys.modules.setdefault("pandas", ModuleType("pandas"))
+if importlib.util.find_spec("pandas") is None:
+    pd_mod = sys.modules.setdefault("pandas", ModuleType("pandas"))
 
+    class _DF(list):
+        def __init__(self, data: dict | list) -> None:
+            if isinstance(data, dict):
+                self._data = {k: list(v) for k, v in data.items()}
+                super().__init__(self._data.get("roll", []))
+            else:
+                self._data = {"data": list(data)}
+                super().__init__(data)
 
-class _DF(list):
-    pass
+        def to_csv(self, path: str | bytes, index: bool = False) -> None:
+            with open(path, "w", encoding="utf-8") as f:
+                cols = list(self._data.keys())
+                f.write(",".join(cols) + "\n")
+                for row in zip(*(self._data[c] for c in cols)):
+                    f.write(",".join(map(str, row)) + "\n")
 
+    def _df_from_dict(data: dict | list) -> _DF:
+        return _DF(data)
 
-pd_mod.DataFrame = lambda data: _DF(data.get("roll", []))  # type: ignore[attr-defined]
+    def _read_csv(path: str | bytes) -> _DF:
+        with open(path, encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+        if not lines:
+            return _DF({})
+        headers = lines[0].split(",")
+        cols = {h: [] for h in headers}
+        for line in lines[1:]:
+            for h, val in zip(headers, line.split(",")):
+                try:
+                    cols[h].append(int(val))
+                except ValueError:
+                    try:
+                        cols[h].append(float(val))
+                    except ValueError:
+                        cols[h].append(val)
+        return _DF(cols)
+
+    pd_mod.DataFrame = _df_from_dict  # type: ignore[attr-defined]
+    pd_mod.read_csv = _read_csv  # type: ignore[attr-defined]
+else:  # pragma: no cover - use real pandas when available
+    import pandas as pd_mod
+
+    class _DF(pd_mod.DataFrame):  # type: ignore[misc]
+        pass
 sk_mod = ModuleType("sklearn.metrics")
 sk_mod.f1_score = lambda *_a, **_k: 1.0  # type: ignore[assignment]
 sys.modules.setdefault("sklearn", ModuleType("sklearn"))
@@ -113,7 +152,8 @@ def _stub_pretty_midi() -> None:
 
     try:  # use the real package when available
         import pretty_midi as _pm  # noqa: F401
-        return
+        if _pm.__class__.__name__ != "_dummy_module":
+            return
     except Exception:  # pragma: no cover - optional dependency
         pass
 

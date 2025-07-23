@@ -109,10 +109,22 @@ def _stub_miditoolkit() -> None:
 
 
 def _stub_pretty_midi() -> None:
+    """Install a lightweight ``pretty_midi`` stub if the real package is missing."""
+
+    try:  # use the real package when available
+        import pretty_midi as _pm  # noqa: F401
+        return
+    except Exception:  # pragma: no cover - optional dependency
+        pass
+
     pm = ModuleType("pretty_midi")
 
     class PrettyMIDI:
-        def __init__(self, _file) -> None:  # pragma: no cover - stub
+        def __init__(self, _file=None, *, initial_tempo=120) -> None:  # pragma: no cover - stub
+            self.instruments = []
+            self.initial_tempo = initial_tempo
+
+        def write(self, _f) -> None:  # pragma: no cover - stub
             pass
 
         def get_piano_roll(self, fs: int = 24):  # pragma: no cover - stub
@@ -120,7 +132,22 @@ def _stub_pretty_midi() -> None:
 
             return np.ones((1, 4))
 
+    class Instrument(list):
+        def __init__(self, program: int = 0, is_drum: bool = False) -> None:  # pragma: no cover - stub
+            super().__init__()
+            self.program = program
+            self.is_drum = is_drum
+
+    class Note:
+        def __init__(self, velocity: int, pitch: int, start: float, end: float) -> None:  # pragma: no cover - stub
+            self.velocity = velocity
+            self.pitch = pitch
+            self.start = start
+            self.end = end
+
     pm.PrettyMIDI = PrettyMIDI
+    pm.Instrument = Instrument
+    pm.Note = Note
     sys.modules["pretty_midi"] = pm
 
 

@@ -7,6 +7,8 @@ from pathlib import Path
 import yaml
 import pretty_midi
 
+from utilities.time_utils import get_end_time
+
 from modular_composer.perc_generator import PercGenerator
 from generator.drum_generator import DrumGenerator
 from utilities.perc_sampler_v1 import PERC_NOTE_MAP
@@ -43,7 +45,7 @@ def add_percussion(mid_path: Path, cfg: dict) -> None:
     bar_dur = 60.0 / tempo * beats_per_bar
 
     pm = pretty_midi.PrettyMIDI(str(mid_path))
-    num_bars = int(pm.get_end_time() / bar_dur + 0.999)
+    num_bars = int(get_end_time(pm) / bar_dur + 0.999)
     perc_inst = pretty_midi.Instrument(program=0, is_drum=True, name="Percussion")
 
     for bar in range(num_bars):

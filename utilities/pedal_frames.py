@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 import pretty_midi
 
+from .time_utils import get_end_time
+
 SR = 22050
 HOP_LENGTH = 512
 
@@ -52,7 +54,7 @@ def extract_from_midi(
     for track_id, rel_times in enumerate(release_times_by_track):
         for frame_id, t in enumerate(frame_times):
             idx = np.searchsorted(rel_times, t)
-            next_rel = rel_times[idx] if idx < len(rel_times) else pm.get_end_time()
+            next_rel = rel_times[idx] if idx < len(rel_times) else get_end_time(pm)
             rel_release = float(next_rel - t)
 
             pidx = np.searchsorted(pedal_times, t, side="right") - 1

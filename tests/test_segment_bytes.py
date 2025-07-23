@@ -2,6 +2,7 @@ import importlib
 import io
 import sys
 from types import ModuleType
+from pathlib import Path
 
 
 def _stub_torch() -> None:
@@ -58,14 +59,103 @@ def _stub_torch() -> None:
 
 _stub_torch()
 
-pd_mod = sys.modules.setdefault("pandas", ModuleType("pandas"))
+
+def _stub_pandas() -> None:
+    if importlib.util.find_spec("pandas") is not None:
+        return
+
+    pd_mod = ModuleType("pandas")
+
+    class _Series(list):
+        def clip(self, lower: float, upper: float):
+            return _Series([max(lower, min(upper, x)) for x in self])
+
+        def fillna(self, val: float | int):
+            return _Series([val if v in {None, ""} else v for v in self])
+
+        def astype(self, typ: type):
+            return _Series([typ(v) for v in self])
+
+        def to_numpy(self):
+            import numpy as np
+
+            return np.array(self)
+
+    class _DF:
+        def __init__(self, data: dict[str, list]):
+            self._data = {k: list(v) for k, v in data.items()}
+
+        def __len__(self) -> int:
+            return len(next(iter(self._data.values()), []))
+
+        def __iter__(self):
+            first = next(iter(self._data.values()), [])
+            return iter(first)
+
+        def __getitem__(self, key: str) -> _Series:
+            return _Series(self._data[key])
+
+        def __setitem__(self, key: str, val: list) -> None:
+            self._data[key] = list(val)
+
+        def to_csv(self, path: Path | str, index: bool = False) -> None:
+            import csv
+
+            keys = list(self._data.keys())
+            with open(path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(keys)
+                for row in zip(*[self._data[k] for k in keys]):
+                    writer.writerow(row)
+
+        @staticmethod
+        def read_csv(path: Path | str) -> "_DF":
+            import csv
+
+            with open(path, newline="") as f:
+                reader = csv.DictReader(f)
+                data: dict[str, list] = {k: [] for k in reader.fieldnames or []}
+                for row in reader:
+                    for k in data:
+                        val = row.get(k, "")
+                        try:
+                            num = float(val)
+                            val = int(num) if num.is_integer() else num
+                        except Exception:
+                            pass
+                        data[k].append(val)
+            return _DF(data)
+
+        def groupby(self, key: str):
+            from collections import defaultdict
+
+            groups: dict[float | int | str, dict[str, list]] = defaultdict(
+                lambda: {k: [] for k in self._data}
+            )
+            for i, val in enumerate(self._data[key]):
+                for k in self._data:
+                    groups[val][k].append(self._data[k][i])
+            return [(k, _DF(v)) for k, v in groups.items()]
+
+        def sort_values(self, key: str) -> "_DF":
+            idx = sorted(range(len(self)), key=lambda i: self._data[key][i])
+            for k in self._data:
+                self._data[k] = [self._data[k][i] for i in idx]
+            return self
+
+        def itertuples(self):
+            from collections import namedtuple
+
+            Row = namedtuple("Row", self._data.keys())
+            for i in range(len(self)):
+                yield Row(**{k: self._data[k][i] for k in self._data})
+
+    pd_mod.DataFrame = lambda data: _DF(data)
+    pd_mod.read_csv = _DF.read_csv
+    sys.modules["pandas"] = pd_mod
 
 
-class _DF(list):
-    pass
-
-
-pd_mod.DataFrame = lambda data: _DF(data.get("roll", []))  # type: ignore[attr-defined]
+_stub_pandas()
 sk_mod = ModuleType("sklearn.metrics")
 sk_mod.f1_score = lambda *_a, **_k: 1.0  # type: ignore[assignment]
 sys.modules.setdefault("sklearn", ModuleType("sklearn"))

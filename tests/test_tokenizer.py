@@ -10,3 +10,5 @@ def test_round_trip_simple() -> None:
     tokens = tokenizer.encode(events)
     decoded = tokenizer.decode(tokens)
     assert decoded == events
+    # encode(decode(x)) == x
+    assert tokenizer.encode(decoded) == tokens

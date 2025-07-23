@@ -93,7 +93,8 @@ def test_bass_velocity_model():
         "tonic_of_section": "C",
         "mode": "major",
     }
-    with patch("utilities.velocity_utils.scale_velocity", wraps=scale_velocity) as spy:
+    # Patch the symbol used inside BasePartGenerator
+    with patch("generator.base_part_generator.scale_velocity", wraps=scale_velocity) as spy:
         part = gen.compose(section_data=section)
         assert spy.called
     for n in part.flatten().notes:
@@ -120,7 +121,8 @@ def test_piano_velocity_model():
         "musical_intent": {},
         "part_params": {},
     }
-    with patch("utilities.velocity_utils.scale_velocity", wraps=scale_velocity) as spy:
+    # Patch the symbol used inside BasePartGenerator
+    with patch("generator.base_part_generator.scale_velocity", wraps=scale_velocity) as spy:
         parts = gen.compose(section_data=section)
         assert spy.called
         for p in parts.values():

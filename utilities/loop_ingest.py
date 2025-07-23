@@ -145,7 +145,9 @@ def _scan_midi(
     bpm = float(tempi[0]) if len(tempi) > 0 else 120.0
     if bpm <= 0:
         logger.warning(
-            "Non-positive tempo %.2f detected in %s; using default.", bpm, path
+            "Non-positive tempo %.2f detected in %s; using default 120 BPM.",
+            bpm,
+            path,
         )
         bpm = 120.0
     sec_per_beat = 60.0 / bpm

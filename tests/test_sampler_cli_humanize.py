@@ -39,3 +39,35 @@ def test_cli_humanize(tmp_path: Path) -> None:
         micro = ticks - step * step_ticks
         assert -30 <= micro <= 30
 
+
+def test_cli_micro_bounds(tmp_path: Path) -> None:
+    _make_loop(tmp_path / "a.mid")
+    model = gs.train(tmp_path, order=1)
+    gs.save(model, tmp_path / "m.pkl")
+    runner = CliRunner()
+    micro_max = 10
+    res = runner.invoke(
+        gs.cli,
+        [
+            "sample",
+            str(tmp_path / "m.pkl"),
+            "-l",
+            "1",
+            "--seed",
+            "0",
+            "--humanize",
+            "micro",
+            "--micro-max",
+            str(micro_max),
+        ],
+    )
+    assert res.exit_code == 0
+    pm = pretty_midi.PrettyMIDI(io.BytesIO(res.stdout_bytes))
+    step_ticks = gs.PPQ // 4
+    for n in pm.instruments[0].notes:
+        start_beats = n.start / 0.5
+        ticks = round(start_beats * gs.PPQ)
+        step = round(start_beats * 4)
+        micro = ticks - step * step_ticks
+        assert -micro_max <= micro <= micro_max
+

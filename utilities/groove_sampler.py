@@ -61,8 +61,8 @@ def _iter_drum_notes(midi_path: Path) -> list[tuple[float, int]]:
     for inst in pm.instruments:
         if not inst.is_drum:
             continue
-        tempo_arr = pm.get_tempo_changes()[0]
-        tempo = float(tempo_arr[0]) if tempo_arr.size else 120.0
+        _times, tempi = pm.get_tempo_changes()
+        tempo = float(tempi[0]) if len(tempi) > 0 else 120.0
         if tempo <= 0:
             logger.warning(
                 "Non-positive tempo %.2f detected in %s; using default.",

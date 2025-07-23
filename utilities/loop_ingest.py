@@ -135,14 +135,18 @@ _PERC_PITCH_TO_LABEL = {
 }
 
 
-def _scan_midi(path: Path, resolution: int, ppq: int, *, part: str = "drums") -> LoopEntry | None:
+def _scan_midi(
+    path: Path, resolution: int, ppq: int, *, part: str = "drums"
+) -> LoopEntry | None:
     pm = _load_pretty_midi(path)
     if pm is None:
         return None
-    tempo = pm.get_tempo_changes()[0]
-    bpm = float(tempo[0]) if tempo.size else 120.0
+    times, tempi = pm.get_tempo_changes()
+    bpm = float(tempi[0]) if len(tempi) > 0 else 120.0
     if bpm <= 0:
-        logger.warning("Non-positive tempo %.2f detected in %s; using default.", bpm, path)
+        logger.warning(
+            "Non-positive tempo %.2f detected in %s; using default.", bpm, path
+        )
         bpm = 120.0
     sec_per_beat = 60.0 / bpm
     bar_beats = max(1, int(round(pm.get_end_time() / sec_per_beat)))
@@ -168,7 +172,9 @@ def _scan_midi(path: Path, resolution: int, ppq: int, *, part: str = "drums") ->
     }
 
 
-def _scan_wav(path: Path, resolution: int, ppq: int, *, part: str = "drums") -> LoopEntry:
+def _scan_wav(
+    path: Path, resolution: int, ppq: int, *, part: str = "drums"
+) -> LoopEntry:
     import soundfile as sf
     import numpy as np
 
@@ -201,7 +207,7 @@ def _scan_wav(path: Path, resolution: int, ppq: int, *, part: str = "drums") -> 
 
             fft = np.abs(np.fft.rfft(seg))
             freqs = np.fft.rfftfreq(len(seg), 1 / sr)
-            f = freqs[np.argmax(fft)] if fft.size else 0.0
+            f = freqs[np.argmax(fft)] if len(fft) else 0.0
             dur_ms = len(seg) / sr * 1000
             if f < 120:
                 label = "conga_cl"
@@ -221,7 +227,9 @@ def _scan_wav(path: Path, resolution: int, ppq: int, *, part: str = "drums") -> 
     }
 
 
-def _scan_file(path: Path, resolution: int, ppq: int, *, part: str = "drums") -> LoopEntry | None:
+def _scan_file(
+    path: Path, resolution: int, ppq: int, *, part: str = "drums"
+) -> LoopEntry | None:
     suf = path.suffix.lower()
     entry: LoopEntry | None = None
     if suf in {".mid", ".midi"}:

@@ -187,6 +187,9 @@ def midi_to_events(pm: "pretty_midi.PrettyMIDI") -> List[Tuple[float, int]]:
     """Extract ``(beat, pitch)`` tuples from a PrettyMIDI drum track."""
     _times, tempi = pm.get_tempo_changes()
     tempo = float(tempi[0]) if len(tempi) > 0 else 120.0
+    if tempo <= 0:
+        logger.warning("Non-positive tempo %.2f detected; using default 120 BPM.", tempo)
+        tempo = 120.0
     sec_per_beat = 60.0 / tempo
 
     events: list[tuple[float, int]] = []

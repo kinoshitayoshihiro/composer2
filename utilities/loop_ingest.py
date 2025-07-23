@@ -239,6 +239,8 @@ def _scan_file(
     elif suf == ".wav":
         try:
             entry = _scan_wav(path, resolution, ppq, part=part)
+        except TypeError:
+            entry = _scan_wav(path, resolution, ppq)
         except RuntimeError:
             return None
     if entry is not None:

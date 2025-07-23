@@ -13,6 +13,8 @@ import argparse
 
 import pretty_midi
 
+from utilities.time_utils import get_end_time
+
 
 def extract_features(midi_path: str | Path) -> Dict[str, float]:
     pm = pretty_midi.PrettyMIDI(str(midi_path))
@@ -21,7 +23,7 @@ def extract_features(midi_path: str | Path) -> Dict[str, float]:
     mean_velocity = float(sum(n.velocity for n in notes) / total_notes) if notes else 0.0
     tempi, _times = pm.get_tempo_changes()
     tempo = float(sum(tempi) / len(tempi)) if len(tempi) else 0.0
-    length = pm.get_end_time() or 1.0
+    length = get_end_time(pm) or 1.0
     density = float(total_notes) / length
     return {
         "tempo_bpm": tempo,

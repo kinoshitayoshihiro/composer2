@@ -160,15 +160,20 @@ class RealtimeEngine:
         self._clock_thread.start()
 
     def _load_model(self) -> None:
+        path = Path(self.model_path)
+        if not path.exists():
+            warnings.warn(f"Model file {path} not found", RuntimeWarning)
+            self.model = None
+            return
         if self.backend == "rnn":
             if GrooveRNN is None:
                 raise click.ClickException("Install extras: rnn")
-            obj = torch.load(self.model_path, map_location="cpu")
+            obj = torch.load(path, map_location="cpu")
             model = GrooveRNN(len(obj["meta"]["vocab"]))
             model.load_state_dict(obj["state_dict"])
             self.model = (model, obj["meta"])
         else:
-            self.model = groove_sampler_ngram.load(self.model_path)
+            self.model = groove_sampler_ngram.load(path)
 
     def _gen_bar(self) -> list[dict]:
         if self.backend == "rnn":

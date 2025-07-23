@@ -145,7 +145,7 @@ class RtMidiStreamer:
     # --------------------------------------------------------------
     def send_cc(self, cc: int, value: int, time: float) -> None:
         """Send Control Change message at absolute ``time`` seconds."""
-        loop = asyncio.get_event_loop()
+        loop = _get_loop()
 
         async def _task() -> None:
             await asyncio.sleep(max(0.0, time - loop.time() - self.buffer))
@@ -154,9 +154,19 @@ class RtMidiStreamer:
         loop.create_task(_task())
 
 
+def _get_loop() -> asyncio.AbstractEventLoop:
+    """Return the running event loop or create one if missing."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
+
+
 def stream_cc_events(part: stream.Part, streamer: RtMidiStreamer) -> None:
     """Send all CC events from ``part`` using ``streamer``."""
-    now = asyncio.get_event_loop().time()
+    now = _get_loop().time()
     events: list[tuple[float, int, int]] = []
     for e in getattr(part, "_extra_cc", set()):
         events.append((float(e[0]), int(e[1]), int(e[2])))

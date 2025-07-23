@@ -6,11 +6,12 @@ import importlib
 import io
 import json
 from collections.abc import Callable
-import sitecustomize  # noqa: F401
 from pathlib import Path
 from typing import Any
 
+import sitecustomize  # noqa: F401
 from utilities import vocal_sync
+from utilities.midi_utils import safe_end_time
 
 try:  # optional dependency introduced by tempo merging
     from utilities import tempo_utils
@@ -97,7 +98,11 @@ def apply_tempo_map(
             pm._tick_scales = []
             tick = 0
             for i, (bpm, start) in enumerate(zip(tempi, times)):
-                scale = 60.0 / (float(bpm) * pm.resolution) if bpm else 60.0 / (120.0 * pm.resolution)
+                scale = (
+                    60.0 / (float(bpm) * pm.resolution)
+                    if bpm
+                    else 60.0 / (120.0 * pm.resolution)
+                )
                 pm._tick_scales.append((int(round(tick)), scale))
                 if i < len(tempi) - 1:
                     next_start = times[i + 1]
@@ -140,7 +145,7 @@ def export_song(
             # determine section duration from generated parts
             sec_duration = 0.0
             for pm in sec_pms:
-                sec_duration = max(sec_duration, pm.get_end_time())
+                sec_duration = max(sec_duration, safe_end_time(pm))
 
             sec_tm = sec.get("tempo_map") or []
             new_tempo = False

@@ -10,6 +10,8 @@ def swing(pm: pretty_midi.PrettyMIDI, ratio: float) -> pretty_midi.PrettyMIDI:
     """Apply swing feel by moving off-beats by ``(ratio-50) %`` of a 16th."""
     tempo = pm.get_tempo_changes()[0]
     bpm = float(tempo[0]) if getattr(tempo, "size", 0) else 120.0
+    if bpm <= 0:
+        bpm = 120.0
     beat = 60.0 / bpm
     offset = (ratio - 50.0) / 100.0 * (beat / 6)
     for inst in pm.instruments:

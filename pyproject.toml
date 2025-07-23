@@ -152,6 +152,15 @@ markers = [
   "packaging: packaging checks",
   "docs: documentation build",
 ]
+addopts = "--cov=models --cov=realtime"
+
+[tool.coverage.run]
+source = ["models", "realtime"]
+omit = [
+  "realtime/rtmidi_streamer.py",
+  "realtime/ws_bridge.py",
+  "realtime/ws_vocal_bridge.py",
+]
 
 [tool.setuptools.packages.find]
 include = ["articulation_tagger", "modular_composer*"]
@@ -165,7 +174,7 @@ license = {text = "MIT"}
 readme = "README.md"
 dependencies = [
     "torch>=2.3",
-    "torch-crf>=1.1",
+    "torchcrf>=1.1",
     "pretty_midi>=0.2",
     "music21>=8.0",
     "pandas>=2.1",
@@ -177,3 +186,12 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/OpenAI/modular_composer"
 Repository = "https://github.com/OpenAI/modular_composer"
+
+[project.optional-dependencies]
+realtime = [
+  "fastapi",
+  "uvicorn",
+  "websockets",
+  "streamlit>=1.30",
+  "pandas>=2.1",
+]

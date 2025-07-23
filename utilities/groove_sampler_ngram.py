@@ -1051,6 +1051,7 @@ def _generate_bar(
                 micro = int(rand.choice(choices))
                 limit = micro_bounds.get(lbl, micro_max)
                 micro = max(-limit, min(limit, micro))
+                micro = int(round(micro))
         vel_mean = int(model["mean_velocity"].get(lbl, 100))
         vel = vel_mean
         if humanize_vel:

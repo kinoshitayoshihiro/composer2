@@ -12,14 +12,15 @@ from typing import Any, TypedDict
 
 import click
 import mido
-import pretty_midi
 import yaml
 
-logger = logging.getLogger(__name__)
+from utilities.pretty_midi_safe import new_pm as PrettyMIDI
 
 from .drum_map_registry import GM_DRUM_MAP
 from .midi_utils import safe_end_time
 from .types import Intensity
+
+logger = logging.getLogger(__name__)
 
 try:  # optional dependency
     import librosa
@@ -73,7 +74,7 @@ def load_meta(path: Path) -> dict[str, Any]:
     return {}
 
 
-def _load_pretty_midi(path: Path) -> pretty_midi.PrettyMIDI | None:
+def _load_pretty_midi(path: Path) -> PrettyMIDI | None:
     """Load a MIDI file with timeout and size guard."""
 
     try:
@@ -90,8 +91,8 @@ def _load_pretty_midi(path: Path) -> pretty_midi.PrettyMIDI | None:
         logger.warning("Failed to inspect %s: %s", path, exc)
         return None
 
-    def _load() -> pretty_midi.PrettyMIDI:
-        return pretty_midi.PrettyMIDI(str(path))
+    def _load() -> PrettyMIDI:
+        return PrettyMIDI(str(path))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
         fut = ex.submit(_load)

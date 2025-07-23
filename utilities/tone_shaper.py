@@ -134,7 +134,9 @@ class ToneShaper:
         # merge presets from global library if no user map provided
         if not self._user_map:
             for name, entry in PRESET_LIBRARY.items():
-                if name not in self.preset_map and isinstance(entry.get("cc_map"), dict):
+                if name not in self.preset_map and isinstance(
+                    entry.get("cc_map"), dict
+                ):
                     conv: dict[str, int] = {}
                     for cc, val in entry["cc_map"].items():
                         if int(cc) == 31:
@@ -164,6 +166,7 @@ class ToneShaper:
         self.last_intensity: str | None = None
         self._knn: KNeighborsClassifier | None = None
         self.fx_envelope: list[dict[str, int | float]] = []
+        self.k: int = 1
 
     # ---- YAML ローダ ---------------------------------------------------------
     @classmethod
@@ -203,7 +206,9 @@ class ToneShaper:
                     except Exception as exc:
                         raise ValueError(f"Invalid level value for {name}:{k}") from exc
                     if not 0 <= iv <= 127:
-                        raise ValueError(f"Level value for {name}:{k} out of range: {iv}")
+                        raise ValueError(
+                            f"Level value for {name}:{k} out of range: {iv}"
+                        )
                     tmp[k] = iv
                 entry.update(tmp)
             preset_map[name] = entry
@@ -350,7 +355,9 @@ class ToneShaper:
             if lvl:
                 vel_bucket = "loud" if avg_velocity >= 65 else "soft"
                 int_bucket = (
-                    "high" if lvl.startswith("h") else "medium" if lvl.startswith("m") else "low"
+                    "high"
+                    if lvl.startswith("h")
+                    else "medium" if lvl.startswith("m") else "low"
                 )
                 chosen = PRESET_TABLE.get((int_bucket, vel_bucket))
                 if not chosen:
@@ -365,9 +372,7 @@ class ToneShaper:
             chosen = (
                 "drive"
                 if avg_velocity > 100 or lvl == "high"
-                else "crunch"
-                if avg_velocity > 60 or lvl == "medium"
-                else "clean"
+                else "crunch" if avg_velocity > 60 or lvl == "medium" else "clean"
             )
 
         if not chosen:
@@ -397,7 +402,6 @@ class ToneShaper:
         self.last_intensity = lvl or intensity or "medium"
         return chosen
 
-
     # ------------------------------------------------------
     # シンプル CC31 だけ返す互換 API
     # ------------------------------------------------------
@@ -422,7 +426,9 @@ class ToneShaper:
         as_dict: bool = False,
         store: bool = True,
     ) -> list[tuple[float, int, int]] | list[dict[str, int | float]]:
-        preset = self.preset_map.get(self._selected, self.preset_map[self.default_preset])
+        preset = self.preset_map.get(
+            self._selected, self.preset_map[self.default_preset]
+        )
 
         amp = max(0, min(127, int(preset.get("amp", 0))))
         base = amp
@@ -438,11 +444,13 @@ class ToneShaper:
         }
         if store:
             self.fx_envelope = [
-                {"time": t, "cc": c, "val": v} for t, c, v in sorted(events, key=lambda e: e[0])
+                {"time": t, "cc": c, "val": v}
+                for t, c, v in sorted(events, key=lambda e: e[0])
             ]
         if as_dict:
             return [
-                {"time": t, "cc": c, "val": v} for t, c, v in sorted(events, key=lambda e: e[0])
+                {"time": t, "cc": c, "val": v}
+                for t, c, v in sorted(events, key=lambda e: e[0])
             ]
         return sorted(events, key=lambda e: e[0])
 
@@ -485,11 +493,13 @@ class ToneShaper:
         }
         if store:
             self.fx_envelope = [
-                {"time": t, "cc": c, "val": v} for t, c, v in sorted(events, key=lambda e: e[0])
+                {"time": t, "cc": c, "val": v}
+                for t, c, v in sorted(events, key=lambda e: e[0])
             ]
         if as_dict:
             return [
-                {"time": t, "cc": c, "val": v} for t, c, v in sorted(events, key=lambda e: e[0])
+                {"time": t, "cc": c, "val": v}
+                for t, c, v in sorted(events, key=lambda e: e[0])
             ]
         return sorted(events, key=lambda e: e[0])
 
@@ -572,8 +582,9 @@ class ToneShaper:
                 raise ValueError("MFCC array must be 2D")
             X.append(arr.mean(axis=1))
             y.append(name)
-
-        self._knn = KNeighborsClassifier(n_neighbors=1)
+        X = np.asarray(X, dtype=np.float32)
+        y = np.asarray(y)
+        self._knn = KNeighborsClassifier(n_neighbors=self.k, n_jobs=1)
         self._knn.fit(X, y)
 
     def predict_preset(self, mfcc: NDArray[np.floating]) -> str:

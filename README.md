@@ -1,6 +1,6 @@
 # OtoKotoba Composer
 [![CI](https://github.com/OpenAI/modular_composer/actions/workflows/ci.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-97%25-brightgreen)](#)
+[![Coverage](https://codecov.io/gh/OpenAI/modular_composer/branch/main/graph/badge.svg)](https://codecov.io/gh/OpenAI/modular_composer)
 [![python-tests](https://github.com/OpenAI/modular_composer/actions/workflows/python-tests.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/python-tests.yml)
 [![Nightly](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml/badge.svg)](https://github.com/OpenAI/modular_composer/actions/workflows/nightly-bench.yml)
 [![PyPI](https://img.shields.io/pypi/v/modular-composer.svg)](https://pypi.org/project/modular-composer/)
@@ -62,6 +62,17 @@ Install AI and audio extras for transformer-based generation:
 ```bash
 pip install 'modular-composer[ai,audio]'
 ```
+
+Install realtime dependencies:
+
+```bash
+pip install -e .[realtime]
+```
+
+This installs the same list as
+[`requirements/realtime.txt`](requirements/realtime.txt).
+
+`miditoolkit` will be used if `pretty_midi` is unavailable.
 
 
 ### Install from PyPI
@@ -438,6 +449,11 @@ Then verify the build with:
 
 ```bash
 pytest -q
+```
+Run coverage with:
+
+```bash
+coverage run -m pytest --cov=models --cov=realtime
 ```
 
 You can also run the suite via `tox` to test against multiple

@@ -32,6 +32,7 @@ import pretty_midi
 from data.articulation_dataset import seq_collate
 from ml_models import NoteFeatureEmbedder
 from utilities.articulation_csv import extract_from_midi
+from dataclasses import asdict
 
 
 class ArticulationTagger(nn.Module if torch is not None else object):
@@ -153,6 +154,26 @@ class MLArticulationModel(ArticulationTagger):
         return model
 
 
+def load(
+    path: Path,
+    *,
+    num_labels: int | None = None,
+    schema: Path | None = None,
+) -> MLArticulationModel:
+    """Backward-compatible loader used in older tests."""
+    if num_labels is not None:
+        if torch is None:
+            raise RuntimeError("torch required")
+        model = MLArticulationModel(num_labels)
+        state = torch.load(path, map_location="cpu")
+        if isinstance(state, dict) and "state_dict" in state:
+            state = {k.replace("model.", ""): v for k, v in state["state_dict"].items()}
+        model.load_state_dict(state, strict=False)
+        model.eval()
+        return model
+    return MLArticulationModel.load(path, schema)
+
+
 @overload
 def predict(
     score: music21.stream.Score,
@@ -192,22 +213,20 @@ def predict(
         mf = music21.midi.translate.streamToMidiFile(score)
         pm = pretty_midi.PrettyMIDI(io.BytesIO(mf.writestr()))
     df = extract_from_midi(pm)
-
-    batch = seq_collate(
+    rows = list(df.itertuples()) if hasattr(df, "itertuples") else [asdict(r) for r in df]
+    batch = seq_collate([
         [
-            [
-                {
-                    "pitch": int(r.pitch),
-                    "bucket": int(r.bucket),
-                    "pedal_state": int(r.pedal_state),
-                    "velocity": float(r.velocity),
-                    "qlen": float(r.duration),
-                    "label": 0,
-                }
-                for r in df.itertuples()
-            ]
+            {
+                "pitch": int(r.pitch),
+                "bucket": int(r.bucket),
+                "pedal_state": int(r.pedal_state),
+                "velocity": float(r.velocity),
+                "qlen": float(r.duration),
+                "label": 0,
+            }
+            for r in rows
         ]
-    )
+    ])
     device = next(model.parameters()).device
     for k in batch:
         batch[k] = batch[k].to(device)
@@ -260,6 +279,7 @@ def predict_many(
             mf = music21.midi.translate.streamToMidiFile(s)
             pm = pretty_midi.PrettyMIDI(io.BytesIO(mf.writestr()))
         df = extract_from_midi(pm)
+        rows = list(df.itertuples()) if hasattr(df, "itertuples") else [asdict(r) for r in df]
         pm_list.append(
             [
                 {
@@ -270,7 +290,7 @@ def predict_many(
                     "qlen": float(r.duration),
                     "label": 0,
                 }
-                for r in df.itertuples()
+                for r in rows
             ]
         )
         note_lists.append(list(s.flat.notes))
@@ -297,6 +317,7 @@ __all__ = [
     "MLArticulationModel",
     "ArticulationTagger",
     "NoteFeatureEmbedder",
+    "load",
     "predict",
     "predict_many",
 ]

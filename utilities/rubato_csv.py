@@ -315,7 +315,7 @@ def extract_tempo_curve(
                 "tempo_factor": tempo_factor.astype(np.float32),
                 "time_sec": beats.astype(np.float64),
             }
-        )["track_id beat tempo_factor time_sec".split()]
+        )[["track_id", "beat", "tempo_factor", "time_sec"]]
     else:  # pandas unavailable → list fallback
         df = _records(track, beats, tempo_factor, beat_idx)
     logger.debug("Extracted %d beats", len(df))

@@ -308,14 +308,15 @@ def extract_tempo_curve(
 
     beat_idx = np.arange(len(beats), dtype=np.int32) * beat_index_factor
     if pd and hasattr(pd, "DataFrame"):
-        df = pd.DataFrame(
+        df_full = pd.DataFrame(
             {
                 "track_id": np.full(beat_idx.shape, track, np.int32),
                 "beat": beat_idx,
                 "tempo_factor": tempo_factor.astype(np.float32),
                 "time_sec": beats.astype(np.float64),
             }
-        )["track_id beat tempo_factor time_sec".split()]
+        )
+        df = df_full.loc[:, ["track_id", "beat", "tempo_factor", "time_sec"]]
     else:  # pandas unavailable → list fallback
         df = _records(track, beats, tempo_factor, beat_idx)
     logger.debug("Extracted %d beats", len(df))

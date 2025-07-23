@@ -9,7 +9,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import sitecustomize  # noqa: F401
 from utilities import vocal_sync
 from utilities.midi_utils import safe_end_time
 
@@ -26,11 +25,13 @@ import pretty_midi
 from music21 import stream
 from music21.midi import translate
 
+from utilities.pretty_midi_safe import new_pm as PrettyMIDI
+
 
 def write_demo_bar(path: str | Path) -> Path:
     """Write a deterministic 4-beat MIDI bar for tests."""
     out_path = Path(path)
-    pm = pretty_midi.PrettyMIDI(initial_tempo=120)
+    pm = PrettyMIDI(tempo=120)
     inst = pretty_midi.Instrument(program=0)
     qlen = 0.5  # quarter note length in seconds at 120 BPM
     for i in range(4):
@@ -44,7 +45,7 @@ def write_demo_bar(path: str | Path) -> Path:
 
 def append_extra_cc(
     part: stream.Part,
-    track: "mido.MidiTrack",
+    track: mido.MidiTrack,
     to_ticks: Callable[[float], int],
     *,
     channel: int = 0,
@@ -65,7 +66,7 @@ def append_extra_cc(
             )
 
 
-def music21_to_mido(part: stream.Part) -> "mido.MidiFile":
+def music21_to_mido(part: stream.Part) -> mido.MidiFile:
     """Convert a ``music21`` part to ``mido.MidiFile`` preserving ``extra_cc``."""
     if mido is None:  # pragma: no cover - optional dependency
         raise ImportError("mido is required to export MIDI")
@@ -83,7 +84,7 @@ def music21_to_mido(part: stream.Part) -> "mido.MidiFile":
 
 
 def apply_tempo_map(
-    pm: "pretty_midi.PrettyMIDI", tempo_map: list[tuple[float, float]] | None
+    pm: PrettyMIDI, tempo_map: list[tuple[float, float]] | None
 ) -> None:
     """Apply a tempo map to ``pm`` using PrettyMIDI's public API."""
     if tempo_map is None:
@@ -114,11 +115,11 @@ def export_song(
     bars: int,
     *,
     tempo_map: list[tuple[float, float]] | None = None,
-    generators: dict[str, Callable[..., "pretty_midi.PrettyMIDI"]],
+    generators: dict[str, Callable[..., PrettyMIDI]],
     fixed_tempo: float = 120.0,
     out_path: str | Path = "song.mid",
     sections: list[dict[str, Any]] | None = None,
-) -> "pretty_midi.PrettyMIDI":
+) -> PrettyMIDI:
     """Generate multiple parts and export a merged MIDI file.
 
     When ``sections`` are provided each section may include a ``tempo_map`` key
@@ -128,7 +129,7 @@ def export_song(
     """
 
     out_path = Path(out_path)
-    master = pretty_midi.PrettyMIDI(initial_tempo=fixed_tempo)
+    master = PrettyMIDI(tempo=fixed_tempo)
     all_tempos: list[tuple[float, float]] = []
     tempo_tuple: tuple[tuple[float, float], ...] | None = None
 
@@ -138,7 +139,7 @@ def export_song(
 
         for sec in sections:
             vm = vocal_sync.analyse_section(sec, tempo_bpm=fixed_tempo)
-            sec_pms: list[pretty_midi.PrettyMIDI] = []
+            sec_pms: list[PrettyMIDI] = []
             for name, gen in (generators or {}).items():
                 sec_pms.append(gen(sec, fixed_tempo, vocal_metrics=vm))
 
@@ -207,7 +208,7 @@ def _load_tempo_map(path: Path) -> list[tuple[float, float]]:
     return [(float(b), float(t)) for b, t in data]
 
 
-def _import_generator(path: str) -> Callable[[int, float], "pretty_midi.PrettyMIDI"]:
+def _import_generator(path: str) -> Callable[[int, float], PrettyMIDI]:
     mod = importlib.import_module(path)
     return getattr(mod, "generate")
 
@@ -230,7 +231,7 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
 
-    gens: dict[str, Callable[[int, float], "pretty_midi.PrettyMIDI"]] = {}
+    gens: dict[str, Callable[[int, float], PrettyMIDI]] = {}
     if args.drum:
         gens["drum"] = _import_generator(args.drum)
     if args.bass:

@@ -18,6 +18,8 @@ except Exception:  # pragma: no cover - optional dependency
 def _extract_features(pm: pretty_midi.PrettyMIDI) -> tuple[list[int], list[int], list[int]]:
     tempo = pm.get_tempo_changes()[0]
     bpm = float(tempo[0]) if getattr(tempo, "size", 0) else 120.0
+    if bpm <= 0:
+        bpm = 120.0
     beat = 60.0 / bpm
     bar_len = beat * 4
     n_bars = max(1, int(round(pm.get_end_time() / bar_len)))

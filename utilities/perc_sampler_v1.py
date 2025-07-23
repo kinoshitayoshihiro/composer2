@@ -36,8 +36,8 @@ def _token(step: int, label: str, vel: int) -> str:
 
 def _parse_midi(path: Path) -> tuple[list[str], list[float]]:
     pm = pretty_midi.PrettyMIDI(str(path))
-    tempo = pm.get_tempo_changes()[0]
-    bpm = float(tempo[0]) if tempo.size else 120.0
+    _, tempi = pm.get_tempo_changes()
+    bpm = float(tempi[0]) if len(tempi) > 0 else 120.0
     if bpm <= 0:
         bpm = 120.0
     sec_per_beat = 60.0 / bpm

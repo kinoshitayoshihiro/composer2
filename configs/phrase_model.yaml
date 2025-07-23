@@ -1,0 +1,6 @@
+arch: transformer
+data_dir: datasets
+train_csv: train_set.csv
+val_csv: val_set.csv
+epochs: 5
+checkpoint: outputs/phrase.ckpt

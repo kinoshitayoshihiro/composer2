@@ -45,7 +45,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, overload
 
 import numpy as np  # ruff: noqa: I001
-import pandas as pd
+
+try:
+    import pandas as pd
+except Exception:  # pragma: no cover - optional dependency
+    pd = None  # type: ignore
 
 try:
     import pretty_midi  # type: ignore
@@ -80,6 +84,20 @@ __all__: list[str] = sorted(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _records(
+    track: int, beats: np.ndarray, tempo_factor: np.ndarray, beat_idx: np.ndarray
+) -> list[RubatoRow]:
+    return [
+        {
+            "track_id": int(track),
+            "beat": int(b),
+            "tempo_factor": float(tf),
+            "time_sec": float(t),
+        }
+        for b, tf, t in zip(beat_idx, tempo_factor, beats)
+    ]
 
 
 class RubatoRow(TypedDict):
@@ -289,15 +307,17 @@ def extract_tempo_curve(
         track = _choose_primary_track(pm)
 
     beat_idx = np.arange(len(beats), dtype=np.int32) * beat_index_factor
-    df = pd.DataFrame(
-        {
-            "track_id": np.full(beat_idx.shape, track, dtype=np.int32),
-            "beat": beat_idx,
-            "tempo_factor": tempo_factor.astype(np.float32),
-            "time_sec": beats.astype(np.float64),
-        }
-    )
-    df = df[["track_id", "beat", "tempo_factor", "time_sec"]]
+    if pd and hasattr(pd, "DataFrame"):
+        df = pd.DataFrame(
+            {
+                "track_id": np.full(beat_idx.shape, track, np.int32),
+                "beat": beat_idx,
+                "tempo_factor": tempo_factor.astype(np.float32),
+                "time_sec": beats.astype(np.float64),
+            }
+        )["track_id beat tempo_factor time_sec".split()]
+    else:  # pandas unavailable → list fallback
+        df = _records(track, beats, tempo_factor, beat_idx)
     logger.debug("Extracted %d beats", len(df))
     elapsed = time.perf_counter() - start_time
     if logger.isEnabledFor(logging.INFO):
@@ -305,6 +325,9 @@ def extract_tempo_curve(
 
     if return_df:
         return df
+
+    if not (pd and hasattr(pd, "DataFrame")):
+        raise ImportError("pandas is required when return_df is False")
 
     dest = out_path
     if dest is None:

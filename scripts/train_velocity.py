@@ -82,6 +82,7 @@ def augment_wav_dir(
 
 # ----------------------------- Datasets ---------------------------------- #
 
+
 class CsvDataset(Dataset):
     def __init__(self, path: Path, input_dim: int, transform=None) -> None:
         if pd is None:
@@ -162,13 +163,17 @@ def run(cfg: DictConfig) -> int:
         noise = np.random.normal(scale=0.01, size=x.shape)
         return x + noise.astype("float32")
 
-    train_ds = CsvDataset(Path(csv_file), cfg.input_dim, transform=_transform if augment_flag else None)
+    train_ds = CsvDataset(
+        Path(csv_file), cfg.input_dim, transform=_transform if augment_flag else None
+    )
     val_ds = CsvDataset(Path(csv_file), cfg.input_dim)
 
     train_loader = DataLoader(
         train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers
     )
-    val_loader = DataLoader(val_ds, batch_size=cfg.batch_size, num_workers=cfg.num_workers)
+    val_loader = DataLoader(
+        val_ds, batch_size=cfg.batch_size, num_workers=cfg.num_workers
+    )
 
     callbacks = []
     if "callbacks" in cfg.trainer and "early_stopping" in cfg.trainer.callbacks:
@@ -213,7 +218,9 @@ def run(cfg: DictConfig) -> int:
     return 0
 
 
-@hydra.main(config_path="../configs", config_name="velocity_model.yaml", version_base="1.3")
+@hydra.main(
+    config_path="../configs", config_name="velocity_model.yaml", version_base="1.3"
+)
 def hydra_main(cfg: DictConfig) -> int:
     return run(cfg)
 
@@ -226,31 +233,43 @@ def _make_augment_parser() -> argparse.ArgumentParser:
     p.add_argument("--wav-dir", type=Path, default=Path("data/tracks"))
     p.add_argument("--out-dir", type=Path, default=Path("data/tracks_aug"))
     p.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
-    p.add_argument("--seed", type=int, help="Random seed")
+    p.add_argument("--seed", type=int, default=None, help="Random seed")
     p.add_argument("--shifts", default="-2,0,2")
     p.add_argument("--rates", default="0.8,1.2")
     p.add_argument("--snrs", default="20,10")
     p.add_argument("--progress", action="store_true", help="Show progress bar")
-    p.add_argument("--seed", type=int, default=None, help="random seed")
     return p
+
 
 def _make_build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="train_velocity.py build-velocity-csv")
     p.add_argument("--tracks-dir", type=Path, default=Path("data/tracks"))
     p.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
-    p.add_argument("--csv-out", type=Path, default=Path("data/csv/velocity_per_event.csv"))
+    p.add_argument(
+        "--csv-out", type=Path, default=Path("data/csv/velocity_per_event.csv")
+    )
     p.add_argument("--stats-out", type=Path, default=Path("data/csv/track_stats.csv"))
     p.add_argument("--seed", type=int, default=None, help="random seed")
     return p
 
+
 def _make_train_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="train_velocity.py")
-    p.add_argument("--csv-path", type=Path, help="Path to velocity_per_event.csv for training")
-    p.add_argument("--dry-run", action="store_true", help="Print resolved config and exit")
-    p.add_argument("--json", action="store_true", help="With --dry-run, also print JSON")
-    p.add_argument("--augment", action="store_true", help="Enable on-the-fly augmentation")
+    p.add_argument(
+        "--csv-path", type=Path, help="Path to velocity_per_event.csv for training"
+    )
+    p.add_argument(
+        "--dry-run", action="store_true", help="Print resolved config and exit"
+    )
+    p.add_argument(
+        "--json", action="store_true", help="With --dry-run, also print JSON"
+    )
+    p.add_argument(
+        "--augment", action="store_true", help="Enable on-the-fly augmentation"
+    )
     p.add_argument("--seed", type=int, help="Random seed")
     return p
+
 
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -296,11 +315,12 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
         sub = main_parser.add_subparsers(dest="command")
         sub.add_parser("build-velocity-csv", help="Rebuild CSV files")
         sub.add_parser("augment-data", help="Augment WAV files and rebuild CSV")
-        main_parser.add_argument("--csv-path", type=Path, help="Path to CSV for training")
+        main_parser.add_argument(
+            "--csv-path", type=Path, help="Path to CSV for training"
+        )
         main_parser.add_argument("--dry-run", action="store_true")
         main_parser.add_argument("--json", action="store_true")
         main_parser.add_argument("--augment", action="store_true")
-        main_parser.add_argument("--seed", type=int)
         main_parser.print_help()
         raise SystemExit
 
@@ -314,7 +334,11 @@ def main(argv: list[str] | None = None) -> int:
     args, overrides = parse_args(argv)
 
     # Seed handling
-    rng = np.random.default_rng(args.seed) if args.seed is not None else np.random.default_rng()
+    rng = (
+        np.random.default_rng(args.seed)
+        if args.seed is not None
+        else np.random.default_rng()
+    )
     if args.seed is not None:
         np.random.seed(args.seed)
 
@@ -324,8 +348,12 @@ def main(argv: list[str] | None = None) -> int:
             _log_error("pretty_midi required for CSV build")
             return 1
         try:
-            validate_build_inputs(args.tracks_dir, args.drums_dir, args.csv_out, args.stats_out)
-            build_velocity_csv(args.tracks_dir, args.drums_dir, args.csv_out, args.stats_out)
+            validate_build_inputs(
+                args.tracks_dir, args.drums_dir, args.csv_out, args.stats_out
+            )
+            build_velocity_csv(
+                args.tracks_dir, args.drums_dir, args.csv_out, args.stats_out
+            )
             _log_success(f"wrote {args.csv_out}")
             _log_success(f"wrote {args.stats_out}")
             return 0

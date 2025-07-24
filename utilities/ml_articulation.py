@@ -81,8 +81,8 @@ class ArticulationTagger(nn.Module if torch is not None else object):
             batch["pitch"],
             batch["bucket"],
             batch["pedal"],
-            batch["velocity"],
-            batch["qlen"],
+            batch["vel"],
+            batch["dur"],
             labels=batch.get("labels"),
             pad_mask=batch.get("pad_mask"),
         )
@@ -214,19 +214,21 @@ def predict(
     df = extract_from_midi(pm)
 
     rows = list(df.itertuples()) if hasattr(df, "itertuples") else list(df)
-    batch = seq_collate([
+    batch = seq_collate(
         [
-            {
-                "pitch": int(r.pitch),
-                "bucket": int(r.bucket),
-                "pedal_state": int(r.pedal_state),
-                "velocity": float(r.velocity),
-                "qlen": float(r.duration),
-                "label": 0,
-            }
-            for r in rows
+            [
+                {
+                    "pitch": int(r.pitch),
+                    "bucket": int(r.bucket),
+                    "pedal": int(r.pedal_state),
+                    "vel": float(r.velocity),
+                    "dur": float(r.duration),
+                    "label": 0,
+                }
+                for r in rows
+            ]
         ]
-    ])
+    )
     device = next(model.parameters()).device
     for k in batch:
         batch[k] = batch[k].to(device)
@@ -286,9 +288,9 @@ def predict_many(
                 {
                     "pitch": int(r.pitch),
                     "bucket": int(r.bucket),
-                    "pedal_state": int(r.pedal_state),
-                    "velocity": float(r.velocity),
-                    "qlen": float(r.duration),
+                    "pedal": int(r.pedal_state),
+                    "vel": float(r.velocity),
+                    "dur": float(r.duration),
                     "label": 0,
                 }
                 for r in rows

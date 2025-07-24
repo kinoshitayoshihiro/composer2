@@ -18,6 +18,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from random import Random
 
+try:
+    import yaml
+except ImportError:  # pragma: no cover - optional dependency
+    class _DummyYAML:
+        @staticmethod
+        def safe_load(stream):
+            return {}
+
+    yaml = _DummyYAML()  # type: ignore
+
 import pretty_midi
 
 log = logging.getLogger(__name__)
@@ -696,6 +706,20 @@ def generate_events(
         next_bin = abs_bin + 1
 
     events.sort(key=lambda e: e["offset"])
+    return events
+
+
+def style_aux_sampling(
+    model: NGramModel,
+    *,
+    cond: dict[str, str],
+    bars: int = 1,
+    **kwargs,
+) -> list[dict[str, float | str]]:
+    """Generate events for a style and limit to four entries."""
+
+    events = generate_events(model, bars=bars, cond=cond, **kwargs)
+    events = events[:4]
     return events
 
 

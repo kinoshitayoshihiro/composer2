@@ -99,6 +99,7 @@ modcompose = "modular_composer.cli:main"
 train-velocity = "scripts.train_velocity:main"
 dump-tree = "modular_composer.cli:dump_tree_cmd"
 randomize-stem = "modular_composer.cli:randomize_stem"
+lyrics-align = "scripts.align_lyrics:main"
 
 [tool.ruff]
 target-version = "py310"
@@ -145,6 +146,11 @@ ignore_missing_imports = true
 module = ["plotly.*", "streamlit.*", "sounddevice.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+ignore_missing_imports = true
+allow_untyped_calls = true
+
 [tool.pytest.ini_options]
 markers = [
   "ci_perf: performance gate",
@@ -155,7 +161,7 @@ markers = [
 addopts = "--cov=models --cov=realtime"
 
 [tool.coverage.run]
-source = ["models", "realtime"]
+source = ["models", "realtime", "scripts"]
 omit = [
   "realtime/rtmidi_streamer.py",
   "realtime/ws_bridge.py",
@@ -194,4 +200,15 @@ realtime = [
   "websockets",
   "streamlit>=1.30",
   "pandas>=2.1",
+]
+alignment = [
+  "torch",
+  "pytorch-lightning>=2.3",
+  "fastapi>=0.95",
+  "uvicorn>=0.22",
+  "websockets>=12.0",
+  "hydra-core",
+  "pretty_midi>=0.2",
+  "librosa>=0.10",
+  "soundfile>=0.12",
 ]

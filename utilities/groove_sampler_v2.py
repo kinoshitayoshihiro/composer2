@@ -188,7 +188,9 @@ def midi_to_events(pm: "pretty_midi.PrettyMIDI") -> List[Tuple[float, int]]:
     _times, tempi = pm.get_tempo_changes()
     tempo = float(tempi[0]) if len(tempi) > 0 else 120.0
     if tempo <= 0:
-        logger.warning("Non-positive tempo %.2f detected; using default 120 BPM.", tempo)
+        logger.warning(
+            "Non-positive tempo %.2f detected; using default 120 BPM.", tempo
+        )
         tempo = 120.0
     sec_per_beat = 60.0 / tempo
 
@@ -462,7 +464,7 @@ def sample_next(
         Nucleus sampling threshold applied after ``top_k``.
     """
 
-    n = model.n
+    n = model.n if model.n is not None else 4
     aux_val = None
     if cond is not None and model.aux_key:
         aux_val = cond.get(model.aux_key)
@@ -483,7 +485,7 @@ def sample_next(
                 arr = arr.astype(float)
         if arr is not None and arr.sum() > 0:
             probs = arr.astype(float)
-            if cond_kick in {"four_on_floor", "sparse"}:
+            if cond_kick in {"four_on_floor", "sparse"} and model.idx_to_state:
                 for i, st in enumerate(model.idx_to_state):
                     if st[2] == "kick":
                         if cond_kick == "four_on_floor" and bucket == 0:
@@ -495,7 +497,9 @@ def sample_next(
             probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
             total = probs.sum()
             if total == 0:
-                return rng.randrange(len(model.idx_to_state))
+                return rng.randrange(
+                    len(model.idx_to_state) if model.idx_to_state else 1
+                )
             probs /= total
             return _choose(probs, rng)
 
@@ -512,7 +516,7 @@ def sample_next(
             arr = arr.astype(float)
     if arr is not None and arr.sum() > 0:
         probs = arr.astype(float)
-        if cond_kick in {"four_on_floor", "sparse"}:
+        if cond_kick in {"four_on_floor", "sparse"} and model.idx_to_state:
             for i, st in enumerate(model.idx_to_state):
                 if st[2] == "kick":
                     if cond_kick == "four_on_floor" and bucket == 0:
@@ -524,14 +528,14 @@ def sample_next(
         probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
         total = probs.sum()
         if total == 0:
-            return rng.randrange(len(model.idx_to_state))
+            return rng.randrange(len(model.idx_to_state) if model.idx_to_state else 1)
         probs /= total
         return _choose(probs, rng)
 
-    b_arr = model.bucket_freq.get(bucket)
+    b_arr = model.bucket_freq.get(bucket) if model.bucket_freq is not None else None
     if b_arr is not None and b_arr.sum() > 0:
         probs = b_arr.astype(float)
-        if cond_kick in {"four_on_floor", "sparse"}:
+        if cond_kick in {"four_on_floor", "sparse"} and model.idx_to_state:
             for i, st in enumerate(model.idx_to_state):
                 if st[2] == "kick":
                     if cond_kick == "four_on_floor" and bucket == 0:
@@ -543,11 +547,11 @@ def sample_next(
         probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
         total = probs.sum()
         if total == 0:
-            return rng.randrange(len(model.idx_to_state))
+            return rng.randrange(len(model.idx_to_state) if model.idx_to_state else 1)
         probs /= total
         return _choose(probs, rng)
 
-    return rng.randrange(len(model.idx_to_state))
+    return rng.randrange(len(model.idx_to_state) if model.idx_to_state else 1)
 
 
 def generate_events(
@@ -617,7 +621,11 @@ def generate_events(
             cond_kick=cond_kick,
             cond=cond,
         )
-        bar_mod, bin_in_bar, lbl = model.idx_to_state[idx]
+        if model.idx_to_state and idx < len(model.idx_to_state):
+            bar_mod, bin_in_bar, lbl = model.idx_to_state[idx]
+        else:
+            # フォールバック: デフォルト値を使用
+            bar_mod, bin_in_bar, lbl = 0, 0, "kick"
         if model.resolution_coarse != res:
             bin_in_bar *= 4
         abs_bin = (next_bin // bar_len) * bar_len + bin_in_bar
@@ -682,7 +690,8 @@ def generate_events(
                     }
                 )
         history.append(idx)
-        if len(history) > model.n - 1:
+        n = model.n if model.n is not None else 4
+        if len(history) > n - 1:
             history.pop(0)
         next_bin = abs_bin + 1
 

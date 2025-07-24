@@ -1,18 +1,18 @@
+from __future__ import annotations
+
 # ruff: noqa: E402,F404
 # === local-stub (CLI) — precedes everything ===  # pragma: no cover
 import importlib.machinery
 import sys
 import types
 
-for _n in ("yaml", "pkg_resources", "scipy", "scipy.signal"):
+for _n in ("pkg_resources", "scipy", "scipy.signal"):
     mod = types.ModuleType(_n)
     mod.__spec__ = importlib.machinery.ModuleSpec(_n, loader=None)
     sys.modules.setdefault(_n, mod)
 # === end stub ===
 """CLI utility to generate a manifest of timbre-transfer training pairs."""
 
-
-from __future__ import annotations
 
 import argparse
 import csv
@@ -25,7 +25,17 @@ import numpy as np
 if TYPE_CHECKING:  # pragma: no cover - hints only
     pass
 
-from utilities.bass_timbre_dataset import BassTimbreDataset, TimbrePair, compute_mel_pair
+# Add the parent directory to sys.path so we can import utilities
+import sys
+from pathlib import Path as SysPath
+
+sys.path.insert(0, str(SysPath(__file__).parent.parent))
+
+from utilities.bass_timbre_dataset import (
+    BassTimbreDataset,
+    TimbrePair,
+    compute_mel_pair,
+)
 
 
 def _process(args: tuple[TimbrePair, str, int, Path]) -> tuple[str, str, str, int]:
@@ -68,8 +78,12 @@ def main() -> None:
         try:
             from tqdm import tqdm  # type: ignore[import,unused-ignore]
         except Exception:
-            def tqdm(x: list[object] | object) -> list[object] | object:  # pragma: no cover
+
+            def tqdm(
+                x: list[object] | object,
+            ) -> list[object] | object:  # pragma: no cover
                 return x
+
         results = []
         for pair in tqdm(ds.pairs):
             results.append(_process((pair, args.src, args.max_len, args.out_dir)))

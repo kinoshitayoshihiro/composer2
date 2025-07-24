@@ -2,7 +2,18 @@ from __future__ import annotations
 
 """Simple FastAPI server exposing sax solo generation."""
 
-from fastapi import FastAPI, Request, HTTPException
+try:
+    from fastapi import FastAPI, Request, HTTPException
+except ImportError:  # pragma: no cover - optional dependency
+    class FastAPI:  # type: ignore
+        def __init__(self) -> None:
+            pass
+
+        def post(self, path):
+            return lambda f: f
+
+    Request = object  # type: ignore
+    HTTPException = Exception
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 

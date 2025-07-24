@@ -32,7 +32,6 @@ import pretty_midi
 from data.articulation_dataset import seq_collate
 from ml_models import NoteFeatureEmbedder
 from utilities.articulation_csv import extract_from_midi
-from dataclasses import asdict
 
 
 class ArticulationTagger(nn.Module if torch is not None else object):
@@ -213,7 +212,8 @@ def predict(
         mf = music21.midi.translate.streamToMidiFile(score)
         pm = pretty_midi.PrettyMIDI(io.BytesIO(mf.writestr()))
     df = extract_from_midi(pm)
-    rows = list(df.itertuples()) if hasattr(df, "itertuples") else [asdict(r) for r in df]
+    # Preserve dataclass rows so attribute access works during feature extraction
+    rows = list(df.itertuples()) if hasattr(df, "itertuples") else list(df)
     batch = seq_collate([
         [
             {
@@ -279,7 +279,8 @@ def predict_many(
             mf = music21.midi.translate.streamToMidiFile(s)
             pm = pretty_midi.PrettyMIDI(io.BytesIO(mf.writestr()))
         df = extract_from_midi(pm)
-        rows = list(df.itertuples()) if hasattr(df, "itertuples") else [asdict(r) for r in df]
+        # Keep dataclass rows instead of converting to dicts
+        rows = list(df.itertuples()) if hasattr(df, "itertuples") else list(df)
         pm_list.append(
             [
                 {

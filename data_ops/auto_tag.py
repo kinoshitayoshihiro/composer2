@@ -15,7 +15,7 @@ except Exception:  # pragma: no cover - optional dependency
     GaussianHMM = None
 
 
-def _extract_features(pm: pretty_midi.PrettyMIDI) -> tuple[list[int], list[int], list[int]]:
+def _extract_features(pm: pretty_midi.PrettyMIDI) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     tempo = pm.get_tempo_changes()[0]
     bpm = float(tempo[0]) if getattr(tempo, "size", 0) else 120.0
     if bpm <= 0:
@@ -37,7 +37,7 @@ def _extract_features(pm: pretty_midi.PrettyMIDI) -> tuple[list[int], list[int],
         else:
             velocity.append(0)
             energy.append(0)
-    return density, velocity, energy
+    return np.array(density), np.array(velocity), np.array(energy)
 
 
 def auto_tag(
@@ -51,7 +51,7 @@ def auto_tag(
     densities: list[int] = []
     velocities: list[int] = []
     energies: list[int] = []
-    per_file: list[tuple[str, list[int], list[int], list[int]]] = []
+    per_file: list[tuple[str, np.ndarray, np.ndarray, np.ndarray]] = []
     for p in sorted(loop_dir.glob("*.mid")):
         pm = pretty_midi.PrettyMIDI(str(p))
         dens, vels, eng = _extract_features(pm)

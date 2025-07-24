@@ -7,6 +7,9 @@ import pandas as pd
 import pretty_midi
 import streamlit as st
 
+if not hasattr(st, "cache_data"):
+    st.cache_data = st.cache
+
 from scripts.segment_phrase import load_model, segment_bytes
 
 

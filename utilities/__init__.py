@@ -17,6 +17,19 @@ utilities package -- 音楽生成プロジェクト全体で利用されるコ�
         - NUMPY_AVAILABLE
 """
 
+import numpy as np
+import pretty_midi
+
+_orig = pretty_midi.PrettyMIDI.get_tempo_changes
+
+
+def _patched_get_tempo_changes(self, *args, **kwargs):
+    times, tempi = _orig(self, *args, **kwargs)
+    return np.array(times), np.array(tempi)
+
+
+pretty_midi.PrettyMIDI.get_tempo_changes = _patched_get_tempo_changes
+
 import importlib
 import importlib.util as importlib_util
 from typing import TYPE_CHECKING, Any
@@ -180,9 +193,9 @@ from .tempo_utils import (
     get_bpm_at,
     get_tempo_at_beat,
     interpolate_bpm,
-    load_tempo_map,
 )
 from .tempo_utils import load_tempo_curve as load_tempo_curve_simple
+from .tempo_utils import load_tempo_map
 from .velocity_curve import PREDEFINED_CURVES, resolve_velocity_curve
 from .velocity_smoother import EMASmoother, VelocitySmoother
 

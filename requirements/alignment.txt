@@ -1,0 +1,9 @@
+torch>=2.0
+pytorch-lightning>=2.3
+fastapi>=0.95
+uvicorn>=0.22
+websockets>=12.0
+hydra-core
+pretty_midi>=0.2
+librosa>=0.10
+soundfile>=0.12

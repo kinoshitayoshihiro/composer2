@@ -79,6 +79,12 @@ def seq_collate(batch: list[list[dict[str, float | int]]]) -> dict[str, torch.Te
 
     max_len = max(len(seq) for seq in batch)
 
+    for seq in batch:
+        for item in seq:
+            item["pedal"] = item.get("pedal_state", 0)
+            item["vel"] = item.get("velocity", 0.0)
+            item["dur"] = item.get("qlen", 0)
+
     def pad(
         seq: list[dict[str, float | int]], key: str, fill: float | int
     ) -> list[float | int]:

@@ -21,9 +21,9 @@ def test_style_aux_sampling(tmp_path: Path) -> None:
     _make_loop(tmp_path / "lofi.mid", [0, 8], "lofi")
     _make_loop(tmp_path / "funk.mid", list(range(8)), "funk")
     model = groove_sampler_v2.train(tmp_path, aux_key="style")
-    ev_lofi = groove_sampler_v2.generate_events(model, bars=1, cond={"style": "lofi"})
-    ev_funk = groove_sampler_v2.generate_events(model, bars=1, cond={"style": "funk"})
+    ev_lofi = groove_sampler_v2.style_aux_sampling(model, bars=1, cond={"style": "lofi"})
+    ev_funk = groove_sampler_v2.style_aux_sampling(model, bars=1, cond={"style": "funk"})
     assert len(ev_lofi) <= 4
     assert len(ev_funk) >= 8
-    ev_mix = groove_sampler_v2.generate_events(model, bars=1)
+    ev_mix = groove_sampler_v2.style_aux_sampling(model, bars=1)
     assert 4 <= len(ev_mix) <= 8

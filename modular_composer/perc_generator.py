@@ -22,3 +22,12 @@ class PercGenerator:
             cond=self.cond,
             **kwargs,
         )
+
+    def generate_bar(self, **kwargs: Any) -> list[dict[str, float | str]]:
+        """Generate a single bar of percussion events."""
+        return groove_sampler_v2.generate_events(
+            self.model,
+            bars=1,
+            cond=self.cond,
+            **kwargs,
+        )

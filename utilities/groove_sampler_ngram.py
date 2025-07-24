@@ -1049,7 +1049,7 @@ def _generate_bar(
                 choices = list(model["micro_offsets"].get(lbl, Counter()).elements())
             if choices:
                 micro = int(round(rand.choice(choices)))
-                limit = micro_bounds.get(lbl, micro_max)
+                limit = min(micro_bounds.get(lbl, micro_max), micro_max)
                 micro = max(-limit, min(limit, micro))
                 micro = int(round(micro))
         vel_mean = int(model["mean_velocity"].get(lbl, 100))
@@ -1341,6 +1341,7 @@ def sample_cmd(
     """
 
     model = load(model_path)
+    length = max(0, min(length, 64))
     combos = sorted(model.get("aux_cache", {}).values())
     cond_map = json.loads(cond) if cond else None
     if cond_map:

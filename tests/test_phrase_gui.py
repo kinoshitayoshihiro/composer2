@@ -7,27 +7,24 @@ MIDI = bytes.fromhex("4d54686400000006000100010060" "4d54726b0000000400ff2f00")
 
 
 def _ensure_pandas(out: list) -> None:
-    """Provide a tiny pandas stub only when pandas is unavailable."""
+    """Install lightweight pandas stub when pandas is missing."""
 
-    try:  # prefer the real pandas
-        import pandas as pd_mod
+    try:
+        import pandas as pd_mod  # noqa: F401
         if hasattr(pd_mod, "DataFrame"):
             return
-    except Exception:  # pragma: no cover - optional dependency
+    except Exception:
         pass
 
-    pd = ModuleType("pandas")
+    from utilities import pd_stub
 
-    class DF(list):
-        pass
-
-    def DataFrame(data: dict) -> DF:  # pragma: no cover - stub
-        df = DF(data.get("roll", []))
+    def DataFrame(data: dict) -> pd_stub._DF:  # type: ignore
+        df = pd_stub._DF(data.get("roll", []))
         out.append(df)
         return df
 
-    pd.DataFrame = DataFrame
-    sys.modules["pandas"] = pd
+    pd_stub.install_pandas_stub()
+    sys.modules["pandas"].DataFrame = DataFrame  # type: ignore
 
 
 def _stub_pretty_midi() -> None:

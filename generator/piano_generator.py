@@ -721,7 +721,7 @@ class PianoGenerator(BasePartGenerator):
         if rest_windows:
             for part in (rh_part, lh_part):
                 for n in list(part.recurse().notes):
-                    if any(s <= n.offset < e for s, e in rest_windows):
+                    if any(s <= n.offset <= e for s, e in rest_windows):
                         part.remove(n)
             if anticipatory:
                 v = [n.volume.velocity or 64 for n in rh_part.recurse().notes]

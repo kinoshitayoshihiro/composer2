@@ -5,6 +5,8 @@ from types import ModuleType
 
 import pytest
 
+pytestmark = pytest.mark.asyncio
+
 
 class DummyWS:
     async def __aenter__(self):  # pragma: no cover - stub

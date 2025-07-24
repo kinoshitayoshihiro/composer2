@@ -27,7 +27,7 @@ class ArticRow:
     articulation_label: str | None
 
 
-def extract_from_midi(src: Path | pretty_midi.PrettyMIDI) -> list[ArticRow]:
+def extract_from_midi(src: Path | pretty_midi.PrettyMIDI) -> pd.DataFrame:
     """Return note features for ML training from a MIDI file or object."""
     # Load PrettyMIDI object if a file path is provided
     pm = src if isinstance(src, pretty_midi.PrettyMIDI) else pretty_midi.PrettyMIDI(str(src))
@@ -40,7 +40,7 @@ def extract_from_midi(src: Path | pretty_midi.PrettyMIDI) -> list[ArticRow]:
     pedal_times = np.array([cc.time for cc in pedal_events])
     pedal_vals = np.array([cc.value for cc in pedal_events])
 
-    rows: list[ArticRow] = []
+    rows: list[dict[str, float | int | str | None]] = []
     for track_id, inst in enumerate(pm.instruments):
         for note in inst.notes:
             # Compute onset and duration in quarterLength
@@ -58,19 +58,19 @@ def extract_from_midi(src: Path | pretty_midi.PrettyMIDI) -> list[ArticRow]:
                 pedal_state = 0
 
             rows.append(
-                ArticRow(
-                    track_id=track_id,
-                    pitch=note.pitch,
-                    onset=onset,
-                    duration=qlen,
-                    velocity=note.velocity / 127.0,
-                    pedal_state=pedal_state,
-                    bucket=to_bucket(qlen),
-                    articulation_label=None,
-                )
+                {
+                    "track_id": track_id,
+                    "pitch": note.pitch,
+                    "onset": onset,
+                    "duration": qlen,
+                    "velocity": note.velocity / 127.0,
+                    "pedal_state": pedal_state,
+                    "bucket": to_bucket(qlen),
+                    "articulation_label": None,
+                }
             )
 
-    return rows
+    return pd.DataFrame(rows)
 
 
 def main() -> None:
@@ -82,13 +82,13 @@ def main() -> None:
     args = parser.parse_args()
 
     # Process all MIDI files in the directory
-    all_rows: list[ArticRow] = []
+    all_dfs: list[pd.DataFrame] = []
     for midi_file in sorted(args.midi_dir.glob("*.mid")):
-        rows = extract_from_midi(midi_file)
-        all_rows.extend(rows)
+        df = extract_from_midi(midi_file)
+        all_dfs.append(df)
 
-    if all_rows:
-        result = pd.DataFrame([r.__dict__ for r in all_rows])
+    if all_dfs:
+        result = pd.concat(all_dfs, ignore_index=True)
         result.to_csv(args.csv_out, index=False)
         print(f"Wrote {len(result)} rows to {args.csv_out}")
     else:

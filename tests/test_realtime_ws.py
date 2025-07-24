@@ -7,6 +7,8 @@ from types import ModuleType
 
 import pytest
 
+pytestmark = pytest.mark.asyncio
+
 
 def _load_module() -> ModuleType:
     if importlib.util.find_spec("fastapi") is None:

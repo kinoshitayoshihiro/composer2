@@ -226,6 +226,7 @@ def _make_augment_parser() -> argparse.ArgumentParser:
     p.add_argument("--wav-dir", type=Path, default=Path("data/tracks"))
     p.add_argument("--out-dir", type=Path, default=Path("data/tracks_aug"))
     p.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
+    p.add_argument("--seed", type=int, help="Random seed")
     p.add_argument("--shifts", default="-2,0,2")
     p.add_argument("--rates", default="0.8,1.2")
     p.add_argument("--snrs", default="20,10")

@@ -34,8 +34,11 @@ class LoopEntry(TypedDict):
 
 
 def _load_loops(path: Path) -> list[LoopEntry]:
-    with path.open("r", encoding="utf-8") as fh:
-        obj = json.load(fh)
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            obj = json.load(fh)
+    except FileNotFoundError:
+        return []
     res: list[LoopEntry] = []
     for entry in obj["data"]:
         res.append(

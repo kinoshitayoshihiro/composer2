@@ -12,6 +12,11 @@ except ImportError:  # pragma: no cover - optional dependency
         def post(self, path):
             return lambda f: f
 
+        def middleware(self, name):
+            def decorator(f):
+                return f
+            return decorator
+
     Request = object  # type: ignore
     HTTPException = Exception
 from fastapi.responses import JSONResponse

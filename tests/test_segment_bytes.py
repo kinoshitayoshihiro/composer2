@@ -65,6 +65,7 @@ def _stub_pandas() -> None:
         return
 
     from utilities import pd_stub
+
     pd_stub.install_pandas_stub()
 
 
@@ -116,6 +117,7 @@ def _stub_pretty_midi() -> None:
 
     try:  # use the real package when available
         import pretty_midi as _pm  # noqa: F401
+
         if _pm.__class__.__name__ != "_dummy_module":
             return
     except Exception:  # pragma: no cover - optional dependency
@@ -124,7 +126,9 @@ def _stub_pretty_midi() -> None:
     pm = ModuleType("pretty_midi")
 
     class PrettyMIDI:
-        def __init__(self, _file=None, *, initial_tempo=120) -> None:  # pragma: no cover - stub
+        def __init__(
+            self, _file=None, *, initial_tempo=120
+        ) -> None:  # pragma: no cover - stub
             self.instruments = []
             self.initial_tempo = initial_tempo
 
@@ -137,13 +141,17 @@ def _stub_pretty_midi() -> None:
             return np.ones((1, 4))
 
     class Instrument(list):
-        def __init__(self, program: int = 0, is_drum: bool = False) -> None:  # pragma: no cover - stub
+        def __init__(
+            self, program: int = 0, is_drum: bool = False
+        ) -> None:  # pragma: no cover - stub
             super().__init__()
             self.program = program
             self.is_drum = is_drum
 
     class Note:
-        def __init__(self, velocity: int, pitch: int, start: float, end: float) -> None:  # pragma: no cover - stub
+        def __init__(
+            self, velocity: int, pitch: int, start: float, end: float
+        ) -> None:  # pragma: no cover - stub
             self.velocity = velocity
             self.pitch = pitch
             self.start = start
@@ -167,6 +175,14 @@ def _stub_streamlit() -> None:
     st.line_chart = lambda *a, **k: None
     st.warning = lambda *a, **k: None
     st.session_state = {}
+
+    # Add cache methods for compatibility
+    def cache_decorator(func):
+        return func
+
+    st.cache = cache_decorator
+    st.cache_data = cache_decorator
+
     sys.modules["streamlit"] = st
 
 

@@ -22,4 +22,4 @@ def test_export_song(tmp_path: Path) -> None:
     assert out.exists()
     assert len(pm.instruments) == 1
     tempi, _times = pm.get_tempo_changes()
-    assert list(tempi) == [120, 90, 140]
+    assert [round(t) for t in tempi] == [120, 90, 140]

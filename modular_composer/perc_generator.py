@@ -23,6 +23,10 @@ class PercGenerator:
             **kwargs,
         )
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get model configuration value."""
+        return getattr(self.model, key, default)
+
     def generate_bar(self, **kwargs: Any) -> list[dict[str, float | str]]:
         """Generate a single bar of percussion events."""
         return groove_sampler_v2.generate_events(

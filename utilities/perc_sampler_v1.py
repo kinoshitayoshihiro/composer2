@@ -22,11 +22,16 @@ PERC_NOTE_MAP = {
     77: "cowbell",
 }
 
+
 @dataclass
 class PercModel:
     order: int
     resolution: int
     freq: dict[tuple[str, ...], Counter[str]]
+
+    def get(self, key: str, default=None):
+        """Get model attribute by key."""
+        return getattr(self, key, default)
 
 
 def _token(step: int, label: str, vel: int) -> str:
@@ -90,7 +95,9 @@ def load(path: Path) -> PercModel:
         return pickle.load(fh)
 
 
-def _sample_next(model: PercModel, ctx: list[str], rng: Random, temperature: float) -> str:
+def _sample_next(
+    model: PercModel, ctx: list[str], rng: Random, temperature: float
+) -> str:
     for l in range(len(ctx), -1, -1):
         sub = tuple(ctx[-l:])
         dist = model.freq.get(sub)
@@ -112,7 +119,13 @@ def _sample_next(model: PercModel, ctx: list[str], rng: Random, temperature: flo
     return rng.choices(choices, probs)[0]
 
 
-def generate_bar(history: list[str], *, model: PercModel, temperature: float = 1.0, seed: int | None = None) -> list[dict]:
+def generate_bar(
+    history: list[str],
+    *,
+    model: PercModel,
+    temperature: float = 1.0,
+    seed: int | None = None,
+) -> list[dict]:
     rng = Random(seed)
     res = model.resolution
     ctx = history[-(model.order - 1) :] if model.order > 1 else []
@@ -132,17 +145,20 @@ def generate_bar(history: list[str], *, model: PercModel, temperature: float = 1
         label, step_str = lbl_step.split("@")
         step = int(step_str)
         velocity = 80 if suf == "h" else 50
-        events.append({
-            "instrument": label,
-            "offset": step / res,
-            "duration": 1 / res,
-            "velocity": velocity,
-        })
+        events.append(
+            {
+                "instrument": label,
+                "offset": step / res,
+                "duration": 1 / res,
+                "velocity": velocity,
+            }
+        )
     return events
 
 
 if __name__ == "__main__":
     import argparse
+
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=["train", "sample"])
     ap.add_argument("path", type=Path)
@@ -159,4 +175,3 @@ if __name__ == "__main__":
         hist: list[str] = []
         ev = generate_bar(hist, model=model, seed=42)
         print(ev)
-

@@ -11,6 +11,7 @@ def _ensure_pandas(out: list) -> None:
 
     try:
         import pandas as pd_mod  # noqa: F401
+
         if hasattr(pd_mod, "DataFrame"):
             return
     except Exception:
@@ -32,6 +33,7 @@ def _stub_pretty_midi() -> None:
 
     try:  # prefer the actual dependency if installed
         import pretty_midi as _pm  # noqa: F401
+
         return
     except Exception:  # pragma: no cover - optional dependency
         pass
@@ -39,7 +41,9 @@ def _stub_pretty_midi() -> None:
     pm = ModuleType("pretty_midi")
 
     class PrettyMIDI:
-        def __init__(self, _f=None, *, initial_tempo=120) -> None:  # pragma: no cover - stub
+        def __init__(
+            self, _f=None, *, initial_tempo=120
+        ) -> None:  # pragma: no cover - stub
             self.instruments = []
             self.initial_tempo = initial_tempo
 
@@ -52,13 +56,17 @@ def _stub_pretty_midi() -> None:
             return np.ones((1, 4))
 
     class Instrument(list):
-        def __init__(self, program: int = 0, is_drum: bool = False) -> None:  # pragma: no cover - stub
+        def __init__(
+            self, program: int = 0, is_drum: bool = False
+        ) -> None:  # pragma: no cover - stub
             super().__init__()
             self.program = program
             self.is_drum = is_drum
 
     class Note:
-        def __init__(self, velocity: int, pitch: int, start: float, end: float) -> None:  # pragma: no cover - stub
+        def __init__(
+            self, velocity: int, pitch: int, start: float, end: float
+        ) -> None:  # pragma: no cover - stub
             self.velocity = velocity
             self.pitch = pitch
             self.start = start
@@ -87,6 +95,13 @@ def _ensure_streamlit(upload: bytes | None = None, charts: list | None = None) -
         st.file_uploader = lambda *a, **k: F()
     st.title = lambda *a, **k: None
     st.json = lambda *a, **k: None
+
+    # Add cache methods for compatibility
+    def cache_decorator(func):
+        return func
+
+    st.cache = cache_decorator
+    st.cache_data = cache_decorator
 
     def line_chart(df):
         if charts is not None:

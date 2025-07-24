@@ -231,6 +231,7 @@ def _make_augment_parser() -> argparse.ArgumentParser:
     p.add_argument("--rates", default="0.8,1.2")
     p.add_argument("--snrs", default="20,10")
     p.add_argument("--progress", action="store_true", help="Show progress bar")
+    p.add_argument("--seed", type=int, default=None, help="random seed")
     return p
 
 def _make_build_parser() -> argparse.ArgumentParser:
@@ -239,6 +240,7 @@ def _make_build_parser() -> argparse.ArgumentParser:
     p.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
     p.add_argument("--csv-out", type=Path, default=Path("data/csv/velocity_per_event.csv"))
     p.add_argument("--stats-out", type=Path, default=Path("data/csv/track_stats.csv"))
+    p.add_argument("--seed", type=int, default=None, help="random seed")
     return p
 
 def _make_train_parser() -> argparse.ArgumentParser:
@@ -252,11 +254,26 @@ def _make_train_parser() -> argparse.ArgumentParser:
 
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     argv = list(sys.argv[1:] if argv is None else argv)
+    parser = _make_train_parser()
     if not argv:
-        parser = _make_train_parser()
         return parser.parse_known_args(argv)
 
-    if argv[0] == "build-velocity-csv":
+    # handle global options before sub-command
+    known, remaining = parser.parse_known_args(argv)
+    if remaining and remaining[0] in {"build-velocity-csv", "augment-data"}:
+        cmd = remaining[0]
+        if cmd == "build-velocity-csv":
+            sub = _make_build_parser()
+        else:
+            sub = _make_augment_parser()
+        sub_args = sub.parse_args(remaining[1:])
+        for k, v in vars(known).items():
+            setattr(sub_args, k, v)
+        sub_args.command = cmd
+        return sub_args, []
+    argv = remaining
+
+    if argv and argv[0] == "build-velocity-csv":
         parser = _make_build_parser()
         if "--help" in argv or "-h" in argv:
             parser.print_help()
@@ -265,7 +282,7 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
         args.command = "build-velocity-csv"
         return args, []
 
-    if argv[0] == "augment-data":
+    if argv and argv[0] == "augment-data":
         parser = _make_augment_parser()
         if "--help" in argv or "-h" in argv:
             parser.print_help()

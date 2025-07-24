@@ -1953,7 +1953,7 @@ class BassGenerator(BasePartGenerator):
 
         for rel_offset, note_obj_to_add in generated_notes_for_block:
             current_note_abs_offset_in_block = rel_offset
-            if any(s <= current_note_abs_offset_in_block < e for s, e in rest_windows):
+            if any(s <= current_note_abs_offset_in_block <= e for s, e in rest_windows):
                 continue
             end_of_note_in_block = (
                 current_note_abs_offset_in_block

@@ -90,7 +90,7 @@ def apply_tempo_map(
     if tempo_map is None:
         return
     tempo_map = sorted((float(b), float(t)) for b, t in tempo_map)
-    tempi = [bpm for _, bpm in tempo_map]
+    tempi = [int(round(bpm)) for _, bpm in tempo_map]
     times = [tempo_utils.beat_to_seconds(b, tempo_map) for b, _ in tempo_map]
     if hasattr(pm, "set_tempo_changes"):
         pm.set_tempo_changes(tempi, times)

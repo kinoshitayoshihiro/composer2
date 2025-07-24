@@ -950,6 +950,16 @@ def sample(
     except Exception:
         pass
 
+    # clamp micro timing offsets in final events
+    for ev in events:
+        start_beats = float(ev.get("offset", 0.0))
+        raw_offset_ticks = round(start_beats * PPQ)
+        step_ticks = round(start_beats * 4) * (PPQ // 4)
+        micro = raw_offset_ticks - step_ticks
+        micro = int(micro)
+        micro = max(-micro_max, min(micro_max, micro))
+        ev["offset"] = (step_ticks + micro) / PPQ
+
     events.sort(key=lambda x: x["offset"])
     if history_arg is not None:
         history_arg[:] = history
@@ -1144,7 +1154,7 @@ def generate_bar_legacy(
     return events, history if history is not None else []
 
 def events_to_midi(events: Sequence[Event]) -> pretty_midi.PrettyMIDI:
-    pm = pretty_midi.PrettyMIDI(initial_tempo=120)
+    pm = pretty_midi.PrettyMIDI(initial_tempo=120, resolution=PPQ)
     inst = pretty_midi.Instrument(program=0, is_drum=True)
     pitch_map = {k: v[1] for k, v in GM_DRUM_MAP.items()}
     for ev in events:

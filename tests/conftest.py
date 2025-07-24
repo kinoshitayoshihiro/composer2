@@ -21,7 +21,7 @@ def _basic_gen():
         default_args = {
             "global_settings": {},
             "default_instrument": instrument.Guitar(),
-            "part_name": "g",  # テストで使用されているpart_nameに合わせる
+            "part_name": "guitar",
             "global_tempo": 120,
             "global_time_signature": "4/4",
             "global_key_signature_tonic": "C",

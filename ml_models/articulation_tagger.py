@@ -59,6 +59,18 @@ class ArticulationTagger(pl.LightningModule):
         self.log("loss", loss)
         return loss
 
+    def decode_batch(self, batch: dict[str, torch.Tensor]) -> list[list[int]]:
+        """Decode batch using CRF Viterbi algorithm."""
+        with torch.no_grad():
+            pitch = batch["pitch"]
+            dur = batch["dur"]
+            vel = batch["vel"]
+            pedal = batch["pedal"]
+            mask = batch.get("mask", torch.ones_like(pitch, dtype=torch.bool))
+
+            emissions = self(pitch, dur, vel, pedal)
+            return self.crf.decode(emissions, mask)
+
     def configure_optimizers(self) -> dict:
         opt = torch.optim.Adam(self.parameters(), lr=1e-3)
         sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, patience=2)

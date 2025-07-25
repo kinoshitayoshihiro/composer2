@@ -81,8 +81,8 @@ class ArticulationTagger(nn.Module if torch is not None else object):
             batch["pitch"],
             batch["bucket"],
             batch["pedal"],
-            batch["vel"],
-            batch["dur"],
+            batch["velocity"],
+            batch["qlen"],
             labels=batch.get("labels"),
             pad_mask=batch.get("pad_mask"),
         )

@@ -19,8 +19,11 @@ class DurationDataset(Dataset):
         g = self.groups[idx]
         L = len(g)
         pad = self.max_len - L
-        # 'pitch'列から pitch_class を計算
-        pitch_class_list = [p % 12 for p in g["pitch"]]
+        # 'pitch_class'列が既に存在する場合はそれを使用、そうでなければ'pitch'から計算
+        if "pitch_class" in g.columns:
+            pitch_class_list = list(g["pitch_class"])
+        else:
+            pitch_class_list = [p % 12 for p in g["pitch"]]
         pc = torch.tensor(pitch_class_list + [0] * pad, dtype=torch.long)
         dur = torch.tensor(list(g["duration"]) + [0.0] * pad, dtype=torch.float32)
         vel = torch.tensor(list(g["velocity"]) + [0.0] * pad, dtype=torch.float32)

@@ -63,10 +63,12 @@ class ArticulationTagger(pl.LightningModule):
         """Decode batch using CRF Viterbi algorithm."""
         with torch.no_grad():
             pitch = batch["pitch"]
-            dur = batch["dur"]
-            vel = batch["vel"]
+            dur = batch["qlen"]
+            vel = batch["velocity"]
             pedal = batch["pedal"]
-            mask = batch.get("mask", torch.ones_like(pitch, dtype=torch.bool))
+            mask = batch.get("mask") or batch.get("pad_mask")
+            if mask is None:
+                mask = torch.ones_like(pitch, dtype=torch.bool)
 
             emissions = self(pitch, dur, vel, pedal)
             return self.crf.decode(emissions, mask)

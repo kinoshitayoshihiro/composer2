@@ -5,9 +5,8 @@ import types
 import numpy as np
 
 if importlib.util.find_spec("soundfile") is None:
-    sf = types.SimpleNamespace(
-        write=lambda p, d, sr: Path(p).write_bytes(b""),
-    )
+    sf = types.ModuleType("soundfile")
+    sf.write = lambda p, d, sr: Path(p).write_bytes(b"")
 else:
     import soundfile as sf
 import importlib

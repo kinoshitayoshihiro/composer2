@@ -15,7 +15,9 @@ def test_synthesize_cli(tmp_path, monkeypatch):
         calls['args'] = (Path(m), p)
         return b"Hello"
 
-    monkeypatch.setitem(sys.modules, 'tts_model', types.SimpleNamespace(synthesize=fake_synth))
+    mod = types.ModuleType('tts_model')
+    mod.synthesize = fake_synth
+    monkeypatch.setitem(sys.modules, 'tts_model', mod)
     import importlib
     from scripts import synthesize_vocal
     importlib.reload(synthesize_vocal)
@@ -64,7 +66,9 @@ def test_synthesize_failure(monkeypatch, tmp_path, caplog):
     def fake_synth(m, p):
         raise RuntimeError("boom")
 
-    monkeypatch.setitem(sys.modules, "tts_model", types.SimpleNamespace(synthesize=fake_synth))
+    mod2 = types.ModuleType("tts_model")
+    mod2.synthesize = fake_synth
+    monkeypatch.setitem(sys.modules, "tts_model", mod2)
 
     gen = VocalGenerator()
     with caplog.at_level("ERROR"):

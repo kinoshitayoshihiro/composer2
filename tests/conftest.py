@@ -1,12 +1,17 @@
 import sys
 import types
 
+from tests import _stubs
+
+_stubs.install()
+
 import pytest
 from music21 import instrument
 
 
 @pytest.fixture(autouse=True)
 def stub_optional_deps():
+    _stubs.install()
     for pkg in ("fastapi", "uvicorn", "websockets", "streamlit"):
         sys.modules[pkg] = types.ModuleType(pkg)
 

@@ -75,15 +75,11 @@ def test_download_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
         writer.writeheader()
         writer.writerow({"url": "http://x/f.zip", "checksum_sha1": sha1})
     out_dir = tmp_path / "out"
-    monkeypatch.setattr(
-        drm,
-        "aiohttp",
-        types.SimpleNamespace(
-            ClientSession=_Session,
-            ClientTimeout=lambda total: None,
-            TCPConnector=lambda limit=None: None,
-        ),
-    )
+    aio = types.ModuleType("aiohttp")
+    aio.ClientSession = _Session
+    aio.ClientTimeout = lambda total: None
+    aio.TCPConnector = lambda limit=None: None
+    monkeypatch.setattr(drm, "aiohttp", aio)
     asyncio.run(drm.download_refs(csv_path, out_dir, timeout=5, concurrency=1))
     assert _Session.calls == 2
     assert (out_dir / "f" / "stems" / "f.txt").read_bytes() == b"good"

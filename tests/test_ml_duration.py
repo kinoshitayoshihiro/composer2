@@ -9,12 +9,14 @@ if os.getenv("LIGHT") == "1":
 def test_overfit_duration(tmp_path):
     torch = pytest.importorskip('torch')
     pl = pytest.importorskip('pytorch_lightning')
-    from types import SimpleNamespace
+    from types import ModuleType, SimpleNamespace
     from utilities.duration_datamodule import DurationDataModule
     from utilities.ml_duration import DurationTransformer, predict
 
     csv = Path('tests/data/duration_dummy.csv')
-    cfg = SimpleNamespace(data=SimpleNamespace(csv=str(csv)), batch_size=1, max_len=24)
+    data_mod = ModuleType("data_cfg")
+    data_mod.csv = str(csv)
+    cfg = SimpleNamespace(data=data_mod, batch_size=1, max_len=24)
     dm = DurationDataModule(cfg)
     model = DurationTransformer(d_model=32, max_len=24)
     trainer = pl.Trainer(max_epochs=30, logger=False, enable_checkpointing=False)

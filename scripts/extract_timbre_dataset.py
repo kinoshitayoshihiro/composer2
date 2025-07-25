@@ -3,8 +3,18 @@ from __future__ import annotations
 # ruff: noqa: E402,F404
 # === local-stub (CLI) — precedes everything ===  # pragma: no cover
 import importlib.machinery
+import importlib.util
 import sys
 import types
+from pathlib import Path
+
+# ``utilities`` pulls in heavy optional dependencies on import.  When running the
+# CLI in isolated test environments these may be unavailable.  Provide minimal
+# stub modules so imports succeed without the full packages being installed.
+UTILS_DIR = Path(__file__).resolve().parent.parent / "utilities"
+utils_pkg = types.ModuleType("utilities")
+utils_pkg.__path__ = [str(UTILS_DIR)]
+sys.modules.setdefault("utilities", utils_pkg)
 
 for _n in ("pkg_resources", "scipy", "scipy.signal"):
     mod = types.ModuleType(_n)
@@ -16,26 +26,28 @@ for _n in ("pkg_resources", "scipy", "scipy.signal"):
 
 import argparse
 import csv
-import sys
-from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
 
-if TYPE_CHECKING:  # pragma: no cover - hints only
-    pass
 
-# Add the parent directory to sys.path so we can import utilities
-import sys
-from pathlib import Path as SysPath
-
-sys.path.insert(0, str(SysPath(__file__).parent.parent))
-
-from utilities.bass_timbre_dataset import (
-    BassTimbreDataset,
-    TimbrePair,
-    compute_mel_pair,
+# Import ``bass_timbre_dataset`` directly from file to avoid importing the
+# heavy ``utilities`` package and its optional dependencies.
+module_name = "utilities.bass_timbre_dataset"
+_spec = importlib.util.spec_from_file_location(
+    module_name,
+    UTILS_DIR / "bass_timbre_dataset.py",
 )
+if _spec is None or _spec.loader is None:  # pragma: no cover - should not happen
+    raise RuntimeError("Failed to load bass_timbre_dataset module")
+_mod = importlib.util.module_from_spec(_spec)
+sys.modules[module_name] = _mod
+try:
+    _spec.loader.exec_module(_mod)
+except ImportError as exc:  # pragma: no cover - optional deps missing
+    raise RuntimeError(f"Failed to load {module_name}") from exc
+BassTimbreDataset = _mod.BassTimbreDataset
+TimbrePair = _mod.TimbrePair
+compute_mel_pair = _mod.compute_mel_pair
 
 
 def _process(args: tuple[TimbrePair, str, int, Path]) -> tuple[str, str, str, int]:
@@ -45,7 +57,7 @@ def _process(args: tuple[TimbrePair, str, int, Path]) -> tuple[str, str, str, in
         pair.src_path, pair.tgt_path, pair.midi_path, max_len
     )
     out = out_dir / f"{pair.id}__{src_suffix}->{pair.tgt_suffix}.npy"
-    np.save(out, np.stack([mel_src, mel_tgt]))
+    np.save(out, np.stack([mel_src, mel_tgt]), allow_pickle=False)
     return pair.id, src_suffix, pair.tgt_suffix, mel_src.shape[1]
 
 

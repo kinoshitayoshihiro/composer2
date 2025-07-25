@@ -81,8 +81,8 @@ class ArticulationTagger(nn.Module if torch is not None else object):
             batch["pitch"],
             batch["bucket"],
             batch["pedal"],
-            batch["vel"],
-            batch["dur"],
+            batch["velocity"],
+            batch["qlen"],
             labels=batch.get("labels"),
             pad_mask=batch.get("pad_mask"),
         )
@@ -221,8 +221,8 @@ def predict(
                     "pitch": int(r.pitch),
                     "bucket": int(r.bucket),
                     "pedal": int(r.pedal_state),
-                    "vel": float(r.velocity),
-                    "dur": float(r.duration),
+                    "velocity": float(r.velocity),
+                    "qlen": float(r.duration),
                     "label": 0,
                 }
                 for r in rows
@@ -282,18 +282,19 @@ def predict_many(
             pm = pretty_midi.PrettyMIDI(io.BytesIO(mf.writestr()))
         df = extract_from_midi(pm)
 
-        rows = list(df.itertuples()) if hasattr(df, "itertuples") else list(df)
         pm_list.append(
             [
                 {
                     "pitch": int(r.pitch),
                     "bucket": int(r.bucket),
                     "pedal": int(r.pedal_state),
-                    "vel": float(r.velocity),
-                    "dur": float(r.duration),
+                    "velocity": float(r.velocity),
+                    "qlen": float(r.duration),
                     "label": 0,
                 }
-                for r in rows
+                for r in (
+                    list(df.itertuples()) if hasattr(df, "itertuples") else list(df)
+                )
             ]
         )
         note_lists.append(list(s.flat.notes))

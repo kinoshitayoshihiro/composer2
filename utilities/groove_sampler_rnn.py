@@ -34,23 +34,35 @@ class LoopEntry(TypedDict):
 
 
 def _load_loops(path: Path) -> list[LoopEntry]:
+    if path.is_dir():
+        cand = path / "loops.json"
+        if not cand.exists():
+            files = sorted(path.glob("*.json"))
+            cand = files[0] if files else cand
+        path = cand
     try:
         with path.open("r", encoding="utf-8") as fh:
             obj = json.load(fh)
-    except FileNotFoundError:
-        return []
+    except FileNotFoundError as exc:
+        raise ValueError("no loops found") from exc
     res: list[LoopEntry] = []
-    for entry in obj["data"]:
+    for entry in obj.get("data", []):
         res.append(
             {
                 "tokens": [tuple(t) for t in entry["tokens"]],
                 "tempo_bpm": entry["tempo_bpm"],
                 "bar_beats": entry["bar_beats"],
                 "section": entry.get("section") or DEFAULT_AUX["section"],
-                "heat_bin": entry.get("heat_bin") if entry.get("heat_bin") is not None else DEFAULT_AUX["heat_bin"],
+                "heat_bin": (
+                    entry.get("heat_bin")
+                    if entry.get("heat_bin") is not None
+                    else DEFAULT_AUX["heat_bin"]
+                ),
                 "intensity": entry.get("intensity") or DEFAULT_AUX["intensity"],
             }
         )
+    if not res:
+        raise ValueError("no loops found")
     return res
 
 
@@ -119,7 +131,9 @@ if torch is not None:
             self.log_softmax = nn.LogSoftmax(dim=-1)
 
         def forward(self, tok: torch.Tensor, vel: torch.Tensor, micro: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
-            emb = torch.cat([self.embed(tok), self.vel_emb(vel), self.micro_emb(micro)], dim=-1)
+            emb = torch.cat(
+                [self.embed(tok), self.vel_emb(vel), self.micro_emb(micro)], dim=-1
+            )
             out, _ = self.gru(emb.unsqueeze(1))
             ctx, _ = self.attn(out, out, out)
             out = out + ctx
@@ -145,7 +159,8 @@ if torch is not None:
             p_tf = max(
                 teacher_force_end,
                 teacher_force_start
-                - (epoch / max(epochs - 1, 1)) * (teacher_force_start - teacher_force_end),
+                - (epoch / max(epochs - 1, 1))
+                * (teacher_force_start - teacher_force_end),
             )
             for idx, vel, micro in dl:
                 idx = idx.long()
@@ -201,7 +216,11 @@ if torch is not None:
         for _ in range(bars * RESOLUTION - 1):
             inp = torch.tensor(tokens[-1:])
             with torch.no_grad():
-                out = model(inp, torch.zeros(1, dtype=torch.long), torch.zeros(1, dtype=torch.long))
+                out = model(
+                    inp,
+                    torch.zeros(1, dtype=torch.long),
+                    torch.zeros(1, dtype=torch.long),
+                )
                 logits = out[0, -1]
                 if temperature <= 0:
                     # deterministic progression through the vocabulary
@@ -259,12 +278,15 @@ if torch is not None:
             with torch.no_grad():
                 for idx, vel, micro in dl:
                     out = model(idx.long(), vel.long(), micro.long())
-                    loss_val += nn.functional.nll_loss(out.squeeze(1), idx.long()).item()
+                    loss_val += nn.functional.nll_loss(
+                        out.squeeze(1), idx.long()
+                    ).item()
             return loss_val / len(dl)
 
         study = optuna.create_study(direction="minimize")
         study.optimize(objective, n_trials=n_trials)
         return study.best_params  # type: ignore[return-value]
+
 else:
     import json
     from dataclasses import dataclass
@@ -331,7 +353,9 @@ else:
             vel = 100
             if humanize:
                 vel = max(1, min(127, int(rng.gauss(100.0, 6.0))))
-            events.append({"instrument": lbl, "offset": offset, "duration": 0.25, "velocity": vel})
+            events.append(
+                {"instrument": lbl, "offset": offset, "duration": 0.25, "velocity": vel}
+            )
             probs = model.matrix[idx]
             if temperature <= 0:
                 idx = int(np.argmax(probs))
@@ -353,7 +377,9 @@ def cli() -> None:
 @click.option("--embed", default=8, type=int)
 @click.option("--hidden", default=16, type=int)
 @click.option("--out", "out_path", type=Path, required=True)
-@click.option("--auto-tag/--no-auto-tag", default=False, help="Infer aux metadata automatically")
+@click.option(
+    "--auto-tag/--no-auto-tag", default=False, help="Infer aux metadata automatically"
+)
 def train_cmd(
     loops: Path, epochs: int, embed: int, hidden: int, out_path: Path, auto_tag: bool
 ) -> None:
@@ -417,4 +443,3 @@ def sample_cmd(
         pm.instruments.append(inst)
         pm.write(str(out))
         click.echo(f"wrote {out}")
-

@@ -57,7 +57,9 @@ def _make_part() -> stream.Part:
 @pytest.mark.slow
 def test_rt_play_live(monkeypatch):
     midi = DummyMidiOut()
-    monkeypatch.setattr(rt_midi_streamer, "rtmidi", SimpleNamespace(MidiOut=lambda: midi))
+    rtmidi_stub = types.ModuleType("rtmidi")
+    rtmidi_stub.MidiOut = lambda: midi
+    monkeypatch.setattr(rt_midi_streamer, "rtmidi", rtmidi_stub)
 
     def gen(idx: int):
         return _make_part() if idx == 0 else None

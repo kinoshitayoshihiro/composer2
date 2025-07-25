@@ -16,7 +16,9 @@ class ArticulationDataset(Dataset[dict[str, float | int]]):
         df["velocity"] = df["velocity"].clip(0.0, 1.0)
         self.df = df
 
-        labels = torch.tensor(df["articulation_label"].fillna(0).astype(int).to_numpy())
+        labels = torch.tensor(
+            df["articulation_label"].fillna(0).astype(int).to_numpy(), dtype=torch.long
+        )
         counts = torch.bincount(labels, minlength=int(labels.max()) + 1)
         weights = counts.sum() / counts.clamp(min=1)
         self.class_weight = weights.float()
@@ -51,7 +53,10 @@ class SeqArticulationDataset(Dataset[list[dict[str, float | int]]]):
         df["velocity"] = df["velocity"].clip(0.0, 1.0)
         self.tracks = [g.sort_values("onset") for _, g in df.groupby("track_id")]
 
-        labels = torch.tensor(df["articulation_label"].fillna(0).astype(int).to_numpy())
+        labels = torch.tensor(
+            df["articulation_label"].fillna(0).astype(int).to_numpy(),
+            dtype=torch.long,
+        )
         counts = torch.bincount(labels, minlength=int(labels.max()) + 1)
         weights = counts.sum() / counts.clamp(min=1)
         self.class_weight = weights.float()
@@ -82,8 +87,8 @@ def seq_collate(batch: list[list[dict[str, float | int]]]) -> dict[str, torch.Te
     for seq in batch:
         for item in seq:
             item["pedal"] = item.get("pedal_state", 0)
-            item["vel"] = item.get("velocity", 0.0)
-            item["dur"] = item.get("qlen", 0)
+            item["velocity"] = item.get("velocity", 0.0)
+            item["qlen"] = item.get("qlen", 0)
 
     def pad(
         seq: list[dict[str, float | int]], key: str, fill: float | int
@@ -100,10 +105,10 @@ def seq_collate(batch: list[list[dict[str, float | int]]]) -> dict[str, torch.Te
         "pedal": torch.tensor(
             [pad(seq, "pedal", 0) for seq in batch], dtype=torch.long
         ),
-        "vel": torch.tensor(
-            [pad(seq, "vel", 0.0) for seq in batch], dtype=torch.float32
+        "velocity": torch.tensor(
+            [pad(seq, "velocity", 0.0) for seq in batch], dtype=torch.float32
         ),
-        "dur": torch.tensor([pad(seq, "dur", 0) for seq in batch], dtype=torch.long),
+        "qlen": torch.tensor([pad(seq, "qlen", 0) for seq in batch], dtype=torch.long),
         "labels": torch.tensor(
             [pad(seq, "label", 0) for seq in batch], dtype=torch.long
         ),

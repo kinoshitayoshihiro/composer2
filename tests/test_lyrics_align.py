@@ -3,7 +3,7 @@ import importlib.util
 import json
 import time
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -26,11 +26,11 @@ def alignment_ws_module():
 
 @pytest.fixture()
 def client(alignment_ws_module):
-    return SimpleNamespace(
-        get=lambda _p: SimpleNamespace(
-            json=lambda: asyncio.run(alignment_ws_module.health())
-        )
-    )
+    resp = ModuleType("resp")
+    resp.json = lambda: asyncio.run(alignment_ws_module.health())
+    cli = ModuleType("client")
+    cli.get = lambda _p: resp
+    return cli
 
 
 def _make_sample(dir: Path):

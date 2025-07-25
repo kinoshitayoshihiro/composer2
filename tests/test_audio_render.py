@@ -4,11 +4,10 @@ import numpy as np
 from pathlib import Path
 
 if importlib.util.find_spec("soundfile") is None:
-    sf = types.SimpleNamespace(
-        write=lambda p, d, sr, subtype=None: Path(p).write_bytes(b""),
-        info=lambda p: types.SimpleNamespace(samplerate=44100, subtype="PCM_16"),
-        read=lambda p: (np.zeros(1, dtype=np.float32), 44100),
-    )
+    sf = types.ModuleType("soundfile")
+    sf.write = lambda p, d, sr, subtype=None: Path(p).write_bytes(b"")
+    sf.info = lambda p: types.SimpleNamespace(samplerate=44100, subtype="PCM_16")
+    sf.read = lambda p: (np.zeros(1, dtype=np.float32), 44100)
 else:
     import soundfile as sf
 

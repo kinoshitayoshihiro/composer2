@@ -54,9 +54,10 @@ def test_latency() -> None:
     assert mean(leads) < 0.009
 def test_latency(monkeypatch):
     fake = _FakeTime()
-    monkeypatch.setattr(
-        realtime_engine, "time", types.SimpleNamespace(time=fake.time, sleep=fake.sleep)
-    )
+    time_mod = types.ModuleType("time_stub")
+    time_mod.time = fake.time
+    time_mod.sleep = fake.sleep
+    monkeypatch.setattr(realtime_engine, "time", time_mod)
 
     class Dummy(realtime_engine.RealtimeEngine):
         def __init__(self) -> None:

@@ -25,7 +25,7 @@ _orig = pretty_midi.PrettyMIDI.get_tempo_changes
 
 def _patched_get_tempo_changes(self, *args, **kwargs):
     times, tempi = _orig(self, *args, **kwargs)
-    return np.array(times), np.array(tempi)
+    return np.asarray(tempi), np.asarray(times)
 
 
 pretty_midi.PrettyMIDI.get_tempo_changes = _patched_get_tempo_changes

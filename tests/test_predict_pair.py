@@ -15,9 +15,9 @@ def test_predict_pair() -> None:
         [note.Note("C4", quarterLength=1.0), note.Note("D4", quarterLength=1.0)]
     )
     model = MLArticulationModel(num_labels=9)
-    pairs = predict(s, model, Path("articulation_schema.yaml"), flat=False)
+    pairs = predict(s, model, Path("articulation_schema.yaml"))
     assert len(pairs) == 2
-    assert isinstance(pairs[0][0], note.Note)
+    assert hasattr(pairs[0], "label")
 
 
 def test_predict_flat() -> None:

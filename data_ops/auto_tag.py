@@ -84,20 +84,19 @@ def auto_tag(
         sec_idx = [i % 4 for i in range(len(densities))]
 
     secs = ["intro", "verse", "chorus", "bridge"]
-    meta: dict[str, dict[int, dict[str, str]]] = {}
+    meta: dict[str, dict[str, list[str]]] = {}
     i = 0
     j = 0
     for name, dens, vels, eng in per_file:
-        bar_map: dict[int, dict[str, str]] = {}
         length = len(dens)
         sec_sub = sec_idx[i : i + length]
         int_sub = labels[j : j + length]
-        for b in range(length):
-            bar_map[b] = {
-                "section": secs[sec_sub[b] % 4],
-                "intensity": int_map.get(int_sub[b], "mid"),
-            }
-        meta[name] = bar_map
+        sections = [secs[s % 4] for s in sec_sub]
+        intens = [int_map.get(t, "mid") for t in int_sub]
+        meta[name] = {
+            "section": sections,
+            "intensity": intens,
+        }
         i += length
         j += length
 
@@ -106,8 +105,10 @@ def auto_tag(
             writer = csv.writer(fh)
             writer.writerow(["file", "bar", "section", "intensity"])
             for fn, bars in meta.items():
-                for b, d in bars.items():
-                    writer.writerow([fn, b, d["section"], d["intensity"]])
+                secs = list(bars["section"])
+                ints = list(bars["intensity"])
+                for b, (sec, inten) in enumerate(zip(secs, ints)):
+                    writer.writerow([fn, b, sec, inten])
 
     return meta
 

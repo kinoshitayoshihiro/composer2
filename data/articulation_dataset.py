@@ -81,7 +81,7 @@ def seq_collate(batch: list[list[dict[str, float | int]]]) -> dict[str, torch.Te
 
     for seq in batch:
         for item in seq:
-            item["pedal"] = item.get("pedal_state", 0)
+            item["pedal"] = item.get("pedal_state", item.get("pedal", 0))
             item["velocity"] = item.get("velocity", item.get("vel", 0.0))
             item["qlen"] = item.get("qlen", item.get("dur", 0))
 

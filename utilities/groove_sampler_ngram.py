@@ -22,6 +22,7 @@ from typing import Any, TypedDict
 
 import click
 import numpy as np
+import pandas as pd
 import pretty_midi
 from typing_extensions import Required
 
@@ -1238,17 +1239,18 @@ def train_cmd(
         auto = _auto_tag(loop_dir)
         collapsed: dict[str, dict[str, Any]] = {}
         for name, bars in auto.items():
-            if not bars:
+            secs = list(bars.get("section", []))
+            ints = list(bars.get("intensity", []))
+            if not secs:
                 collapsed[name] = {
                     "section": "verse",
                     "intensity": "mid",
                     "heat_bin": 0,
                 }
                 continue
-            first = next(iter(bars.values()))
             collapsed[name] = {
-                "section": first.get("section", "verse"),
-                "intensity": first.get("intensity", "mid"),
+                "section": secs[0],
+                "intensity": ints[0] if ints else "mid",
                 "heat_bin": 0,
             }
         aux_map = {**(aux_map or {}), **collapsed}

@@ -59,3 +59,5 @@ def test_predict_api(tmp_path: Path) -> None:
     s.append(p)
     tags = ml_articulation.predict(s, model)
     assert len(tags) == 3
+    assert hasattr(tags[0], "pitch")
+    assert hasattr(tags[0], "dur")

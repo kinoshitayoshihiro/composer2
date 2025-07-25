@@ -14,7 +14,7 @@ import click
 try:  # optional dependency
     import torch
     from torch import nn
-    from torch.utils.data import DataLoader, Dataset
+    from torch.utils.data import DataLoader, Dataset, RandomSampler
 except Exception:  # pragma: no cover - optional dependency missing
     torch = None  # type: ignore
     nn = object  # type: ignore
@@ -39,6 +39,16 @@ def _load_loops(path: Path) -> list[LoopEntry]:
             obj = json.load(fh)
     except FileNotFoundError:
         return []
+    if not obj.get("data"):
+        obj = {
+            "data": [
+                {
+                    "tokens": [],
+                    "tempo_bpm": 120,
+                    "bar_beats": 4,
+                }
+            ]
+        }
     res: list[LoopEntry] = []
     for entry in obj["data"]:
         res.append(
@@ -47,7 +57,11 @@ def _load_loops(path: Path) -> list[LoopEntry]:
                 "tempo_bpm": entry["tempo_bpm"],
                 "bar_beats": entry["bar_beats"],
                 "section": entry.get("section") or DEFAULT_AUX["section"],
-                "heat_bin": entry.get("heat_bin") if entry.get("heat_bin") is not None else DEFAULT_AUX["heat_bin"],
+                "heat_bin": (
+                    entry.get("heat_bin")
+                    if entry.get("heat_bin") is not None
+                    else DEFAULT_AUX["heat_bin"]
+                ),
                 "intensity": entry.get("intensity") or DEFAULT_AUX["intensity"],
             }
         )
@@ -119,7 +133,9 @@ if torch is not None:
             self.log_softmax = nn.LogSoftmax(dim=-1)
 
         def forward(self, tok: torch.Tensor, vel: torch.Tensor, micro: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
-            emb = torch.cat([self.embed(tok), self.vel_emb(vel), self.micro_emb(micro)], dim=-1)
+            emb = torch.cat(
+                [self.embed(tok), self.vel_emb(vel), self.micro_emb(micro)], dim=-1
+            )
             out, _ = self.gru(emb.unsqueeze(1))
             ctx, _ = self.attn(out, out, out)
             out = out + ctx
@@ -134,7 +150,10 @@ if torch is not None:
     ) -> tuple[GRUModel, dict]:
         data = _load_loops(path)
         ds = TokenDataset(data)
-        dl = DataLoader(ds, batch_size=32, shuffle=True)
+        sampler = None
+        if len(ds) > 0:
+            sampler = RandomSampler(ds, replacement=True, num_samples=len(ds))
+        dl = DataLoader(ds, batch_size=32, sampler=sampler)
         model = GRUModel(ds.vocab_size, embed, hidden, 1)
         opt = torch.optim.Adam(model.parameters(), lr=2e-3)
         model.train()
@@ -145,7 +164,8 @@ if torch is not None:
             p_tf = max(
                 teacher_force_end,
                 teacher_force_start
-                - (epoch / max(epochs - 1, 1)) * (teacher_force_start - teacher_force_end),
+                - (epoch / max(epochs - 1, 1))
+                * (teacher_force_start - teacher_force_end),
             )
             for idx, vel, micro in dl:
                 idx = idx.long()
@@ -201,7 +221,11 @@ if torch is not None:
         for _ in range(bars * RESOLUTION - 1):
             inp = torch.tensor(tokens[-1:])
             with torch.no_grad():
-                out = model(inp, torch.zeros(1, dtype=torch.long), torch.zeros(1, dtype=torch.long))
+                out = model(
+                    inp,
+                    torch.zeros(1, dtype=torch.long),
+                    torch.zeros(1, dtype=torch.long),
+                )
                 logits = out[0, -1]
                 if temperature <= 0:
                     # deterministic progression through the vocabulary
@@ -238,7 +262,10 @@ if torch is not None:
 
         data = _load_loops(loop_path)
         ds = TokenDataset(data)
-        dl = DataLoader(ds, batch_size=32, shuffle=True)
+        sampler = None
+        if len(ds) > 0:
+            sampler = RandomSampler(ds, replacement=True, num_samples=len(ds))
+        dl = DataLoader(ds, batch_size=32, sampler=sampler)
 
         def objective(trial: optuna.Trial) -> float:
             hidden = trial.suggest_int("hidden", 64, 256)
@@ -259,12 +286,17 @@ if torch is not None:
             with torch.no_grad():
                 for idx, vel, micro in dl:
                     out = model(idx.long(), vel.long(), micro.long())
-                    loss_val += nn.functional.nll_loss(out.squeeze(1), idx.long()).item()
+                    loss_val += nn.functional.nll_loss(
+                        out.squeeze(1), idx.long()
+                    ).item()
+            if len(dl) == 0:
+                return float("inf")
             return loss_val / len(dl)
 
         study = optuna.create_study(direction="minimize")
         study.optimize(objective, n_trials=n_trials)
         return study.best_params  # type: ignore[return-value]
+
 else:
     import json
     from dataclasses import dataclass
@@ -331,7 +363,9 @@ else:
             vel = 100
             if humanize:
                 vel = max(1, min(127, int(rng.gauss(100.0, 6.0))))
-            events.append({"instrument": lbl, "offset": offset, "duration": 0.25, "velocity": vel})
+            events.append(
+                {"instrument": lbl, "offset": offset, "duration": 0.25, "velocity": vel}
+            )
             probs = model.matrix[idx]
             if temperature <= 0:
                 idx = int(np.argmax(probs))
@@ -353,7 +387,9 @@ def cli() -> None:
 @click.option("--embed", default=8, type=int)
 @click.option("--hidden", default=16, type=int)
 @click.option("--out", "out_path", type=Path, required=True)
-@click.option("--auto-tag/--no-auto-tag", default=False, help="Infer aux metadata automatically")
+@click.option(
+    "--auto-tag/--no-auto-tag", default=False, help="Infer aux metadata automatically"
+)
 def train_cmd(
     loops: Path, epochs: int, embed: int, hidden: int, out_path: Path, auto_tag: bool
 ) -> None:
@@ -417,4 +453,3 @@ def sample_cmd(
         pm.instruments.append(inst)
         pm.write(str(out))
         click.echo(f"wrote {out}")
-

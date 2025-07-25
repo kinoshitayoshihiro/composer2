@@ -10,7 +10,9 @@ class _Series(list):
 
     def to_numpy(self):
         import numpy as np
+
         return np.array(self)
+
 
 class _Loc:
     def __init__(self, df: "_DF") -> None:
@@ -23,9 +25,15 @@ class _Loc:
             return [self[i] for i in range(*idx.indices(len(self._df)))]
         return [self[i] for i in idx]
 
+
 class _DF:
-    def __init__(self, data: dict[str, list]):
-        self._data = {k: list(v) for k, v in data.items()}
+    def __init__(self, data: dict[str, list] | list):
+        if isinstance(data, list):
+            data = {"roll": data}
+        self._data = {
+            k: (v.tolist() if hasattr(v, "tolist") else list(v))
+            for k, v in data.items()
+        }
 
     def __len__(self) -> int:
         return len(next(iter(self._data.values()), []))
@@ -41,16 +49,17 @@ class _DF:
         self._data[key] = list(val)
 
     @staticmethod
-    def read_csv(path: str | 'Path') -> '_DF':
+    def read_csv(path: str | "Path") -> "_DF":
         import csv
         from pathlib import Path
+
         p = Path(path)
-        with p.open(newline='') as f:
+        with p.open(newline="") as f:
             reader = csv.DictReader(f)
             data: dict[str, list] = {k: [] for k in reader.fieldnames or []}
             for row in reader:
                 for k in data:
-                    val = row.get(k, '')
+                    val = row.get(k, "")
                     try:
                         num = float(val)
                         val = int(num) if num.is_integer() else num
@@ -66,6 +75,7 @@ class _DF:
     @property
     def values(self):
         import numpy as np
+
         return np.array([self._data[k] for k in self._data]).T
 
     @property
@@ -74,6 +84,7 @@ class _DF:
 
     def to_csv(self, path: str | None = None, index: bool = False) -> None:
         import csv
+
         keys = list(self._data.keys())
         rows = zip(*[self._data[k] for k in keys])
         if path is None:
@@ -89,10 +100,11 @@ class _DF:
 
 
 def install_pandas_stub() -> None:
-    import sys, types
+    import sys
+    import types
+
     pd_mod = types.ModuleType("pandas")
     pd_mod.DataFrame = lambda data: _DF(data)
     pd_mod.read_csv = lambda path: _DF.read_csv(path)  # type: ignore
     pd_mod.Series = _Series
     sys.modules["pandas"] = pd_mod
-

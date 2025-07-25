@@ -20,6 +20,9 @@ def _load_module() -> ModuleType:
 
             websocket = post
 
+            async def __call__(self, scope, receive, send):  # pragma: no cover - stub
+                pass
+
         fastapi.FastAPI = lambda: DummyApp()
         fastapi.WebSocket = object
         fastapi.__spec__ = importlib.machinery.ModuleSpec("fastapi", loader=None)

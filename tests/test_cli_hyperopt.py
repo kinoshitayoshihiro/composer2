@@ -18,8 +18,10 @@ class DummyStudy:
 
 def test_cli_hyperopt(monkeypatch):
     best = {"temperature": 0.9}
-    fake_optuna = SimpleNamespace(create_study=lambda direction="maximize": DummyStudy(best), Trial=None)
-    monkeypatch.setitem(sys.modules, "optuna", fake_optuna)
+    optuna_stub = types.ModuleType("optuna")
+    optuna_stub.create_study = lambda direction="maximize": DummyStudy(best)
+    optuna_stub.Trial = None
+    monkeypatch.setitem(sys.modules, "optuna", optuna_stub)
     monkeypatch.setattr(cli.groove_sampler_ngram, "load", lambda p: object())
     monkeypatch.setattr(cli.groove_sampler_ngram, "sample", lambda mdl, bars, temperature: [{"velocity": 0}])
     runner = CliRunner()

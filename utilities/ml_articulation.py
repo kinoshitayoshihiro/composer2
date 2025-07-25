@@ -211,7 +211,8 @@ def predict(
                 {
                     "pitch": int(r.pitch),
                     "bucket": int(r.bucket),
-                    "pedal_state": int(r.pedal_state),
+                    "pedal": int(r.pedal_state),
+
                     "velocity": float(r.velocity),
                     "qlen": float(r.duration),
                     "label": 0,
@@ -252,20 +253,19 @@ def predict_many(
             mf = music21.midi.translate.streamToMidiFile(s)
             pm = pretty_midi.PrettyMIDI(io.BytesIO(mf.writestr()))
         df = extract_from_midi(pm)
-
-        rows = list(df.itertuples()) if hasattr(df, "itertuples") else list(df)
-        rows_lists.append(rows)
         pm_list.append(
             [
                 {
                     "pitch": int(r.pitch),
                     "bucket": int(r.bucket),
-                    "pedal_state": int(r.pedal_state),
+                    "pedal": int(r.pedal_state),
                     "velocity": float(r.velocity),
                     "qlen": float(r.duration),
                     "label": 0,
                 }
-                for r in rows
+                for r in (
+                    list(df.itertuples()) if hasattr(df, "itertuples") else list(df)
+                )
             ]
         )
 

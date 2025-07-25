@@ -66,8 +66,9 @@ class ArticulationTagger(pl.LightningModule):
             dur = batch["qlen"]
             vel = batch["velocity"]
             pedal = batch["pedal"]
-            mask = batch.get("pad_mask", torch.ones_like(pitch, dtype=torch.bool))
-
+            mask = batch.get("mask") or batch.get("pad_mask")
+            if mask is None:
+                mask = torch.ones_like(pitch, dtype=torch.bool)
             emissions = self(pitch, dur, vel, pedal)
             return self.crf.decode(emissions, mask)
 

@@ -34,23 +34,19 @@ class LoopEntry(TypedDict):
 
 
 def _load_loops(path: Path) -> list[LoopEntry]:
+    if path.is_dir():
+        cand = path / "loops.json"
+        if not cand.exists():
+            files = sorted(path.glob("*.json"))
+            cand = files[0] if files else cand
+        path = cand
     try:
         with path.open("r", encoding="utf-8") as fh:
             obj = json.load(fh)
-    except FileNotFoundError:
-        return []
-    if not obj.get("data"):
-        obj = {
-            "data": [
-                {
-                    "tokens": [],
-                    "tempo_bpm": 120,
-                    "bar_beats": 4,
-                }
-            ]
-        }
+    except FileNotFoundError as exc:
+        raise ValueError("no loops found") from exc
     res: list[LoopEntry] = []
-    for entry in obj["data"]:
+    for entry in obj.get("data", []):
         res.append(
             {
                 "tokens": [tuple(t) for t in entry["tokens"]],
@@ -65,6 +61,8 @@ def _load_loops(path: Path) -> list[LoopEntry]:
                 "intensity": entry.get("intensity") or DEFAULT_AUX["intensity"],
             }
         )
+    if not res:
+        raise ValueError("no loops found")
     return res
 
 

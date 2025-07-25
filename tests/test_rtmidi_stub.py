@@ -34,7 +34,9 @@ class DummyGen:
 
 def test_rtmidi_stream(monkeypatch):
     midi = DummyMidiOut()
-    monkeypatch.setattr(rtmidi_streamer, "rtmidi", SimpleNamespace(MidiOut=lambda: midi))
+    rtmidi_stub = types.ModuleType("rtmidi")
+    rtmidi_stub.MidiOut = lambda: midi
+    monkeypatch.setattr(rtmidi_streamer, "rtmidi", rtmidi_stub)
     monkeypatch.setattr(rtmidi_streamer.RtMidiStreamer, "_run_loop", lambda self: None)
     monkeypatch.setattr(rtmidi_streamer, "PianoMLGenerator", lambda *_a, **_k: DummyGen())
     gen = DummyGen()

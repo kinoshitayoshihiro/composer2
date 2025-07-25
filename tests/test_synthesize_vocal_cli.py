@@ -118,7 +118,9 @@ def test_cli_default_tts(tmp_path, monkeypatch):
         return b"TTS"
 
     import sys, types
-    monkeypatch.setitem(sys.modules, 'tts_model', types.SimpleNamespace(synthesize=fake_synth))
+    mod = types.ModuleType('tts_model')
+    mod.synthesize = fake_synth
+    monkeypatch.setitem(sys.modules, 'tts_model', mod)
 
     # 再ロードして実行
     from scripts import synthesize_vocal

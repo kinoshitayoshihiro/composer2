@@ -12,7 +12,9 @@ class FakeClient:
     def generate(self, *a, **k):
         return b"FAKEWAV"
 
-sys.modules['sunoai'] = types.SimpleNamespace(GenerationClient=FakeClient)
+mod = types.ModuleType('sunoai')
+mod.GenerationClient = FakeClient
+sys.modules['sunoai'] = mod
 
 from utilities import vocal_synth
 

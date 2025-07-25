@@ -23,7 +23,9 @@ def test_synthesize_with_onnx_success(tmp_path, monkeypatch, caplog):
             calls["feeds"] = feeds
             return [b"audio"]
 
-    monkeypatch.setitem(sys.modules, "onnxruntime", types.SimpleNamespace(InferenceSession=DummySession))
+    mod = types.ModuleType("onnxruntime")
+    mod.InferenceSession = DummySession
+    monkeypatch.setitem(sys.modules, "onnxruntime", mod)
     importlib.reload(vocal_generator)
 
     with caplog.at_level("INFO"):

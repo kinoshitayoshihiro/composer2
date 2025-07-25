@@ -6,8 +6,7 @@ import importlib.machinery
 import importlib.util
 import sys
 import types
-from typing import Callable, Iterable, List
-
+from collections.abc import Callable, Iterable
 
 STUB_MODULES = [
     "pkg_resources",
@@ -17,6 +16,9 @@ STUB_MODULES = [
     "music21",
     "pretty_midi",
     "soundfile",
+    "torchcrf",
+    "torch_crf",
+    "TorchCRF",
 ]
 
 
@@ -29,7 +31,7 @@ class _dummy_class:
     def __getattr__(self, name: str):
         return self
 
-    def __call__(self, *args: object, **kwargs: object) -> "_dummy_class":
+    def __call__(self, *args: object, **kwargs: object) -> _dummy_class:
         return self
 
     def __iter__(self):
@@ -80,6 +82,14 @@ def _populate_music21(mod: types.ModuleType) -> None:
         "instrument",
         "articulations",
         "harmony",
+        "expressions",
+        "chord",
+        "tempo",
+        "volume",
+        "midi",
+        "exceptions21",
+        "scale",
+        "common",
         "key",
         "meter",
         "interval",
@@ -101,9 +111,13 @@ def _populate_music21(mod: types.ModuleType) -> None:
         ],
         "articulations": ["Articulation"],
         "harmony": ["ChordSymbol"],
+        "expressions": ["Expression"],
+        "chord": ["Chord"],
         "key": ["Key"],
         "meter": ["TimeSignature"],
         "interval": ["Interval"],
+        "tempo": ["MetronomeMark"],
+        "volume": ["Volume"],
     }
     for mod_name, classes in cls_map.items():
         sm = sys.modules[f"music21.{mod_name}"]
@@ -160,7 +174,7 @@ def register_populator(name: str, fn: Callable[[types.ModuleType], None]) -> Non
 
 
 def install_stubs(
-    names: List[str] = STUB_MODULES, force_names: Iterable[str] | None = None
+    names: list[str] = STUB_MODULES, force_names: Iterable[str] | None = None
 ) -> None:
     """Install lightweight stub modules for missing packages."""
 
@@ -172,4 +186,3 @@ def install_stubs(
         pop = SPECIAL_POPULATORS.get(name)
         if pop is not None:
             pop(mod)
-

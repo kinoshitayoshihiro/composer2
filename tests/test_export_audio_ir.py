@@ -33,7 +33,9 @@ def test_export_audio_uses_metadata(tmp_path, monkeypatch):
     if "utilities.convolver" in sys.modules:
         monkeypatch.setattr(sys.modules["utilities.convolver"], "render_with_ir", fake_render_with_ir)
     else:
-        monkeypatch.setitem(sys.modules, "utilities.convolver", types.SimpleNamespace(render_with_ir=fake_render_with_ir))
+        mod = types.ModuleType("utilities.convolver")
+        mod.render_with_ir = fake_render_with_ir
+        monkeypatch.setitem(sys.modules, "utilities.convolver", mod)
 
     synth.export_audio(midi, wav, part=part)
     assert calls.get("ir") == "dummy_ir.wav"

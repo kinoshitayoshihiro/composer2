@@ -40,7 +40,9 @@ def make_part():
 
 def test_rt_streamer_disconnect(monkeypatch, caplog):
     midi = FlakyMidiOut()
-    monkeypatch.setattr(rt_midi_streamer, "rtmidi", SimpleNamespace(MidiOut=lambda: midi))
+    rtmidi_stub = types.ModuleType("rtmidi")
+    rtmidi_stub.MidiOut = lambda: midi
+    monkeypatch.setattr(rt_midi_streamer, "rtmidi", rtmidi_stub)
     part = make_part()
     streamer = rt_midi_streamer.RtMidiStreamer("dummy", buffer_ms=0)
     with caplog.at_level(logging.ERROR):

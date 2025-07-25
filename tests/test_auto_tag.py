@@ -26,4 +26,5 @@ def test_auto_tag(tmp_path: Path) -> None:
     midi = tmp_path / "a.mid"
     _make_midi(midi)
     meta = auto_tag(tmp_path)
-    assert meta[midi.name][0]["intensity"] and meta[midi.name][0]["section"]
+    assert meta[midi.name]["intensity"]
+    assert meta[midi.name]["section"]

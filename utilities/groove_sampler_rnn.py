@@ -14,7 +14,7 @@ import click
 try:  # optional dependency
     import torch
     from torch import nn
-    from torch.utils.data import DataLoader, Dataset
+    from torch.utils.data import DataLoader, Dataset, RandomSampler
 except Exception:  # pragma: no cover - optional dependency missing
     torch = None  # type: ignore
     nn = object  # type: ignore
@@ -148,7 +148,10 @@ if torch is not None:
     ) -> tuple[GRUModel, dict]:
         data = _load_loops(path)
         ds = TokenDataset(data)
-        dl = DataLoader(ds, batch_size=32, shuffle=True)
+        sampler = None
+        if len(ds) > 0:
+            sampler = RandomSampler(ds, replacement=True, num_samples=len(ds))
+        dl = DataLoader(ds, batch_size=32, sampler=sampler)
         model = GRUModel(ds.vocab_size, embed, hidden, 1)
         opt = torch.optim.Adam(model.parameters(), lr=2e-3)
         model.train()
@@ -257,7 +260,10 @@ if torch is not None:
 
         data = _load_loops(loop_path)
         ds = TokenDataset(data)
-        dl = DataLoader(ds, batch_size=32, shuffle=True)
+        sampler = None
+        if len(ds) > 0:
+            sampler = RandomSampler(ds, replacement=True, num_samples=len(ds))
+        dl = DataLoader(ds, batch_size=32, sampler=sampler)
 
         def objective(trial: optuna.Trial) -> float:
             hidden = trial.suggest_int("hidden", 64, 256)
@@ -281,6 +287,8 @@ if torch is not None:
                     loss_val += nn.functional.nll_loss(
                         out.squeeze(1), idx.long()
                     ).item()
+            if len(dl) == 0:
+                return float("inf")
             return loss_val / len(dl)
 
         study = optuna.create_study(direction="minimize")

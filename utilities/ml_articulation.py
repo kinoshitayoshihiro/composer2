@@ -32,6 +32,19 @@ import pretty_midi
 from data.articulation_dataset import seq_collate
 from ml_models import NoteFeatureEmbedder
 from utilities.articulation_csv import extract_from_midi
+from dataclasses import dataclass
+
+
+@dataclass
+class Prediction:
+    pitch: int
+    dur: float
+    label: str
+
+    def __iter__(self):  # pragma: no cover - simple tuple compatibility
+        yield self.pitch
+        yield self.dur
+        yield self.label
 
 
 class ArticulationTagger(nn.Module if torch is not None else object):
@@ -173,37 +186,15 @@ def load(
     return MLArticulationModel.load(path, schema)
 
 
-@overload
 def predict(
     score: music21.stream.Score,
     model: ArticulationTagger,
     schema_path: Path = settings.schema_path,
-    *,
-    flat: Literal[True] = True,
-) -> list[str]: ...
-
-
-@overload
-def predict(
-    score: music21.stream.Score,
-    model: ArticulationTagger,
-    schema_path: Path = settings.schema_path,
-    *,
-    flat: Literal[False],
-) -> list[tuple[music21.note.Note, str]]: ...
-
-
-def predict(
-    score: music21.stream.Score,
-    model: ArticulationTagger,
-    schema_path: Path = settings.schema_path,
-    *,
-    flat: bool = True,
-) -> list[str] | list[tuple[music21.note.Note, str]]:
+) -> list[Prediction]:
     """Predict articulation labels for a score.
 
-    When ``flat`` is ``True`` (default) return just the label list.  Otherwise
-    return ``(note, label)`` pairs preserving the input note order.
+    Returns a list of :class:`Prediction` objects exposing ``pitch`` and ``dur``
+    attributes for each note in ``score``.
     """
 
     try:
@@ -221,6 +212,7 @@ def predict(
                     "pitch": int(r.pitch),
                     "bucket": int(r.bucket),
                     "pedal": int(r.pedal_state),
+
                     "velocity": float(r.velocity),
                     "qlen": float(r.duration),
                     "label": 0,
@@ -236,44 +228,24 @@ def predict(
     ids = model.decode_batch(batch)[0]
     mapping = yaml.safe_load(Path(schema_path).read_text())
     inv = {v: k for k, v in mapping.items()}
-    labels = [inv[i] for i in ids]
-    if flat:
-        return labels
-    notes = list(score.flat.notes)
-    return list(zip(notes, labels))
-
-
-@overload
-def predict_many(
-    scores: list[music21.stream.Score],
-    model: ArticulationTagger,
-    *,
-    flat: Literal[True] = True,
-    schema_path: Path = settings.schema_path,
-) -> list[list[str]]: ...
-
-
-@overload
-def predict_many(
-    scores: list[music21.stream.Score],
-    model: ArticulationTagger,
-    *,
-    flat: Literal[False],
-    schema_path: Path = settings.schema_path,
-) -> list[list[tuple[music21.note.Note, str]]]: ...
+    labels = [inv.get(i, str(i)) for i in ids]
+    preds = [
+        Prediction(pitch=int(r.pitch), dur=float(r.duration), label=lab)
+        for r, lab in zip(rows, labels)
+    ]
+    return preds
 
 
 def predict_many(
     scores: list[music21.stream.Score],
     model: ArticulationTagger,
     *,
-    flat: bool = True,
     schema_path: Path = settings.schema_path,
-) -> list[list[str] | list[tuple[music21.note.Note, str]]]:
+) -> list[list[Prediction]]:
     """Predict articulations for multiple scores in a single batch."""
 
     pm_list = []
-    note_lists: list[list[music21.note.Note]] = []
+    rows_lists: list[list[object]] = []
     for s in scores:
         try:
             pm = music21.midi.translate.m21ObjectToPrettyMIDI(s)
@@ -281,7 +253,6 @@ def predict_many(
             mf = music21.midi.translate.streamToMidiFile(s)
             pm = pretty_midi.PrettyMIDI(io.BytesIO(mf.writestr()))
         df = extract_from_midi(pm)
-
         pm_list.append(
             [
                 {
@@ -297,7 +268,6 @@ def predict_many(
                 )
             ]
         )
-        note_lists.append(list(s.flat.notes))
 
     batch = seq_collate(pm_list)
     device = next(model.parameters()).device
@@ -308,16 +278,19 @@ def predict_many(
     mapping = yaml.safe_load(Path(schema_path).read_text())
     inv = {v: k for k, v in mapping.items()}
     out = []
-    for ids, notes in zip(ids_batch, note_lists):
-        labels = [inv[i] for i in ids]
-        if flat:
-            out.append(labels)
-        else:
-            out.append(list(zip(notes, labels)))
+    for ids, rows in zip(ids_batch, rows_lists):
+        labels = [inv.get(i, str(i)) for i in ids]
+        out.append(
+            [
+                Prediction(pitch=int(r.pitch), dur=float(r.duration), label=lab)
+                for r, lab in zip(rows, labels)
+            ]
+        )
     return out
 
 
 __all__ = [
+    "Prediction",
     "MLArticulationModel",
     "ArticulationTagger",
     "NoteFeatureEmbedder",

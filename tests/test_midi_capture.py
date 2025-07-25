@@ -33,7 +33,9 @@ class DummyMidiIn:
 @pytest.fixture
 def recorder(monkeypatch):
     midi = DummyMidiIn()
-    monkeypatch.setattr(midi_capture, "rtmidi", types.SimpleNamespace(MidiIn=lambda: midi))
+    rtmidi_stub = types.ModuleType("rtmidi")
+    rtmidi_stub.MidiIn = lambda: midi
+    monkeypatch.setattr(midi_capture, "rtmidi", rtmidi_stub)
     rec = midi_capture.MIDIRecorder("dummy", bpm=120.0)
     rec.start_recording()
     midi.emit([0x90, 60, 100], 0.0)

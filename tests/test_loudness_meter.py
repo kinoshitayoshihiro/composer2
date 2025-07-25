@@ -20,7 +20,9 @@ class DummyStream:
 
 
 def test_realtime_loudness_meter(monkeypatch):
-    monkeypatch.setattr(lm, "sd", types.SimpleNamespace(InputStream=DummyStream))
+    sd_stub = types.ModuleType("sd")
+    sd_stub.InputStream = DummyStream
+    monkeypatch.setattr(lm, "sd", sd_stub)
     meter = lm.RealtimeLoudnessMeter(sample_rate=44100)
     meter.start(None)
     val = meter.get_current_lufs()

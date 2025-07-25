@@ -1,44 +1,19 @@
 import sys
 import types
 
+from tests import _stubs
+
+_stubs.install()
+
 import pytest
 from music21 import instrument
 
 
 @pytest.fixture(autouse=True)
 def stub_optional_deps():
-    # FastAPI stub with more methods
-    class FastAPIStub:
-        def __init__(self):
-            pass
-
-        def post(self, path):
-            return lambda f: f
-
-        def middleware(self, name):
-            def decorator(f):
-                return f
-
-            return decorator
-
-    class ResponseStub:
-        def __init__(self, content, status_code=200):
-            self.content = content
-            self.status_code = status_code
-
-    fastapi_module = types.ModuleType("fastapi")
-    fastapi_module.FastAPI = FastAPIStub
-    fastapi_module.Request = type("Request", (), {})
-    fastapi_module.HTTPException = type("HTTPException", (Exception,), {})
-
-    # FastAPI responses submodule
-    responses_module = types.ModuleType("fastapi.responses")
-    responses_module.JSONResponse = ResponseStub
-    sys.modules["fastapi"] = fastapi_module
-    sys.modules["fastapi.responses"] = responses_module
-
-    # Other stubs
-    for pkg in ("uvicorn", "websockets"):
+    _stubs.install()
+    for pkg in ("fastapi", "uvicorn", "websockets", "streamlit"):
+        sys.modules[pkg] = types.ModuleType(pkg)
         sys.modules[pkg] = types.ModuleType(pkg)
 
     # Streamlit stub with cache_data

@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Lightweight module stubs for tests in `tests/_stubs.py`
+
+## [0.6.1] - 2025-07-25
+### Fixed
+- handle missing `pad_mask` in `decode_batch`
+- error when no loops found in `_load_loops`
 
 ## [0.1.0] - 2025-07-21
 ### Added

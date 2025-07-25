@@ -21,6 +21,7 @@ def test_predict_length(tmp_path: Path) -> None:
     s.append(p)
     tags = ml_articulation.predict(s, loaded)
     assert len(tags) == 4
+    assert hasattr(tags[0], "label")
 
 def test_predict_with_trill_and_sustain(tmp_path: Path) -> None:
     model = ArticulationTagger(num_labels=2)
@@ -37,3 +38,4 @@ def test_predict_with_trill_and_sustain(tmp_path: Path) -> None:
     s.append(p)
     tags = ml_articulation.predict(s, loaded)
     assert len(tags) == 2
+    assert hasattr(tags[0], "dur")

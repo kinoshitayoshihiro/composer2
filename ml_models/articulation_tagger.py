@@ -36,14 +36,14 @@ class ArticulationTagger(pl.LightningModule):
     def forward(
         self,
         pitch: torch.Tensor,
-        dur: torch.Tensor,
-        vel: torch.Tensor,
+        qlen: torch.Tensor,
+        velocity: torch.Tensor,
         pedal: torch.Tensor,
     ) -> torch.Tensor:
         p = self.pitch_emb(pitch)
-        d = self.dur_emb(dur)
+        d = self.dur_emb(qlen)
         ped = self.pedal_emb(pedal)
-        v = self.vel_proj(vel.unsqueeze(-1).float())
+        v = self.vel_proj(velocity.unsqueeze(-1).float())
         x = torch.cat([p, d, v, ped], dim=-1)
         out, _ = self.gru(x)
         return self.fc(out)
@@ -63,11 +63,12 @@ class ArticulationTagger(pl.LightningModule):
         """Decode batch using CRF Viterbi algorithm."""
         with torch.no_grad():
             pitch = batch["pitch"]
-            dur = batch["dur"]
-            vel = batch["vel"]
+            dur = batch["qlen"]
+            vel = batch["velocity"]
             pedal = batch["pedal"]
-            mask = batch.get("mask", torch.ones_like(pitch, dtype=torch.bool))
-
+            mask = batch.get("mask") or batch.get("pad_mask")
+            if mask is None:
+                mask = torch.ones_like(pitch, dtype=torch.bool)
             emissions = self(pitch, dur, vel, pedal)
             return self.crf.decode(emissions, mask)
 

@@ -14,7 +14,9 @@ def test_cli_no_articulation(tmp_path, monkeypatch):
     phon.write_text(json.dumps(["a"]))
     out = tmp_path / "out"
     # stub tts_model to bypass actual TTS
-    monkeypatch.setitem(sys.modules, 'tts_model', types.SimpleNamespace(synthesize=lambda *args: b""))
+    mod = types.ModuleType('tts_model')
+    mod.synthesize = lambda *args: b""
+    monkeypatch.setitem(sys.modules, 'tts_model', mod)
     # run CLI
     sys_argv = [
         "modcompose",

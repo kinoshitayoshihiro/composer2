@@ -5,7 +5,26 @@ from pathlib import Path
 
 import torch
 import uvicorn
-from fastapi import FastAPI, WebSocket
+
+try:  # pragma: no cover - prefer FastAPI when available
+    from fastapi import FastAPI, WebSocket
+except Exception:  # pragma: no cover - optional dependency
+    from starlette.applications import Starlette as FastAPI
+    from starlette.routing import WebSocketRoute
+    from starlette.websockets import WebSocket
+
+    class FastAPIStub(FastAPI):  # type: ignore
+        def websocket(self, path):
+            def decorator(func):
+                async def endpoint(ws):
+                    await func(ws)
+
+                self.router.routes.append(WebSocketRoute(path, endpoint))
+                return func
+
+            return decorator
+
+    FastAPI = FastAPIStub  # type: ignore
 
 from scripts.segment_phrase import load_model, segment_bytes
 

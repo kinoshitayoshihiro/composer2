@@ -901,7 +901,7 @@ class PianoGenerator(BasePartGenerator):
             score.append(p.flat)
             tags = ml_articulation.predict(score, model)
             for n, t in zip(score.flat.notes, tags):
-                n.editorial.articulation_tag = int(t)
+                n.editorial.articulation_tag = t.label
 
         if isinstance(part, dict):
             for p in part.values():

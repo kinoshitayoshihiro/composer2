@@ -16,10 +16,14 @@ utils_pkg = types.ModuleType("utilities")
 utils_pkg.__path__ = [str(UTILS_DIR)]
 sys.modules.setdefault("utilities", utils_pkg)
 
-for _n in ("pkg_resources", "scipy", "scipy.signal"):
-    mod = types.ModuleType(_n)
-    mod.__spec__ = importlib.machinery.ModuleSpec(_n, loader=None)
-    sys.modules.setdefault(_n, mod)
+try:  # pragma: no cover - optional dependency
+    import scipy.signal  # type: ignore
+except Exception:
+    for _n in ("pkg_resources", "scipy", "scipy.signal"):
+        if _n not in sys.modules:
+            mod = types.ModuleType(_n)
+            mod.__spec__ = importlib.machinery.ModuleSpec(_n, loader=None)
+            sys.modules[_n] = mod
 # === end stub ===
 """CLI utility to generate a manifest of timbre-transfer training pairs."""
 

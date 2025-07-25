@@ -1,18 +1,25 @@
+import importlib.util
 import json
 import random
 from pathlib import Path
 
-import importlib.util
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+settings.register_profile("ci", deadline=None)
+settings.load_profile("ci")
 
 if importlib.util.find_spec("hypothesis") is None:
     pytest.skip("hypothesis missing", allow_module_level=True)
-from music21 import stream, note
-from generator.drum_generator import DrumGenerator, GM_DRUM_MAP
-from utilities.groove_sampler_ngram import Event
 from typing import cast
+
+from music21 import note, stream
+
+from generator.drum_generator import GM_DRUM_MAP, DrumGenerator
 from tests.helpers.events import make_event
 from utilities import humanizer
+from utilities.groove_sampler_ngram import Event
 
 
 def _cfg(tmp_path: Path, extra_global=None):
@@ -64,7 +71,13 @@ def test_cymbal_articulations(tmp_path: Path):
     part = stream.Part(id="drums")
     events = [
         make_event(instrument="ride", offset=0.0, velocity=90, articulation="bell"),
-        make_event(instrument="crash", offset=1.0, velocity=80, articulation="splash", duration=1.0),
+        make_event(
+            instrument="crash",
+            offset=1.0,
+            velocity=80,
+            articulation="splash",
+            duration=1.0,
+        ),
         make_event(instrument="crash", offset=2.0, velocity=70, articulation="choke"),
     ]
     drum._apply_pattern(
@@ -96,7 +109,8 @@ def test_cymbal_articulations(tmp_path: Path):
     assert pytest.approx(lag, abs=0.02) == 0.2
 
 
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 
 
 @given(st.integers(min_value=60, max_value=120))

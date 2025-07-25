@@ -2,24 +2,32 @@ from __future__ import annotations
 
 """Simple FastAPI server exposing sax solo generation."""
 
-try:
-    from fastapi import FastAPI, Request, HTTPException
-except ImportError:  # pragma: no cover - optional dependency
-    class FastAPI:  # type: ignore
-        def __init__(self) -> None:
-            pass
+try:  # pragma: no cover - prefer actual FastAPI when available
+    from fastapi import FastAPI, HTTPException, Request
+    from fastapi.responses import JSONResponse
+except Exception:  # pragma: no cover - optional dependency missing
+    from starlette.applications import Starlette as FastAPI
+    from starlette.exceptions import HTTPException
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
 
+    class FastAPIStub(FastAPI):  # type: ignore
         def post(self, path):
-            return lambda f: f
+            def decorator(func):
+                self.add_route(path, func, methods=["POST"])
+                return func
 
-        def middleware(self, name):
-            def decorator(f):
-                return f
             return decorator
 
-    Request = object  # type: ignore
-    HTTPException = Exception
-from fastapi.responses import JSONResponse
+        def middleware(self, _name):
+            def decorator(func):
+                self.add_middleware(BaseHTTPMiddleware, dispatch=func)
+                return func
+
+            return decorator
+
+    FastAPI = FastAPIStub  # type: ignore
 from pydantic import BaseModel
 
 try:

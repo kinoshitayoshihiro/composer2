@@ -1,9 +1,9 @@
--r cpu.txt
-hypothesis>=6
+-r requirements/cpu.txt
+hypothesis>=6.95
 mido>=1.2
 librosa>=0.10
 httpx>=0.23.3
-pytest-asyncio>=0.20.3
+pytest-asyncio>=0.23
 numpy>=1.26,<2.0
 tqdm>=4.66
 colorama>=0.4

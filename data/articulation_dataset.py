@@ -100,10 +100,10 @@ def seq_collate(batch: list[list[dict[str, float | int]]]) -> dict[str, torch.Te
         "pedal": torch.tensor(
             [pad(seq, "pedal", 0) for seq in batch], dtype=torch.long
         ),
-        "vel": torch.tensor(
+        "velocity": torch.tensor(
             [pad(seq, "vel", 0.0) for seq in batch], dtype=torch.float32
         ),
-        "dur": torch.tensor([pad(seq, "dur", 0) for seq in batch], dtype=torch.long),
+        "qlen": torch.tensor([pad(seq, "dur", 0) for seq in batch], dtype=torch.long),
         "labels": torch.tensor(
             [pad(seq, "label", 0) for seq in batch], dtype=torch.long
         ),

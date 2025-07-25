@@ -40,10 +40,7 @@ except Exception:
     groove_rnn_v2 = None
 from utilities.golden import compare_midi, update_golden  # noqa: E402
 from utilities.groove_sampler_ngram import Event, State  # noqa: E402
-from utilities.groove_sampler_v2 import (  # noqa: E402
-    generate_events,
-    load,
-)  # noqa: F401
+from utilities.groove_sampler_v2 import generate_events, load  # noqa: E402; noqa: F401
 from utilities.peak_synchroniser import PeakSynchroniser  # noqa: E402
 from utilities.realtime_engine import RealtimeEngine  # noqa: E402
 
@@ -63,7 +60,7 @@ def _schema_to_swing(schema: str | None) -> float | None:
 from utilities.tempo_utils import beat_to_seconds  # noqa: E402
 from utilities.tempo_utils import (  # noqa: E402
     load_tempo_curve as load_tempo_curve_simple,
-)  # noqa: E402
+)
 
 
 def _lazy_import_groove_rnn() -> ModuleType | None:
@@ -1256,7 +1253,10 @@ def _cmd_tag(args: list[str]) -> None:
     from data_ops.auto_tag import auto_tag
 
     meta = auto_tag(ns.loops, k_intensity=ns.k_intensity, csv_path=ns.csv)
-    ns.out.write_text(json.dumps(meta))
+    serializable = {
+        k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in meta.items()
+    }
+    ns.out.write_text(json.dumps(serializable))
     print(f"wrote {ns.out}")
 
 

@@ -6,7 +6,7 @@ import asyncio
 from typing import Dict, List, Set, Optional
 
 import pretty_midi
-from fastapi import WebSocket
+from utilities.fastapi_compat import WebSocket
 try:
     import redis.asyncio as redis  # type: ignore
 except Exception:  # pragma: no cover - redis optional

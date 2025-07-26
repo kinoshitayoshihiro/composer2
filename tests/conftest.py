@@ -1,41 +1,60 @@
 import sys
 import types
+import importlib.util
+import importlib.machinery
+from importlib.util import spec_from_loader
+
+# --- kill broken fastapi stub ASAP (before anything else imports it) ---
+if "fastapi" in sys.modules and getattr(sys.modules["fastapi"], "__spec__", None) is None:
+    del sys.modules["fastapi"]
+
+# Import stubs for optional dependencies early so music21 import works
+try:
+    from . import _stubs
+except ImportError:
+    _stubs = types.ModuleType("_stubs")
+    _stubs.install = lambda: None
+
+_stubs.install()
 
 import pytest
 from music21 import instrument
 
-# Import stubs for optional dependencies
-try:
-    from . import _stubs
-except ImportError:
-    # Create a simple _stubs module if it doesn't exist
-    _stubs = types.ModuleType("_stubs")
-    _stubs.install = lambda: None
-
 
 @pytest.fixture(autouse=True)
 def stub_optional_deps():
-    # Simple stub approach to avoid type annotation conflicts
+    """Install lightweight stubs for truly optional packages."""
     _stubs.install()
-    import importlib.util
+    if importlib.util.find_spec("fastapi") is None:
+        sys.modules.pop("fastapi", None)
 
-    for pkg in ("fastapi", "uvicorn", "websockets", "streamlit"):
-        if pkg not in sys.modules:
-            sys.modules[pkg] = types.ModuleType(pkg)
-        sys.modules[pkg] = types.ModuleType(pkg)
+    def _stub_pkg(name: str, attrs: dict | None = None) -> None:
+        # leave real packages untouched
         try:
-            found = importlib.util.find_spec(pkg)
+            if importlib.util.find_spec(name):
+                return
         except ValueError:
-            found = None
-        if found is None and pkg not in sys.modules:
-            mod = types.ModuleType(pkg)
-            mod.__spec__ = importlib.machinery.ModuleSpec(pkg, loader=importlib.machinery.BuiltinImporter)
-            sys.modules[pkg] = mod
+            pass
+        if name in sys.modules and getattr(sys.modules[name], "__spec__", None):
+            return
 
-    if "streamlit" not in sys.modules:
-        streamlit_module = types.ModuleType("streamlit")
-        streamlit_module.cache_data = lambda func: func
-        sys.modules["streamlit"] = streamlit_module
+        mod = sys.modules.get(name, types.ModuleType(name))
+        spec = spec_from_loader(name, loader=None, is_package=True)
+        spec.submodule_search_locations = []
+        mod.__spec__ = spec
+        mod.__package__ = name
+        mod.__path__ = []
+        if attrs:
+            for k, v in attrs.items():
+                setattr(mod, k, v)
+        sys.modules[name] = mod
+
+    for pkg in ("uvicorn", "websockets", "streamlit"):
+        _stub_pkg(pkg)
+
+    st = sys.modules.get("streamlit")
+    if st and not hasattr(st, "cache_data"):
+        st.cache_data = lambda func: func
 
 
 @pytest.fixture

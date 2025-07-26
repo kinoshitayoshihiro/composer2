@@ -3,6 +3,8 @@ from pathlib import Path
 from music21 import note, stream, expressions
 import torch
 
+import pytest
+pytest.importorskip("pytorch_lightning")
 from ml_models.articulation_tagger import ArticulationTagger
 from utilities import ml_articulation
 

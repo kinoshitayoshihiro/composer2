@@ -23,7 +23,6 @@ STUB_MODULES = [
     "joblib",
     "sklearn",
     "numba",
-    "fastapi",
     "uvicorn",
     "websockets",
     "mido",

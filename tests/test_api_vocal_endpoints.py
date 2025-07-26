@@ -5,6 +5,7 @@ import io
 import pytest
 
 pytest.importorskip("pytest_asyncio")
+pytest.importorskip("fastapi")
 import httpx
 from httpx import AsyncClient
 from fastapi.testclient import TestClient

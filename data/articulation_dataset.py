@@ -111,6 +111,7 @@ def seq_collate(batch: list[list[dict[str, float | int]]]) -> dict[str, torch.Te
         ),
         "velocity": torch.tensor(
             [pad(seq, "velocity", 0.0) for seq in batch], dtype=torch.float32
+
         ),
         "qlen": torch.tensor([pad(seq, "qlen", 0) for seq in batch], dtype=torch.long),
         "labels": torch.tensor(

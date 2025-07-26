@@ -1,20 +1,28 @@
 import sys
 import types
 
-from tests import _stubs
-
-_stubs.install()
-
 import pytest
 from music21 import instrument
+
+# Import stubs for optional dependencies
+try:
+    from . import _stubs
+except ImportError:
+    # Create a simple _stubs module if it doesn't exist
+    _stubs = types.ModuleType("_stubs")
+    _stubs.install = lambda: None
 
 
 @pytest.fixture(autouse=True)
 def stub_optional_deps():
+    # Simple stub approach to avoid type annotation conflicts
     _stubs.install()
     import importlib.util
 
     for pkg in ("fastapi", "uvicorn", "websockets", "streamlit"):
+        if pkg not in sys.modules:
+            sys.modules[pkg] = types.ModuleType(pkg)
+        sys.modules[pkg] = types.ModuleType(pkg)
         try:
             found = importlib.util.find_spec(pkg)
         except ValueError:

@@ -190,5 +190,15 @@ def install() -> None:
             loop.close()
 
         pa.event_loop = event_loop
+
+        def pytest_addoption(parser):
+            parser.addoption(
+                "--asyncio-mode",
+                action="store",
+                default="auto",
+                help="dummy asyncio mode option for stub",
+            )
+
+        pa.pytest_addoption = pytest_addoption
         pa.pytest_configure = lambda config: None
         sys.modules["pytest_asyncio"] = pa

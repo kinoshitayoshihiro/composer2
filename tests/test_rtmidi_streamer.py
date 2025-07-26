@@ -1,4 +1,5 @@
 import time
+import types
 from types import SimpleNamespace
 
 from realtime import rtmidi_streamer

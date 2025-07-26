@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,17 @@ def _load_loops(path: Path) -> list[LoopEntry]:
         with path.open("r", encoding="utf-8") as fh:
             obj = json.load(fh)
     except FileNotFoundError as exc:
+        if os.environ.get("COMPOSER2_ALLOW_EMPTY_LOOPS") == "1":
+            return [
+                {
+                    "tokens": [],
+                    "tempo_bpm": 120.0,
+                    "bar_beats": 4,
+                    "section": DEFAULT_AUX["section"],
+                    "heat_bin": DEFAULT_AUX["heat_bin"],
+                    "intensity": DEFAULT_AUX["intensity"],
+                }
+            ]
         raise ValueError("no loops found") from exc
     res: list[LoopEntry] = []
     for entry in obj.get("data", []):

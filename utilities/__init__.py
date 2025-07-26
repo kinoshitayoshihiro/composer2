@@ -1,5 +1,5 @@
-"""
-utilities package -- 音楽生成プロジェクト全体で利用されるコアユーティリティ群
+# ruff: noqa
+"""utilities package -- 音楽生成プロジェクト全体で利用されるコアユーティリティ群
 --------------------------------------------------------------------------
 公開API:
     - core_music_utils:
@@ -17,6 +17,8 @@ utilities package -- 音楽生成プロジェクト全体で利用されるコ�
         - NUMPY_AVAILABLE
 """
 
+import os
+
 import numpy as np
 import pretty_midi
 
@@ -24,15 +26,18 @@ _orig = pretty_midi.PrettyMIDI.get_tempo_changes
 
 
 def _patched_get_tempo_changes(self, *args, **kwargs):
+    """Return numpy arrays if the original returns lists."""
     times, tempi = _orig(self, *args, **kwargs)
-    return np.asarray(tempi), np.asarray(times)
+    if isinstance(tempi, list) and os.environ.get("COMPOSER2_DISABLE_PM_PATCH") != "1":
+        return np.asarray(tempi), np.asarray(times)
+    return tempi, times
 
 
 pretty_midi.PrettyMIDI.get_tempo_changes = _patched_get_tempo_changes
 
-import importlib
-import importlib.util as importlib_util
-from typing import TYPE_CHECKING, Any
+import importlib  # noqa: E402
+import importlib.util as importlib_util  # noqa: E402
+from typing import TYPE_CHECKING, Any  # noqa: E402
 
 __all__: list[str] = []
 
@@ -43,16 +48,16 @@ if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from . import groove_sampler_ngram as groove_sampler_ngram
     from . import vocal_sync as vocal_sync
 
-from .accent_mapper import AccentMapper
-from .kde_velocity import KDEVelocityModel
+from .accent_mapper import AccentMapper  # noqa: E402
+from .kde_velocity import KDEVelocityModel as _KDEVelocityModel  # noqa: E402
 from .loader import load_chordmap  # noqa: E402
-from .progression_templates import get_progressions
-from .rest_utils import get_rest_windows
-from .velocity_model import KDEVelocityModel
+from .progression_templates import get_progressions  # noqa: E402
+from .rest_utils import get_rest_windows  # noqa: E402
+from .velocity_model import KDEVelocityModel  # noqa: E402
 
 __all__.append("get_progressions")
 
-from .tempo_utils import beat_to_seconds
+from .tempo_utils import beat_to_seconds  # noqa: E402
 
 __all__.append("beat_to_seconds")
 __all__.append("load_chordmap")
@@ -193,9 +198,9 @@ from .tempo_utils import (
     get_bpm_at,
     get_tempo_at_beat,
     interpolate_bpm,
+    load_tempo_map,
 )
 from .tempo_utils import load_tempo_curve as load_tempo_curve_simple
-from .tempo_utils import load_tempo_map
 from .velocity_curve import PREDEFINED_CURVES, resolve_velocity_curve
 from .velocity_smoother import EMASmoother, VelocitySmoother
 

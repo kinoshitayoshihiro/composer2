@@ -1,6 +1,6 @@
 import asyncio
 import time
-from types import SimpleNamespace
+import types
 
 from music21 import note, stream, volume
 

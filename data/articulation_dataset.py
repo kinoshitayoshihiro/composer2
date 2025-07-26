@@ -84,11 +84,15 @@ def seq_collate(batch: list[list[dict[str, float | int]]]) -> dict[str, torch.Te
 
     max_len = max(len(seq) for seq in batch)
 
+    def normalize_item(item: dict[str, float | int]) -> None:
+        """Backwards compatible key normalization."""
+        item.setdefault("pedal", item.get("pedal_state", 0))
+        item.setdefault("velocity", item.get("vel", item.get("velocity", 0.0)))
+        item.setdefault("qlen", item.get("dur", item.get("qlen", 0)))
+
     for seq in batch:
         for item in seq:
-            item["pedal"] = item.get("pedal_state", 0)
-            item["velocity"] = item.get("velocity", 0.0)
-            item["qlen"] = item.get("qlen", 0)
+            normalize_item(item)
 
     def pad(
         seq: list[dict[str, float | int]], key: str, fill: float | int
@@ -107,10 +111,9 @@ def seq_collate(batch: list[list[dict[str, float | int]]]) -> dict[str, torch.Te
         ),
         "velocity": torch.tensor(
             [pad(seq, "velocity", 0.0) for seq in batch], dtype=torch.float32
+
         ),
-        "qlen": torch.tensor(
-            [pad(seq, "qlen", 0) for seq in batch], dtype=torch.long
-        ),
+        "qlen": torch.tensor([pad(seq, "qlen", 0) for seq in batch], dtype=torch.long),
         "labels": torch.tensor(
             [pad(seq, "label", 0) for seq in batch], dtype=torch.long
         ),

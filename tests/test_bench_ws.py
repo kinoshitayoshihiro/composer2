@@ -1,4 +1,5 @@
 import importlib.util
+import importlib.machinery
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -25,9 +26,11 @@ class DummyWS:
 def _load() -> ModuleType:
     ws_mod = ModuleType("websockets")
     ws_mod.connect = lambda *a, **k: DummyWS()
+    ws_mod.__spec__ = importlib.machinery.ModuleSpec("websockets", loader=None)
     sys.modules["websockets"] = ws_mod
 
     fastapi = ModuleType("fastapi")
+    fastapi.__spec__ = importlib.machinery.ModuleSpec("fastapi", loader=None)
 
     class DummyApp:
         def post(self, *_a, **_k):
@@ -43,6 +46,7 @@ def _load() -> ModuleType:
     sys.modules["fastapi"] = fastapi
 
     uvicorn = ModuleType("uvicorn")
+    uvicorn.__spec__ = importlib.machinery.ModuleSpec("uvicorn", loader=None)
 
     class Server:
         def __init__(self, config: object) -> None:  # pragma: no cover - stub

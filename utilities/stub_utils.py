@@ -19,6 +19,15 @@ STUB_MODULES = [
     "torchcrf",
     "torch_crf",
     "TorchCRF",
+    "pandas",
+    "joblib",
+    "sklearn",
+    "numba",
+    "fastapi",
+    "uvicorn",
+    "websockets",
+    "mido",
+    "tomli",
 ]
 
 
@@ -57,7 +66,12 @@ class _dummy_module(types.ModuleType):
 
 def _create_module(name: str) -> types.ModuleType:
     mod = _dummy_module(name)
-    mod.__spec__ = importlib.machinery.ModuleSpec(name, loader=None)
+    spec = importlib.machinery.ModuleSpec(
+        name, loader=importlib.machinery.BuiltinImporter
+    )
+    if '.' not in name:
+        spec.submodule_search_locations = []
+    mod.__spec__ = spec
     return mod
 
 
@@ -86,6 +100,11 @@ def _populate_music21(mod: types.ModuleType) -> None:
         "chord",
         "tempo",
         "volume",
+        "duration",
+        "dynamics",
+        "spanner",
+        "tie",
+        "layout",
         "midi",
         "exceptions21",
         "scale",
@@ -107,6 +126,7 @@ def _populate_music21(mod: types.ModuleType) -> None:
             "Violin",
             "AcousticBass",
             "AltoSaxophone",
+            "KeyboardInstrument",
             "Piano",
         ],
         "articulations": ["Articulation"],
@@ -118,6 +138,9 @@ def _populate_music21(mod: types.ModuleType) -> None:
         "interval": ["Interval"],
         "tempo": ["MetronomeMark"],
         "volume": ["Volume"],
+        "duration": ["Duration"],
+        "scale": ["ConcreteScale"],
+        "tie": ["Tie"],
     }
     for mod_name, classes in cls_map.items():
         sm = sys.modules[f"music21.{mod_name}"]

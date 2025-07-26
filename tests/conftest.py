@@ -12,14 +12,22 @@ from music21 import instrument
 @pytest.fixture(autouse=True)
 def stub_optional_deps():
     _stubs.install()
-    for pkg in ("fastapi", "uvicorn", "websockets", "streamlit"):
-        sys.modules[pkg] = types.ModuleType(pkg)
-        sys.modules[pkg] = types.ModuleType(pkg)
+    import importlib.util
 
-    # Streamlit stub with cache_data
-    streamlit_module = types.ModuleType("streamlit")
-    streamlit_module.cache_data = lambda func: func
-    sys.modules["streamlit"] = streamlit_module
+    for pkg in ("fastapi", "uvicorn", "websockets", "streamlit"):
+        try:
+            found = importlib.util.find_spec(pkg)
+        except ValueError:
+            found = None
+        if found is None and pkg not in sys.modules:
+            mod = types.ModuleType(pkg)
+            mod.__spec__ = importlib.machinery.ModuleSpec(pkg, loader=importlib.machinery.BuiltinImporter)
+            sys.modules[pkg] = mod
+
+    if "streamlit" not in sys.modules:
+        streamlit_module = types.ModuleType("streamlit")
+        streamlit_module.cache_data = lambda func: func
+        sys.modules["streamlit"] = streamlit_module
 
 
 @pytest.fixture

@@ -1,4 +1,5 @@
 # --- START OF FILE generator/bass_generator.py (simplified) ---
+from __future__ import annotations
 import copy
 import logging
 import math

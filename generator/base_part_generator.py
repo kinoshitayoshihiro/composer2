@@ -186,10 +186,7 @@ class BasePartGenerator(ABC):
                 import numpy as np
 
                 ctx = np.array(
-                    [
-                        [float(n.offset), float(n.pitch.midi)]
-                        for n in notes
-                    ],
+                    [[float(n.offset), float(n.pitch.midi)] for n in notes],
                     dtype=np.float32,
                 )
                 preds = model.predict(ctx)

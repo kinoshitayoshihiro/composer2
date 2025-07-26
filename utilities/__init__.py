@@ -34,6 +34,9 @@ def _patched_get_tempo_changes(self, *args, **kwargs):
 
 
 pretty_midi.PrettyMIDI.get_tempo_changes = _patched_get_tempo_changes
+# Ensure pretty_midi always returns ndarray for tempo changes.
+# The import has side effects (monkey patch), but it's lightweight and idempotent.
+from . import pretty_midi_compat  # noqa: F401
 
 import importlib  # noqa: E402
 import importlib.util as importlib_util  # noqa: E402

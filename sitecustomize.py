@@ -6,6 +6,29 @@ import os
 from pathlib import Path
 
 try:
+    import pytest_asyncio.plugin as _pa_plugin
+    _pa_plugin.pytest_collectstart = lambda *a, **k: None  # type: ignore
+except Exception:
+    pass
+
+# Patch pytest-asyncio to avoid AttributeError on newer pytest versions
+try:
+    import pytest_asyncio.plugin as _pa_plugin  # type: ignore
+
+    def _safe_collectstart(collector):
+        pyobject = getattr(collector, "obj", None)
+        if pyobject is not None:
+            setattr(
+                pyobject,
+                "__pytest_asyncio_scoped_event_loop",
+                _pa_plugin.scoped_event_loop,
+            )
+
+    _pa_plugin.pytest_collectstart = _safe_collectstart  # type: ignore[attr-defined]
+except Exception:
+    pass
+
+try:
     import pretty_midi  # type: ignore
 except Exception:
     pretty_midi = None

@@ -3,8 +3,15 @@ from __future__ import annotations
 import base64
 from typing import List
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
-from fastapi.responses import JSONResponse
+from utilities.fastapi_compat import (
+    FastAPI,
+    WebSocket,
+    WebSocketDisconnect,
+    HTTPException,
+    Request,
+    status,
+    JSONResponse,
+)
 from pydantic import BaseModel
 
 from .session_manager import SessionManager

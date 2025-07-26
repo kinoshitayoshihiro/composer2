@@ -283,9 +283,9 @@ def install() -> None:
         pa.pytest_configure = lambda config: None
         sys.modules["pytest_asyncio"] = pa
 
-    # Additional lightweight stubs used in tests
+    # Additional lightweight stubs used in tests. Avoid stubbing FastAPI so
+    # that its absence is detected properly.
     for name in (
-        "fastapi",
         "uvicorn",
         "websockets",
         "streamlit",

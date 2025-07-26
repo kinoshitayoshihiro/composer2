@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 from typing import List
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from utilities.fastapi_compat import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from .session_manager import SessionManager

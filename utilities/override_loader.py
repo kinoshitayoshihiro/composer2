@@ -23,7 +23,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional, List # List を追加
-import tomli
+try:
+    import tomllib as tomli  # Python 3.11+
+except Exception:  # pragma: no cover
+    import tomli
 import yaml
 import io
 import logging

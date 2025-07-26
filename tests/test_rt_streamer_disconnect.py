@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from types import SimpleNamespace
+import types
 
 from music21 import note, stream, volume
 

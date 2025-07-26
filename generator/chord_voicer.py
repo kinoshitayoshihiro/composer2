@@ -1,4 +1,5 @@
 # --- START OF FILE generators/chord_voicer.py (修正版) ---
+from __future__ import annotations
 from typing import List, Dict, Optional
 
 # music21 のサブモジュールを正しい形式でインポート

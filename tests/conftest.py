@@ -68,7 +68,16 @@ def stub_optional_deps():
                 setattr(mod, k, v)
         sys.modules[name] = mod
 
-    for pkg in ("uvicorn", "websockets", "streamlit"):
+    for pkg in (
+        "uvicorn",
+        "websockets",
+        "streamlit",
+        "aiohttp",
+        "sklearn",
+        "sklearn.cluster",
+        "sklearn.metrics",
+        "scipy.stats",
+    ):
         _stub_pkg(pkg)
 
     st = sys.modules.get("streamlit")

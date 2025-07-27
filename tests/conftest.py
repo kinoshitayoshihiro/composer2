@@ -3,19 +3,22 @@ import types
 import importlib.util
 import importlib.machinery
 from importlib.util import spec_from_loader
+import os
+
+# Heavy import を抑止（transformers が torch.distributed.* を引っ張るのを防ぐ）
+os.environ.setdefault("COMPOSER_USE_DUMMY_TRANSFORMERS", "1")
+os.environ.setdefault("TRANSFORMERS_NO_TORCH_FSDP", "1")
+os.environ.setdefault("TRANSFORMERS_NO_TORCH_DYNAMO", "1")
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 # --- kill broken fastapi stub ASAP (before anything else imports it) ---
 if "fastapi" in sys.modules and getattr(sys.modules["fastapi"], "__spec__", None) is None:
     del sys.modules["fastapi"]
 
-# Import stubs for optional dependencies early so music21 import works
-try:
-    from . import _stubs
-except ImportError:
-    _stubs = types.ModuleType("_stubs")
-    _stubs.install = lambda: None
+# stub を必ずインストール（他のモジュールより前に）
+from ._stubs import install as _install_stubs  # noqa: E402
 
-_stubs.install()
+_install_stubs()
 
 import pytest
 from music21 import instrument
@@ -24,7 +27,7 @@ from music21 import instrument
 @pytest.fixture(autouse=True)
 def stub_optional_deps():
     """Install lightweight stubs for truly optional packages."""
-    _stubs.install()
+    _install_stubs()
     if importlib.util.find_spec("fastapi") is None:
         sys.modules.pop("fastapi", None)
 
@@ -79,3 +82,4 @@ def _basic_gen():
         return GuitarGenerator(**default_args)
 
     return _create_generator
+

@@ -168,9 +168,13 @@ def _populate_scipy(mod: types.ModuleType) -> None:
     def lfilter(*_a, **_k):
         return _empty_array()
 
+    def resample_poly(x, up, down, axis=0):
+        return _empty_array()
+
     sig.hamming = hamming
     sig.butter = butter
     sig.lfilter = lfilter
+    sig.resample_poly = resample_poly
     mod.signal = sig
 
 

@@ -170,8 +170,13 @@ except Exception:  # pragma: no cover - optional
             return _Tensor()
         if len(seq) == 1:
             return seq[0]
-        total = sum(getattr(s, "shape", [1])[0] if hasattr(s, "shape") else 1 for s in seq)
-        return _Tensor(total)
+        base = getattr(seq[0], "shape", ())
+        if not base:
+            return seq[0]
+        total = sum(getattr(t, "shape", base)[dim] for t in seq)
+        new_shape = list(base)
+        new_shape[dim] = total
+        return _Tensor(*new_shape)
 
     torch.cat = _cat  # type: ignore[attr-defined]
     torch.nn = nn  # type: ignore[attr-defined]
@@ -191,6 +196,28 @@ except Exception:  # pragma: no cover - optional
     torch.utils = utils  # type: ignore[attr-defined]
     sys.modules.setdefault("torch.utils", utils)
     sys.modules.setdefault("torch.utils.data", utils.data)
+    # use real torch.distributed if available; otherwise provide minimal stub
+    if "torch.distributed" not in sys.modules:
+        try:
+            import torch.distributed as _dist  # type: ignore
+        except Exception:
+            dist = types.ModuleType("torch.distributed")
+            dist.__spec__ = importlib.machinery.ModuleSpec(
+                "torch.distributed", loader=importlib.machinery.BuiltinImporter, is_package=True
+            )
+            def _noop(*_a, **_k):
+                pass
+            dist.is_available = lambda: False
+            dist.init_process_group = _noop
+            dist.destroy_process_group = _noop
+            dist.barrier = _noop
+            dist.get_rank = lambda: 0
+            dist.get_world_size = lambda: 1
+            class _PG:
+                pass
+            dist.ProcessGroup = _PG
+            sys.modules.setdefault("torch.distributed", dist)
+            torch.distributed = dist  # type: ignore[attr-defined]
 
 
 def install() -> None:
@@ -227,8 +254,11 @@ def install() -> None:
         np.zeros = _zeros
         np.asarray = lambda x, *a, **k: array("f", x)
         sys.modules["numpy"] = np
-    for name in ("pretty_midi", "music21", "yaml", "pydantic", "pydantic_settings"):
-        spec = importlib.util.find_spec(name)
+    for name in ("pretty_midi", "music21", "yaml", "pydantic", "pydantic_settings", "numpy.typing"):
+        try:
+            spec = importlib.util.find_spec(name)
+        except ModuleNotFoundError:
+            spec = None
         if spec is not None or (
             name in sys.modules and getattr(sys.modules[name], "__spec__", None)
         ):
@@ -236,8 +266,18 @@ def install() -> None:
         if name not in sys.modules:
             mod = types.ModuleType(name)
             mod.__spec__ = importlib.machinery.ModuleSpec(
-                name, loader=importlib.machinery.BuiltinImporter
+                name, loader=importlib.machinery.BuiltinImporter, is_package=(name == "music21")
             )
+            if name == "music21":
+                mod.__spec__.submodule_search_locations = []
+                mod.__package__ = name
+                mod.__path__ = []
+                class _Dummy:
+                    def __getattr__(self, _):
+                        return self
+                    def __call__(self, *a, **k):
+                        return self
+                mod.__getattr__ = lambda _n: _Dummy()
             if name == "pretty_midi":
 
                 class _PM:
@@ -264,24 +304,35 @@ def install() -> None:
                     pass
 
                 mod.BaseSettings = _BaseSettings
+            if name == "numpy.typing":
+                class _NDArray:
+                    pass
+                mod.NDArray = _NDArray
             if name == "music21":
                 instr = types.ModuleType("music21.instrument")
-                instr.__spec__ = importlib.machinery.ModuleSpec("music21.instrument", loader=importlib.machinery.BuiltinImporter)
+                instr.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.instrument", loader=importlib.machinery.BuiltinImporter
+                )
                 class _Instr:
                     def __init__(self, *a, **k) -> None:
                         pass
                 instr.Instrument = _Instr
+                instr.__getattr__ = lambda _n: _Dummy()
                 mod.instrument = instr
                 sys.modules["music21.instrument"] = instr
                 arts = types.ModuleType("music21.articulations")
-                arts.__spec__ = importlib.machinery.ModuleSpec("music21.articulations", loader=importlib.machinery.BuiltinImporter)
+                arts.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.articulations", loader=importlib.machinery.BuiltinImporter
+                )
                 arts.Articulation = object
+                arts.__getattr__ = lambda _n: _Dummy()
                 mod.articulations = arts
                 sys.modules["music21.articulations"] = arts
                 harm = types.ModuleType("music21.harmony")
                 harm.__spec__ = importlib.machinery.ModuleSpec(
                     "music21.harmony", loader=importlib.machinery.BuiltinImporter
                 )
+                harm.__getattr__ = lambda _n: _Dummy()
                 mod.harmony = harm
                 sys.modules["music21.harmony"] = harm
                 expr = types.ModuleType("music21.expressions")
@@ -290,8 +341,108 @@ def install() -> None:
                 )
                 expr.TextExpression = object
                 expr.Expression = object
+                expr.__getattr__ = lambda _n: _Dummy()
                 mod.expressions = expr
                 sys.modules["music21.expressions"] = expr
+                pitch = types.ModuleType("music21.pitch")
+                pitch.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.pitch", loader=importlib.machinery.BuiltinImporter
+                )
+                class _Pitch:
+                    def __init__(self, *a, **k):
+                        pass
+                pitch.Pitch = _Pitch
+                pitch.__getattr__ = lambda _n: _Dummy()
+                mod.pitch = pitch
+                sys.modules["music21.pitch"] = pitch
+                key_mod = types.ModuleType("music21.key")
+                key_mod.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.key", loader=importlib.machinery.BuiltinImporter
+                )
+                class _Key:
+                    def __init__(self, *a, **k):
+                        pass
+                key_mod.Key = _Key
+                key_mod.__getattr__ = lambda _n: _Dummy()
+                mod.key = key_mod
+                sys.modules["music21.key"] = key_mod
+                meter_mod = types.ModuleType("music21.meter")
+                meter_mod.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.meter", loader=importlib.machinery.BuiltinImporter
+                )
+                class _TimeSignature:
+                    def __init__(self, *a, **k):
+                        pass
+                meter_mod.TimeSignature = _TimeSignature
+                meter_mod.__getattr__ = lambda _n: _Dummy()
+                mod.meter = meter_mod
+                sys.modules["music21.meter"] = meter_mod
+                interval_mod = types.ModuleType("music21.interval")
+                interval_mod.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.interval", loader=importlib.machinery.BuiltinImporter
+                )
+                class _Interval:
+                    def __init__(self, *a, **k):
+                        pass
+                interval_mod.Interval = _Interval
+                interval_mod.__getattr__ = lambda _n: _Dummy()
+                mod.interval = interval_mod
+                sys.modules["music21.interval"] = interval_mod
+                note = types.ModuleType("music21.note")
+                note.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.note", loader=importlib.machinery.BuiltinImporter
+                )
+                class _Note:
+                    def __init__(self, *a, **k):
+                        pass
+                note.Note = _Note
+                note.__getattr__ = lambda _n: _Dummy()
+                mod.note = note
+                sys.modules["music21.note"] = note
+                chord_mod = types.ModuleType("music21.chord")
+                chord_mod.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.chord", loader=importlib.machinery.BuiltinImporter
+                )
+                class _Chord:
+                    def __init__(self, *a, **k):
+                        pass
+                chord_mod.Chord = _Chord
+                chord_mod.__getattr__ = lambda _n: _Dummy()
+                mod.chord = chord_mod
+                sys.modules["music21.chord"] = chord_mod
+                stream_mod = types.ModuleType("music21.stream")
+                stream_mod.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.stream", loader=importlib.machinery.BuiltinImporter
+                )
+                class _Stream:
+                    def __init__(self, *a, **k):
+                        pass
+                stream_mod.Stream = _Stream
+                stream_mod.__getattr__ = lambda _n: _Dummy()
+                mod.stream = stream_mod
+                sys.modules["music21.stream"] = stream_mod
+                tempo_mod = types.ModuleType("music21.tempo")
+                tempo_mod.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.tempo", loader=importlib.machinery.BuiltinImporter
+                )
+                class _Tempo:
+                    def __init__(self, *a, **k):
+                        pass
+                tempo_mod.MetronomeMark = _Tempo
+                tempo_mod.__getattr__ = lambda _n: _Dummy()
+                mod.tempo = tempo_mod
+                sys.modules["music21.tempo"] = tempo_mod
+                volume_mod = types.ModuleType("music21.volume")
+                volume_mod.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.volume", loader=importlib.machinery.BuiltinImporter
+                )
+                class _Volume:
+                    def __init__(self, *a, **k):
+                        pass
+                volume_mod.Volume = _Volume
+                volume_mod.__getattr__ = lambda _n: _Dummy()
+                mod.volume = volume_mod
+                sys.modules["music21.volume"] = volume_mod
             sys.modules[name] = mod
 
     utils_path = Path(__file__).resolve().parent.parent / "utilities" / "stub_utils.py"
@@ -401,6 +552,7 @@ def install() -> None:
         sig.lfilter = _dummy_filter
         sig.filtfilt = _dummy_filter
         sig.find_peaks = lambda *_a, **_k: ([], {})
+        sig.resample_poly = lambda x, up, down, axis=0: x
         sys.modules["scipy"] = types.ModuleType("scipy")
         sys.modules["scipy.signal"] = sig
     else:
@@ -414,6 +566,7 @@ def install() -> None:
             sig.lfilter = _dummy_filter
             sig.filtfilt = _dummy_filter
             sig.find_peaks = lambda *_a, **_k: ([], {})
+            sig.resample_poly = lambda x, up, down, axis=0: x
 
     if "pytest_asyncio" not in sys.modules:
         import asyncio
@@ -442,35 +595,90 @@ def install() -> None:
         pa.pytest_configure = lambda config: None
         sys.modules["pytest_asyncio"] = pa
 
-    # Additional lightweight stubs used in tests. Avoid stubbing FastAPI so
-    # that its absence is detected properly.
-    for name in (
+    # ------------------------------------------------------------------
+    # 強制スタブ: transformers / torchmetrics 系は常にスタブ化して
+    # '_dummy_module' 由来の TypeError を防止する
+    # ------------------------------------------------------------------
+    heavy = (
         "uvicorn",
         "websockets",
         "streamlit",
         "mido",
         "tomli",
         "transformers",
+        "torchmetrics",
+        "torchmetrics.functional",
+        "torchmetrics.functional.text",
         "librosa",
-    ):
-        if name in sys.modules and getattr(sys.modules[name], "__spec__", None):
-            continue
-        if importlib.util.find_spec(name):
-            continue
-        if name == "transformers" and os.getenv("COMPOSER_USE_DUMMY_TRANSFORMERS", "0") != "1":
-            continue
+    )
+
+    for name in heavy:
+        force = (
+            name.startswith("transformers")
+            or name.startswith("torchmetrics")
+            or name in {"streamlit", "uvicorn", "websockets", "mido"}
+        )
+        if name.startswith("transformers") and os.getenv("COMPOSER_USE_DUMMY_TRANSFORMERS", "0") != "1":
+            force = False
+
+        # transformers/torchmetrics は必ず潰す。それ以外は存在確認して無ければ stub
+        if not force:
+            if name in sys.modules and getattr(sys.modules[name], "__spec__", None):
+                continue
+            if importlib.util.find_spec(name):
+                continue
+
+        # 既にロード済みなら上書きしない
+        if name in sys.modules:
+            mod_in_sys = sys.modules[name]
+            mod_file = getattr(mod_in_sys, "__file__", "")
+            if not isinstance(mod_file, str):
+                mod_file = ""
+            if force and mod_file.startswith("<stub:"):
+                continue
+            if not force and getattr(mod_in_sys, "__spec__", None):
+                continue
+            del sys.modules[name]
+
         mod = types.ModuleType(name)
         mod.__file__ = f"<stub:{name}>"
         mod.__spec__ = importlib.machinery.ModuleSpec(
             name, loader=importlib.machinery.BuiltinImporter, is_package=True
         )
+        mod.__spec__.submodule_search_locations = []
+        mod.__package__ = name
+        mod.__path__ = []
         sys.modules[name] = mod
+
         if name == "tomli":
             mod.loads = lambda s, *a, **k: {}
-        if name == "transformers":
-            class _Model:
-                pass
 
-            mod.Wav2Vec2Model = _Model
+        if name.startswith("transformers"):
+            class _Dummy:
+                def __getattr__(self, _):
+                    return self
+
+                def __call__(self, *a, **k):
+                    return self
+
+                @classmethod
+                def from_pretrained(cls, *a, **k):
+                    return cls()
+
+            mod.Wav2Vec2Model = _Dummy
+            mod.AutoTokenizer = _Dummy
+            mod.AutoModel = _Dummy
+            mod.__getattr__ = lambda _n: _Dummy
+
+        if name.startswith("torchmetrics"):
+            class _TM:
+                def __getattr__(self, _):
+                    return self
+
+                def __call__(self, *a, **k):
+                    return 0
+
+            mod.__getattr__ = lambda _n: _TM()
+
         if name == "librosa":
             mod.load = lambda *_a, **_k: ([], 22050)

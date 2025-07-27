@@ -40,7 +40,8 @@ def _midi_frames(times: list[float], n_frames: int, hop_length_ms: int) -> torch
     for t_ms in times:
         idx = int(t_ms / hop_length_ms)
         if idx < n_frames:
-            arr[idx] = min(int(t_ms), 511)
+            # インデックスを 0..511 に制限
+            arr[idx] = min(idx, 511)
     return arr
 
 
@@ -54,10 +55,12 @@ def align_audio(
     n_frames = int(
         round(len(audio) / cfg["sample_rate"] / (cfg["hop_length_ms"] / 1000))
     )
+    if n_frames == 0 or not midi_times:
+        return []
     midi = _midi_frames(midi_times, n_frames, cfg["hop_length_ms"]).unsqueeze(0)
     with torch.no_grad():
         logp = model(audio.unsqueeze(0), midi)
-    pred = logp.argmax(-1)[:, :n_frames].squeeze(1)
+    pred = logp.argmax(-1)[:n_frames, 0]  # (T,B) -> use first batch
     res = []
     prev = len(vocab)
     for i, p in enumerate(pred):

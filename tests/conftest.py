@@ -9,7 +9,23 @@ import os
 os.environ.setdefault("COMPOSER_USE_DUMMY_TRANSFORMERS", "1")
 os.environ.setdefault("TRANSFORMERS_NO_TORCH_FSDP", "1")
 os.environ.setdefault("TRANSFORMERS_NO_TORCH_DYNAMO", "1")
+os.environ.setdefault("PYTORCH_DISABLE_DYNAMO", "1")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+# 既に読み込まれた heavy モジュールを掃除
+for _m in (
+    "pytorch_lightning",
+    "lightning_fabric",
+    "lightning_utilities",
+    "tensorboard",
+    "tensorboardX",
+    "torch._dynamo",
+    "torch.distributed.fsdp",
+    "torch.distributed.tensor",
+    "torch.library",
+    "torch._library",
+):
+    sys.modules.pop(_m, None)
 
 # --- kill broken fastapi stub ASAP (before anything else imports it) ---
 if "fastapi" in sys.modules and getattr(sys.modules["fastapi"], "__spec__", None) is None:

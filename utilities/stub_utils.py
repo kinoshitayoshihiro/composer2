@@ -7,6 +7,7 @@ import importlib.util
 import sys
 import types
 from collections.abc import Callable, Iterable
+from pathlib import Path
 
 STUB_MODULES = [
     "pkg_resources",
@@ -89,7 +90,7 @@ class _dummy_module(types.ModuleType):
 
     @classmethod
     def __mro_entries__(cls, bases):
-        return (object,)
+        return (cls,)
 
 
 def _create_module(name: str) -> types.ModuleType:
@@ -156,7 +157,12 @@ def _populate_music21(mod: types.ModuleType) -> None:
             "Violin",
             "AcousticBass",
             "AltoSaxophone",
+            "Flute",
             "KeyboardInstrument",
+            "Contrabass",
+            "Violoncello",
+            "Viola",
+            "Vocalist",
             "Piano",
         ],
         "articulations": ["Articulation"],
@@ -215,6 +221,9 @@ def _populate_pretty_midi(mod: types.ModuleType) -> None:
 
 def _populate_soundfile(mod: types.ModuleType) -> None:
     setattr(mod, "read", lambda *_a, **_k: ([], 44100))
+    def _write(path, data, sr, *a, **k):
+        Path(path).touch()
+    setattr(mod, "write", _write)
 
 
 def _populate_numpy(mod: types.ModuleType) -> None:

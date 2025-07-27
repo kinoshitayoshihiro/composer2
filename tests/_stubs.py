@@ -292,20 +292,53 @@ def install() -> None:
         sig.__package__ = "scipy.signal"
         sig.__path__ = []
 
-    stub_utils.install_stubs()
-
+    pm = sys.modules.get("pretty_midi")
+    if pm and getattr(pm, "__spec__", None) is None:
+        pm.__spec__ = importlib.machinery.ModuleSpec(
+            "pretty_midi", loader=importlib.machinery.BuiltinImporter, is_package=True
+        )
+        pm.__spec__.submodule_search_locations = []
+        pm.__package__ = "pretty_midi"
+        pm.__path__ = []
+    stub_utils.install_stubs(force_names=["pretty_midi"])
     pm = sys.modules.get("pretty_midi")
     if pm and not hasattr(pm.PrettyMIDI, "get_tempo_changes"):
         import numpy as np
 
         class _PM:
             def __init__(self, *args, **kwargs) -> None:
-                pass
+                inst = _Instrument(is_drum=True)
+                inst.notes.append(_Note(pitch=36, start=0.0, end=0.1, velocity=100))
+                self.instruments = [inst]
 
             def get_tempo_changes(self, *args, **kwargs):
                 return np.asarray([]), np.asarray([])
 
+            def write(self, path):
+                Path(path).touch()
+
+        class _Instrument:
+            def __init__(self, program=0, is_drum=False) -> None:
+                self.program = program
+                self.notes = []
+                self.control_changes = []
+                self.pitch_bends = []
+                self.is_drum = is_drum
+
+        class _Note:
+            def __init__(self, velocity=0, pitch=0, start=0.0, end=0.0) -> None:
+                self.velocity = velocity
+                self.pitch = pitch
+                self.start = start
+                self.end = end
+
+        def _write(path):
+            Path(path).touch()
+
         pm.PrettyMIDI = _PM
+        pm.Instrument = _Instrument
+        pm.Note = _Note
+        pm.write = lambda path: _write(path)
     m21 = sys.modules.get("music21")
     if m21:
         sys.modules.setdefault("music21.midi", types.ModuleType("music21.midi"))
@@ -457,6 +490,11 @@ def install() -> None:
         "mido",
         "tomli",
         "transformers",
+        "sklearn",
+        "sklearn.cluster",
+        "sklearn.metrics",
+        "scipy.stats",
+        "aiohttp",
         "pytorch_lightning",
         "lightning_fabric",
         "lightning_utilities",
@@ -478,7 +516,8 @@ def install() -> None:
             or name.startswith("torchmetrics")
             or name in {"streamlit", "uvicorn", "websockets", "mido",
                         "pytorch_lightning", "lightning_fabric", "lightning_utilities",
-                        "tensorboard", "tensorboardX", "torch._dynamo"}
+                        "tensorboard", "tensorboardX", "torch._dynamo",
+                        "scipy.stats", "aiohttp"}
         )
         if name.startswith("transformers") and os.getenv("COMPOSER_USE_DUMMY_TRANSFORMERS", "0") != "1":
             force = False
@@ -487,8 +526,11 @@ def install() -> None:
         if not force:
             if name in sys.modules and getattr(sys.modules[name], "__spec__", None):
                 continue
-            if importlib.util.find_spec(name):
-                continue
+            try:
+                if importlib.util.find_spec(name):
+                    continue
+            except ValueError:
+                pass
 
         # 既にロード済みなら上書きしない
         if name in sys.modules:
@@ -554,4 +596,169 @@ def install() -> None:
 
         if name == "librosa":
             mod.load = lambda *_a, **_k: ([], 22050)
+
+        if name == "mido":
+            class MidiFile:
+                def __init__(self, *a, **k) -> None:
+                    self.tracks = []
+                    self.length = 0.0
+
+            mod.MidiFile = MidiFile
+
+        if name == "tqdm":
+            mod.tqdm = lambda x=None, *a, **k: x if x is not None else iter([])
+            auto = types.ModuleType("tqdm.auto")
+            auto.tqdm = mod.tqdm
+            sys.modules["tqdm.auto"] = auto
+            nb = types.ModuleType("tqdm.notebook")
+            nb.tqdm = mod.tqdm
+            sys.modules["tqdm.notebook"] = nb
+
+        if name == "matplotlib":
+            pyplot = types.ModuleType("matplotlib.pyplot")
+            pyplot.plot = lambda *a, **k: None
+            pyplot.show = lambda *a, **k: None
+            mod.pyplot = pyplot
+            sys.modules["matplotlib.pyplot"] = pyplot
+            mod.use = lambda *a, **k: None
+
+        if name == "hypothesis":
+            strategies = types.ModuleType("hypothesis.strategies")
+            strategies.text = lambda *a, **k: None
+            strategies.integers = lambda *a, **k: None
+            strategies.floats = lambda *a, **k: None
+            mod.given = lambda *a, **k: (lambda f: f)
+            mod.settings = lambda *a, **k: (lambda f: f)
+            mod.strategies = strategies
+            sys.modules["hypothesis.strategies"] = strategies
+
+        if name in {"pydantic", "pydantic_settings"}:
+            class _Base:
+                def __init__(self, **data):
+                    for k, v in data.items():
+                        setattr(self, k, v)
+
+                def model_dump(self, *a, **k):
+                    return self.__dict__
+
+                @classmethod
+                def model_validate(cls, data, *a, **k):
+                    return cls(**data)
+
+            mod.BaseModel = _Base
+            mod.BaseSettings = _Base
+            mod.FilePath = str
+            mod.Field = lambda *a, **k: None
+            mod.field_validator = lambda *a, **k: (lambda f: f)
+            mod.ValidationError = Exception
+
+        # --- sklearn -------------------------------------------------
+        if name.startswith("sklearn"):
+            class _Estimator:
+                def fit(self, *a, **k):
+                    return self
+
+                def predict(self, X):
+                    return [0] * len(X) if X is not None else []
+
+            cluster_mod = types.SimpleNamespace(
+                KMeans=_Estimator, AgglomerativeClustering=_Estimator
+            )
+
+            def _conf_mat(*a, **k):
+                return types.SimpleNamespace(ravel=lambda: [0, 0, 0, 0])
+
+            metrics_mod = types.SimpleNamespace(
+                f1_score=lambda *a, **k: 0.0,
+                accuracy_score=lambda *a, **k: 0.0,
+                confusion_matrix=_conf_mat,
+                classification_report=lambda *a, **k: "",
+                precision_recall_fscore_support=lambda *a, **k: ([0.0], [0.0], [0.0], [0]),
+                silhouette_score=lambda *a, **k: 0.0,
+            )
+
+            mod.cluster = cluster_mod
+            mod.metrics = metrics_mod
+            if name.endswith(".cluster"):
+                mod.KMeans = _Estimator
+                mod.AgglomerativeClustering = _Estimator
+            if name.endswith(".metrics"):
+                for attr in (
+                    "f1_score",
+                    "accuracy_score",
+                    "confusion_matrix",
+                    "classification_report",
+                    "precision_recall_fscore_support",
+                    "silhouette_score",
+                ):
+                    setattr(mod, attr, getattr(metrics_mod, attr))
+
+        # --- scipy.stats ----------------------------------------------
+        if name == "scipy.stats":
+            mod.entropy = lambda *a, **k: 0.0
+            mod.pearsonr = lambda *a, **k: (0.0, 1.0)
+            mod.spearmanr = lambda *a, **k: (0.0, 1.0)
+            mod.rankdata = lambda *a, **k: []
+            mod.gmean = lambda *a, **k: 0.0
+            mod.ks_2samp = lambda *a, **k: (0.0, 1.0)
+            mod.ttest_rel = lambda *a, **k: (0.0, 1.0)
+            mod.ttest_ind = lambda *a, **k: (0.0, 1.0)
+
+        # --- aiohttp --------------------------------------------------
+        if name == "aiohttp":
+            class _Resp:
+                status = 200
+
+                async def read(self):
+                    return b""
+
+                async def json(self):
+                    return {}
+
+                async def text(self):
+                    return ""
+
+                async def raise_for_status(self):
+                    pass
+
+                async def __aenter__(self):
+                    return self
+
+                async def __aexit__(self, *exc):
+                    pass
+
+            class ClientSession:
+                async def get(self, *a, **k):
+                    return _Resp()
+
+                async def post(self, *a, **k):
+                    return _Resp()
+
+                async def close(self):
+                    pass
+
+                async def __aenter__(self):
+                    return self
+
+                async def __aexit__(self, *exc):
+                    pass
+
+            mod.ClientSession = ClientSession
+            class ClientTimeout:
+                def __init__(self, *a, **k):
+                    pass
+
+            class TCPConnector:
+                def __init__(self, *a, **k):
+                    pass
+
+            class ClientResponseError(Exception):
+                def __init__(self, status: int = 400, message: str = "", *a, **k) -> None:
+                    super().__init__(message)
+                    self.status = status
+                    self.message = message
+
+            mod.ClientTimeout = ClientTimeout
+            mod.TCPConnector = TCPConnector
+            mod.ClientResponseError = ClientResponseError
 

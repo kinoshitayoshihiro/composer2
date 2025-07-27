@@ -129,7 +129,7 @@ def evaluate(
             logp = model(audio, midi)
             loss = crit(logp, target, input_len, target_len)
             total_loss += float(loss)
-            preds = logp.argmax(-1).transpose(0, 1)
+            preds = logp.argmax(-1).transpose(0, 1)  # (T,N)->(N,T)
             for b in range(preds.size(0)):
                 seq = preds[b, : input_len[b]]
                 pred_times = decode(seq, blank_id, hop)
@@ -177,7 +177,7 @@ class AlignModule(pl.LightningModule):
         audio, midi, input_len, target, target_len, times = batch
         logp = self(audio, midi)
         loss = self.crit(logp, target, input_len, target_len)
-        preds = logp.argmax(-1).transpose(0, 1)
+        preds = logp.argmax(-1).transpose(0, 1)  # (T,N)->(N,T)
         mae = 0.0
         for b in range(preds.size(0)):
             seq = preds[b, : input_len[b]]

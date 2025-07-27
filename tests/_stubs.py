@@ -7,6 +7,7 @@ import importlib.util  # noqa: E402
 import sys  # noqa: E402
 import types  # noqa: E402
 from pathlib import Path  # noqa: E402
+import os
 
 try:
     import torch  # type: ignore
@@ -73,8 +74,47 @@ except Exception:  # pragma: no cover - optional
         def __init__(self, *shape) -> None:
             self.shape = shape
 
+        def zero_(self):
+            return self
+
+        @property
+        def data(self):
+            return self
+
+        def __getitem__(self, _):
+            return _Tensor(1)
+
+        def __setitem__(self, _, __):
+            pass
+
+        def __len__(self):
+            return self.shape[0] if self.shape else 0
+
+        def dim(self):
+            return len(self.shape)
+
+        def new_zeros(self, shape):
+            return _Tensor(*shape)
+
         def to(self, *_a, **_k):
             return self
+
+        def unsqueeze(self, dim):
+            if dim == 0:
+                return _Tensor(1, *self.shape)
+            return _Tensor(*self.shape)
+
+        def transpose(self, dim0, dim1):
+            return self
+
+        def argmax(self, dim=None):
+            return _Tensor(1)
+
+        def __iter__(self):
+            return iter(range(len(self)))
+
+        def __int__(self):
+            return 0
 
     torch.Tensor = _Tensor  # type: ignore[attr-defined]
 
@@ -82,26 +122,70 @@ except Exception:  # pragma: no cover - optional
         def __init__(self, *args, **kwargs) -> None:
             pass
 
+        def __call__(self, *a, **k):
+            if hasattr(self, "forward"):
+                return self.forward(*a, **k)
+            return None
+
         def parameters(self):
             return []
 
     class _Embedding(_Module):
-        pass
+        def __init__(self, num_embeddings, embedding_dim, *a, **k):
+            self.embedding_dim = embedding_dim
+        def forward(self, idx):
+            return _Tensor(len(idx), self.embedding_dim)
 
     class _GRU(_Module):
         def __call__(self, x, *a, **k):
             return x, None
 
+    class _LSTM(_Module):
+        def forward(self, x, *a, **k):
+            return x, None
+
     class _Linear(_Module):
-        pass
+        def __init__(self, *a, **k) -> None:
+            self.weight = _Tensor()
+            self.bias = _Tensor()
+        def forward(self, x):
+            return x
+
+    class _LayerNorm(_Module):
+        def forward(self, x):
+            return x
 
     nn.Module = _Module  # type: ignore[attr-defined]
     nn.Embedding = _Embedding  # type: ignore[attr-defined]
     nn.GRU = _GRU  # type: ignore[attr-defined]
     nn.Linear = _Linear  # type: ignore[attr-defined]
-    nn.functional = types.SimpleNamespace()  # type: ignore[attr-defined]
+    nn.LayerNorm = _LayerNorm  # type: ignore[attr-defined]
+    nn.LSTM = _LSTM  # type: ignore[attr-defined]
+    nn.functional = types.SimpleNamespace(
+        pad=lambda x, pad: x,
+        log_softmax=lambda x, dim=None: x,
+    )  # type: ignore[attr-defined]
+    def _cat(seq, dim=0):  # pragma: no cover - very small fake concat
+        if not seq:
+            return _Tensor()
+        if len(seq) == 1:
+            return seq[0]
+        total = sum(getattr(s, "shape", [1])[0] if hasattr(s, "shape") else 1 for s in seq)
+        return _Tensor(total)
+
+    torch.cat = _cat  # type: ignore[attr-defined]
     torch.nn = nn  # type: ignore[attr-defined]
-    torch.zeros = lambda *a, **k: 0  # type: ignore[attr-defined]
+    torch.zeros = lambda *a, **k: _Tensor(*a)  # type: ignore[attr-defined]
+    torch.long = "long"  # type: ignore[attr-defined]
+    torch.float32 = "float32"  # type: ignore[attr-defined]
+    torch.tensor = lambda data, *a, **k: _Tensor(len(data))  # type: ignore[attr-defined]
+    class _NoGrad:
+        def __enter__(self):
+            pass
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    torch.no_grad = lambda: _NoGrad()  # type: ignore[attr-defined]
     sys.modules.setdefault("torch", torch)
     sys.modules.setdefault("torch.nn", nn)
     torch.utils = utils  # type: ignore[attr-defined]
@@ -111,9 +195,43 @@ except Exception:  # pragma: no cover - optional
 
 def install() -> None:
     """Register lightweight stubs for optional dependencies."""
+    if "fastapi" in sys.modules and getattr(sys.modules["fastapi"], "__spec__", None) is None:
+        spec = importlib.util.find_spec("fastapi")
+        if spec is not None:
+            sys.modules["fastapi"].__spec__ = spec
+            sys.modules["fastapi"].__file__ = getattr(spec, "origin", "<fastapi>")
+    if "numpy" not in sys.modules and importlib.util.find_spec("numpy") is None:
+        import math
+        from array import array
+
+        np = types.ModuleType("numpy")
+        np.__file__ = "<stub:numpy>"
+        np.__spec__ = importlib.machinery.ModuleSpec(
+            "numpy", loader=importlib.machinery.BuiltinImporter
+        )
+        np.pi = math.pi
+        np.float32 = "float32"
+
+        def _linspace(start, stop, num, endpoint=True):
+            step = (stop - start) / (num - 1 if endpoint else num)
+            return array("f", [start + step * i for i in range(num)])
+
+        def _sin(arr):
+            return array("f", [math.sin(x) for x in arr])
+
+        def _zeros(n, dtype=None):
+            return array("f", [0.0] * (n if isinstance(n, int) else n[0]))
+
+        np.linspace = _linspace
+        np.sin = _sin
+        np.zeros = _zeros
+        np.asarray = lambda x, *a, **k: array("f", x)
+        sys.modules["numpy"] = np
     for name in ("pretty_midi", "music21", "yaml", "pydantic", "pydantic_settings"):
         spec = importlib.util.find_spec(name)
-        if spec is not None:
+        if spec is not None or (
+            name in sys.modules and getattr(sys.modules[name], "__spec__", None)
+        ):
             continue
         if name not in sys.modules:
             mod = types.ModuleType(name)
@@ -155,6 +273,25 @@ def install() -> None:
                 instr.Instrument = _Instr
                 mod.instrument = instr
                 sys.modules["music21.instrument"] = instr
+                arts = types.ModuleType("music21.articulations")
+                arts.__spec__ = importlib.machinery.ModuleSpec("music21.articulations", loader=importlib.machinery.BuiltinImporter)
+                arts.Articulation = object
+                mod.articulations = arts
+                sys.modules["music21.articulations"] = arts
+                harm = types.ModuleType("music21.harmony")
+                harm.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.harmony", loader=importlib.machinery.BuiltinImporter
+                )
+                mod.harmony = harm
+                sys.modules["music21.harmony"] = harm
+                expr = types.ModuleType("music21.expressions")
+                expr.__spec__ = importlib.machinery.ModuleSpec(
+                    "music21.expressions", loader=importlib.machinery.BuiltinImporter
+                )
+                expr.TextExpression = object
+                expr.Expression = object
+                mod.expressions = expr
+                sys.modules["music21.expressions"] = expr
             sys.modules[name] = mod
 
     utils_path = Path(__file__).resolve().parent.parent / "utilities" / "stub_utils.py"
@@ -162,6 +299,16 @@ def install() -> None:
     assert spec and spec.loader
     stub_utils = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(stub_utils)  # type: ignore[attr-defined]
+
+    sig = sys.modules.get("scipy.signal")
+    if sig and getattr(sig, "__spec__", None) is None:
+        sig.__spec__ = importlib.machinery.ModuleSpec(
+            "scipy.signal", loader=importlib.machinery.BuiltinImporter, is_package=True
+        )
+        sig.__spec__.submodule_search_locations = []
+        sig.__package__ = "scipy.signal"
+        sig.__path__ = []
+
     stub_utils.install_stubs()
 
     pm = sys.modules.get("pretty_midi")
@@ -209,13 +356,25 @@ def install() -> None:
         "TorchCRF",
         "pytorch_lightning",
     ):
-        mod = sys.modules.get(name)
-        if mod is None:
-            mod = types.ModuleType(name)
-            mod.__spec__ = importlib.machinery.ModuleSpec(
-                name, loader=importlib.machinery.BuiltinImporter
-            )
-            sys.modules[name] = mod
+        if name == "pytorch_lightning" and importlib.util.find_spec(name):
+            continue
+        if name in sys.modules and getattr(sys.modules[name], "__spec__", None):
+            continue
+        if importlib.util.find_spec(name):
+            continue
+        mod = types.ModuleType(name)
+        mod.__file__ = f"<stub:{name}>"
+        is_pkg = name in {"scipy", "scipy.signal"}
+        mod.__spec__ = importlib.machinery.ModuleSpec(
+            name,
+            loader=importlib.machinery.BuiltinImporter,
+            is_package=is_pkg,
+        )
+        if is_pkg:
+            mod.__spec__.submodule_search_locations = []
+            mod.__package__ = name
+            mod.__path__ = []
+        sys.modules[name] = mod
         mod.CRF = _DummyCRF  # type: ignore[attr-defined]
         if name == "pytorch_lightning":
 
@@ -292,10 +451,16 @@ def install() -> None:
         "mido",
         "tomli",
         "transformers",
+        "librosa",
     ):
-        if name in sys.modules or importlib.util.find_spec(name) is not None:
+        if name in sys.modules and getattr(sys.modules[name], "__spec__", None):
+            continue
+        if importlib.util.find_spec(name):
+            continue
+        if name == "transformers" and os.getenv("COMPOSER_USE_DUMMY_TRANSFORMERS", "0") != "1":
             continue
         mod = types.ModuleType(name)
+        mod.__file__ = f"<stub:{name}>"
         mod.__spec__ = importlib.machinery.ModuleSpec(
             name, loader=importlib.machinery.BuiltinImporter, is_package=True
         )
@@ -307,14 +472,5 @@ def install() -> None:
                 pass
 
             mod.Wav2Vec2Model = _Model
-
-    if "transformers" not in sys.modules and importlib.util.find_spec("transformers") is None:
-        mod = types.ModuleType("transformers")
-        mod.__spec__ = importlib.machinery.ModuleSpec(
-            "transformers", loader=importlib.machinery.BuiltinImporter, is_package=True
-        )
-        sys.modules["transformers"] = mod
-        class _Model:
-            pass
-
-        mod.Wav2Vec2Model = _Model
+        if name == "librosa":
+            mod.load = lambda *_a, **_k: ([], 22050)

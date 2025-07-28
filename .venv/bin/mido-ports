@@ -1,8 +1,33 @@
-#!/Users/kinoshitayoshihiro/music21/composer2-3/.venv/bin/python3.13
-# -*- coding: utf-8 -*-
-import re
+#!/Users/kinoshitayoshihiro/music_21/composer2-3/.venv/bin/python3.11
+"""
+List available PortMidi ports.
+"""
+
+from __future__ import print_function
+import os
 import sys
-from mido.scripts.mido_ports import main
-if __name__ == '__main__':
-    sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
-    sys.exit(main())
+import mido
+
+def print_ports(heading, port_names):
+    print(heading)
+    for name in port_names:
+        print("    '{}'".format(name))
+    print()
+
+print()
+print_ports('Available input Ports:', mido.get_input_names())
+print_ports('Available output Ports:', mido.get_output_names())
+
+for name in ['MIDO_DEFAULT_INPUT',
+             'MIDO_DEFAULT_OUTPUT',
+             'MIDO_DEFAULT_IOPORT',
+             'MIDO_BACKEND']:
+    try:
+        value = os.environ[name]
+        print('{}={!r}'.format(name, value))
+    except LookupError:
+        print('{} not set.'.format(name))
+print()
+print('Using backend {}.'.format(mido.backend.name))
+print()
+

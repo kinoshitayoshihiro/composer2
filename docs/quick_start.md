@@ -223,9 +223,24 @@ Requires: `poetry install --extras audio`
 
 ```python
 pm = PrettyMIDI()
-pm.set_tempo_changes([120, 130, 140], [0.0, 10.0, 20.0])
+tempo_map = [(0.0, 120), (10.0, 130), (20.0, 140)]
+
+# PrettyMIDI still lacks ``set_tempo_changes`` so we update ``_tick_scales``
+# directly to apply tempo maps.
+pm._tick_scales = []
+tick = 0.0
+last_time = tempo_map[0][0]
+last_scale = 60.0 / (tempo_map[0][1] * pm.resolution)
+for i, (beat, bpm) in enumerate(tempo_map):
+    if i > 0:
+        tick += (beat - last_time) / last_scale
+        last_scale = 60.0 / (bpm * pm.resolution)
+        last_time = beat
+    pm._tick_scales.append((int(round(tick)), last_scale))
+pm._update_tick_to_time(int(round(tick)) + 1)
 ```
 
-Using the official API avoids relying on private internals for tempo maps.
+The tempo map is passed as ``[(beat, bpm), ...]`` and converted into
+``_tick_scales`` internally.
 
 

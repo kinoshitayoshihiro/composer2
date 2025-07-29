@@ -92,23 +92,21 @@ def apply_tempo_map(
     tempo_map = sorted((float(b), float(t)) for b, t in tempo_map)
     tempi = [int(round(bpm)) for _, bpm in tempo_map]
     times = [tempo_utils.beat_to_seconds(b, tempo_map) for b, _ in tempo_map]
-    if hasattr(pm, "set_tempo_changes"):
-        pm.set_tempo_changes(tempi, times)
-    else:  # pragma: no cover - fallback for older pretty_midi
-        if tempi:
-            pm._tick_scales = []
-            tick = 0
-            for i, (bpm, start) in enumerate(zip(tempi, times)):
-                scale = (
-                    60.0 / (float(bpm) * pm.resolution)
-                    if bpm
-                    else 60.0 / (120.0 * pm.resolution)
-                )
-                pm._tick_scales.append((int(round(tick)), scale))
-                if i < len(tempi) - 1:
-                    next_start = times[i + 1]
-                    tick += (next_start - start) / scale
-            pm._update_tick_to_time(int(round(tick)) + 1)
+
+    # PrettyMIDI has no public API to set tempo changes. We directly update
+    # ``_tick_scales`` which ``set_tempo_changes`` would normally modify.
+    if tempi:
+        pm._tick_scales = []
+        tick = 0.0
+        last_time = times[0]
+        last_scale = 60.0 / (float(tempi[0]) * pm.resolution)
+        for i, (bpm, start) in enumerate(zip(tempi, times)):
+            if i > 0:
+                tick += (start - last_time) / last_scale
+                last_scale = 60.0 / (float(bpm) * pm.resolution)
+                last_time = start
+            pm._tick_scales.append((int(round(tick)), last_scale))
+        pm._update_tick_to_time(int(round(tick)) + 1)
 
 
 def export_song(

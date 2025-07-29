@@ -36,6 +36,9 @@ def _load() -> ModuleType:
         def post(self, *_a, **_k):
             return lambda fn: fn
 
+        def get(self, *_a, **_k):
+            return lambda fn: fn
+
         websocket = post
 
         async def __call__(self, scope, receive, send):  # pragma: no cover - stub

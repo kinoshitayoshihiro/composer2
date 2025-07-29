@@ -17,7 +17,7 @@ except Exception:  # pragma: no cover - optional
 
 if torch is not None:
     try:
-        from torchcrf import CRF  # pytorch-crf パッケージ
+        from pytorch_crf import CRF  # pytorch-crf パッケージ
     except ImportError:
         try:
             from torch_crf import CRF  # torch-crf パッケージ

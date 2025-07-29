@@ -236,6 +236,8 @@ def test_cli_augment_data_errors(tmp_path: Path, set_pythonpath) -> None:
         str(src),
         "--out-dir",
         str(tmp_path / "out2"),
+        "--drums-dir",
+        str(tmp_path / "missing"),
     ]
     res2 = subprocess.run(cmd, capture_output=True, text=True, env=set_pythonpath)
     assert res2.returncode == 1

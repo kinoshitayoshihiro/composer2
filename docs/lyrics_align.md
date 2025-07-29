@@ -29,6 +29,17 @@ python scripts/align_lyrics.py --audio vocal.wav --midi melody.mid \
     --ckpt outputs/lyrics_align.ckpt
 ```
 
+### Handling CTCLoss input lengths
+
+When computing the CTC loss, make sure that `input_len` does not exceed the
+length of `logp`:
+
+```python
+logp = model(audio, midi)
+input_len = input_len.clamp(max=logp.size(0))
+loss = crit(logp, target, input_len, target_len)
+```
+
 ## Realtime WebSocket
 
 ```bash

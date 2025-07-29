@@ -109,6 +109,7 @@ def test_train_and_cli(tmp_path: Path):
     for audio, midi, input_len, target, target_len, _ in dl:
         opt.zero_grad()
         logp = model(audio, midi)
+        input_len = input_len.clamp(max=logp.size(0))
         loss = crit(logp, target, input_len, target_len)
         loss.backward()
         opt.step()

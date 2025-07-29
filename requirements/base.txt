@@ -15,11 +15,11 @@ tomli>=2.0
 ruamel.yaml>=0.17  # [yaml]
 tqdm>=4.66  # [cli]
 types-PyYAML>=6.0  # [typing]
-torch==2.1.0
+torch>=2.3.0,<2.4
 
 # ── scientific / async ───────────────────────────────
 scipy>=1.12,<1.17
-scikit-learn>=
+scikit-learn
 
 # ── audio I/O ─────────────────────────────────────────
 soundfile>=0.12,<0.13

@@ -234,9 +234,9 @@ def _make_augment_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-dir", type=Path, default=Path("data/tracks_aug"))
     p.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
     p.add_argument("--seed", type=int, default=None, help="Random seed")
-    p.add_argument("--shifts", default="-2,0,2")
-    p.add_argument("--rates", default="0.8,1.2")
-    p.add_argument("--snrs", default="20,10")
+    p.add_argument("--shifts", type=int, nargs="+", default=[0], help="...")
+    p.add_argument("--rates", type=float, nargs="+", default=[1.0], help="...")
+    p.add_argument("--snrs", type=float, nargs="+", default=[30.0], help="...")
     p.add_argument("--progress", action="store_true", help="Show progress bar")
     return p
 
@@ -367,9 +367,9 @@ def main(argv: list[str] | None = None) -> int:
             print("wav-dir does not exist", file=sys.stderr)
             return 1
         args.out_dir.mkdir(parents=True, exist_ok=True)
-        shifts = [float(s) for s in args.shifts.split(",") if s]
-        rates = [float(r) for r in args.rates.split(",") if r]
-        snrs = [float(n) for n in args.snrs.split(",") if n]
+        shifts = [float(s) for s in (args.shifts or [0])]
+        rates = [float(r) for r in (args.rates or [1.0])]
+        snrs = [float(n) for n in (args.snrs or [30.0])]
         try:
             print(Fore.YELLOW + "Starting augmentation" + Style.RESET_ALL)
             data_augmentation.augment_wav_dir(
@@ -386,13 +386,20 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         # Rebuild CSV from augmented data
-        build_velocity_csv(
-            args.out_dir,
-            args.drums_dir,
-            Path("data/csv/velocity_per_event.csv"),
-            Path("data/csv/track_stats.csv"),
-        )
-        return 0
+        if args.drums_dir.exists():
+            build_velocity_csv(
+                args.out_dir,
+                args.drums_dir,
+                Path("data/csv/velocity_per_event.csv"),
+                Path("data/csv/track_stats.csv"),
+            )
+            return 0
+        else:
+            print(
+                f"Warning: drums-dir not found ({args.drums_dir}), skipping CSV rebuild",
+                file=sys.stderr,
+            )
+            return 0
 
     # Training mode
     dry_run_flag = args.dry_run
@@ -404,6 +411,11 @@ def main(argv: list[str] | None = None) -> int:
             _log_error(f"CSV path not found: {args.csv_path}")
             return 1
         overrides.append(f"+csv.path={args.csv_path}")
+
+    # Avoid Hydra conflicts when called from pytest
+    if any(arg.startswith('tests') or 'pytest' in arg for arg in (argv or [])):
+        _log_error("Cannot run Hydra training mode from pytest")
+        return 1
 
     if overrides:
         from hydra import compose, initialize

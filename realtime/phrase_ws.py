@@ -14,6 +14,12 @@ except Exception:  # pragma: no cover - optional dependency
     from starlette.websockets import WebSocket
 
     class FastAPIStub(FastAPI):  # type: ignore
+        def post(self, *_a, **_k):
+            return lambda fn: fn
+
+        def get(self, *_a, **_k):
+            return lambda fn: fn
+
         def websocket(self, path):
             def decorator(func):
                 async def endpoint(ws):

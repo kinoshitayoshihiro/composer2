@@ -127,6 +127,8 @@ def evaluate(
     with torch.no_grad():
         for audio, midi, input_len, target, target_len, times in loader:
             logp = model(audio, midi)
+            # ensure CTCLoss receives valid lengths
+            input_len = input_len.clamp(max=logp.size(0))
             loss = crit(logp, target, input_len, target_len)
             total_loss += float(loss)
             preds = logp.argmax(-1).transpose(0, 1)  # (T,N)->(N,T)
@@ -169,6 +171,7 @@ class AlignModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         audio, midi, input_len, target, target_len, _ = batch
         logp = self(audio, midi)
+        input_len = input_len.clamp(max=logp.size(0))
         loss = self.crit(logp, target, input_len, target_len)
         self.log("train_loss", loss)
         return loss
@@ -176,6 +179,7 @@ class AlignModule(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         audio, midi, input_len, target, target_len, times = batch
         logp = self(audio, midi)
+        input_len = input_len.clamp(max=logp.size(0))
         loss = self.crit(logp, target, input_len, target_len)
         preds = logp.argmax(-1).transpose(0, 1)  # (T,N)->(N,T)
         mae = 0.0

@@ -413,7 +413,7 @@ def main(argv: list[str] | None = None) -> int:
         overrides.append(f"+csv.path={args.csv_path}")
 
     # Avoid Hydra conflicts when called from pytest
-    if any(arg.startswith('tests') or 'pytest' in arg for arg in (argv or [])):
+    if any(arg.startswith("tests") or "pytest" in arg for arg in (argv or [])):
         _log_error("Cannot run Hydra training mode from pytest")
         return 1
 

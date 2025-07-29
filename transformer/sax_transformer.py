@@ -24,6 +24,8 @@ class SaxTransformer(nn.Module if torch is not None else object):
     """LoRA-equipped GPT-2 transformer for saxophone tokens."""
 
     def __init__(self, vocab_size: int, rank: int = 4, lora_alpha: int | None = None) -> None:
+        if vocab_size <= 0:
+            raise ValueError("vocab_size must be > 0")
         if GPT2Config is None or GPT2LMHeadModel is None or get_peft_model is None or torch is None:
             raise RuntimeError("Install torch, transformers and peft to use SaxTransformer")
         super().__init__()

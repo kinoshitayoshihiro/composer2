@@ -28,7 +28,7 @@ def load_model(
         freeze_encoder=cfg.get("freeze_encoder", False),
         gradient_checkpointing=cfg.get("gradient_checkpointing", False),
     )
-    model.load_state_dict(state["model"])
+    model.load_state_dict(state["model"], strict=False)
     model.eval()
     model.to(device)
     return model, cfg, vocab

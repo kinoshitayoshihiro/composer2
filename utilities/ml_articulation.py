@@ -17,12 +17,12 @@ except Exception:  # pragma: no cover - optional
 
 if torch is not None:
     try:
-        from torchcrf import CRF  # type: ignore
+        from torchcrf import CRF  # pytorch-crf パッケージ
     except ImportError:
         try:
-            from torch_crf import CRF  # type: ignore
-        except ImportError:  # pragma: no cover - final fallback
-            from TorchCRF import CRF  # type: ignore
+            from torch_crf import CRF  # torch-crf パッケージ
+        except ImportError:
+            from TorchCRF import CRF  # TorchCRF パッケージ
 else:  # pragma: no cover - optional
     CRF = object  # type: ignore
 
@@ -212,7 +212,6 @@ def predict(
                     "pitch": int(r.pitch),
                     "bucket": int(r.bucket),
                     "pedal": int(r.pedal_state),
-
                     "velocity": float(r.velocity),
                     "qlen": float(r.duration),
                     "label": 0,

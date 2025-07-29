@@ -1,5 +1,7 @@
 import sys
 import os
+import builtins
+import types
 
 # use real dependencies by default
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -20,7 +22,10 @@ for _m in (
     sys.modules.pop(_m, None)
 
 # --- kill broken fastapi stub ASAP (before anything else imports it) ---
-if "fastapi" in sys.modules and getattr(sys.modules["fastapi"], "__spec__", None) is None:
+if (
+    "fastapi" in sys.modules
+    and getattr(sys.modules["fastapi"], "__spec__", None) is None
+):
     del sys.modules["fastapi"]
 
 # stubs are disabled; tests rely on real packages
@@ -28,7 +33,8 @@ if "fastapi" in sys.modules and getattr(sys.modules["fastapi"], "__spec__", None
 import pytest
 from music21 import instrument
 
-
+# すべてのテストモジュールで types を利用可能にする
+builtins.types = types
 
 
 @pytest.fixture
@@ -54,3 +60,11 @@ def _basic_gen():
 
     return _create_generator
 
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        default=False,
+        help="update golden midi files",
+    )

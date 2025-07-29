@@ -386,20 +386,21 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         # Rebuild CSV from augmented data
-        if args.drums_dir.exists():
-            build_velocity_csv(
-                args.out_dir,
-                args.drums_dir,
-                Path("data/csv/velocity_per_event.csv"),
-                Path("data/csv/track_stats.csv"),
-            )
-            return 0
-        else:
+        # Treat missing drums-dir as an error, mirroring wav-dir check
+        if not args.drums_dir.exists():
             print(
-                f"Warning: drums-dir not found ({args.drums_dir}), skipping CSV rebuild",
+                "drums-dir does not exist",
                 file=sys.stderr,
             )
-            return 0
+            return 1
+
+        build_velocity_csv(
+            args.out_dir,
+            args.drums_dir,
+            Path("data/csv/velocity_per_event.csv"),
+            Path("data/csv/track_stats.csv"),
+        )
+        return 0
 
     # Training mode
     dry_run_flag = args.dry_run

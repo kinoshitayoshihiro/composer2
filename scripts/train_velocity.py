@@ -245,9 +245,27 @@ def _make_parser() -> argparse.ArgumentParser:
     aug.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
     aug.add_argument("--out-dir", type=Path, default=Path("data/tracks_aug"))
     # デフォルト: shifts=0.0, rates=1.0, snrs=30.0
-    aug.add_argument("--shifts", default="0.0", help="comma‑sep floats")
-    aug.add_argument("--rates",  default="1.0", help="comma‑sep floats")
-    aug.add_argument("--snrs",   default="30.0", help="comma‑sep floats")
+    aug.add_argument(
+        "--shifts",
+        nargs="+",
+        type=float,
+        default=[0.0],
+        help="space-sep floats",
+    )
+    aug.add_argument(
+        "--rates",
+        nargs="+",
+        type=float,
+        default=[1.0],
+        help="space-sep floats",
+    )
+    aug.add_argument(
+        "--snrs",
+        nargs="+",
+        type=float,
+        default=[30.0],
+        help="space-sep floats",
+    )
     aug.add_argument("--progress", action="store_true")
     aug.add_argument("--seed", type=int)
 
@@ -272,9 +290,6 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
     args, overrides = parser.parse_known_args(argv)
     return args, overrides
 
-
-def _parse_floats(arg: str) -> list[float]:
-    return [float(x) for x in arg.split(',') if x.strip()]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -330,9 +345,9 @@ def main(argv: list[str] | None = None) -> int:
         except PermissionError:
             print("Permission denied: cannot create output directory", file=sys.stderr)
             return 1
-        shifts = _parse_floats(args.shifts)
-        rates = _parse_floats(args.rates)
-        snrs = _parse_floats(args.snrs)
+        shifts = list(args.shifts)
+        rates = list(args.rates)
+        snrs = list(args.snrs)
         try:
             print(Fore.YELLOW + "Starting augmentation" + Style.RESET_ALL)
             data_augmentation.augment_wav_dir(

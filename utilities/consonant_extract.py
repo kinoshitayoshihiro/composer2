@@ -76,7 +76,7 @@ def detect_consonant_peaks(
 ) -> list[float]:
     """Return peak times in seconds from ``wav_path``."""
     path = Path(wav_path)
-    y, sr = librosa.load(path, sr=None, mono=True)
+    y, sr = librosa.load(str(path), sr=None, mono=True)
     y = _apply_filters(y, sr, hpf, lpf)
 
     algo = algo.lower()

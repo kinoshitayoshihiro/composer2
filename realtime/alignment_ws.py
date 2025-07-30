@@ -75,7 +75,8 @@ async def infer(ws: WebSocket, chunk_ms: int | None = None) -> None:
                 await ws.close(code=1011)
                 return
             else:
-                await ws.send_json(res)
+                for ev in res:
+                    await ws.send_json(ev)
                 if cfg.get("heartbeat"):
                     await ws.send_json({"heartbeat": True})
             if chunk is None:

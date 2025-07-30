@@ -1511,7 +1511,7 @@ class StringsGenerator(BasePartGenerator):
                 audio_mix = audio_mix / peak
 
         if outfile is not None:
-            sf.write(outfile, audio_mix, sample_rate)
+            sf.write(str(outfile), audio_mix, sample_rate)
 
         return audio_mix
 

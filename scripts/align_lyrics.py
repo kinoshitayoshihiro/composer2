@@ -74,7 +74,7 @@ def align_audio(
 def align_pair(
     audio: Path, midi: Path, model: LyricsAligner, cfg: dict, vocab: list[str]
 ):
-    wav, _ = librosa.load(audio, sr=cfg["sample_rate"])
+    wav, _ = librosa.load(str(audio), sr=cfg["sample_rate"])
     pm = pretty_midi.PrettyMIDI(str(midi))
     times = [n.start * 1000 for n in pm.instruments[0].notes]
     return align_audio(torch.tensor(wav, dtype=torch.float32), times, model, cfg, vocab)

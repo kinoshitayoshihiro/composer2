@@ -19,7 +19,10 @@
 
 import os
 
-import numpy as np
+try:
+    import numpy as np
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    np = None  # type: ignore
 import pretty_midi
 
 _orig = pretty_midi.PrettyMIDI.get_tempo_changes
@@ -28,6 +31,8 @@ _orig = pretty_midi.PrettyMIDI.get_tempo_changes
 def _patched_get_tempo_changes(self, *args, **kwargs):
     """Return numpy arrays if the original returns lists."""
     times, tempi = _orig(self, *args, **kwargs)
+    if np is None:
+        return tempi, times
     if isinstance(tempi, list) and os.environ.get("COMPOSER2_DISABLE_PM_PATCH") != "1":
         return np.asarray(tempi), np.asarray(times)
     return tempi, times

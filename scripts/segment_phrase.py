@@ -44,7 +44,7 @@ def load_model(arch: str, ckpt: Path) -> nn.Module:
         model = PhraseTransformer()
     if ckpt.is_file():
         state = torch.load(ckpt, map_location="cpu")
-        model.load_state_dict(state)
+        model.load_state_dict(state, strict=False)
     model.eval()
     return model
 

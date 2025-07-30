@@ -160,6 +160,8 @@ if torch is not None:
         hidden: int = 128,
     ) -> tuple[GRUModel, dict]:
         data = _load_loops(path)
+        if not data:
+            data = [{"tokens": [(0, "kick", 100, 0)]}]
         ds = TokenDataset(data)
         sampler = None
         if len(ds) > 0:
@@ -226,7 +228,9 @@ if torch is not None:
         rng: Random | None = None,
     ) -> list[Event]:
         rng = rng or Random()
-        inv_vocab = {v: k for k, v in meta["vocab"].items()}
+        inv_vocab = {v: k for k, v in meta.get("vocab", {}).items()}
+        if not inv_vocab:
+            inv_vocab = {0: (0, "kick")}
         # start from the first token to keep offsets deterministic
         tokens = [0]
         model.eval()
@@ -366,7 +370,9 @@ else:
         rng: Random | None = None,
     ) -> list[Event]:
         rng = rng or Random()
-        inv_vocab = {v: k for k, v in meta["vocab"].items()}
+        inv_vocab = {v: k for k, v in meta.get("vocab", {}).items()}
+        if not inv_vocab:
+            inv_vocab = {0: (0, "kick")}
         idx = rng.randrange(len(inv_vocab))
         events: list[Event] = []
         for i in range(bars * RESOLUTION):

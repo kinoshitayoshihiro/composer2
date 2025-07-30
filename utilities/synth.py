@@ -21,7 +21,7 @@ def render_midi(
         import soundfile as sf
 
         out_wav = Path(out_wav)
-        sf.write(out_wav, [0.0], 44100)
+        sf.write(str(out_wav), [0.0], 44100)
         return out_wav
 
     soundfont = sf2_path or os.environ.get("SF2_PATH")

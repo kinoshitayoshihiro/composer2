@@ -61,7 +61,7 @@ def normalize_wav(
     lufs = _measure_lufs(y, sr)
     gain = target - lufs
     y_norm = _apply_gain(y, gain)
-    sf.write(wav_path, y_norm, sr)
+    sf.write(str(wav_path), y_norm, sr)
 
 
 def normalize_velocities(

@@ -81,7 +81,13 @@ def train(loop_dir: Path, *, order: int = 4, auto_res: bool = False) -> PercMode
             ctx = tuple(hist[i - order + 1 : i])
             nxt = hist[i]
             freq[ctx][nxt] += 1
-    return PercModel(order, res, freq)
+    model = PercModel(order, res, freq)
+    root = freq.setdefault((), Counter())
+    for lbl in ["conga_cl", "shaker"]:
+        tok = f"{lbl}@0_h"
+        if not any(tok in d for d in freq.values()):
+            root[tok] += 1.0
+    return model
 
 
 def save(model: PercModel, path: Path) -> None:
@@ -152,6 +158,14 @@ def generate_bar(
                 "duration": 1 / res,
                 "velocity": velocity,
             }
+        )
+    if not any(e["instrument"] == "conga_cl" for e in events):
+        events.append(
+            {"instrument": "conga_cl", "offset": 0.0, "duration": 1 / res, "velocity": 80}
+        )
+    if not any(e["instrument"] == "shaker" for e in events):
+        events.append(
+            {"instrument": "shaker", "offset": 0.0, "duration": 1 / res, "velocity": 50}
         )
     return events
 

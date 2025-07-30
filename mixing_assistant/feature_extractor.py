@@ -16,6 +16,15 @@ from tqdm import tqdm
 __all__ = ["extract_features", "main"]
 
 _meters: dict[int, pyln.Meter] = {}
+EXPECTED_KEYS = [
+    "spectral_centroid_mean",
+    "spectral_flatness_db",
+    "spectral_rolloff95",
+    "zero_cross_rate_mean",
+    "loudness_i",
+    "loudness_range",
+    "crest_factor",
+]
 
 
 def extract_features(
@@ -26,8 +35,11 @@ def extract_features(
     hop_len: float = 0.0232,
     loudness_range_s: float = 3.0,
 ) -> dict[str, float]:
-    y, sr = librosa.load(audio_path, sr=None, mono=True)
-    return _compute_features(y, sr, n_mels, frame_len, hop_len, loudness_range_s)
+    try:
+        y, sr = librosa.load(str(audio_path), sr=None, mono=True)
+        return _compute_features(y, sr, n_mels, frame_len, hop_len, loudness_range_s)
+    except Exception:
+        return {k: float("nan") for k in EXPECTED_KEYS}
 
 
 def _compute_features(

@@ -7,7 +7,7 @@ import pretty_midi
 
 
 def wav_to_midi(wav_path: Path, midi_path: Path) -> None:
-    y, sr = librosa.load(wav_path, sr=None)
+    y, sr = librosa.load(str(wav_path), sr=None)
     onset_frames = librosa.onset.onset_detect(y=y, sr=sr)
     onset_times = librosa.frames_to_time(onset_frames, sr=sr)
     pm = pretty_midi.PrettyMIDI()

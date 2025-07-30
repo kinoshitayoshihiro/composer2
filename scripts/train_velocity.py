@@ -228,105 +228,53 @@ def hydra_main(cfg: DictConfig) -> int:
 # ----------------------------- CLI Frontend ------------------------------- #
 
 
-def _make_augment_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="train_velocity.py augment-data")
-    p.add_argument("--wav-dir", type=Path, default=Path("data/tracks"))
-    p.add_argument("--out-dir", type=Path, default=Path("data/tracks_aug"))
-    p.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
-    p.add_argument("--seed", type=int, default=None, help="Random seed")
-    p.add_argument("--shifts", type=int, nargs="+", default=[0], help="...")
-    p.add_argument("--rates", type=float, nargs="+", default=[1.0], help="...")
-    p.add_argument("--snrs", type=float, nargs="+", default=[30.0], help="...")
-    p.add_argument("--progress", action="store_true", help="Show progress bar")
-    return p
-
-
-def _make_build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="train_velocity.py build-velocity-csv")
-    p.add_argument("--tracks-dir", type=Path, default=Path("data/tracks"))
-    p.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
-    p.add_argument(
-        "--csv-out", type=Path, default=Path("data/csv/velocity_per_event.csv")
-    )
-    p.add_argument("--stats-out", type=Path, default=Path("data/csv/track_stats.csv"))
-    p.add_argument("--seed", type=int, default=None, help="random seed")
-    return p
-
-
-def _make_train_parser() -> argparse.ArgumentParser:
+def _make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="train_velocity.py")
-    p.add_argument(
-        "--csv-path", type=Path, help="Path to velocity_per_event.csv for training"
+    sub = p.add_subparsers(dest="command")
+
+    # train (default)
+    p.add_argument("--csv-path", type=Path)
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--augment", action="store_true")
+    p.add_argument("--seed", type=int)
+
+    # augment-data
+    aug = sub.add_parser("augment-data", help="Augment WAVs & rebuild CSV")
+    aug.add_argument("--wav-dir", type=Path)
+    aug.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
+    aug.add_argument("--out-dir", type=Path, default=Path("data/tracks_aug"))
+    # デフォルト: shifts=0.0, rates=1.0, snrs=30.0
+    aug.add_argument("--shifts", default="0.0", help="comma‑sep floats")
+    aug.add_argument("--rates",  default="1.0", help="comma‑sep floats")
+    aug.add_argument("--snrs",   default="30.0", help="comma‑sep floats")
+    aug.add_argument("--progress", action="store_true")
+    aug.add_argument("--seed", type=int)
+
+    # build-velocity-csv
+    build = sub.add_parser("build-velocity-csv", help="Rebuild CSV files")
+    build.add_argument("--tracks-dir", type=Path, default=Path("data/tracks"))
+    build.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
+    build.add_argument(
+        "--csv-out",
+        type=Path,
+        default=Path("data/csv/velocity_per_event.csv"),
     )
-    p.add_argument(
-        "--dry-run", action="store_true", help="Print resolved config and exit"
+    build.add_argument(
+        "--stats-out", type=Path, default=Path("data/csv/track_stats.csv")
     )
-    p.add_argument(
-        "--json", action="store_true", help="With --dry-run, also print JSON"
-    )
-    p.add_argument(
-        "--augment", action="store_true", help="Enable on-the-fly augmentation"
-    )
-    p.add_argument("--seed", type=int, help="Random seed")
+    build.add_argument("--seed", type=int)
     return p
 
 
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    parser = _make_train_parser()
-    if not argv:
-        return parser.parse_known_args(argv)
-
-    # handle global options before sub-command
-    known, remaining = parser.parse_known_args(argv)
-    if remaining and remaining[0] in {"build-velocity-csv", "augment-data"}:
-        cmd = remaining[0]
-        if cmd == "build-velocity-csv":
-            sub = _make_build_parser()
-        else:
-            sub = _make_augment_parser()
-        sub_args = sub.parse_args(remaining[1:])
-        for k, v in vars(known).items():
-            setattr(sub_args, k, v)
-        sub_args.command = cmd
-        return sub_args, []
-    argv = remaining
-
-    if argv and argv[0] == "build-velocity-csv":
-        parser = _make_build_parser()
-        if "--help" in argv or "-h" in argv:
-            parser.print_help()
-            raise SystemExit
-        args = parser.parse_args(argv[1:])
-        args.command = "build-velocity-csv"
-        return args, []
-
-    if argv and argv[0] == "augment-data":
-        parser = _make_augment_parser()
-        if "--help" in argv or "-h" in argv:
-            parser.print_help()
-            raise SystemExit
-        args = parser.parse_args(argv[1:])
-        args.command = "augment-data"
-        return args, []
-
-    if "--help" in argv or "-h" in argv:
-        main_parser = argparse.ArgumentParser(prog="train_velocity.py")
-        sub = main_parser.add_subparsers(dest="command")
-        sub.add_parser("build-velocity-csv", help="Rebuild CSV files")
-        sub.add_parser("augment-data", help="Augment WAV files and rebuild CSV")
-        main_parser.add_argument(
-            "--csv-path", type=Path, help="Path to CSV for training"
-        )
-        main_parser.add_argument("--dry-run", action="store_true")
-        main_parser.add_argument("--json", action="store_true")
-        main_parser.add_argument("--augment", action="store_true")
-        main_parser.print_help()
-        raise SystemExit
-
-    parser = _make_train_parser()
+    parser = _make_parser()
     args, overrides = parser.parse_known_args(argv)
     return args, overrides
+
+
+def _parse_floats(arg: str) -> list[float]:
+    return [float(x) for x in arg.split(',') if x.strip()]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -363,7 +311,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Augment-data command
     if getattr(args, "command", None) == "augment-data":
-        if not args.wav_dir.exists():
+        wav_dir = args.wav_dir or args.drums_dir
+        if not wav_dir or not wav_dir.exists():
             print("wav-dir does not exist", file=sys.stderr)
             return 1
         try:
@@ -381,13 +330,13 @@ def main(argv: list[str] | None = None) -> int:
         except PermissionError:
             print("Permission denied: cannot create output directory", file=sys.stderr)
             return 1
-        shifts = [float(s) for s in (args.shifts or [0])]
-        rates = [float(r) for r in (args.rates or [1.0])]
-        snrs = [float(n) for n in (args.snrs or [30.0])]
+        shifts = _parse_floats(args.shifts)
+        rates = _parse_floats(args.rates)
+        snrs = _parse_floats(args.snrs)
         try:
             print(Fore.YELLOW + "Starting augmentation" + Style.RESET_ALL)
             data_augmentation.augment_wav_dir(
-                args.wav_dir,
+                wav_dir,
                 args.out_dir,
                 shifts,
                 rates,

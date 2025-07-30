@@ -193,7 +193,7 @@ def test_cli_augment_data(tmp_path: Path, set_pythonpath) -> None:
             "--drums-dir",
             str(drums),
             "--shifts",
-            "0,1",
+            "0" "1",
             "--rates",
             "1.0",
             "--snrs",

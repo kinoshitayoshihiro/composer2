@@ -14,28 +14,10 @@
     │   ├── 🛠️ rhythm_library.yml – バリデーションエラー修正プラン をキャンバスにまとめました。.pdf
     │   └── 🛠️emotionalmaploader.pdf
     ├── __pycache__
-    │   ├── build_all_json.cpython-310.pyc
     │   ├── conftest.cpython-311-pytest-8.4.1.pyc
-    │   ├── conftest.cpython-312-pytest-8.4.1.pyc
-    │   ├── emotion_humanizer.cpython-310.pyc
-    │   ├── groove_profile.cpython-310.pyc
-    │   ├── json2midi.cpython-310.pyc
-    │   ├── modular_composer.cpython-310.pyc
     │   ├── modular_composer.cpython-311.pyc
-    │   ├── modular_composer.cpython-312.pyc
-    │   ├── modular_composer.cpython-313.pyc
-    │   ├── pytest_asyncio.cpython-312.pyc
-    │   ├── setup.cpython-310.pyc
-    │   ├── sitecustomize.cpython-310.pyc
     │   ├── sitecustomize.cpython-311.pyc
-    │   ├── sitecustomize.cpython-312.pyc
-    │   ├── sitecustomize.cpython-313.pyc
-    │   ├── streamlit_app_v2.cpython-310.pyc
-    │   ├── streamlit_app_v2.cpython-312.pyc
-    │   ├── streamlit_app_v2.cpython-313.pyc
-    │   ├── train_piano_lora.cpython-310.pyc
-    │   ├── train_piano_lora.cpython-313.pyc
-    │   └── train_sax_lora.cpython-310.pyc
+    │   └── streamlit_app_v2.cpython-311.pyc
     ├── api
     │   ├── __pycache__
     │   ├── __init__.py
@@ -87,7 +69,17 @@
     │   ├── epoch=0-step=2-v30.ckpt
     │   ├── epoch=0-step=2-v31.ckpt
     │   ├── epoch=0-step=2-v32.ckpt
+    │   ├── epoch=0-step=2-v33.ckpt
+    │   ├── epoch=0-step=2-v34.ckpt
+    │   ├── epoch=0-step=2-v35.ckpt
+    │   ├── epoch=0-step=2-v36.ckpt
+    │   ├── epoch=0-step=2-v37.ckpt
+    │   ├── epoch=0-step=2-v38.ckpt
+    │   ├── epoch=0-step=2-v39.ckpt
     │   ├── epoch=0-step=2-v4.ckpt
+    │   ├── epoch=0-step=2-v40.ckpt
+    │   ├── epoch=0-step=2-v41.ckpt
+    │   ├── epoch=0-step=2-v42.ckpt
     │   ├── epoch=0-step=2-v5.ckpt
     │   ├── epoch=0-step=2-v6.ckpt
     │   ├── epoch=0-step=2-v7.ckpt
@@ -96,7 +88,6 @@
     │   ├── epoch=0-step=2.ckpt
     │   └── last.ckpt
     ├── cli
-    │   ├── __pycache__
     │   └── ir_render.py
     ├── conf
     │   ├── data.yaml
@@ -109,6 +100,7 @@
     │   ├── main_cfg_example.yml
     │   └── sax_demo.yml
     ├── configs
+    │   ├── __init__.py
     │   ├── duration_model.yaml
     │   ├── lyrics_align.yaml
     │   ├── mixing.yaml
@@ -268,7 +260,6 @@
     │   ├── __init__.py
     │   └── chord_generator.py
     ├── groove_sampler
-    │   ├── __pycache__
     │   ├── __init__.py
     │   └── loop_ingest.py
     ├── gui
@@ -403,7 +394,6 @@
     │   ├── __init__.py
     │   ├── __init__.py  # マークダウン記法を削除
     │   ├── _asyncio_plugin.py
-    │   ├── _stubs.py
     │   ├── conftest.py
     │   ├── drum_lut_test.py
     │   ├── mini.jsonl
@@ -895,7 +885,6 @@
     │   ├── scale_registry.py
     │   ├── settings.py
     │   ├── streaming_sampler.py
-    │   ├── stub_utils.py
     │   ├── style_db.py
     │   ├── synth.py
     │   ├── tempo_curve.py
@@ -1020,6 +1009,7 @@
     ├── model.pkl
     ├── modular_composer.py
     ├── mypy.ini
+    ├── ocr_process.py
     ├── pdoc.yml
     ├── piano.jsonl
     ├── piano_fixed.jsonl
@@ -1041,6 +1031,7 @@
     ├── setup_project.sh
     ├── sitecustomize.py
     ├── streamlit_app_v2.py
+    ├── temp_fix.py
     ├── temp_midi_list.txt
     ├── train_piano_lora.py
     ├── train_sax_lora.py

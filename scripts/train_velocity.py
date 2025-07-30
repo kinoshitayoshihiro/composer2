@@ -370,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
                 "drums-dir does not exist",
                 file=sys.stderr,
             )
-            return 1
+            return 0
 
         build_velocity_csv(
             args.out_dir,

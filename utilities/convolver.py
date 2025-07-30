@@ -329,7 +329,7 @@ def render_with_ir(
         if dither:
             y = _apply_tpdf_dither(y, bit_depth)
         pcm, subtype = _quantize_pcm(y, bit_depth)
-        sf.write(out, pcm, sr, subtype=subtype)
+        sf.write(str(out), pcm, sr, subtype=subtype)
         return out
 
     ir, ir_sr = load_ir(str(irp))
@@ -385,7 +385,7 @@ def render_with_ir(
     if dither:
         data = _apply_tpdf_dither(data, bit_depth)
     pcm, subtype = _quantize_pcm(data, bit_depth)
-    sf.write(out, pcm, sr, subtype=subtype)
+    sf.write(str(out), pcm, sr, subtype=subtype)
     return out
 
 

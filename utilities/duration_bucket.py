@@ -3,9 +3,9 @@ from __future__ import annotations
 """Utilities for mapping note durations to discrete buckets."""
 
 # Duration boundaries in quarter lengths.  Durations fall into bucket ``i`` if
-# ``_BOUNDS[i-1] <= dur < _BOUNDS[i]``.  Values beyond the last bound map to the
+# ``_BOUNDS[i-1] < dur <= _BOUNDS[i]``.  Values beyond the last bound map to the
 # final bucket.
-_BOUNDS: list[float] = [0.25, 0.5, 0.55, 1.0, 3.0, 5.0, 8.0]
+_BOUNDS: list[float] = [0.25, 0.5, 1.0, 3.0, 5.0, 8.0]
 
 __all__ = ["_BOUNDS", "to_bucket"]
 
@@ -13,7 +13,7 @@ __all__ = ["_BOUNDS", "to_bucket"]
 def to_bucket(dur: float) -> int:
     """Return duration bucket index for ``dur`` measured in quarter lengths."""
     for i, bound in enumerate(_BOUNDS):
-        if dur < bound:
+        if dur <= bound:
             return i
     return len(_BOUNDS)
 

@@ -18,11 +18,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        audio, sr = librosa.load(args.input, sr=None)
+        audio, sr = librosa.load(str(args.input), sr=None)
         shifted = librosa.effects.pitch_shift(
             audio, sr=sr, n_steps=args.cents / 100 + args.formant
         )
-        sf.write(args.out, shifted, sr)
+        sf.write(str(args.out), shifted, sr)
     except Exception as exc:  # pragma: no cover - error handling
         print(f"error: {exc}", file=sys.stderr)
         return 1

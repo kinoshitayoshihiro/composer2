@@ -55,7 +55,7 @@ def _iter_wav(path: Path) -> Iterator[tuple[int, str, int, int]]:
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise RuntimeError("WAV support requires librosa") from exc
 
-    y, sr = librosa.load(path, sr=None, mono=True)
+    y, sr = librosa.load(str(path), sr=None, mono=True)
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
     bpm = float(tempo) if tempo else 120.0
     sec_per_beat = 60.0 / bpm

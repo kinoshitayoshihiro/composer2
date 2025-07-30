@@ -366,7 +366,21 @@ def main(argv: list[str] | None = None) -> int:
         if not args.wav_dir.exists():
             print("wav-dir does not exist", file=sys.stderr)
             return 1
-        args.out_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            try:
+                args.out_dir.mkdir(parents=True, exist_ok=True)
+            except (PermissionError, FileExistsError) as e:
+                if args.out_dir.exists() and not args.out_dir.is_dir():
+                    print(
+                        f"Output path exists but is not a directory: {args.out_dir}",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(f"Cannot create output directory: {e}", file=sys.stderr)
+                return 1
+        except PermissionError:
+            print("Permission denied: cannot create output directory", file=sys.stderr)
+            return 1
         shifts = [float(s) for s in (args.shifts or [0])]
         rates = [float(r) for r in (args.rates or [1.0])]
         snrs = [float(n) for n in (args.snrs or [30.0])]

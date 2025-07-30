@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytorch_lightning as pl
 import torch
 from torch import nn
-from torchcrf import CRF
+from TorchCRF import CRF
 
 
 class ArticulationTagger(pl.LightningModule):

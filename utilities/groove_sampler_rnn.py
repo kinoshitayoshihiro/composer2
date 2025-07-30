@@ -117,7 +117,7 @@ if torch is not None:
 
         @property
         def vocab_size(self) -> int:
-            return len(self._vocab)
+            return max(1, len(self._vocab))
 
         @property
         def vocab(self) -> dict[tuple[int, str], int]:
@@ -134,12 +134,13 @@ if torch is not None:
 
         def __init__(self, vocab: int, embed: int, hidden: int, layers: int) -> None:
             super().__init__()
-            self.embed = nn.Embedding(vocab, embed)
+            vocab_size = max(1, vocab)
+            self.embed = nn.Embedding(vocab_size, embed)
             self.vel_emb = nn.Embedding(_VEL_BINS, 8)
             self.micro_emb = nn.Embedding(_MICRO_BINS, 8)
             self.gru = nn.GRU(embed + 16, hidden, num_layers=layers, batch_first=True)
             self.attn = nn.MultiheadAttention(hidden, num_heads=4, batch_first=True)
-            self.fc = nn.Linear(hidden, vocab)
+            self.fc = nn.Linear(hidden, vocab_size)
             self.log_softmax = nn.LogSoftmax(dim=-1)
 
         def forward(self, tok: torch.Tensor, vel: torch.Tensor, micro: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
@@ -209,7 +210,8 @@ if torch is not None:
     def load(path: Path) -> tuple[GRUModel, dict]:
         obj = torch.load(path, map_location="cpu")
         meta = obj["meta"]
-        model = GRUModel(len(meta["vocab"]), 64, 128, 2)
+        vocab_size = max(1, len(meta["vocab"]))
+        model = GRUModel(vocab_size, 64, 128, 2)
         model.load_state_dict(obj["state"])
         model.eval()
         return model, meta
@@ -331,7 +333,7 @@ else:
 
         @property
         def vocab_size(self) -> int:
-            return len(self.vocab)
+            return max(1, len(self.vocab))
 
     def train(path: Path, *, epochs: int = 1, **_: object) -> tuple[GRUModel, dict]:
         data = _load_loops(path)

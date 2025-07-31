@@ -103,12 +103,14 @@ if torch is not None:
             self._data = data
             self._vocab: dict[tuple[int, str], int] = {}
             self._tokens: list[tuple[int, int, int]] = []
+            self.tokens: list[int] = []
             self._build_vocab()
             for entry in data:
                 for step, lbl, vel, micro in entry["tokens"]:
                     token = (step, lbl)
                     idx = self._vocab.setdefault(token, len(self._vocab))
                     self._tokens.append((idx, _bucket_vel(vel), _bucket_micro(micro)))
+                    self.tokens.append(idx)
 
         def _build_vocab(self) -> None:
             for entry in self._data:
@@ -332,7 +334,7 @@ else:
 
     class TokenDataset:
         def __init__(self, data: list[LoopEntry]) -> None:
-            self.tokens: list[tuple[int, str]] = []
+            self.tokens: list[int] = []
             self.vocab: dict[tuple[int, str], int] = {}
             for entry in data:
                 for step, lbl, _v, _m in entry["tokens"]:

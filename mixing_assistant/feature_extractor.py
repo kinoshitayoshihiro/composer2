@@ -7,15 +7,14 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-import librosa
+import importlib
 import numpy as np
 import pandas as pd
-import pyloudnorm as pyln
 from tqdm import tqdm
 
 __all__ = ["extract_features", "main"]
 
-_meters: dict[int, pyln.Meter] = {}
+_meters: dict[int, object] = {}
 EXPECTED_KEYS = [
     "spectral_centroid_mean",
     "spectral_flatness_db",
@@ -36,10 +35,17 @@ def extract_features(
     loudness_range_s: float = 3.0,
 ) -> dict[str, float]:
     try:
-        y, sr = librosa.load(str(audio_path), sr=None, mono=True)
-        return _compute_features(y, sr, n_mels, frame_len, hop_len, loudness_range_s)
+        librosa = importlib.import_module("librosa")
+        pyln = importlib.import_module("pyloudnorm")
     except Exception:
         return {k: float("nan") for k in EXPECTED_KEYS}
+
+    try:
+        y, sr = librosa.load(str(audio_path), sr=None, mono=True)
+    except Exception:
+        return {k: float("nan") for k in EXPECTED_KEYS}
+
+    return _compute_features(y, sr, n_mels, frame_len, hop_len, loudness_range_s, librosa, pyln)
 
 
 def _compute_features(
@@ -49,6 +55,8 @@ def _compute_features(
     frame_len: float,
     hop_len: float,
     loudness_range_s: float,
+    librosa: object,
+    pyln: object,
 ) -> dict[str, float]:
     frame_length = int(sr * frame_len)
     hop_length = int(sr * hop_len)

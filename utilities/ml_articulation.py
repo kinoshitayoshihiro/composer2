@@ -22,7 +22,7 @@ if torch is not None:
         try:
             from torch_crf import CRF  # torch-crf パッケージ
         except ImportError:
-            from TorchCRF import CRF  # TorchCRF パッケージ
+            CRF = object  # type: ignore
 else:  # pragma: no cover - optional
     CRF = object  # type: ignore
 

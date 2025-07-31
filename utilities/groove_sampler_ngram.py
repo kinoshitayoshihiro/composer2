@@ -564,15 +564,17 @@ def auto_select_order(
 
     if not seqs:
         raise ValueError("no sequences provided")
+    if len(seqs[0]) < 2:
+        return 1
     rng = Random(0)
     seqs_copy = seqs[:]
     rng.shuffle(seqs_copy)
     split = max(1, int(len(seqs_copy) * validation_split))
     val_seqs = seqs_copy[:split]
     train_seqs = seqs_copy[split:] or seqs_copy[:1]
-    best_order = 1
+    best_order = 2
     best_ppx = float("inf")
-    for order in range(1, min(max_order, 5) + 1):
+    for order in range(2, min(max_order, 5) + 1):
         freq = _count_ngrams(train_seqs, order)
         prob = _freq_to_log_prob(
             freq, smoothing="add_alpha", alpha=ALPHA, discount=0.75

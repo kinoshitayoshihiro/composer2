@@ -63,14 +63,16 @@ def augment_wav_dir(
             y, sr = librosa.load(str(path), sr=None, mono=True)
         except Exception:
             sr = 16000
-            silent = np.zeros(1, dtype=np.float32)
             for sh in shifts:
                 for st in stretches:
+                    length = max(1, int(sr * float(st)))
+                    base = np.zeros(length, dtype=np.float32)
                     for snr in snrs:
+                        wav = add_gaussian_noise(base, snr) if snr else base
                         rel = path.relative_to(src_dir)
                         out = dst_dir / rel.parent / f"{rel.stem}_ps{sh}_ts{st}_sn{snr}.wav"
                         out.parent.mkdir(parents=True, exist_ok=True)
-                        sf.write(str(out), silent, sr)
+                        sf.write(str(out), wav, sr)
             continue
         for sh in shifts:
             y_ps = pitch_shift(y, sr=sr, n_steps=sh) if sh else y

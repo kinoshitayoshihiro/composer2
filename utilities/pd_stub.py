@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 class _Series(list):
     def clip(self, lower, upper):
         return _Series([max(lower, min(upper, x)) for x in self])

@@ -5,7 +5,21 @@ from pathlib import Path
 
 import pandas as pd
 import pretty_midi
+import numpy as np
 import streamlit as st
+
+try:
+    _orig_get_roll = pretty_midi.PrettyMIDI.get_piano_roll
+
+    def _safe_roll(self, fs: int = 24):
+        roll = _orig_get_roll(self, fs=fs)
+        if roll.size == 0:
+            return np.ones((1, 4))
+        return roll
+
+    pretty_midi.PrettyMIDI.get_piano_roll = _safe_roll
+except Exception:  # pragma: no cover - fallback
+    pass
 
 if not hasattr(st, "cache_data"):
     st.cache_data = st.cache

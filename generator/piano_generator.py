@@ -52,6 +52,7 @@ EMO_TO_BUCKET_PIANO = {
     "love_and_resolution": "energetic",
     "trial_prayer": "energetic",
     "emotional_storm": "energetic",
+    "quiet_pain_and_nascent_strength": "calm",
     "default": "calm",
 }
 BUCKET_TO_PATTERN_PIANO = {

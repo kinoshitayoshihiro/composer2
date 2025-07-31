@@ -1976,7 +1976,12 @@ class BassGenerator(BasePartGenerator):
                     f"{log_blk_prefix}: Final note for {m21_cs_obj.figure} at {current_note_abs_offset_in_block:.2f} too short ({note_obj_to_add.duration.quarterLength:.3f}ql). Skipping."
                 )
 
-        if vocal_metrics:
+        insert_rest = (
+            section_data.get("part_params", {})
+            .get("bass", {})
+            .get("anticipatory_rest_notes", False)
+        )
+        if vocal_metrics and insert_rest:
             root_pitch = m21_cs_obj.root() if m21_cs_obj else None
             if root_pitch:
                 for start, end in get_rest_windows(vocal_metrics):

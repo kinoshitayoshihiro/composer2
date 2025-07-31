@@ -10,6 +10,8 @@ from pathlib import Path
 from random import Random
 from typing import TypedDict
 
+import numpy as np
+
 import click
 
 try:  # optional dependency
@@ -203,7 +205,10 @@ if torch is not None:
                     entry.get("intensity") or DEFAULT_AUX["intensity"],
                 )
                 aux_map[key] = _hash_aux(aux)
-        meta = {"vocab": ds.vocab, "aux": aux_map}
+        hist = [0] * ds.vocab_size
+        for t in ds.tokens:
+            hist[t] += 1
+        meta = {"vocab": ds.vocab, "aux": aux_map, "hist": hist}
         return model, meta
 
     def save(model: GRUModel, meta: dict, path: Path) -> None:
@@ -231,8 +236,9 @@ if torch is not None:
         inv_vocab = {v: k for k, v in meta.get("vocab", {}).items()}
         if not inv_vocab:
             inv_vocab = {0: (0, "kick")}
-        # start from the first token to keep offsets deterministic
-        tokens = [0]
+        hist = meta.get("hist") if isinstance(meta, dict) else None
+        start_idx = int(np.argmax(hist)) if temperature <= 0 and hist else 0
+        tokens = [start_idx]
         model.eval()
         for _ in range(bars * RESOLUTION - 1):
             inp = torch.tensor(tokens[-1:])
@@ -244,8 +250,7 @@ if torch is not None:
                 )
                 logits = out[0, -1]
                 if temperature <= 0:
-                    # deterministic progression through the vocabulary
-                    idx = (tokens[-1] + 1) % len(inv_vocab)
+                    idx = int(torch.argmax(logits))
                 else:
                     probs = torch.exp(logits / temperature)
                     idx = int(torch.multinomial(probs, 1).item())
@@ -347,7 +352,10 @@ else:
             mat[a, b] += 1.0
         mat /= mat.sum(axis=1, keepdims=True)
         model = GRUModel(mat)
-        meta = {"vocab": ds.vocab}
+        hist = [0] * ds.vocab_size
+        for t in ds.tokens:
+            hist[t] += 1
+        meta = {"vocab": ds.vocab, "hist": hist}
         return model, meta
 
     def save(model: GRUModel, meta: dict, path: Path) -> None:
@@ -373,7 +381,7 @@ else:
         inv_vocab = {v: k for k, v in meta.get("vocab", {}).items()}
         if not inv_vocab:
             inv_vocab = {0: (0, "kick")}
-        idx = rng.randrange(len(inv_vocab))
+        idx = int(np.argmax(model.matrix.sum(axis=1))) if hasattr(model, "matrix") else rng.randrange(len(inv_vocab))
         events: list[Event] = []
         for i in range(bars * RESOLUTION):
             step, lbl = inv_vocab[idx]

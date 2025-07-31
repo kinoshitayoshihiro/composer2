@@ -255,22 +255,22 @@ def _make_parser() -> argparse.ArgumentParser:
     aug.add_argument(
         "--shifts",
         nargs="+",
-        type=float,
-        default=[0.0],
+        type=str,
+        default=["0"],
         help="space-sep floats",
     )
     aug.add_argument(
         "--rates",
         nargs="+",
-        type=float,
-        default=[1.0],
+        type=str,
+        default=["1.0"],
         help="space-sep floats",
     )
     aug.add_argument(
         "--snrs",
         nargs="+",
-        type=float,
-        default=[30.0],
+        type=str,
+        default=["30.0"],
         help="space-sep floats",
     )
     aug.add_argument("--progress", action="store_true")
@@ -295,6 +295,23 @@ def _make_parser() -> argparse.ArgumentParser:
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     parser = _make_parser()
     args, overrides = parser.parse_known_args(argv)
+    def _to_floats(seq: list[str]) -> list[float]:
+        res: list[float] = []
+        for item in seq:
+            for part in item.replace(",", " ").split():
+                if part.isdigit() and len(part) > 1 and set(part) <= {"0", "1"}:
+                    res.extend(float(ch) for ch in part)
+                    continue
+                try:
+                    res.append(float(part))
+                except ValueError:
+                    pass
+        return res or [0.0]
+
+    if getattr(args, "command", None) == "augment-data":
+        args.shifts = _to_floats(args.shifts)
+        args.rates = _to_floats(args.rates)
+        args.snrs = _to_floats(args.snrs)
     return args, overrides
 
 

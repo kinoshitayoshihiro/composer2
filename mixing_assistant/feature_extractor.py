@@ -42,10 +42,11 @@ def extract_features(
 
     try:
         y, sr = librosa.load(str(audio_path), sr=None, mono=True)
+        return _compute_features(
+            y, sr, n_mels, frame_len, hop_len, loudness_range_s, librosa, pyln
+        )
     except Exception:
         return {k: float("nan") for k in EXPECTED_KEYS}
-
-    return _compute_features(y, sr, n_mels, frame_len, hop_len, loudness_range_s, librosa, pyln)
 
 
 def _compute_features(

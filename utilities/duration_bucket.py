@@ -13,7 +13,7 @@ __all__ = ["_BOUNDS", "to_bucket"]
 def to_bucket(dur: float) -> int:
     """Return duration bucket index for ``dur`` measured in quarter lengths."""
     for i, bound in enumerate(_BOUNDS):
-        if dur <= bound:
+        if dur < bound:
             return i
     return len(_BOUNDS)
 

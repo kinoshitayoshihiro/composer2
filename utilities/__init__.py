@@ -23,9 +23,11 @@ try:
     import numpy as np
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     np = None  # type: ignore
-import pretty_midi
-
-_orig = pretty_midi.PrettyMIDI.get_tempo_changes
+try:
+    import pretty_midi
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    pretty_midi = None  # type: ignore
+_orig = pretty_midi.PrettyMIDI.get_tempo_changes if pretty_midi else None
 
 
 def _patched_get_tempo_changes(self, *args, **kwargs):
@@ -38,10 +40,11 @@ def _patched_get_tempo_changes(self, *args, **kwargs):
     return tempi, times
 
 
-pretty_midi.PrettyMIDI.get_tempo_changes = _patched_get_tempo_changes
-# Ensure pretty_midi always returns ndarray for tempo changes.
-# The import has side effects (monkey patch), but it's lightweight and idempotent.
-from . import pretty_midi_compat  # noqa: F401
+if pretty_midi is not None and _orig is not None:
+    pretty_midi.PrettyMIDI.get_tempo_changes = _patched_get_tempo_changes
+    # Ensure pretty_midi always returns ndarray for tempo changes.
+    # The import has side effects (monkey patch), but it's lightweight and idempotent.
+    from . import pretty_midi_compat  # noqa: F401
 
 import importlib  # noqa: E402
 import importlib.util as importlib_util  # noqa: E402
@@ -57,11 +60,23 @@ if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from . import vocal_sync as vocal_sync
 
 from .accent_mapper import AccentMapper  # noqa: E402
-from .kde_velocity import KDEVelocityModel as _KDEVelocityModel  # noqa: E402
-from .loader import load_chordmap  # noqa: E402
-from .progression_templates import get_progressions  # noqa: E402
+try:
+    from .kde_velocity import KDEVelocityModel as _KDEVelocityModel  # noqa: E402
+except Exception:  # pragma: no cover - optional dependency missing
+    _KDEVelocityModel = None  # type: ignore
+if _HAS_YAML:
+    from .loader import load_chordmap  # noqa: E402
+else:  # pragma: no cover - optional dependency missing
+    load_chordmap = None  # type: ignore
+if _HAS_YAML:
+    from .progression_templates import get_progressions  # noqa: E402
+else:  # pragma: no cover - optional dependency missing
+    get_progressions = None  # type: ignore
 from .rest_utils import get_rest_windows  # noqa: E402
-from .velocity_model import KDEVelocityModel  # noqa: E402
+try:
+    from .velocity_model import KDEVelocityModel  # noqa: E402
+except Exception:  # pragma: no cover - optional dependency missing
+    KDEVelocityModel = None  # type: ignore
 
 __all__.append("get_progressions")
 

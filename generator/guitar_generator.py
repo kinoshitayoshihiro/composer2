@@ -178,6 +178,12 @@ EXEC_STYLE_MUTED_RHYTHM = "muted_rhythm"
 EXEC_STYLE_HAMMER_ON = "hammer_on"
 EXEC_STYLE_PULL_OFF = "pull_off"
 
+EMO_TO_BUCKET_GUITAR: dict[str, str] = {
+    "quiet_pain": "calm",
+    "nascent_strength": "calm",
+    "quiet_pain_and_nascent_strength": "calm",
+}
+
 EMOTION_INTENSITY_MAP: dict[tuple[str, str], str] = {
     ("quiet_pain_and_nascent_strength", "low"): "guitar_ballad_arpeggio",
     ("deep_regret_gratitude_and_realization", "medium_low"): "guitar_ballad_arpeggio",

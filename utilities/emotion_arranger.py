@@ -7,7 +7,7 @@ from music21 import instrument
 
 from generator.bass_generator import BassGenerator
 from generator.piano_generator import PianoGenerator
-from generator.guitar_generator import GuitarGenerator
+from generator.guitar_generator import GuitarGenerator, EMO_TO_BUCKET_GUITAR
 from utilities.config_loader import load_chordmap_yaml
 from utilities.emotion_profile_loader import load_emotion_profile
 from utilities.rhythm_library_loader import load_rhythm_library
@@ -145,6 +145,10 @@ def generate_full_arrangement(
             part_params_override_rhythm_key=None,
             rhythm_library_keys=list(guitar_gen.part_parameters.keys()),
         )
+
+        bucket = EMO_TO_BUCKET_GUITAR.get(intent.get("emotion", "default"), "default")
+        if bucket == "calm" and (intent.get("intensity") or "default").lower() == "low":
+            guitar_key = "guitar_ballad_arpeggio"
 
         emotion = intent.get("emotion", "default")
         e_cfg = emotion_profiles.get(emotion, {}) if isinstance(emotion_profiles, dict) else {}

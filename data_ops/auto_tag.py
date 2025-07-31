@@ -7,6 +7,19 @@ from statistics import median
 
 import numpy as np
 import pretty_midi
+import utilities  # ensure pretty_midi patch
+
+_pm_orig = pretty_midi.PrettyMIDI.get_tempo_changes
+
+def _pm_patch(self, *args, **kwargs):
+    tempi, times = _pm_orig(self, *args, **kwargs)
+    if isinstance(tempi, list):
+        tempi = np.asarray(tempi)
+    if isinstance(times, list):
+        times = np.asarray(times)
+    return tempi, times
+
+pretty_midi.PrettyMIDI.get_tempo_changes = _pm_patch
 from sklearn.cluster import KMeans
 
 try:
@@ -22,7 +35,8 @@ def _extract_features(pm: pretty_midi.PrettyMIDI) -> tuple[np.ndarray, np.ndarra
         bpm = 120.0
     beat = 60.0 / bpm
     bar_len = beat * 4
-    n_bars = max(1, int(round(pm.get_end_time() / bar_len)))
+    end_time = max((n.end for inst in pm.instruments for n in inst.notes), default=0.0)
+    n_bars = max(1, int(round(end_time / bar_len)))
     density: list[int] = []
     velocity: list[int] = []
     energy: list[int] = []

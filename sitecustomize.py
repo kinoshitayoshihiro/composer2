@@ -74,3 +74,8 @@ if pretty_midi is not None and not hasattr(pretty_midi.PrettyMIDI, "set_tempo_ch
 
     pretty_midi.PrettyMIDI.set_tempo_changes = _set_tempo_changes  # type: ignore[attr-defined]
     pretty_midi.PrettyMIDI.get_tempo_changes = _get_tempo_changes  # type: ignore[attr-defined]
+
+try:
+    import utilities  # noqa: F401
+except Exception:
+    pass

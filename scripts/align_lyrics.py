@@ -28,7 +28,15 @@ def load_model(
         freeze_encoder=cfg.get("freeze_encoder", False),
         gradient_checkpointing=cfg.get("gradient_checkpointing", False),
     )
-    model.load_state_dict(state["model"], strict=False)
+    try:
+        model.load_state_dict(state["model"], strict=False)
+    except RuntimeError:
+        filtered = {
+            k: v
+            for k, v in state["model"].items()
+            if k in model.state_dict() and model.state_dict()[k].shape == v.shape
+        }
+        model.load_state_dict(filtered, strict=False)
     model.eval()
     model.to(device)
     return model, cfg, vocab

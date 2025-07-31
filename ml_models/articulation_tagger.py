@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytorch_lightning as pl
 import torch
 from torch import nn
-from TorchCRF import CRF
+try:
+    from TorchCRF import CRF
+except Exception:  # pragma: no cover - optional
+    try:
+        from torch_crf import CRF  # type: ignore
+    except Exception:
+        CRF = object  # type: ignore
 
 
 class ArticulationTagger(pl.LightningModule):

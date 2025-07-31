@@ -33,6 +33,15 @@ try:
 except Exception:
     pretty_midi = None
 
+try:
+    import pandas  # type: ignore
+except Exception:
+    try:
+        from utilities.pd_stub import install_pandas_stub
+        install_pandas_stub()
+    except Exception:
+        pass
+
 if os.getenv("COMPOSER_CI_STUBS") == "1":
     path = Path(__file__).resolve().parent / "utilities" / "stub_utils.py"
     spec = importlib.util.spec_from_file_location("_stub_utils", path)

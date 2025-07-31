@@ -64,9 +64,11 @@ from utilities.tempo_utils import (  # noqa: E402
 
 
 def _lazy_import_groove_rnn() -> ModuleType | None:
-    try:
-        import importlib
+    import sys, importlib
 
+    if sys.modules.get("pytorch_lightning") is None:
+        return None
+    try:
         mod = importlib.import_module("utilities.groove_rnn_v2")
     except Exception:
         return None
@@ -139,7 +141,9 @@ def eval_metrics(midi: Path, ref_midi: Path | None) -> None:
 
     pm = pretty_midi.PrettyMIDI(str(midi))
     _, tempi = pm.get_tempo_changes()
-    bpm = float(tempi[0]) if len(tempi) > 0 else 120.0
+    bpm = float(tempi[0]) if len(tempi) > 0 and tempi[0] > 0 else 120.0
+    if bpm == 0:
+        bpm = 120.0
     beat = 60.0 / bpm
     events = [
         {"offset": n.start / beat, "velocity": n.velocity}
@@ -304,7 +308,9 @@ def evaluate_cmd(midi: Path, ref_midi: Path | None) -> None:
 
     pm = pretty_midi.PrettyMIDI(str(midi))
     _, tempi = pm.get_tempo_changes()
-    bpm = float(tempi[0]) if len(tempi) > 0 else 120.0
+    bpm = float(tempi[0]) if len(tempi) > 0 and tempi[0] > 0 else 120.0
+    if bpm == 0:
+        bpm = 120.0
     beat = 60.0 / bpm
     events = [
         {"offset": n.start / beat, "velocity": n.velocity}

@@ -61,6 +61,13 @@ def _basic_gen():
     return _create_generator
 
 
+@pytest.fixture
+def rhythm_library():
+    from utilities.rhythm_library_loader import load_rhythm_library
+
+    return load_rhythm_library("data/rhythm_library.yml")
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--update-golden",

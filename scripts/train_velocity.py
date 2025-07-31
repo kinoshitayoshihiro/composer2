@@ -8,7 +8,14 @@ from pathlib import Path
 
 import numpy as np
 
-from colorama import Fore, Style
+try:
+    from colorama import Fore, Style
+except Exception:  # pragma: no cover - optional
+    class _Dummy:
+        def __getattr__(self, name: str) -> str:
+            return ""
+
+    Fore = Style = _Dummy()
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -241,7 +248,7 @@ def _make_parser() -> argparse.ArgumentParser:
 
     # augment-data
     aug = sub.add_parser("augment-data", help="Augment WAVs & rebuild CSV")
-    aug.add_argument("--wav-dir", type=Path)
+    aug.add_argument("--wav-dir", type=Path, required=False)
     aug.add_argument("--drums-dir", type=Path, default=Path("data/loops/drums"))
     aug.add_argument("--out-dir", type=Path, default=Path("data/tracks_aug"))
     # デフォルト: shifts=0.0, rates=1.0, snrs=30.0
@@ -370,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
                 "drums-dir does not exist",
                 file=sys.stderr,
             )
-            return 0
+            return 1
 
         build_velocity_csv(
             args.out_dir,

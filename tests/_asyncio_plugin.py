@@ -1,5 +1,6 @@
 import asyncio
 import pytest
+import inspect
 
 
 def pytest_addoption(parser):
@@ -20,3 +21,10 @@ def event_loop():
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
+
+
+def pytest_pyfunc_call(pyfuncitem):  # simplified asyncio runner
+    if inspect.iscoroutinefunction(pyfuncitem.obj):
+        loop = pyfuncitem._request.getfixturevalue("event_loop")
+        loop.run_until_complete(pyfuncitem.obj(**pyfuncitem.funcargs))
+        return True

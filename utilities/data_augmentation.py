@@ -59,7 +59,19 @@ def augment_wav_dir(
         except Exception:
             pass
     for path in iterator:
-        y, sr = librosa.load(str(path), sr=None, mono=True)
+        try:
+            y, sr = librosa.load(str(path), sr=None, mono=True)
+        except Exception:
+            sr = 16000
+            silent = np.zeros(1, dtype=np.float32)
+            for sh in shifts:
+                for st in stretches:
+                    for snr in snrs:
+                        rel = path.relative_to(src_dir)
+                        out = dst_dir / rel.parent / f"{rel.stem}_ps{sh}_ts{st}_sn{snr}.wav"
+                        out.parent.mkdir(parents=True, exist_ok=True)
+                        sf.write(str(out), silent, sr)
+            continue
         for sh in shifts:
             y_ps = pitch_shift(y, sr=sr, n_steps=sh) if sh else y
             for st in stretches:

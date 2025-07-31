@@ -34,6 +34,33 @@ except Exception:
     pretty_midi = None
 
 try:
+    import music21  # type: ignore
+except Exception:
+    try:
+        from utilities.stub_utils import install_stub as _inst
+        _inst("music21")
+    except Exception:
+        pass
+
+# ---- PyTorch / MPS safety patches ----------------------------------- #
+try:
+    import torch
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+    from torch.nn import TransformerEncoder as _OrigTE
+
+    _old_init = _OrigTE.__init__
+
+    def _patched_init(self, *args, **kwargs):
+        _old_init(self, *args, **kwargs)
+        # force CPU-fallback safe path
+        self.use_nested_tensor = False
+
+    _OrigTE.__init__ = _patched_init  # type: ignore[assignment]
+except Exception:
+    pass
+
+try:
     import pandas  # type: ignore
 except Exception:
     try:

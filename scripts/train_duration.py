@@ -46,9 +46,8 @@ def run(cfg: DictConfig) -> int:
         callbacks=[EarlyStopping(monitor="val_loss", patience=5), ckpt_cb],
     )
     trainer.fit(model, dm)
-    ckpt = Path(cfg.model.checkpoint)
-    ckpt.parent.mkdir(parents=True, exist_ok=True)
-    trainer.save_checkpoint(str(ckpt))
+    if hasattr(cfg.model, "checkpoint") and cfg.model.checkpoint:
+        trainer.save_checkpoint(cfg.model.checkpoint)
     return 0
 
 
@@ -112,16 +111,24 @@ pad = 16 - len(sample)
 
 # 3. 入力テンソルの作成
 feats = {
-    "duration": torch.tensor(sample["duration"].tolist() + [0.0]*pad, dtype=torch.float32).unsqueeze(0),
-    "velocity": torch.tensor(sample["velocity"].tolist() + [0.0]*pad, dtype=torch.float32).unsqueeze(0),
-    "pitch_class": torch.tensor((sample["pitch"] % 12).tolist() + [0]*pad, dtype=torch.long).unsqueeze(0),
-    "position_in_bar": torch.tensor(sample["position"].tolist() + [0]*pad, dtype=torch.long).unsqueeze(0),
+    "duration": torch.tensor(
+        sample["duration"].tolist() + [0.0] * pad, dtype=torch.float32
+    ).unsqueeze(0),
+    "velocity": torch.tensor(
+        sample["velocity"].tolist() + [0.0] * pad, dtype=torch.float32
+    ).unsqueeze(0),
+    "pitch_class": torch.tensor(
+        (sample["pitch"] % 12).tolist() + [0] * pad, dtype=torch.long
+    ).unsqueeze(0),
+    "position_in_bar": torch.tensor(
+        sample["position"].tolist() + [0] * pad, dtype=torch.long
+    ).unsqueeze(0),
 }
 mask = torch.zeros(1, 16, dtype=torch.bool)
-mask[0, :len(sample)] = 1
+mask[0, : len(sample)] = 1
 
 # 4. 推論実行
 with torch.no_grad():
     pred = model(feats, mask)
 
-print("予測duration:", pred[0, :len(sample)].numpy())
+print("予測duration:", pred[0, : len(sample)].numpy())

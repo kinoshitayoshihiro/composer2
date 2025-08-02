@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import re
 import statistics
+import warnings
 from typing import Any
 
 from music21 import (
@@ -38,9 +39,28 @@ class PianoTemplateGenerator(BasePartGenerator):
         enable_articulation: bool = True,
         tone_preset: str | None = None,
         normalize_loudness: bool = False,
+        key: str | tuple[str, str] | None = None,
+        tempo: float | None = None,
+        emotion: str | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(*args, **kwargs)
+        if args:
+            warnings.warn(
+                "Positional arguments are deprecated; use keyword arguments",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            arg_names = [
+                "global_settings",
+                "default_instrument",
+                "global_tempo",
+                "global_time_signature",
+                "global_key_signature_tonic",
+                "global_key_signature_mode",
+            ]
+            for name, val in zip(arg_names, args):
+                kwargs.setdefault(name, val)
+        super().__init__(key=key, tempo=tempo, emotion=emotion, **kwargs)
         self._density_engine = VoicingDensityEngine()
         self._art_engine = ArticulationEngine()
         self.enable_articulation = enable_articulation

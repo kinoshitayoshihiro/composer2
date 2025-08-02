@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import warnings
 from typing import Any
 
 import numpy as np
@@ -71,15 +72,40 @@ class SaxGenerator(MelodyGenerator):
     def __init__(
         self,
         seed: int | None = None,
-        *,
+        *args,
         staccato_prob: float = 0.3,
         slur_prob: float = 0.5,
         vibrato_depth: float = 200.0,
         vibrato_rate: float = 5.0,
+        key: str | tuple[str, str] | None = None,
+        tempo: float | None = None,
+        emotion: str | None = None,
         **kwargs,
     ):
+        if args:
+            warnings.warn(
+                "Positional arguments are deprecated; use keyword arguments",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            arg_names = [
+                "global_settings",
+                "default_instrument",
+                "global_tempo",
+                "global_time_signature",
+                "global_key_signature_tonic",
+                "global_key_signature_mode",
+            ]
+            for name, val in zip(arg_names, args):
+                kwargs.setdefault(name, val)
         kwargs.setdefault("instrument_name", "Alto Saxophone")
         kwargs["default_instrument"] = instrument.AltoSaxophone()
+        if key is not None:
+            kwargs["key"] = key
+        if tempo is not None:
+            kwargs["tempo"] = tempo
+        if emotion is not None:
+            kwargs["emotion"] = emotion
         rh_lib = kwargs.setdefault("rhythm_library", {})
         for k, v in DEFAULT_PHRASE_PATTERNS.items():
             rh_lib.setdefault(k, v)

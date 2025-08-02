@@ -40,6 +40,7 @@ from .strings_generator import (
 )
 from .vocal_generator import VocalGenerator
 from modular_composer.perc_generator import PercGenerator
+from .arranger import Arranger
 
 __all__ = [
     "BasePartGenerator",
@@ -59,4 +60,5 @@ __all__ = [
     "ChordVoicer",
     "ModularComposer",
     "PercGenerator",
+    "Arranger",
 ]

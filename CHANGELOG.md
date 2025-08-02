@@ -3,6 +3,8 @@
 ## [Unreleased]
 ### Added
 - Lightweight module stubs for tests in `tests/_stubs.py`
+### Changed
+- ⚠️ Breaking change note removed – parameters are now optional
 
 ## [0.6.1] - 2025-07-25
 ### Fixed

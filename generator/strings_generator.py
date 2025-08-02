@@ -18,6 +18,7 @@ except AttributeError:  # pragma: no cover - fallback for Python < 3.11
 
 import math
 import re
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -172,13 +173,16 @@ class StringsGenerator(BasePartGenerator):
 
     def __init__(
         self,
-        *,
+        *args,
         global_settings: dict | None = None,
         default_instrument: m21instrument.Instrument | None = None,
         global_tempo: int | None = None,
         global_time_signature: str | None = None,
         global_key_signature_tonic: str | None = None,
         global_key_signature_mode: str | None = None,
+        key: str | tuple[str, str] | None = None,
+        tempo: float | None = None,
+        emotion: str | None = None,
         voice_allocation: dict[str, int] | None = None,
         default_velocity_curve: list[int] | list[float] | str | None = None,
         expression_maps_path: str | None = None,
@@ -199,6 +203,33 @@ class StringsGenerator(BasePartGenerator):
         ml_velocity_model_path: str | None = None,
         **kwargs: Any,
     ) -> None:
+        if args:
+            warnings.warn(
+                "Positional arguments are deprecated; use keyword arguments",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            arg_names = [
+                "global_settings",
+                "default_instrument",
+                "global_tempo",
+                "global_time_signature",
+                "global_key_signature_tonic",
+                "global_key_signature_mode",
+            ]
+            for name, val in zip(arg_names, args):
+                if name == "global_settings":
+                    global_settings = val
+                elif name == "default_instrument":
+                    default_instrument = val
+                elif name == "global_tempo":
+                    global_tempo = val
+                elif name == "global_time_signature":
+                    global_time_signature = val
+                elif name == "global_key_signature_tonic":
+                    global_key_signature_tonic = val
+                elif name == "global_key_signature_mode":
+                    global_key_signature_mode = val
         super().__init__(
             global_settings=global_settings,
             default_instrument=default_instrument or m21instrument.Violin(),
@@ -206,6 +237,9 @@ class StringsGenerator(BasePartGenerator):
             global_time_signature=global_time_signature,
             global_key_signature_tonic=global_key_signature_tonic,
             global_key_signature_mode=global_key_signature_mode,
+            key=key,
+            tempo=tempo,
+            emotion=emotion,
             rng=rng,
             ml_velocity_model_path=ml_velocity_model_path,
             **kwargs,

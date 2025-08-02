@@ -8,6 +8,7 @@ import copy
 import logging
 import os
 import random
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -78,7 +79,7 @@ logger = logging.getLogger(__name__)
 class MelodyGenerator(BasePartGenerator):
     def __init__(
         self,
-        *,
+        *args,
         global_settings: dict = None,  # ★追加
         role: str = "melody",
         instrument_name: str = "Soprano Sax",
@@ -89,9 +90,39 @@ class MelodyGenerator(BasePartGenerator):
         global_time_signature: str = "4/4",
         global_key_signature_tonic: str = "C",
         global_key_signature_mode: str = "major",
+        key: str | tuple[str, str] | None = None,
+        tempo: float | None = None,
+        emotion: str | None = None,
         rng: random.Random | None = None,
         **kwargs,
     ):
+        if args:
+            warnings.warn(
+                "Positional arguments are deprecated; use keyword arguments",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            arg_names = [
+                "global_settings",
+                "default_instrument",
+                "global_tempo",
+                "global_time_signature",
+                "global_key_signature_tonic",
+                "global_key_signature_mode",
+            ]
+            for name, val in zip(arg_names, args):
+                if name == "global_settings":
+                    global_settings = val
+                elif name == "default_instrument":
+                    default_instrument = val
+                elif name == "global_tempo":
+                    global_tempo = val
+                elif name == "global_time_signature":
+                    global_time_signature = val
+                elif name == "global_key_signature_tonic":
+                    global_key_signature_tonic = val
+                elif name == "global_key_signature_mode":
+                    global_key_signature_mode = val
         from music21.instrument import fromString
 
         self.role = role
@@ -116,6 +147,9 @@ class MelodyGenerator(BasePartGenerator):
             global_time_signature=global_time_signature,
             global_key_signature_tonic=global_key_signature_tonic,
             global_key_signature_mode=global_key_signature_mode,
+            key=key,
+            tempo=tempo,
+            emotion=emotion,
             rng=rng,
             **kwargs,
         )
@@ -396,6 +430,7 @@ class MelodyGenerator(BasePartGenerator):
         out_path = section_path / fname
         part.write("midi", fp=str(out_path))
         return out_path
+
 
 # --- Debug / manual test (REMOVE IN PRODUCTION) -----------------
 if __name__ == "__main__":

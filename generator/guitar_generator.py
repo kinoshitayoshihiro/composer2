@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import statistics
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
@@ -305,6 +306,9 @@ class GuitarGenerator(BasePartGenerator):
         harmonic_gain_db: float | None = None,
         rng_seed: int | None = None,
         ml_velocity_model_path: str | None = None,
+        key: str | tuple[str, str] | None = None,
+        tempo: float | None = None,
+        emotion: str | None = None,
         **kwargs,
     ):
         """Create a guitar part generator.
@@ -318,8 +322,29 @@ class GuitarGenerator(BasePartGenerator):
             Interpolation mode for seven-point velocity curves. Either
             ``"linear"`` or ``"spline"``.
         """
-
-        super().__init__(*args, ml_velocity_model_path=ml_velocity_model_path, **kwargs)
+        if args:
+            warnings.warn(
+                "Positional arguments are deprecated; use keyword arguments",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            arg_names = [
+                "global_settings",
+                "default_instrument",
+                "global_tempo",
+                "global_time_signature",
+                "global_key_signature_tonic",
+                "global_key_signature_mode",
+            ]
+            for name, val in zip(arg_names, args):
+                kwargs.setdefault(name, val)
+        super().__init__(
+            ml_velocity_model_path=ml_velocity_model_path,
+            key=key,
+            tempo=tempo,
+            emotion=emotion,
+            **kwargs,
+        )
         self.external_patterns_path = external_patterns_path
         if isinstance(tuning, str):
             self.tuning = TUNING_PRESETS.get(tuning.lower(), STANDARD_TUNING_OFFSETS)
@@ -501,7 +526,7 @@ class GuitarGenerator(BasePartGenerator):
         """Return current fingering cost configuration."""
         return self._fingering_costs
 
-    def compose(self, *args, vocal_metrics: dict | None = None, **kwargs):
+    def compose(self, *, vocal_metrics: dict | None = None, **kwargs):
         self._prev_note_pitch = None
         section = kwargs.get("section_data", {}) if kwargs else {}
         part_params = section.get("part_params", {})
@@ -519,7 +544,7 @@ class GuitarGenerator(BasePartGenerator):
         if ratio_to_apply is None:
             ratio_to_apply = self.swing_ratio
 
-        result = super().compose(*args, vocal_metrics=vocal_metrics, **kwargs)
+        result = super().compose(vocal_metrics=vocal_metrics, **kwargs)
         if isinstance(result, stream.Part):
             self._last_part = result
 

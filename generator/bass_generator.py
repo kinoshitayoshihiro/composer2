@@ -1,9 +1,11 @@
 # --- START OF FILE generator/bass_generator.py (simplified) ---
 from __future__ import annotations
+
 import copy
 import logging
 import math
 import random  # 追加
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -216,13 +218,16 @@ BUCKET_TO_PATTERN_BASS: dict[tuple[str, str], str] = {
 class BassGenerator(BasePartGenerator):
     def __init__(
         self,
-        *,
+        *args,
         global_settings=None,
         default_instrument=None,
         global_tempo=None,
         global_time_signature=None,
         global_key_signature_tonic=None,
         global_key_signature_mode=None,
+        key: str | tuple[str, str] | None = None,
+        tempo: float | None = None,
+        emotion: str | None = None,
         mirror_melody: bool = False,
         main_cfg=None,
         emotion_profile_path: str | Path | None = None,
@@ -240,6 +245,33 @@ class BassGenerator(BasePartGenerator):
             bass notes. Default is ``False``.  Set this in ``main_cfg.yml`` under
             ``part_defaults.bass`` to apply globally.
         """
+        if args:
+            warnings.warn(
+                "Positional arguments are deprecated; use keyword arguments",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            arg_names = [
+                "global_settings",
+                "default_instrument",
+                "global_tempo",
+                "global_time_signature",
+                "global_key_signature_tonic",
+                "global_key_signature_mode",
+            ]
+            for name, val in zip(arg_names, args):
+                if name == "global_settings":
+                    global_settings = val
+                elif name == "default_instrument":
+                    default_instrument = val
+                elif name == "global_tempo":
+                    global_tempo = val
+                elif name == "global_time_signature":
+                    global_time_signature = val
+                elif name == "global_key_signature_tonic":
+                    global_key_signature_tonic = val
+                elif name == "global_key_signature_mode":
+                    global_key_signature_mode = val
         self.kick_lock_cfg = (global_settings or {}).get("kick_lock", {})
         seed = self.kick_lock_cfg.get("random_seed")
         self._rng = random.Random(0 if seed is None else seed)
@@ -252,6 +284,9 @@ class BassGenerator(BasePartGenerator):
             global_time_signature=global_time_signature,
             global_key_signature_tonic=global_key_signature_tonic,
             global_key_signature_mode=global_key_signature_mode,
+            key=key,
+            tempo=tempo,
+            emotion=emotion,
             rng=self._rng,
             velocity_model=velocity_model,
             **kwargs,

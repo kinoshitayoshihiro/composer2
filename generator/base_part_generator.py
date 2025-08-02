@@ -42,27 +42,33 @@ class BasePartGenerator(ABC):
     def __init__(
         self,
         *,
-        global_settings: dict = None,
+        global_settings: dict | None = None,
         default_instrument,
-        global_tempo,
-        global_time_signature,
-        global_key_signature_tonic,
-        global_key_signature_mode,
+        global_tempo=None,
+        global_time_signature=None,
+        global_key_signature_tonic=None,
+        global_key_signature_mode=None,
         rng=None,
         ml_velocity_model_path: str | None = None,
+        duration_model=None,
         velocity_model=None,
         **kwargs,
     ):
-        # ここを追加
+        # optional contextual parameters; shim for backwards compatibility
+        key = kwargs.pop("key", None)
+        tempo = kwargs.pop("tempo", None)
+        emotion = kwargs.pop("emotion", None)
+
         self.global_settings = global_settings or {}
         self.part_name = kwargs.get("part_name")
         self.default_instrument = default_instrument
-        self.global_tempo = global_tempo
-        self.global_time_signature = global_time_signature
+        self.emotion = emotion
+        self.global_tempo = tempo or global_tempo
+        self.global_time_signature = global_time_signature or "4/4"
         try:
-            num, denom = map(int, str(global_time_signature).split("/"))
+            num, denom = map(int, str(self.global_time_signature).split("/"))
         except Exception:
-            ts_obj = meter.TimeSignature(global_time_signature or "4/4")
+            ts_obj = meter.TimeSignature(self.global_time_signature)
             num, denom = ts_obj.numerator, ts_obj.denominator
         self.bar_length = num * (4 / denom)
         # Determine default swing subdivision
@@ -70,11 +76,29 @@ class BasePartGenerator(ABC):
             self.swing_subdiv = 12
         else:
             self.swing_subdiv = 8
-        self.global_key_signature_tonic = global_key_signature_tonic
-        self.global_key_signature_mode = global_key_signature_mode
+        if key is not None:
+            if isinstance(key, (tuple, list)):
+                tonic = key[0]
+                mode = key[1] if len(key) > 1 else "major"
+            else:
+                parts = str(key).replace("_", " ").replace("-", " ").split()
+                tonic = parts[0] if parts else global_key_signature_tonic
+                mode = (
+                    parts[1] if len(parts) > 1 else global_key_signature_mode or "major"
+                )
+            self.global_key_signature_tonic = tonic
+            self.global_key_signature_mode = mode
+        else:
+            self.global_key_signature_tonic = global_key_signature_tonic
+            self.global_key_signature_mode = global_key_signature_mode
+        if self.global_key_signature_tonic and self.global_key_signature_mode:
+            self.key = f"{self.global_key_signature_tonic} {self.global_key_signature_mode}".strip()
+        else:
+            self.key = None
         self.rng = rng or random.Random()
         self.ml_velocity_model_path = ml_velocity_model_path
         self.velocity_model = velocity_model
+        self.duration_model = duration_model
         self.ml_velocity_model = None
         self.ml_velocity_cache_key = (
             ml_velocity_model_path if ml_velocity_model_path and torch else None
@@ -146,7 +170,12 @@ class BasePartGenerator(ABC):
             self.logger.error("Failed to apply effect envelope: %s", exc, exc_info=True)
 
     def _apply_ml_velocity(self, part: stream.Part) -> None:
-        """Apply ML velocity model to generated notes if available."""
+        """Apply ML velocity model to generated notes if available.
+
+        The model should be trained using ``train_velocity.py`` and saved via
+        :mod:`utilities.ml_velocity`.  It is loaded lazily based on the path
+        provided at initialization.
+        """
         model = getattr(self, "ml_velocity_model", None)
         if model is None or torch is None:
             return
@@ -210,6 +239,43 @@ class BasePartGenerator(ABC):
                         n.volume = m21volume.Volume(velocity=vel)
                     else:
                         n.volume.velocity = scale_velocity(vel, 1.0)
+
+    def _apply_duration_model(self, part: stream.Part) -> None:
+        """Adjust note durations using an ML duration model if supplied.
+
+        The model is expected to expose a ``predict`` method taking an array of
+        note features and returning predicted quarterLength values.  This is a
+        lightweight hook for models such as the Duration Transformer; training
+        utilities are provided in ``scripts/train_duration.py``.
+        """
+        model = getattr(self, "duration_model", None)
+        if model is None:
+            self.logger.debug(
+                "No duration model supplied; skipping duration adjustment"
+            )
+            return
+        try:
+            import numpy as np
+
+            notes = list(part.recurse().notes)
+            if not notes:
+                return
+            feats = np.array(
+                [
+                    [
+                        n.pitch.midi / 127.0,
+                        float(n.offset),
+                        (n.volume.velocity or 64) / 127.0,
+                    ]
+                    for n in notes
+                ],
+                dtype=np.float32,
+            )
+            preds = model.predict(feats)
+            for n, d in zip(notes, preds):
+                n.quarterLength = max(0.05, float(d))
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.debug("ML duration inference failed: %s", exc)
 
     def compose(
         self,
@@ -340,6 +406,7 @@ class BasePartGenerator(ABC):
                     pass
             self._apply_ml_velocity(part)
             self._apply_velocity_model(part)
+            self._apply_duration_model(part)
             finalize_cc_events(part)
             self._last_section = section_data
             return part

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import logging
 import random
+import warnings
 from typing import Any
 
 from music21 import chord as m21chord
@@ -107,8 +108,27 @@ class PianoGenerator(BasePartGenerator):
         main_cfg=None,
         ml_velocity_model_path: str | None = None,
         velocity_model=None,
+        key: str | tuple[str, str] | None = None,
+        tempo: float | None = None,
+        emotion: str | None = None,
         **kwargs,
     ):
+        if args:
+            warnings.warn(
+                "Positional arguments are deprecated; use keyword arguments",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            arg_names = [
+                "global_settings",
+                "default_instrument",
+                "global_tempo",
+                "global_time_signature",
+                "global_key_signature_tonic",
+                "global_key_signature_mode",
+            ]
+            for name, val in zip(arg_names, args):
+                kwargs.setdefault(name, val)
         self.main_cfg = main_cfg
         self.part_parameters = kwargs.get("part_parameters", {})
         self.chord_voicer = None
@@ -119,9 +139,11 @@ class PianoGenerator(BasePartGenerator):
         self.measure_duration = ts_obj.barDuration.quarterLength if ts_obj else 4.0
         self.velocity_model = velocity_model
         super().__init__(
-            *args,
             ml_velocity_model_path=ml_velocity_model_path,
             velocity_model=velocity_model,
+            key=key,
+            tempo=tempo,
+            emotion=emotion,
             **kwargs,
         )
         self.cfg: dict = kwargs.copy()

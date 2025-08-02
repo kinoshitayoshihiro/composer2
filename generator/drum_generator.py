@@ -4,9 +4,7 @@ import logging
 import math
 import os
 import random
-
-import yaml
-
+import warnings
 from bisect import bisect_left
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
@@ -14,23 +12,12 @@ from pathlib import Path
 from typing import Any
 
 import pretty_midi
-from music21 import (
-    converter,
-    meter,
-    note,
-    pitch,
-    stream,
-    tie,
-)
-from music21 import (
-    duration as m21duration,
-)
-from music21 import (
-    instrument as m21instrument,
-)
-from music21 import (
-    volume as m21volume,
-)
+import yaml
+from music21 import converter
+from music21 import duration as m21duration
+from music21 import instrument as m21instrument
+from music21 import meter, note, pitch, stream, tie
+from music21 import volume as m21volume
 
 from tools.peak_synchroniser import PeakSynchroniser
 from utilities import fill_dsl, groove_sampler, groove_sampler_ngram, humanizer
@@ -403,17 +390,19 @@ def load_heatmap_data(heatmap_path: str | None) -> dict[int, int]:
         return {}
 
 
-# DrumGenerator例
 class DrumGenerator(BasePartGenerator):
     def __init__(
         self,
-        *,
+        *args,
         global_settings=None,
         default_instrument=None,
         global_tempo=None,
         global_time_signature=None,
         global_key_signature_tonic=None,
         global_key_signature_mode=None,
+        key: str | tuple[str, str] | None = None,
+        tempo: float | None = None,
+        emotion: str | None = None,
         main_cfg=None,
         drum_map=None,
         tempo_map=None,
@@ -422,6 +411,33 @@ class DrumGenerator(BasePartGenerator):
         lut_path: str | Path | None = None,
         **kwargs,
     ):
+        if args:
+            warnings.warn(
+                "Positional arguments are deprecated; use keyword arguments",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            arg_names = [
+                "global_settings",
+                "default_instrument",
+                "global_tempo",
+                "global_time_signature",
+                "global_key_signature_tonic",
+                "global_key_signature_mode",
+            ]
+            for name, val in zip(arg_names, args):
+                if name == "global_settings":
+                    global_settings = val
+                elif name == "default_instrument":
+                    default_instrument = val
+                elif name == "global_tempo":
+                    global_tempo = val
+                elif name == "global_time_signature":
+                    global_time_signature = val
+                elif name == "global_key_signature_tonic":
+                    global_key_signature_tonic = val
+                elif name == "global_key_signature_mode":
+                    global_key_signature_mode = val
         self.main_cfg = main_cfg
         self.drum_map = drum_map or GENERAL_MIDI_MAP
         super().__init__(
@@ -431,6 +447,9 @@ class DrumGenerator(BasePartGenerator):
             global_time_signature=global_time_signature,
             global_key_signature_tonic=global_key_signature_tonic,
             global_key_signature_mode=global_key_signature_mode,
+            key=key,
+            tempo=tempo,
+            emotion=emotion,
             ml_velocity_model_path=ml_velocity_model_path,
             **kwargs,
         )
@@ -2489,7 +2508,9 @@ class DrumGenerator(BasePartGenerator):
         return part
 
     @staticmethod
-    def merge_perc_events(events_drum: list[dict], events_perc: list[dict]) -> list[dict]:
+    def merge_perc_events(
+        events_drum: list[dict], events_perc: list[dict]
+    ) -> list[dict]:
         """Merge percussion events with drum events.
 
         Percussion hits colliding with kick or snare on the same tick are shifted

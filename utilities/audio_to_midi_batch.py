@@ -1,104 +1,233 @@
+"""Batch convert stem WAV files to multi-track MIDI.
+
+This utility walks a directory of audio stems and converts each group of
+tracks into a single multi-track MIDI file.  Each input WAV is transcribed
+using `crepe` for pitch detection and `pretty_midi` for MIDI generation.  The
+stem's filename (sans extension) is preserved as the name of the corresponding
+MIDI track.
+
+Usage
+-----
+```
+python -m utilities.audio_to_midi_batch src_dir dst_dir
+```
+
+`src_dir` should contain sub-directories, one per song, each holding WAV
+stems.  If `src_dir` itself contains WAV files, they are treated as a single
+song.  The resulting MIDI files are written to `dst_dir` with the directory
+name as the file name.
+"""
+
+from __future__ import annotations
+
 import argparse
-import math
-import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from pathlib import Path
-from typing import Iterable
 
-import numpy as np
 import pretty_midi
 
+try:  # Optional heavy deps
+    import crepe  # type: ignore
+except Exception:  # pragma: no cover - handled by fallback
+    crepe = None  # type: ignore
 
-def _classify(pitch: float, dur: float) -> int:
-    if pitch < 50:
-        return 36  # kick
-    if 50 <= pitch < 65:
-        return 38  # snare
-    if pitch >= 65 and dur < 0.15:
-        return 42  # hi-hat
-    return 39  # other
-
-
-def _vel(amp: float) -> int:
-    return int(np.clip(np.interp(amp, [0.0, 1.0], [20, 120]), 1, 127))
+try:  # Optional heavy deps
+    import librosa  # type: ignore
+except Exception:  # pragma: no cover - handled by fallback
+    librosa = None  # type: ignore
 
 
-def _process(path: Path, out_dir: Path, overwrite: bool, min_db: float) -> None:
-    out = out_dir / f"{path.stem}.mid"
-    if out.exists() and not overwrite:
-        return
-    from basic_pitch.inference import predict
+def _fallback_transcribe_stem(path: Path, *, min_dur: float) -> pretty_midi.Instrument:
+    """Simpler onset-only transcription used when CREPE/librosa are unavailable."""
 
-    _, _midi, notes = predict(str(path), use_gpu=False)
+    try:  # Attempt to use basic_pitch if installed
+        from basic_pitch import inference
+    except Exception:  # pragma: no cover - optional dependency
+        inference = None
 
-    inst = pretty_midi.Instrument(program=0, is_drum=True)
-    for start, end, pitch, amp, *_ in notes:
-        if 20 * math.log10(max(amp, 1e-6)) < min_db:
-            continue
-        dur = end - start
+    inst = pretty_midi.Instrument(program=0, name=path.stem)
+
+    if inference is not None:
+        try:
+            _, _, note_events = inference.predict(str(path))
+        except Exception:  # pragma: no cover - unexpected basic_pitch failure
+            note_events = []
+        for onset, offset, *_ in note_events:
+            if offset - onset >= min_dur:
+                inst.notes.append(
+                    pretty_midi.Note(
+                        velocity=100,
+                        pitch=36,  # Kick drum placeholder until drum mapping is improved
+                        start=float(onset),
+                        end=float(offset),
+                    )
+                )
+        return inst
+
+    import numpy as np
+    from scipy.io import wavfile
+
+    sr, audio = wavfile.read(path)
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+    audio = audio.astype(float)
+    envelope = np.abs(audio)
+    if not envelope.size:
+        return inst
+    thresh = 0.5 * envelope.max()
+    onset_idxs = np.where((envelope[1:] >= thresh) & (envelope[:-1] < thresh))[0]
+    for idx in onset_idxs:
+        t = idx / sr
         inst.notes.append(
             pretty_midi.Note(
-                velocity=_vel(amp),
-                pitch=_classify(pitch, dur),
-                start=float(start),
-                end=float(end),
+                velocity=100,
+                pitch=36,  # Kick drum placeholder until drum mapping is improved
+                start=float(t),
+                end=float(t + min_dur),
             )
         )
-    pm = pretty_midi.PrettyMIDI()
-    pm.instruments.append(inst)
-    pm.write(str(out))
+    return inst
 
 
-def convert(
-    in_dir: Path,
-    out_dir: Path,
-    part: str,
-    exts: Iterable[str],
-    stem: str | None,
-    jobs: int,
-    min_db: float,
-    overwrite: bool,
-) -> None:
-    paths: list[Path] = []
-    for ext in exts:
-        paths.extend(in_dir.rglob(f"*.{ext}"))
-    if stem:
-        paths = [p for p in paths if p.name == stem]
-    out_dir.mkdir(parents=True, exist_ok=True)
-    func = partial(_process, out_dir=out_dir, overwrite=overwrite, min_db=min_db)
-    if jobs == 1:
-        for p in paths:
-            func(p)
+def _transcribe_stem(
+    path: Path,
+    *,
+    step_size: int = 10,
+    conf_threshold: float = 0.5,
+    min_dur: float = 0.05,
+) -> pretty_midi.Instrument:
+    """Transcribe a monophonic WAV file into a MIDI instrument."""
+
+    if crepe is None or librosa is None:
+        return _fallback_transcribe_stem(path, min_dur=min_dur)
+
+    audio, sr = librosa.load(path, sr=16000, mono=True)
+    time, freq, conf, _ = crepe.predict(
+        audio, sr, step_size=step_size, model_capacity="full", verbose=0
+    )
+
+    inst = pretty_midi.Instrument(program=0, name=path.stem)
+    pitch: int | None = None
+    start: float = 0.0
+
+    for t, f, c in zip(time, freq, conf):
+        if c < conf_threshold:
+            if pitch is not None and t - start >= min_dur:
+                inst.notes.append(
+                    pretty_midi.Note(
+                        velocity=100, pitch=pitch, start=start, end=float(t)
+                    )
+                )
+            pitch = None
+            continue
+
+        p = int(round(pretty_midi.hz_to_note_number(f)))
+        if pitch is None:
+            pitch, start = p, float(t)
+        elif p != pitch:
+            if t - start >= min_dur:
+                inst.notes.append(
+                    pretty_midi.Note(
+                        velocity=100, pitch=pitch, start=start, end=float(t)
+                    )
+                )
+            pitch, start = p, float(t)
+
+    if pitch is not None and time.size:
+        end = float(time[-1])
+        if end - start >= min_dur:
+            inst.notes.append(
+                pretty_midi.Note(velocity=100, pitch=pitch, start=start, end=end)
+            )
+
+    return inst
+
+
+def _iter_song_dirs(src: Path, exts: list[str]) -> list[Path]:
+    """Return directories representing individual songs.
+
+    If ``src`` contains audio files with any of the given extensions directly,
+    treat ``src`` itself as a single song. Otherwise, each sub-directory is
+    considered a separate song.
+    """
+
+    if len(exts) == 1:
+        audio_files = list(src.glob(f"*.{exts[0]}"))
     else:
-        with mp.Pool(jobs) as pool:
-            pool.map(func, paths)
+        audio_files = []
+        for ext in exts:
+            audio_files.extend(src.glob(f"*.{ext}"))
+    if audio_files:
+        return [src]
+    return [d for d in src.iterdir() if d.is_dir()]
+
+
+def convert_directory(
+    src: Path,
+    dst: Path,
+    *,
+    ext: str = "wav",
+    jobs: int = 1,
+    min_dur: float = 0.05,
+) -> None:
+    """Convert a directory of stems into multi-track MIDI files."""
+
+    exts = [e.strip().lstrip(".") for e in ext.split(",") if e.strip()]
+    dst.mkdir(parents=True, exist_ok=True)
+    for song_dir in _iter_song_dirs(src, exts):
+        if len(exts) == 1:
+            wavs = sorted(song_dir.glob(f"*.{exts[0]}"))
+        else:
+            wavs = []
+            for e in exts:
+                wavs.extend(song_dir.glob(f"*.{e}"))
+            wavs.sort()
+        if not wavs:
+            continue
+
+        pm = pretty_midi.PrettyMIDI()
+        if jobs > 1:
+            transcribe = partial(_transcribe_stem, min_dur=min_dur)
+            with ProcessPoolExecutor(max_workers=jobs) as ex:
+                for inst in ex.map(transcribe, wavs):
+                    pm.instruments.append(inst)
+        else:
+            for wav in wavs:
+                pm.instruments.append(_transcribe_stem(wav, min_dur=min_dur))
+
+        out_path = dst / f"{song_dir.name}.mid"
+        pm.write(str(out_path))
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Batch convert audio to MIDI")
-    parser.add_argument("in_dir")
-    parser.add_argument("out_dir")
-    parser.add_argument("--part", default="drums", choices=["drums", "perc"])
-    parser.add_argument("--ext", default="wav,mp3,flac")
-    parser.add_argument("--stem")
-    parser.add_argument("--jobs", type=int, default=1)
-    parser.add_argument("--min-db", type=float, default=-40.0)
-    parser.add_argument("--overwrite", action="store_true")
+    parser = argparse.ArgumentParser(description="Batch audio-to-MIDI converter")
+    parser.add_argument("src_dir", help="Directory containing audio stems")
+    parser.add_argument("dst_dir", help="Output directory for MIDI files")
+    parser.add_argument(
+        "--jobs", type=int, default=1, help="Number of worker processes"
+    )
+    parser.add_argument(
+        "--ext",
+        default="wav",
+        help="Comma-separated audio file extensions to scan for",
+    )
+    parser.add_argument(
+        "--min-dur",
+        type=float,
+        default=0.05,
+        help="Minimum note duration in seconds",
+    )
     args = parser.parse_args(argv)
 
-    exts = [e.strip() for e in args.ext.split(",") if e.strip()]
-    convert(
-        Path(args.in_dir),
-        Path(args.out_dir),
-        args.part,
-        exts,
-        args.stem,
-        args.jobs,
-        args.min_db,
-        args.overwrite,
+    convert_directory(
+        Path(args.src_dir),
+        Path(args.dst_dir),
+        ext=args.ext,
+        jobs=args.jobs,
+        min_dur=args.min_dur,
     )
 
 
 if __name__ == "__main__":
-    mp.freeze_support()
     main()

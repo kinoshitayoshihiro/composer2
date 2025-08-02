@@ -1,3 +1,10 @@
+# Data Note Schema
+
+The project uses YAML files to describe song structure and emotion cues.  See
+`generator/arranger.py` for a minimal example of how `chordmap.yaml`,
+`rhythm_library.yaml` and `emotion_profile.yaml` interact to produce section-wise
+MIDI parts.
+
 # Rich Note CSV Schema
 
 The `rich_note_csv.py` utility exports note-level information from MIDI files.
@@ -42,3 +49,4 @@ python -m utilities.rich_note_csv --coverage notes.csv
 
 This prints the percentage of non-null values for each column and helps verify
 that the dataset is complete.
+

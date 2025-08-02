@@ -17,6 +17,7 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Setup](#setup)
 - [Configuration Files](#configuration-files)
 - [Generating MIDI](#generating-midi)
+- [Batch audio-to-MIDI conversion](#batch-audio-to-midi-conversion)
 - [Breath Control](#breath-control)
 - [Demo MIDI Generation](#demo-midi-generation)
 - [Notebook Demo](#notebook-demo)
@@ -234,6 +235,18 @@ The same behaviour can be enabled with `global_settings.strict_drum_map: true` i
 ```yaml
 global_settings:
   fill_fade_beats: 2.0 # デフォルトは2
+```
+
+### Batch audio-to-MIDI conversion
+
+`utilities.audio_to_midi_batch` transcribes directories of stems into multi-track
+MIDI. Use `--jobs` to process stems in parallel, but note that each worker loads
+the CREPE model; on GPU this can quickly exhaust memory, so large batches may
+require a smaller `--jobs` value. Non-WAV formats like FLAC or MP3 rely on
+`librosa` and system codecs for decoding.
+
+```bash
+python -m utilities.audio_to_midi_batch input/ output/ --ext wav,flac
 ```
 
 ## Breath Control

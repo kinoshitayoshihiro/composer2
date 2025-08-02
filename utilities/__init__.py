@@ -60,6 +60,7 @@ if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from . import vocal_sync as vocal_sync
 
 from .accent_mapper import AccentMapper  # noqa: E402
+
 try:
     from .kde_velocity import KDEVelocityModel as _KDEVelocityModel  # noqa: E402
 except Exception:  # pragma: no cover - optional dependency missing
@@ -73,6 +74,7 @@ if _HAS_YAML:
 else:  # pragma: no cover - optional dependency missing
     get_progressions = None  # type: ignore
 from .rest_utils import get_rest_windows  # noqa: E402
+
 try:
     from .velocity_model import KDEVelocityModel  # noqa: E402
 except Exception:  # pragma: no cover - optional dependency missing
@@ -84,6 +86,10 @@ from .tempo_utils import beat_to_seconds  # noqa: E402
 
 __all__.append("beat_to_seconds")
 __all__.append("load_chordmap")
+
+from .section_validator import SectionValidationError, validate_sections  # noqa: E402
+
+__all__.extend(["validate_sections", "SectionValidationError"])
 
 
 try:
@@ -221,9 +227,9 @@ from .tempo_utils import (
     get_bpm_at,
     get_tempo_at_beat,
     interpolate_bpm,
-    load_tempo_map,
 )
 from .tempo_utils import load_tempo_curve as load_tempo_curve_simple
+from .tempo_utils import load_tempo_map
 from .velocity_curve import PREDEFINED_CURVES, resolve_velocity_curve
 from .velocity_smoother import EMASmoother, VelocitySmoother
 

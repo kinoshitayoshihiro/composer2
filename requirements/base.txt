@@ -1,4 +1,5 @@
 # Core, pure-Python dependencies for lightweight mode
+setuptools>=65  # via pretty_midi
 numpy<2.3
 numba==0.59.1
 click>=8

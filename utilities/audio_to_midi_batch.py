@@ -9,20 +9,24 @@ MIDI track.
 Usage
 -----
 ```
-python -m utilities.audio_to_midi_batch src_dir dst_dir
+python -m utilities.audio_to_midi_batch src_dir dst_dir [--jobs N] [--ext EXT[,EXT...]] [--min-dur SEC]
 ```
 
 `src_dir` should contain sub-directories, one per song, each holding WAV
 stems.  If `src_dir` itself contains WAV files, they are treated as a single
 song.  The resulting MIDI files are written to `dst_dir` with the directory
 name as the file name.
+
+The converter logs each WAV file as it is transcribed and reports when the
+final MIDI file is written. Standard ``logging`` configuration can be used to
+silence or redirect this output.
 """
 
 from __future__ import annotations
 
 import argparse
+import logging
 from concurrent.futures import ProcessPoolExecutor
-from functools import partial
 from pathlib import Path
 
 import pretty_midi
@@ -188,19 +192,26 @@ def convert_directory(
 
         pm = pretty_midi.PrettyMIDI()
         if jobs > 1:
-            transcribe = partial(_transcribe_stem, min_dur=min_dur)
             with ProcessPoolExecutor(max_workers=jobs) as ex:
-                for inst in ex.map(transcribe, wavs):
-                    pm.instruments.append(inst)
+                futures = []
+                for wav in wavs:
+                    logging.info("Transcribing %s", wav)
+                    futures.append(ex.submit(_transcribe_stem, wav, min_dur=min_dur))
+                for future in futures:
+                    pm.instruments.append(future.result())
         else:
             for wav in wavs:
+                logging.info("Transcribing %s", wav)
                 pm.instruments.append(_transcribe_stem(wav, min_dur=min_dur))
 
         out_path = dst / f"{song_dir.name}.mid"
         pm.write(str(out_path))
+        logging.info("Wrote %s", out_path)
 
 
 def main(argv: list[str] | None = None) -> None:
+    if not logging.getLogger().hasHandlers():
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(description="Batch audio-to-MIDI converter")
     parser.add_argument("src_dir", help="Directory containing audio stems")
     parser.add_argument("dst_dir", help="Output directory for MIDI files")

@@ -89,6 +89,8 @@ from .tempo_utils import beat_to_seconds  # noqa: E402  # isort: skip
 __all__.append("beat_to_seconds")
 __all__.append("load_chordmap")
 
+from typing import Any  # noqa: E402
+
 try:
     from .section_validator import (  # noqa: E402
         SectionValidationError,
@@ -97,14 +99,13 @@ try:
 except Exception:  # pragma: no cover - optional dependency missing
 
     class SectionValidationError(Exception):  # type: ignore
-        """Raised when section validation fails (pretty_midi unavailable)."""
+        """Raised when section validation cannot run because pretty_midi (and setuptools) are missing."""
 
-    def validate_sections(*_a: Any, **_kw: Any) -> None:
+    def validate_sections(*_args: Any, **_kwargs: Any) -> None:  # type: ignore
         raise SectionValidationError(
-            "pretty_midi (and setuptools) がインストールされていないため "
-            "セクション検証を実行できません。"
+            "pretty_midi とその依存関係 (setuptools) がインストールされていないため "
+            "validate_sections を実行できません。"
         )
-
 
 __all__.extend(["validate_sections", "SectionValidationError"])
 

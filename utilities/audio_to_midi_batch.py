@@ -21,6 +21,7 @@ name as the file name.
 from __future__ import annotations
 
 import argparse
+import logging
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from pathlib import Path
@@ -100,6 +101,14 @@ def _transcribe_stem(
     """Transcribe a monophonic WAV file into a MIDI instrument."""
 
     if crepe is None or librosa is None:
+        missing = " and ".join(
+            dep for dep, mod in (("crepe", crepe), ("librosa", librosa)) if mod is None
+        )
+        logging.warning(
+            "Missing %s; falling back to onset-only transcription, "
+            "transcription quality may degrade",
+            missing,
+        )
         return _fallback_transcribe_stem(path, min_dur=min_dur)
 
     audio, sr = librosa.load(path, sr=16000, mono=True)

@@ -82,10 +82,14 @@ except Exception:  # pragma: no cover - optional dependency missing
 
 __all__.append("get_progressions")
 
-from .tempo_utils import beat_to_seconds  # noqa: E402
+from .tempo_utils import beat_to_seconds  # noqa: E402  # isort: skip
+
+# ---- section_validator (optional) ------------------------------------------
 
 __all__.append("beat_to_seconds")
 __all__.append("load_chordmap")
+
+from typing import Any  # noqa: E402
 
 try:
     from .section_validator import (  # noqa: E402
@@ -93,14 +97,15 @@ try:
         validate_sections,
     )
 except Exception:  # pragma: no cover - optional dependency missing
-    SectionValidationError = type("SectionValidationError", (Exception,), {})
 
-    def validate_sections(*_a: Any, **_kw: Any) -> None:
-        raise RuntimeError(
-            "pretty_midi and its dependencies are required to validate sections. "
-            "Please install pretty_midi to use validate_sections."
+    class SectionValidationError(Exception):  # type: ignore
+        """Raised when section validation cannot run because pretty_midi (and setuptools) are missing."""
+
+    def validate_sections(*_args: Any, **_kwargs: Any) -> None:  # type: ignore
+        raise SectionValidationError(
+            "pretty_midi とその依存関係 (setuptools) がインストールされていないため "
+            "validate_sections を実行できません。"
         )
-
 
 __all__.extend(["validate_sections", "SectionValidationError"])
 

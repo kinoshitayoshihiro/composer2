@@ -87,7 +87,20 @@ from .tempo_utils import beat_to_seconds  # noqa: E402
 __all__.append("beat_to_seconds")
 __all__.append("load_chordmap")
 
-from .section_validator import SectionValidationError, validate_sections  # noqa: E402
+try:
+    from .section_validator import (  # noqa: E402
+        SectionValidationError,
+        validate_sections,
+    )
+except Exception:  # pragma: no cover - optional dependency missing
+    SectionValidationError = type("SectionValidationError", (Exception,), {})
+
+    def validate_sections(*_a: Any, **_kw: Any) -> None:
+        raise RuntimeError(
+            "pretty_midi and its dependencies are required to validate sections. "
+            "Please install pretty_midi to use validate_sections."
+        )
+
 
 __all__.extend(["validate_sections", "SectionValidationError"])
 

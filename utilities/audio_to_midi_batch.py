@@ -1,30 +1,34 @@
 """Batch convert stem WAV files to multi-track MIDI.
 
 This utility walks a directory of audio stems and converts each group of
-tracks into a single multi-track MIDI file.  Each input WAV is transcribed
-using `crepe` for pitch detection and `pretty_midi` for MIDI generation.  The
+tracks into a single multi-track MIDI file. Each input WAV is transcribed
+using `crepe` for pitch detection and `pretty_midi` for MIDI generation. The
 stem's filename (sans extension) is preserved as the name of the corresponding
 MIDI track.
 
 Usage
 -----
 ```
-python -m utilities.audio_to_midi_batch src_dir dst_dir [--jobs N] [--ext EXT[,EXT...]] [--min-dur SEC]
+python -m utilities.audio_to_midi_batch src_dir dst_dir [--jobs N] [--ext EXT[,EXT...]] [--min-dur SEC] [--resume]
 ```
 
 `src_dir` should contain sub-directories, one per song, each holding WAV
-stems.  If `src_dir` itself contains WAV files, they are treated as a single
-song.  The resulting MIDI files are written to `dst_dir` with the directory
+stems. If `src_dir` itself contains WAV files, they are treated as a single
+song. The resulting MIDI files are written to `dst_dir` with the directory
 name as the file name.
 
-The converter logs each WAV file as it is transcribed and reports when the
-final MIDI file is written. Standard ``logging`` configuration can be used to
-silence or redirect this output.
+Passing ``--resume`` skips songs whose output MIDI files already exist. When
+resuming, completed conversions are logged to ``conversion_log.json`` in the
+destination directory for incremental processing. The converter logs each WAV
+file as it is transcribed and reports when the final MIDI file is written.
+Standard ``logging`` configuration can be used to silence or redirect this
+output.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 import unicodedata
@@ -195,12 +199,26 @@ def convert_directory(
     ext: str = "wav",
     jobs: int = 1,
     min_dur: float = 0.05,
+    resume: bool = False,
 ) -> None:
     """Convert a directory of stems into multi-track MIDI files."""
 
     exts = [e.strip().lstrip(".") for e in ext.split(",") if e.strip()]
     dst.mkdir(parents=True, exist_ok=True)
+
+    log_path = dst / "conversion_log.json"
+    processed: set[str] = set()
+    if resume and log_path.exists():
+        try:
+            processed = set(json.loads(log_path.read_text()))
+        except Exception:
+            logging.warning("Failed to read %s", log_path)
+
     for song_dir in _iter_song_dirs(src, exts):
+        out_path = dst / f"{song_dir.name}.mid"
+        if resume and (out_path.exists() or song_dir.name in processed):
+            logging.info("Skipping %s", out_path)
+            continue
         if len(exts) == 1:
             wavs = sorted(song_dir.glob(f"*.{exts[0]}"))
         else:
@@ -228,9 +246,14 @@ def convert_directory(
         for inst in pm.instruments:
             inst.name = _sanitize_name(inst.name)
 
-        out_path = dst / f"{song_dir.name}.mid"
         pm.write(str(out_path))
         logging.info("Wrote %s", out_path)
+        if resume:
+            processed.add(song_dir.name)
+            try:
+                log_path.write_text(json.dumps(sorted(processed)))
+            except Exception:
+                logging.warning("Failed to update %s", log_path)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -253,6 +276,11 @@ def main(argv: list[str] | None = None) -> None:
         default=0.05,
         help="Minimum note duration in seconds",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip songs with existing MIDI files and log progress",
+    )
     args = parser.parse_args(argv)
 
     convert_directory(
@@ -261,6 +289,7 @@ def main(argv: list[str] | None = None) -> None:
         ext=args.ext,
         jobs=args.jobs,
         min_dur=args.min_dur,
+        resume=args.resume,
     )
 
 

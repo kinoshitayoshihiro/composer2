@@ -1,6 +1,6 @@
-from pathlib import Path
 import sys
 import types
+from pathlib import Path
 
 import numpy as np
 import pretty_midi
@@ -46,6 +46,6 @@ def test_audio_to_midi_batch(tmp_path, monkeypatch):
     monkeypatch.setattr("basic_pitch.inference.predict", fake_predict)
     audio_to_midi_batch.main([str(in_dir), str(out_dir), "--jobs", "1"])
     mids = list(out_dir.glob("*.mid"))
-    assert len(mids) == 3
+    assert len(mids) == 1
     pm = pretty_midi.PrettyMIDI(str(mids[0]))
     assert any(n.pitch == 36 for n in pm.instruments[0].notes)

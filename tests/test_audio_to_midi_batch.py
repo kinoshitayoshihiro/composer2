@@ -89,3 +89,25 @@ def test_multi_ext_scanning(tmp_path, monkeypatch):
     midi_path = out_dir / f"{song_dir.name}.mid"
     pm = pretty_midi.PrettyMIDI(str(midi_path))
     assert {inst.name for inst in pm.instruments} == {"a", "b"}
+
+
+def test_resume_skips_existing(tmp_path, monkeypatch):
+    song_dir = tmp_path / "song"
+    out_dir = tmp_path / "out"
+    song_dir.mkdir()
+    sr = 22050
+    t = np.linspace(0, 1, sr, False)
+    wave = 0.1 * np.sin(2 * np.pi * 440 * t)
+    sf.write(song_dir / "a.wav", wave, sr)
+
+    monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _stub_transcribe)
+
+    audio_to_midi_batch.main([str(song_dir), str(out_dir), "--resume"])
+    midi_path = out_dir / f"{song_dir.name}.mid"
+    assert midi_path.exists()
+
+    def fail_transcribe(path: Path, **kwargs):  # pragma: no cover - ensure skip
+        raise AssertionError("should not transcribe on resume")
+
+    monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", fail_transcribe)
+    audio_to_midi_batch.main([str(song_dir), str(out_dir), "--resume"])

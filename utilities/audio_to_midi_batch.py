@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
+import unicodedata
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -40,6 +42,17 @@ try:  # Optional heavy deps
     import librosa  # type: ignore
 except Exception:  # pragma: no cover - handled by fallback
     librosa = None  # type: ignore
+
+
+def _sanitize_name(name: str) -> str:
+    """Return a best-effort ASCII-only representation of ``name``."""
+
+    normalized = unicodedata.normalize("NFKD", name)
+    ascii_name = normalized.encode("ascii", "ignore").decode("ascii")
+    # Replace whitespace with underscores and drop other invalid chars
+    ascii_name = re.sub(r"\s+", "_", ascii_name)
+    ascii_name = re.sub(r"[^\w-]", "", ascii_name)
+    return ascii_name or "track"
 
 
 def _fallback_transcribe_stem(path: Path, *, min_dur: float) -> pretty_midi.Instrument:
@@ -211,6 +224,9 @@ def convert_directory(
             for wav in wavs:
                 logging.info("Transcribing %s", wav)
                 pm.instruments.append(_transcribe_stem(wav, min_dur=min_dur))
+        # Ensure MIDI track names contain only ASCII to avoid encoding errors
+        for inst in pm.instruments:
+            inst.name = _sanitize_name(inst.name)
 
         out_path = dst / f"{song_dir.name}.mid"
         pm.write(str(out_path))

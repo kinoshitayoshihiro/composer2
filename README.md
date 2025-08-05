@@ -18,6 +18,7 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Configuration Files](#configuration-files)
 - [Generating MIDI](#generating-midi)
 - [Batch audio-to-MIDI conversion](#batch-audio-to-midi-conversion)
+- [Duration CSV Extraction](#duration-csv-extraction)
 - [Breath Control](#breath-control)
 - [Demo MIDI Generation](#demo-midi-generation)
 - [Notebook Demo](#notebook-demo)
@@ -247,6 +248,19 @@ require a smaller `--jobs` value. Non-WAV formats like FLAC or MP3 rely on
 
 ```bash
 python -m utilities.audio_to_midi_batch input/ output/ --ext wav,flac
+```
+
+### Duration CSV Extraction
+
+Use `utilities.duration_csv` to collect note durations, pitch and velocity from
+MIDI files into a CSV. Pass `--instrument` to process only files whose
+filenames contain the given string, matching case-insensitively.
+
+```bash
+python -m utilities.duration_csv data/midi --out data/duration/all.csv
+
+# Only include files whose names contain "Guitar" (case-insensitive)
+python -m utilities.duration_csv data/midi --out data/duration/guitar.csv --instrument guitar
 ```
 
 ## Breath Control

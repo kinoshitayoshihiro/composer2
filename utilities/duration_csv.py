@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 from pathlib import Path
 from typing import Iterable
 
@@ -38,9 +39,25 @@ def scan_midi_files(paths: Iterable[Path]) -> list[list]:
     return rows
 
 
-def build_duration_csv(src: Path, out: Path) -> None:
-    """Extract complete note data from ``src`` MIDI folder into ``out`` CSV."""
+def build_duration_csv(src: Path, out: Path, instrument: str | None = None) -> None:
+    """Extract note data from ``src`` MIDI folder into ``out`` CSV.
+
+    Parameters
+    ----------
+    src:
+        Folder containing MIDI files.
+    out:
+        Destination CSV file.
+    instrument:
+        Optional instrument name filter. If provided, only MIDI files whose
+        filenames contain this string (case-insensitive) will be processed.
+    """
     midi_paths = sorted(src.rglob("*.mid"))
+    if instrument:
+        instrument_lc = instrument.lower()
+        midi_paths = [p for p in midi_paths if instrument_lc in p.name.lower()]
+        if not midi_paths:
+            logging.warning("No MIDI files matched '%s'", instrument)
     rows = scan_midi_files(midi_paths)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="") as fh:
@@ -58,8 +75,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("src", type=Path)
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument(
+        "--instrument",
+        type=str,
+        help=(
+            "Only process MIDI files whose filenames contain this string "
+            "(case-insensitive)"
+        ),
+    )
     args = p.parse_args(argv)
-    build_duration_csv(args.src, args.out)
+    build_duration_csv(args.src, args.out, args.instrument)
     print(f"✅ Complete duration CSV with pitch/velocity generated: {args.out}")
     return 0
 

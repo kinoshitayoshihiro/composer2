@@ -3,6 +3,7 @@
 ## [Unreleased]
 ### Added
 - Lightweight module stubs for tests in `tests/_stubs.py`
+- Instrument filtering for duration CSV via `--instrument` flag
 ### Changed
 - ⚠️ Breaking change note removed – parameters are now optional
 

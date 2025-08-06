@@ -46,7 +46,8 @@ def test_fallback_basic_pitch(tmp_path, monkeypatch):
     monkeypatch.setattr(audio_to_midi_batch, "librosa", None)
 
     audio_to_midi_batch.main([str(in_dir), str(out_dir)])
-    mids = list(out_dir.glob("*.mid"))
+    midi_dir = out_dir / in_dir.name
+    mids = list(midi_dir.glob("*.mid"))
     assert len(mids) == 1
     pm = pretty_midi.PrettyMIDI(str(mids[0]))
     assert pm.instruments[0].notes[0].pitch == 36
@@ -65,7 +66,17 @@ def test_parallel_jobs_and_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _stub_transcribe)
 
     audio_to_midi_batch.main(
-        [str(in_dir), str(out_dir), "--jobs", "2", "--ext", "wav", "--min-dur", "0.1"]
+        [
+            str(in_dir),
+            str(out_dir),
+            "--jobs",
+            "2",
+            "--ext",
+            "wav",
+            "--min-dur",
+            "0.1",
+            "--merge",
+        ]
     )
     midi_path = out_dir / f"{in_dir.name}.mid"
     pm = pretty_midi.PrettyMIDI(str(midi_path))
@@ -86,9 +97,8 @@ def test_multi_ext_scanning(tmp_path, monkeypatch):
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _stub_transcribe)
 
     audio_to_midi_batch.main([str(song_dir), str(out_dir), "--ext", "wav,flac"])
-    midi_path = out_dir / f"{song_dir.name}.mid"
-    pm = pretty_midi.PrettyMIDI(str(midi_path))
-    assert {inst.name for inst in pm.instruments} == {"a", "b"}
+    midi_dir = out_dir / song_dir.name
+    assert {p.stem for p in midi_dir.glob("*.mid")} == {"a", "b"}
 
 
 def test_resume_skips_existing(tmp_path, monkeypatch):
@@ -103,7 +113,7 @@ def test_resume_skips_existing(tmp_path, monkeypatch):
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _stub_transcribe)
 
     audio_to_midi_batch.main([str(song_dir), str(out_dir), "--resume"])
-    midi_path = out_dir / f"{song_dir.name}.mid"
+    midi_path = out_dir / song_dir.name / "a.mid"
     assert midi_path.exists()
 
     def fail_transcribe(path: Path, **kwargs):  # pragma: no cover - ensure skip

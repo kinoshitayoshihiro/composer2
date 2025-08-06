@@ -240,14 +240,17 @@ global_settings:
 
 ### Batch audio-to-MIDI conversion
 
-`utilities.audio_to_midi_batch` transcribes directories of stems into multi-track
-MIDI. Use `--jobs` to process stems in parallel, but note that each worker loads
-the CREPE model; on GPU this can quickly exhaust memory, so large batches may
-require a smaller `--jobs` value. Non-WAV formats like FLAC or MP3 rely on
-`librosa` and system codecs for decoding.
+`utilities.audio_to_midi_batch` transcribes directories of stems into separate
+single-track MIDI files. Use `--jobs` to process stems in parallel, but note
+that each worker loads the CREPE model; on GPU this can quickly exhaust memory,
+so large batches may require a smaller `--jobs` value. Non-WAV formats like
+FLAC or MP3 rely on `librosa` and system codecs for decoding. `--resume`
+maintains a log of completed stems, `--overwrite` forces re-transcription,
+`--safe-dirnames` sanitizes song folder names, and `--merge` produces a single
+multi-track MIDI per song.
 
 ```bash
-python -m utilities.audio_to_midi_batch input/ output/ --ext wav,flac
+python -m utilities.audio_to_midi_batch input/ output/ --ext wav,flac --resume
 ```
 
 ### Duration CSV Extraction

@@ -1,28 +1,33 @@
-"""Batch convert stem WAV files to multi-track MIDI.
+"""Batch convert stem WAV files to per-instrument MIDI.
 
-This utility walks a directory of audio stems and converts each group of
-tracks into a single multi-track MIDI file. Each input WAV is transcribed
-using `crepe` for pitch detection and `pretty_midi` for MIDI generation. The
-stem's filename (sans extension) is preserved as the name of the corresponding
-MIDI track.
+This utility walks a directory of audio stems and converts each track into its
+own single-track MIDI file. Each input WAV is transcribed using `crepe` for
+pitch detection and `pretty_midi` for MIDI generation. The stem's filename
+(sans extension) is preserved as both the MIDI file name and the instrument
+track name.
 
 Usage
 -----
 ```
-python -m utilities.audio_to_midi_batch src_dir dst_dir [--jobs N] [--ext EXT[,EXT...]] [--min-dur SEC] [--resume]
+python -m utilities.audio_to_midi_batch src_dir dst_dir [--jobs N] [--ext EXT[,EXT...]]
+    [--min-dur SEC] [--resume] [--overwrite] [--safe-dirnames] [--merge]
 ```
 
 `src_dir` should contain sub-directories, one per song, each holding WAV
 stems. If `src_dir` itself contains WAV files, they are treated as a single
-song. The resulting MIDI files are written to `dst_dir` with the directory
-name as the file name.
+song. By default the resulting MIDI files are written to subdirectories of
+`dst_dir` named after the song, with one MIDI file per stem.
 
-Passing ``--resume`` skips songs whose output MIDI files already exist. When
-resuming, completed conversions are logged to ``conversion_log.json`` in the
-destination directory for incremental processing. The converter logs each WAV
-file as it is transcribed and reports when the final MIDI file is written.
-Standard ``logging`` configuration can be used to silence or redirect this
-output.
+Passing ``--merge`` combines all stems for a song into a single multi-track
+MIDI file, mirroring the legacy behaviour.
+
+Passing ``--resume`` maintains a ``conversion_log.json`` mapping each song to
+its completed stems so that interrupted jobs resume exactly where they left
+off. ``--overwrite`` forces re-transcription even when output files exist.
+``--safe-dirnames`` sanitizes song directory names for the output tree. The
+converter logs each WAV file as it is transcribed and reports when the
+corresponding MIDI file is written. Standard ``logging`` configuration can be
+used to silence or redirect this output.
 """
 
 from __future__ import annotations
@@ -31,8 +36,9 @@ import argparse
 import json
 import logging
 import re
+import time
 import unicodedata
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import pretty_midi
@@ -200,25 +206,44 @@ def convert_directory(
     jobs: int = 1,
     min_dur: float = 0.05,
     resume: bool = False,
+    overwrite: bool = False,
+    safe_dirnames: bool = False,
+    merge: bool = False,
 ) -> None:
-    """Convert a directory of stems into multi-track MIDI files."""
+    """Convert a directory of stems into individual MIDI files.
+
+    If ``merge`` is ``True``, all stems for a song are merged into a single
+    multi-track MIDI file, emulating the legacy behaviour.
+    """
 
     exts = [e.strip().lstrip(".") for e in ext.split(",") if e.strip()]
     dst.mkdir(parents=True, exist_ok=True)
 
     log_path = dst / "conversion_log.json"
-    processed: set[str] = set()
+    log_data: dict[str, list[str]] = {}
     if resume and log_path.exists():
         try:
-            processed = set(json.loads(log_path.read_text()))
+            log_data = json.loads(log_path.read_text())
         except Exception:
             logging.warning("Failed to read %s", log_path)
 
     for song_dir in _iter_song_dirs(src, exts):
-        out_path = dst / f"{song_dir.name}.mid"
-        if resume and (out_path.exists() or song_dir.name in processed):
-            logging.info("Skipping %s", out_path)
-            continue
+        song_name = _sanitize_name(song_dir.name) if safe_dirnames else song_dir.name
+
+        if merge:
+            out_song = dst / f"{song_name}.mid"
+            processed = set(log_data.get(song_name, []))
+            if (
+                resume
+                and not overwrite
+                and ("__MERGED__" in processed or out_song.exists())
+            ):
+                logging.info("Skipping %s", out_song)
+                continue
+        else:
+            out_song = dst / song_name
+            out_song.mkdir(parents=True, exist_ok=True)
+
         if len(exts) == 1:
             wavs = sorted(song_dir.glob(f"*.{exts[0]}"))
         else:
@@ -229,37 +254,128 @@ def convert_directory(
         if not wavs:
             continue
 
-        pm = pretty_midi.PrettyMIDI()
-        if jobs > 1:
-            with ProcessPoolExecutor(max_workers=jobs) as ex:
-                futures = []
+        total_time = 0.0
+        converted = 0
+
+        if merge:
+            pm = pretty_midi.PrettyMIDI()
+            if jobs > 1:
+                with ProcessPoolExecutor(max_workers=jobs) as ex:
+                    futures = []
+                    for wav in wavs:
+                        logging.info("Transcribing %s", wav)
+                        start = time.perf_counter()
+                        futures.append(
+                            (ex.submit(_transcribe_stem, wav, min_dur=min_dur), start)
+                        )
+                    for fut, start in futures:
+                        inst = fut.result()
+                        total_time += time.perf_counter() - start
+                        pm.instruments.append(inst)
+            else:
                 for wav in wavs:
                     logging.info("Transcribing %s", wav)
-                    futures.append(ex.submit(_transcribe_stem, wav, min_dur=min_dur))
-                for future in futures:
-                    pm.instruments.append(future.result())
+                    start = time.perf_counter()
+                    pm.instruments.append(_transcribe_stem(wav, min_dur=min_dur))
+                    total_time += time.perf_counter() - start
+            for inst in pm.instruments:
+                inst.name = _sanitize_name(inst.name)
+            pm.write(str(out_song))
+            converted = len(pm.instruments)
+            if resume:
+                log_data[song_name] = ["__MERGED__"]
+                try:
+                    log_path.write_text(json.dumps(log_data))
+                except Exception:
+                    logging.warning("Failed to update %s", log_path)
+            logging.info("Wrote %s", out_song)
         else:
+            processed = set(log_data.get(song_name, []))
+            existing = {p.stem for p in out_song.glob("*.mid")}
+            used_names: set[str] = set()
+            tasks = []
             for wav in wavs:
-                logging.info("Transcribing %s", wav)
-                pm.instruments.append(_transcribe_stem(wav, min_dur=min_dur))
-        # Ensure MIDI track names contain only ASCII to avoid encoding errors
-        for inst in pm.instruments:
-            inst.name = _sanitize_name(inst.name)
+                sanitized = _sanitize_name(wav.stem)
+                if resume and not overwrite and sanitized in processed:
+                    logging.info("Skipping %s", wav)
+                    continue
+                base = sanitized
+                n = 1
+                if overwrite:
+                    while base in used_names or (
+                        base != sanitized and base in existing
+                    ):
+                        base = f"{sanitized}_{n}"
+                        n += 1
+                else:
+                    candidate = out_song / f"{base}.mid"
+                    while candidate.exists() or base in used_names:
+                        base = f"{sanitized}_{n}"
+                        candidate = out_song / f"{base}.mid"
+                        n += 1
+                midi_path = out_song / f"{base}.mid"
+                used_names.add(base)
+                tasks.append((wav, base, midi_path))
 
-        pm.write(str(out_path))
-        logging.info("Wrote %s", out_path)
-        if resume:
-            processed.add(song_dir.name)
-            try:
-                log_path.write_text(json.dumps(sorted(processed)))
-            except Exception:
-                logging.warning("Failed to update %s", log_path)
+            if jobs > 1:
+                with ProcessPoolExecutor(max_workers=jobs) as ex:
+                    futures = {}
+                    for wav, base, midi_path in tasks:
+                        logging.info("Transcribing %s", wav)
+                        start = time.perf_counter()
+                        futures[ex.submit(_transcribe_stem, wav, min_dur=min_dur)] = (
+                            base,
+                            midi_path,
+                            start,
+                        )
+                    for fut in as_completed(futures):
+                        base, midi_path, start = futures[fut]
+                        inst = fut.result()
+                        inst.name = base
+                        pm = pretty_midi.PrettyMIDI()
+                        pm.instruments.append(inst)
+                        pm.write(str(midi_path))
+                        total_time += time.perf_counter() - start
+                        converted += 1
+                        processed.add(base)
+                        if resume:
+                            log_data[song_name] = sorted(processed)
+                            try:
+                                log_path.write_text(json.dumps(log_data))
+                            except Exception:
+                                logging.warning("Failed to update %s", log_path)
+                        logging.info("Wrote %s", midi_path)
+            else:
+                for wav, base, midi_path in tasks:
+                    logging.info("Transcribing %s", wav)
+                    start = time.perf_counter()
+                    inst = _transcribe_stem(wav, min_dur=min_dur)
+                    total_time += time.perf_counter() - start
+                    inst.name = base
+                    pm = pretty_midi.PrettyMIDI()
+                    pm.instruments.append(inst)
+                    pm.write(str(midi_path))
+                    converted += 1
+                    processed.add(base)
+                    if resume:
+                        log_data[song_name] = sorted(processed)
+                        try:
+                            log_path.write_text(json.dumps(log_data))
+                        except Exception:
+                            logging.warning("Failed to update %s", log_path)
+                    logging.info("Wrote %s", midi_path)
+
+        logging.info(
+            "\N{CHECK MARK} %s – %d stems → %.1f s", song_name, converted, total_time
+        )
 
 
 def main(argv: list[str] | None = None) -> None:
     if not logging.getLogger().hasHandlers():
         logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    parser = argparse.ArgumentParser(description="Batch audio-to-MIDI converter")
+    parser = argparse.ArgumentParser(
+        description="Batch audio-to-MIDI converter with per-stem output"
+    )
     parser.add_argument("src_dir", help="Directory containing audio stems")
     parser.add_argument("dst_dir", help="Output directory for MIDI files")
     parser.add_argument(
@@ -279,7 +395,22 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Skip songs with existing MIDI files and log progress",
+        help="Resume from conversion_log.json and skip completed stems",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Re-transcribe stems even if output files exist",
+    )
+    parser.add_argument(
+        "--safe-dirnames",
+        action="store_true",
+        help="Sanitize song directory names for output",
+    )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="Merge stems into a single multi-track MIDI file",
     )
     args = parser.parse_args(argv)
 
@@ -290,6 +421,9 @@ def main(argv: list[str] | None = None) -> None:
         jobs=args.jobs,
         min_dur=args.min_dur,
         resume=args.resume,
+        overwrite=args.overwrite,
+        safe_dirnames=args.safe_dirnames,
+        merge=args.merge,
     )
 
 

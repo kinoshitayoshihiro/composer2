@@ -2,9 +2,13 @@ import sys
 import types
 from pathlib import Path
 
+from pathlib import Path
+import sys
+import types
+
 import numpy as np
 import pretty_midi
-import soundfile as sf
+import wave
 
 # Mock basic_pitch module before any imports that might use it
 basic_pitch_module = types.ModuleType("basic_pitch")
@@ -25,11 +29,20 @@ sys.modules["basic_pitch.inference"] = inference_module
 
 # Now safe to import modules that depend on basic_pitch
 from utilities import audio_to_midi_batch
+from utilities.audio_to_midi_batch import StemResult
 
 
 def fake_predict(path: str, *args, **kwargs):
     """Alternative fake predict function for monkeypatch"""
     return {}, pretty_midi.PrettyMIDI(), [(0.0, 0.1, 45, 0.2, None)]
+
+
+def _write(path: Path, data: np.ndarray, sr: int) -> None:
+    with wave.open(str(path), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(sr)
+        f.writeframes((data * 32767).astype("<i2").tobytes())
 
 
 def test_audio_to_midi_batch(tmp_path, monkeypatch):
@@ -41,7 +54,7 @@ def test_audio_to_midi_batch(tmp_path, monkeypatch):
     t = np.linspace(0, 1, sr, False)
     wave = 0.1 * np.sin(2 * np.pi * 440 * t)
     for i in range(3):
-        sf.write(in_dir / f"sample{i}.wav", wave, sr)
+        _write(in_dir / f"sample{i}.wav", wave, sr)
 
     monkeypatch.setattr("basic_pitch.inference.predict", fake_predict)
     audio_to_midi_batch.main([str(in_dir), str(out_dir), "--jobs", "1"])
@@ -59,12 +72,13 @@ def _pitch_stub(pitch: int):
         step_size: int = 10,
         conf_threshold: float = 0.5,
         min_dur: float = 0.05,
-    ) -> pretty_midi.Instrument:
+        auto_tempo: bool = True,
+    ) -> StemResult:
         inst = pretty_midi.Instrument(program=0, name=path.stem)
         inst.notes.append(
             pretty_midi.Note(velocity=100, pitch=pitch, start=0.0, end=min_dur)
         )
-        return inst
+        return StemResult(inst, 120.0)
 
     return _stub
 
@@ -76,12 +90,12 @@ def test_resume_new_stems(tmp_path, monkeypatch):
     sr = 22050
     t = np.linspace(0, 1, sr, False)
     wave = 0.1 * np.sin(2 * np.pi * 440 * t)
-    sf.write(song_dir / "a.wav", wave, sr)
+    _write(song_dir / "a.wav", wave, sr)
 
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _pitch_stub(60))
     audio_to_midi_batch.main([str(song_dir), str(out_dir), "--resume"])
 
-    sf.write(song_dir / "b.wav", wave, sr)
+    _write(song_dir / "b.wav", wave, sr)
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _pitch_stub(61))
     audio_to_midi_batch.main([str(song_dir), str(out_dir), "--resume"])
 
@@ -98,7 +112,7 @@ def test_overwrite(tmp_path, monkeypatch):
     sr = 22050
     t = np.linspace(0, 1, sr, False)
     wave = 0.1 * np.sin(2 * np.pi * 440 * t)
-    sf.write(song_dir / "a.wav", wave, sr)
+    _write(song_dir / "a.wav", wave, sr)
 
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _pitch_stub(60))
     audio_to_midi_batch.main([str(song_dir), str(out_dir)])
@@ -120,8 +134,8 @@ def test_collision_renaming(tmp_path, monkeypatch):
     sr = 22050
     t = np.linspace(0, 1, sr, False)
     wave = 0.1 * np.sin(2 * np.pi * 440 * t)
-    sf.write(song_dir / "a.wav", wave, sr)
-    sf.write(song_dir / "a!.wav", wave, sr)
+    _write(song_dir / "a.wav", wave, sr)
+    _write(song_dir / "a!.wav", wave, sr)
 
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _pitch_stub(60))
     audio_to_midi_batch.main([str(song_dir), str(out_dir)])
@@ -139,7 +153,7 @@ def test_safe_dirnames(tmp_path, monkeypatch):
     sr = 22050
     t = np.linspace(0, 1, sr, False)
     wave = 0.1 * np.sin(2 * np.pi * 440 * t)
-    sf.write(song_dir / "a.wav", wave, sr)
+    _write(song_dir / "a.wav", wave, sr)
 
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _pitch_stub(60))
     audio_to_midi_batch.main([str(src_root), str(out_dir), "--safe-dirnames"])

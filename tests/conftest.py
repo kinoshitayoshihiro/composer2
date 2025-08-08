@@ -33,7 +33,12 @@ if (
 # stubs are disabled; tests rely on real packages
 
 import pytest
-from music21 import instrument
+sys.modules.setdefault("requests", types.ModuleType("requests"))
+try:  # pragma: no cover - optional dependency
+    from music21 import instrument
+except Exception:  # pragma: no cover - fallback stub
+    class instrument:  # type: ignore
+        Instrument = object
 
 # すべてのテストモジュールで types を利用可能にする
 builtins.types = types

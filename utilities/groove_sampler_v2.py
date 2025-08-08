@@ -173,10 +173,43 @@ def convert_wav_to_midi(
         if y.ndim > 1:
             y = y.mean(axis=1)
 
-        bpm = float(fixed_bpm) if fixed_bpm is not None else 120.0
+        if fixed_bpm is None:
+            try:
+                import librosa  # type: ignore
+            except Exception as exc:  # pragma: no cover - optional dependency
+                logger.warning(
+                    "librosa unavailable (%s); using default 120 BPM for %s",
+                    exc,
+                    path,
+                )
+                tempo = 120.0
+            else:
+                try:
+                    tempo, _ = librosa.beat.beat_track(y=y, sr=sr, trim=False)
+                except Exception as exc:  # pragma: no cover
+                    logger.warning(
+                        "Tempo estimation failed for %s: %s; using default 120 BPM.",
+                        path,
+                        exc,
+                    )
+                    tempo = 120.0
+                else:
+                    if not np.isfinite(tempo) or tempo < 40 or tempo > 300:
+                        logger.warning(
+                            "Tempo %.1f BPM for %s out of range; using default 120 BPM.",
+                            tempo,
+                            path,
+                        )
+                        tempo = 120.0
+                    else:
+                        logger.info(
+                            "Estimated tempo %.1f BPM for %s", tempo, path.name
+                        )
+        else:
+            tempo = float(fixed_bpm)
 
-        threshold = 0.2
-        min_gap = int(0.1 * sr)
+        threshold = 0.5 * np.percentile(np.abs(y), 95)
+        min_gap = int((60 / tempo) / 4 * sr)
         onset_samples = []
         last_onset = -min_gap
         for i, val in enumerate(y):
@@ -186,7 +219,7 @@ def convert_wav_to_midi(
 
         onset_times = [s / sr for s in onset_samples]
 
-        pm = pretty_midi.PrettyMIDI(initial_tempo=bpm)
+        pm = pretty_midi.PrettyMIDI(initial_tempo=tempo)
         drum = pretty_midi.Instrument(program=0, is_drum=True)
         for t in onset_times:
             note = pretty_midi.Note(

@@ -247,7 +247,10 @@ so large batches may require a smaller `--jobs` value. Non-WAV formats like
 FLAC or MP3 rely on `librosa` and system codecs for decoding. `--resume`
 maintains a log of completed stems, `--overwrite` forces re-transcription,
 `--safe-dirnames` sanitizes song folder names, and `--merge` produces a single
-multi-track MIDI per song.
+multi-track MIDI per song. Tempo is estimated automatically; pass
+`--no-auto-tempo` to skip tempo analysis. Import the resulting MIDI into your
+DAW—Ableton Live, for example—and the project BPM will be auto-filled from the
+embedded tempo event.
 
 ```bash
 python -m utilities.audio_to_midi_batch input/ output/ --ext wav,flac --resume

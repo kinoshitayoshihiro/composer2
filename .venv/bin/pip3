@@ -1,4 +1,4 @@
-#!/Users/kinoshitayoshihiro/music_21/composer2-3/.venv/bin/python3.13
+#!/Users/kinoshitayoshihiro/music_21/composer2-3/.venv/bin/python3.12
 # -*- coding: utf-8 -*-
 import re
 import sys

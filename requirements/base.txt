@@ -1,7 +1,7 @@
 # Core, pure-Python dependencies for lightweight mode
 setuptools>=65  # via pretty_midi
 numpy<2.3
-numba==0.59.1
+numba>=0.60.0
 click>=8
 httpx>=0.27
 hypothesis>=6.99

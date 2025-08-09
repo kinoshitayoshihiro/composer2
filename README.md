@@ -252,6 +252,21 @@ multi-track MIDI per song. Tempo is estimated automatically; pass
 DAW—Ableton Live, for example—and the project BPM will be auto-filled from the
 embedded tempo event.
 
+Tempo unification:
+Use `--tempo-lock` to enforce a single BPM per song folder (merged output via
+`--merge` also receives this locked tempo):
+
+- `--tempo-lock anchor --tempo-anchor-pattern "(?i)(drum|perc|beat)"`  
+  Use the matched stem’s BPM as the song BPM.
+- `--tempo-lock median --tempo-fold-halves`  
+  Collapse half/double BPM outliers before taking the median.
+- `--tempo-lock value --tempo-lock-value 120`
+  Force a fixed BPM.
+- `--tempo-lock-fallback none`
+  Abort if `--tempo-anchor-pattern` is invalid (default `median` falls back).
+
+Without `--tempo-lock` (default), each stem keeps its own estimated tempo.
+
 ```bash
 python -m utilities.audio_to_midi_batch input/ output/ --ext wav,flac --resume
 ```

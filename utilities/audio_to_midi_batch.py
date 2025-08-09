@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import multiprocessing
 import os
 import re
@@ -45,7 +46,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
-import math
 try:  # Optional dependency
     import numpy as np
 except Exception:  # pragma: no cover - numpy may be absent
@@ -110,6 +110,29 @@ def _coerce_controller_times(inst: pretty_midi.Instrument) -> None:
     for cc in inst.control_changes:
         cc.time = _to_float(cc.time)
         cc.value = int(cc.value)
+
+
+def _fold_to_ref(t: float, ref: float) -> float:
+    """Fold tempo ``t`` into the vicinity of ``ref`` via ×2/÷2 steps."""
+    if ref <= 0:
+        return t
+    while t < ref * 0.75:
+        t *= 2.0
+    while t > ref * 1.5:
+        t /= 2.0
+    return t
+
+
+def _folded_median(tempos: list[float]) -> float:
+    """Return median tempo after folding half/double outliers."""
+    if not tempos:
+        return 120.0
+    finite = [x for x in tempos if x and math.isfinite(x)]
+    if not finite:
+        return 120.0
+    ref = statistics.median(finite)
+    folded = [_fold_to_ref(t, ref) for t in finite]
+    return statistics.median(folded) if folded else 120.0
 
 
 def _emit_pitch_bend_range(
@@ -257,32 +280,62 @@ def _fallback_transcribe_stem(
     from scipy.io import wavfile
 
     sr, audio = wavfile.read(path)
-    if np is None:
-        raise RuntimeError("numpy is required for onset-only transcription")
-    if audio.ndim > 1:
-        audio = audio.mean(axis=1)
-    audio = audio.astype(float)
-    if not audio.size:
-        return StemResult(inst, tempo)
-    threshold = 0.5 * np.percentile(np.abs(audio), 95)
-    gap = 60.0 / (tempo if tempo and tempo > 0 else 120.0) / 4.0
-    min_gap = int(sr * gap)
-    envelope = np.abs(audio)
-    onset_idxs = np.where((envelope[1:] >= threshold) & (envelope[:-1] < threshold))[0]
-    last_idx = -min_gap
-    for idx in onset_idxs:
-        if idx - last_idx < min_gap:
-            continue
-        t = idx / sr
-        inst.notes.append(
-            pretty_midi.Note(
-                velocity=100,
-                pitch=36,  # Kick drum placeholder until drum mapping is improved
-                start=float(t),
-                end=float(t + min_dur),
+
+    # Convert to mono
+    if getattr(audio, "ndim", 1) > 1:
+        if np is not None:
+            audio = audio.mean(axis=1)
+        else:  # pragma: no cover - simple Python fallback
+            audio = [sum(frame) / len(frame) for frame in audio]
+
+    if np is not None:
+        audio = audio.astype(float)
+        if not audio.size:
+            return StemResult(inst, tempo)
+        threshold = 0.5 * np.percentile(np.abs(audio), 95)
+        gap = 60.0 / (tempo if tempo and tempo > 0 else 120.0) / 4.0
+        min_gap = int(sr * gap)
+        envelope = np.abs(audio)
+        onset_idxs = np.where((envelope[1:] >= threshold) & (envelope[:-1] < threshold))[0]
+        last_idx = -min_gap
+        for idx in onset_idxs:
+            if idx - last_idx < min_gap:
+                continue
+            t = idx / sr
+            inst.notes.append(
+                pretty_midi.Note(
+                    velocity=100,
+                    pitch=36,  # Kick drum placeholder until drum mapping is improved
+                    start=float(t),
+                    end=float(t + min_dur),
+                )
             )
-        )
-        last_idx = idx
+            last_idx = idx
+    else:  # pragma: no cover - numpy may be absent
+        logger.info("numpy not available; using simple onset detector for %s", path.name)
+        audio = [float(x) for x in audio]
+        if not audio:
+            return StemResult(inst, tempo)
+        abs_audio = [abs(x) for x in audio]
+        idx95 = int(0.95 * (len(abs_audio) - 1))
+        threshold = 0.5 * sorted(abs_audio)[idx95]
+        gap = 60.0 / (tempo if tempo and tempo > 0 else 120.0) / 4.0
+        min_gap = int(sr * gap)
+        last_idx = -min_gap
+        prev = abs_audio[0]
+        for idx, val in enumerate(abs_audio[1:], start=1):
+            if val >= threshold and prev < threshold and idx - last_idx >= min_gap:
+                t = idx / sr
+                inst.notes.append(
+                    pretty_midi.Note(
+                        velocity=100,
+                        pitch=36,
+                        start=float(t),
+                        end=float(t + min_dur),
+                    )
+                )
+                last_idx = idx
+            prev = val
     return StemResult(inst, tempo)
 
 
@@ -314,7 +367,7 @@ def _transcribe_stem(
         missing = " and ".join(
             dep for dep, mod in (("crepe", crepe), ("librosa", librosa)) if mod is None
         )
-        logging.warning(
+        logger.warning(
             "Missing %s; falling back to onset-only transcription, "
             "transcription quality may degrade",
             missing,
@@ -491,6 +544,11 @@ def convert_directory(
     merge: bool = False,
     auto_tempo: bool = True,
     tempo_strategy: str = "median",
+    tempo_lock: str = "none",
+    tempo_anchor_pattern: str = r"(?i)(drum|perc|beat|click)",
+    tempo_lock_value: float | None = None,
+    tempo_fold_halves: bool = False,
+    tempo_lock_fallback: str = "median",
     enable_bend: bool = True,
     bend_range_semitones: float = 2.0,
     bend_alpha: float = 0.25,
@@ -518,7 +576,7 @@ def convert_directory(
         try:
             log_data = json.loads(log_path.read_text())
         except Exception:
-            logging.warning("Failed to read %s", log_path)
+            logger.warning("Failed to read %s", log_path)
 
     for song_dir in _iter_song_dirs(src, exts):
         song_name = _sanitize_name(song_dir.name) if safe_dirnames else song_dir.name
@@ -531,7 +589,7 @@ def convert_directory(
                 and not overwrite
                 and ("__MERGED__" in processed or out_song.exists())
             ):
-                logging.info("Skipping %s", out_song)
+                logger.info("Skipping %s", out_song)
                 continue
         else:
             out_song = dst / song_name
@@ -551,8 +609,7 @@ def convert_directory(
         converted = 0
 
         if merge:
-            tempos: list[float] = []
-            insts: list[pretty_midi.Instrument] = []
+            results: list[tuple[str, pretty_midi.Instrument, float | None]] = []
             ex_kwargs = {"max_workers": jobs}
             if os.name != "nt":
                 ex_kwargs["mp_context"] = multiprocessing.get_context("forkserver")
@@ -560,7 +617,7 @@ def convert_directory(
                 with ProcessPoolExecutor(**ex_kwargs) as ex:
                     futures = []
                     for wav in wavs:
-                        logging.info("Transcribing %s", wav)
+                        logger.info("Transcribing %s", wav)
                         start = time.perf_counter()
                         futures.append(
                             (ex.submit(
@@ -582,13 +639,13 @@ def convert_directory(
                         )
                     for fut, start in futures:
                         res = fut.result()
-                        if res.tempo is not None:
-                            tempos.append(res.tempo)
-                        insts.append(res.instrument)
+                        name = _sanitize_name(res.instrument.name)
+                        res.instrument.name = name
+                        results.append((name, res.instrument, res.tempo))
                         total_time += time.perf_counter() - start
             else:
                 for wav in wavs:
-                    logging.info("Transcribing %s", wav)
+                    logger.info("Transcribing %s", wav)
                     start = time.perf_counter()
                     res = _transcribe_stem(
                         wav,
@@ -605,43 +662,106 @@ def convert_directory(
                         cc11_min_dt_ms=cc11_min_dt_ms,
                         cc11_min_delta=cc11_min_delta,
                     )
-                    if res.tempo is not None:
-                        tempos.append(res.tempo)
-                    insts.append(res.instrument)
+                    name = _sanitize_name(res.instrument.name)
+                    res.instrument.name = name
+                    results.append((name, res.instrument, res.tempo))
                     total_time += time.perf_counter() - start
 
             tempo: float | None = None
-            if tempo_strategy == "first":
-                tempo = tempos[0] if tempos else None
-            elif tempo_strategy == "median":
-                if tempos:
-                    spread = max(tempos) - min(tempos)
-                    tempo = statistics.median(tempos)
-                    if spread > 5:
-                        logging.warning("Tempo spread %.1f BPM for %s", spread, song_name)
-            elif tempo_strategy == "ignore":
-                tempo = None
+            summary_line: str | None = None
+            tempos = [float(t) for _, _, t in results if t is not None and math.isfinite(float(t))]
+            if tempo_lock != "none":
+                orig_mode = tempo_lock
+                candidates = [(n, float(t)) for n, _, t in results if t is not None and math.isfinite(float(t))]
+                cand_count = len(candidates)
+                if tempo_lock == "value" and tempo_lock_value is not None:
+                    tempo = float(tempo_lock_value)
+                    summary_line = f"Tempo-lock(value): {song_name} → BPM={tempo:.1f}"
+                elif tempo_lock == "anchor":
+                    try:
+                        pattern = re.compile(tempo_anchor_pattern)
+                    except re.error:
+                        msg = f"Invalid tempo-anchor-pattern: {tempo_anchor_pattern}"
+                        if tempo_lock_fallback == "none":
+                            logger.error(msg)
+                            raise SystemExit(2)
+                        logger.error("%s; falling back to median", msg)
+                        tempo_lock = "median"
+                    if tempo_lock == "anchor":
+                        anchor_name = None
+                        anchor_bpm = None
+                        for n, t in candidates:
+                            if pattern.search(n):
+                                anchor_name = n
+                                anchor_bpm = t
+                                break
+                        if anchor_bpm is not None:
+                            if tempo_fold_halves:
+                                candidates = [(n, _fold_to_ref(t, anchor_bpm)) for n, t in candidates]
+                            tempo = float(anchor_bpm)
+                            summary_line = (
+                                f"Tempo-lock(anchor): {song_name} → BPM={tempo:.1f} "
+                                f"(pattern='{tempo_anchor_pattern}', fold_halves={tempo_fold_halves}, "
+                                f"candidates={cand_count}, anchor='{anchor_name}')"
+                            )
+                        else:
+                            tempo_lock = "median"
+                    if tempo_lock == "median":
+                        vals = [t for _, t in candidates]
+                        if not vals:
+                            tempo = 120.0
+                            logger.warning(
+                                "Tempo-lock(%s): %s has no valid tempo estimates (%d stems); using 120 BPM",
+                                orig_mode,
+                                song_name,
+                                len(results),
+                            )
+                        else:
+                            tempo = (
+                                _folded_median(vals)
+                                if tempo_fold_halves
+                                else statistics.median(vals)
+                            )
+                        summary_line = (
+                            "Tempo-lock(median): "
+                            f"{song_name} → BPM={tempo:.1f} "
+                            f"(fold_halves={tempo_fold_halves}, candidates={cand_count})"
+                        )
+            else:
+                if tempo_strategy == "first":
+                    tempo = tempos[0] if tempos else None
+                elif tempo_strategy == "median":
+                    if tempos:
+                        spread = max(tempos) - min(tempos)
+                        tempo = statistics.median(tempos)
+                        if spread > 5:
+                            logger.warning(
+                                "Tempo spread %.1f BPM for %s", spread, song_name
+                            )
+                elif tempo_strategy == "ignore":
+                    tempo = None
 
             pm = (
                 pretty_midi.PrettyMIDI(initial_tempo=float(tempo))
                 if tempo is not None
                 else pretty_midi.PrettyMIDI()
             )
-            for inst in insts:
-                inst.name = _sanitize_name(inst.name)
+            for name, inst, _ in results:
                 _emit_pitch_bend_range(inst, bend_range_semitones)
                 _coerce_note_times(inst)
                 _coerce_controller_times(inst)
                 pm.instruments.append(inst)
             pm.write(str(out_song))
-            converted = len(insts)
+            converted = len(results)
             if resume:
                 log_data[song_name] = ["__MERGED__"]
                 try:
                     log_path.write_text(json.dumps(log_data))
                 except Exception:
-                    logging.warning("Failed to update %s", log_path)
-            logging.info("Wrote %s", out_song)
+                    logger.warning("Failed to update %s", log_path)
+            logger.info("Wrote %s", out_song)
+            if summary_line:
+                logger.info(summary_line)
         else:
             processed = set(log_data.get(song_name, []))
             existing = {p.stem for p in out_song.glob("*.mid")}
@@ -650,7 +770,7 @@ def convert_directory(
             for wav in wavs:
                 sanitized = _sanitize_name(wav.stem)
                 if resume and not overwrite and sanitized in processed:
-                    logging.info("Skipping %s", wav)
+                    logger.info("Skipping %s", wav)
                     continue
                 base = sanitized
                 n = 1
@@ -670,6 +790,7 @@ def convert_directory(
                 used_names.add(base)
                 tasks.append((wav, base, midi_path))
 
+            results: list[tuple[str, pretty_midi.Instrument, float | None, Path]] = []
             if jobs > 1:
                 ex_kwargs = {"max_workers": jobs}
                 if os.name != "nt":
@@ -677,7 +798,7 @@ def convert_directory(
                 with ProcessPoolExecutor(**ex_kwargs) as ex:
                     futures = {}
                     for wav, base, midi_path in tasks:
-                        logging.info("Transcribing %s", wav)
+                        logger.info("Transcribing %s", wav)
                         start = time.perf_counter()
                         futures[
                             ex.submit(
@@ -703,29 +824,11 @@ def convert_directory(
                         inst = res.instrument
                         tempo = res.tempo
                         inst.name = base
-                        pm = (
-                            pretty_midi.PrettyMIDI(initial_tempo=float(tempo))
-                            if tempo is not None
-                            else pretty_midi.PrettyMIDI()
-                        )
-                        _emit_pitch_bend_range(inst, bend_range_semitones)
-                        _coerce_note_times(inst)
-                        _coerce_controller_times(inst)
-                        pm.instruments.append(inst)
-                        pm.write(str(midi_path))
+                        results.append((base, inst, tempo, midi_path))
                         total_time += time.perf_counter() - start
-                        converted += 1
-                        processed.add(base)
-                        if resume:
-                            log_data[song_name] = sorted(processed)
-                            try:
-                                log_path.write_text(json.dumps(log_data))
-                            except Exception:
-                                logging.warning("Failed to update %s", log_path)
-                        logging.info("Wrote %s", midi_path)
             else:
                 for wav, base, midi_path in tasks:
-                    logging.info("Transcribing %s", wav)
+                    logger.info("Transcribing %s", wav)
                     start = time.perf_counter()
                     res = _transcribe_stem(
                         wav,
@@ -744,29 +847,98 @@ def convert_directory(
                     )
                     inst = res.instrument
                     tempo = res.tempo
-                    total_time += time.perf_counter() - start
                     inst.name = base
-                    pm = (
-                        pretty_midi.PrettyMIDI(initial_tempo=float(tempo))
-                        if tempo is not None
-                        else pretty_midi.PrettyMIDI()
-                    )
-                    _emit_pitch_bend_range(inst, bend_range_semitones)
-                    _coerce_note_times(inst)
-                    _coerce_controller_times(inst)
-                    pm.instruments.append(inst)
-                    pm.write(str(midi_path))
-                    converted += 1
-                    processed.add(base)
-                    if resume:
-                        log_data[song_name] = sorted(processed)
-                        try:
-                            log_path.write_text(json.dumps(log_data))
-                        except Exception:
-                            logging.warning("Failed to update %s", log_path)
-                    logging.info("Wrote %s", midi_path)
+                    results.append((base, inst, tempo, midi_path))
+                    total_time += time.perf_counter() - start
 
-        logging.info(
+            locked_tempo: float | None = None
+            summary_line: str | None = None
+            if tempo_lock != "none":
+                orig_mode = tempo_lock
+                candidates = [
+                    (b, float(t))
+                    for b, _, t, _ in results
+                    if t is not None and math.isfinite(float(t))
+                ]
+                cand_count = len(candidates)
+                if tempo_lock == "value" and tempo_lock_value is not None:
+                    locked_tempo = float(tempo_lock_value)
+                    summary_line = f"Tempo-lock(value): {song_name} → BPM={locked_tempo:.1f}"
+                elif tempo_lock == "anchor":
+                    try:
+                        pattern = re.compile(tempo_anchor_pattern)
+                    except re.error:
+                        msg = f"Invalid tempo-anchor-pattern: {tempo_anchor_pattern}"
+                        if tempo_lock_fallback == "none":
+                            logger.error(msg)
+                            raise SystemExit(2)
+                        logger.error("%s; falling back to median", msg)
+                        tempo_lock = "median"
+                    if tempo_lock == "anchor":
+                        anchor_name = None
+                        anchor_bpm = None
+                        for n, t in candidates:
+                            if pattern.search(n):
+                                anchor_name = n
+                                anchor_bpm = t
+                                break
+                        if anchor_bpm is not None:
+                            if tempo_fold_halves:
+                                candidates = [(n, _fold_to_ref(t, anchor_bpm)) for n, t in candidates]
+                            locked_tempo = float(anchor_bpm)
+                            summary_line = (
+                                f"Tempo-lock(anchor): {song_name} → BPM={locked_tempo:.1f} "
+                                f"(pattern='{tempo_anchor_pattern}', fold_halves={tempo_fold_halves}, "
+                                f"candidates={cand_count}, anchor='{anchor_name}')"
+                            )
+                        else:
+                            tempo_lock = "median"
+                if tempo_lock == "median":
+                    vals = [t for _, t in candidates]
+                    if not vals:
+                        locked_tempo = 120.0
+                        logger.warning(
+                            "Tempo-lock(%s): %s has no valid tempo estimates (%d stems); using 120 BPM",
+                            orig_mode,
+                            song_name,
+                            len(results),
+                        )
+                    else:
+                        locked_tempo = (
+                            _folded_median(vals) if tempo_fold_halves else statistics.median(vals)
+                        )
+                    summary_line = (
+                        "Tempo-lock(median): "
+                        f"{song_name} → BPM={locked_tempo:.1f} "
+                        f"(fold_halves={tempo_fold_halves}, candidates={cand_count})"
+                    )
+
+            for base, inst, tempo, midi_path in results:
+                use_tempo = locked_tempo if locked_tempo is not None else tempo
+                pm = (
+                    pretty_midi.PrettyMIDI(initial_tempo=float(use_tempo))
+                    if use_tempo is not None
+                    else pretty_midi.PrettyMIDI()
+                )
+                _emit_pitch_bend_range(inst, bend_range_semitones)
+                _coerce_note_times(inst)
+                _coerce_controller_times(inst)
+                pm.instruments.append(inst)
+                pm.write(str(midi_path))
+                converted += 1
+                processed.add(base)
+                if resume:
+                    log_data[song_name] = sorted(processed)
+                    try:
+                        log_path.write_text(json.dumps(log_data))
+                    except Exception:
+                        logger.warning("Failed to update %s", log_path)
+                logger.info("Wrote %s", midi_path)
+
+            if summary_line:
+                logger.info(summary_line)
+
+        logger.info(
             "\N{CHECK MARK} %s – %d stems → %.1f s", song_name, converted, total_time
         )
 
@@ -831,6 +1003,33 @@ def main(argv: list[str] | None = None) -> None:
         choices=["first", "median", "ignore"],
         default="median",
         help="How to select tempo when merging stems",
+    )
+    parser.add_argument(
+        "--tempo-lock",
+        choices=["none", "anchor", "median", "value"],
+        default="none",
+        help="Unify tempo across stems per song folder",
+    )
+    parser.add_argument(
+        "--tempo-anchor-pattern",
+        default="(?i)(drum|perc|beat|click)",
+        help="Regex to select anchor stem when tempo-lock=anchor",
+    )
+    parser.add_argument(
+        "--tempo-lock-value",
+        type=float,
+        help="Explicit BPM for tempo-lock=value",
+    )
+    parser.add_argument(
+        "--tempo-fold-halves",
+        action="store_true",
+        help="Fold half/double tempo outliers before locking",
+    )
+    parser.add_argument(
+        "--tempo-lock-fallback",
+        choices=["median", "none"],
+        default="median",
+        help="When tempo-lock=anchor and regex is invalid, choose median or abort",
     )
     parser.add_argument(
         "--enable-bend",
@@ -906,6 +1105,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
+    if args.tempo_lock == "value" and args.tempo_lock_value is None:
+        parser.error("--tempo-lock-value is required when --tempo-lock=value")
+
     convert_directory(
         Path(args.src_dir),
         Path(args.dst_dir),
@@ -918,6 +1120,11 @@ def main(argv: list[str] | None = None) -> None:
         merge=args.merge,
         auto_tempo=args.auto_tempo,
         tempo_strategy=args.tempo_strategy,
+        tempo_lock=args.tempo_lock,
+        tempo_anchor_pattern=args.tempo_anchor_pattern,
+        tempo_lock_value=args.tempo_lock_value,
+        tempo_fold_halves=args.tempo_fold_halves,
+        tempo_lock_fallback=args.tempo_lock_fallback,
         enable_bend=args.enable_bend,
         bend_range_semitones=args.bend_range_semitones,
         bend_alpha=args.bend_alpha,

@@ -45,7 +45,11 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
+import math
+try:  # Optional dependency
+    import numpy as np
+except Exception:  # pragma: no cover - numpy may be absent
+    np = None  # type: ignore
 import pretty_midi
 
 logger = logging.getLogger(__name__)
@@ -76,6 +80,26 @@ def _sanitize_name(name: str) -> str:
     ascii_name = re.sub(r"\s+", "_", ascii_name)
     ascii_name = re.sub(r"[^\w-]", "", ascii_name)
     return ascii_name or "track"
+
+
+def _to_float(x):
+    """0次元 array-like（.item() を持つ）や numpy scalar を含め、なんでも Python float に。
+    numpy が無い環境でも動くように、属性ベースで処理。"""
+    item = getattr(x, "item", None)
+    try:
+        return float(item() if callable(item) else x)
+    except Exception:
+        # 最後の保険：文字列などを無理やり float 化
+        return float(str(x))
+
+
+def _coerce_note_times(inst: pretty_midi.Instrument) -> None:
+    """Ensure note.start/end are plain Python floats; also clamp weird values."""
+    for n in inst.notes:
+        n.start = _to_float(n.start)
+        n.end = _to_float(n.end)
+        if n.end < n.start:  # 稀に順序が壊れているケースの保険
+            n.end = n.start
 
 
 def _fallback_transcribe_stem(
@@ -116,6 +140,8 @@ def _fallback_transcribe_stem(
     from scipy.io import wavfile
 
     sr, audio = wavfile.read(path)
+    if np is None:
+        raise RuntimeError("numpy is required for onset-only transcription")
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
     audio = audio.astype(float)
@@ -171,7 +197,7 @@ def _transcribe_stem(
             try:
                 audio, sr = librosa.load(path, sr=16000, mono=True)
                 tempo, _ = librosa.beat.beat_track(y=audio, sr=sr, trim=False)
-                if not 40 <= tempo <= 300 or not np.isfinite(tempo):
+                if not 40 <= tempo <= 300 or not math.isfinite(tempo):
                     tempo = None
                 else:
                     logger.info("Estimated %.1f BPM for %s", tempo, path.name)
@@ -185,7 +211,7 @@ def _transcribe_stem(
     if auto_tempo:
         try:
             tempo, _ = librosa.beat.beat_track(y=audio, sr=sr, trim=False)
-            if not 40 <= tempo <= 300 or not np.isfinite(tempo):
+            if not 40 <= tempo <= 300 or not math.isfinite(tempo):
                 tempo = None
             else:
                 logger.info("Estimated %.1f BPM for %s", tempo, path.name)
@@ -363,12 +389,13 @@ def convert_directory(
                 tempo = None
 
             pm = (
-                pretty_midi.PrettyMIDI(initial_tempo=tempo)
+                pretty_midi.PrettyMIDI(initial_tempo=float(tempo))
                 if tempo is not None
                 else pretty_midi.PrettyMIDI()
             )
             for inst in insts:
                 inst.name = _sanitize_name(inst.name)
+                _coerce_note_times(inst)
                 pm.instruments.append(inst)
             pm.write(str(out_song))
             converted = len(insts)
@@ -431,10 +458,11 @@ def convert_directory(
                         tempo = res.tempo
                         inst.name = base
                         pm = (
-                            pretty_midi.PrettyMIDI(initial_tempo=tempo)
+                            pretty_midi.PrettyMIDI(initial_tempo=float(tempo))
                             if tempo is not None
                             else pretty_midi.PrettyMIDI()
                         )
+                        _coerce_note_times(inst)
                         pm.instruments.append(inst)
                         pm.write(str(midi_path))
                         total_time += time.perf_counter() - start
@@ -459,10 +487,11 @@ def convert_directory(
                     total_time += time.perf_counter() - start
                     inst.name = base
                     pm = (
-                        pretty_midi.PrettyMIDI(initial_tempo=tempo)
+                        pretty_midi.PrettyMIDI(initial_tempo=float(tempo))
                         if tempo is not None
                         else pretty_midi.PrettyMIDI()
                     )
+                    _coerce_note_times(inst)
                     pm.instruments.append(inst)
                     pm.write(str(midi_path))
                     converted += 1

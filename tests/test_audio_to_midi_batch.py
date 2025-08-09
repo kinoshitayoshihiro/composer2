@@ -3,9 +3,10 @@ import sys
 import types
 from pathlib import Path
 
-import numpy as np
-import pretty_midi
 import pytest
+
+np = pytest.importorskip("numpy")
+pretty_midi = pytest.importorskip("pretty_midi")
 import wave
 import multiprocessing
 import logging
@@ -32,6 +33,13 @@ def _stub_transcribe(
     bend_range_semitones: float = 2.0,
     bend_alpha: float = 0.25,
     bend_fixed_base: bool = False,
+    cc_strategy: str = "none",
+    cc11_smoothing_ms: int = 80,
+    cc64_threshold: float = 0.6,
+    cc64_instruments: list[str] | None = None,
+    cc11_min_dt_ms: int = 30,
+    cc11_min_delta: int = 3,
+    **kwargs,
 ) -> StemResult:
     inst = pretty_midi.Instrument(program=0, name=path.stem)
     inst.notes.append(
@@ -167,7 +175,7 @@ def test_rpn_emitted(tmp_path, monkeypatch):
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _stub_transcribe)
 
     audio_to_midi_batch.main(
-        [str(song_dir), str(out_dir), "--bend-range-semitones", "12"]
+        [str(song_dir), str(out_dir), "--bend-range-semitones", "12.34"]
     )
     midi_path = out_dir / song_dir.name / "a.mid"
     pm = pretty_midi.PrettyMIDI(str(midi_path))
@@ -176,7 +184,7 @@ def test_rpn_emitted(tmp_path, monkeypatch):
     assert (101, 0) in cc_map
     assert (100, 0) in cc_map
     assert (6, 12) in cc_map
-    assert (38, 0) in cc_map
+    assert (38, 34) in cc_map
 
 
 def test_tempo_written(tmp_path, monkeypatch):
@@ -199,6 +207,7 @@ def test_tempo_written(tmp_path, monkeypatch):
         bend_range_semitones: float = 2.0,
         bend_alpha: float = 0.25,
         bend_fixed_base: bool = False,
+        **kwargs,
     ) -> StemResult:
         inst = pretty_midi.Instrument(program=0, name=path.stem)
         inst.notes.append(
@@ -386,6 +395,7 @@ def test_tempo_strategy(tmp_path, monkeypatch, strategy, expected):
         bend_range_semitones: float = 2.0,
         bend_alpha: float = 0.25,
         bend_fixed_base: bool = False,
+        **kwargs,
     ) -> StemResult:
         inst = pretty_midi.Instrument(program=0, name=path.stem)
         inst.notes.append(
@@ -408,3 +418,97 @@ def test_tempo_strategy(tmp_path, monkeypatch, strategy, expected):
     pm = pretty_midi.PrettyMIDI(str(out_dir / f"{song_dir.name}.mid"))
     _, tempi = pm.get_tempo_changes()
     assert tempi[0] == pytest.approx(expected)
+
+
+def test_cc11_energy(tmp_path, monkeypatch):
+    in_dir = tmp_path / "song"
+    out_dir = tmp_path / "out"
+    in_dir.mkdir()
+    sr = 22050
+    t = np.linspace(0, 2, sr * 2, False)
+    audio = np.concatenate([np.ones(sr), np.linspace(1.0, 0.0, sr)])
+    _write(in_dir / "voice.wav", audio, sr)
+
+    def stub(path: Path, **kwargs):
+        inst = pretty_midi.Instrument(program=0, name=path.stem)
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=2.0))
+        audio_to_midi_batch._generate_ccs(
+            audio,
+            sr,
+            inst,
+            path.stem,
+            cc_strategy=kwargs.get("cc_strategy", "none"),
+            cc11_smoothing_ms=kwargs.get("cc11_smoothing_ms", 80),
+            cc64_threshold=kwargs.get("cc64_threshold", 0.6),
+            cc64_instruments=kwargs.get("cc64_instruments", ["piano", "ep", "keys"]),
+            cc11_min_dt_ms=kwargs.get("cc11_min_dt_ms", 30),
+            cc11_min_delta=kwargs.get("cc11_min_delta", 3),
+        )
+        return types.SimpleNamespace(instrument=inst, tempo=120.0)
+
+    monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", stub)
+    audio_to_midi_batch.main(
+        [str(in_dir), str(out_dir), "--cc-strategy", "energy"]
+    )
+    pm = pretty_midi.PrettyMIDI(str(out_dir / in_dir.name / "voice.mid"))
+    vals = [cc.value for cc in pm.instruments[0].control_changes if cc.number == 11]
+    assert sum(vals[-5:]) < sum(vals[:5])
+
+
+def test_cc64_threshold(tmp_path, monkeypatch):
+    in_dir = tmp_path / "piano_song"
+    out_dir = tmp_path / "out"
+    in_dir.mkdir()
+    sr = 22050
+    audio = np.ones(sr)
+    _write(in_dir / "piano.wav", audio, sr)
+
+    def stub(path: Path, **kwargs):
+        inst = pretty_midi.Instrument(program=0, name=path.stem)
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=0.4))
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.6, end=1.0))
+        audio_to_midi_batch._generate_ccs(
+            audio,
+            sr,
+            inst,
+            path.stem,
+            cc_strategy=kwargs.get("cc_strategy", "none"),
+            cc11_smoothing_ms=kwargs.get("cc11_smoothing_ms", 80),
+            cc64_threshold=kwargs.get("cc64_threshold", 0.5),
+            cc64_instruments=kwargs.get("cc64_instruments", ["piano", "ep", "keys"]),
+            cc11_min_dt_ms=kwargs.get("cc11_min_dt_ms", 30),
+            cc11_min_delta=kwargs.get("cc11_min_delta", 3),
+        )
+        return types.SimpleNamespace(instrument=inst, tempo=None)
+
+    monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", stub)
+    audio_to_midi_batch.main([
+        str(in_dir),
+        str(out_dir),
+        "--cc64-threshold",
+        "0.5",
+    ])
+    pm = pretty_midi.PrettyMIDI(str(out_dir / in_dir.name / "piano.mid"))
+    vals = [cc.value for cc in pm.instruments[0].control_changes if cc.number == 64]
+    assert 127 in vals and 0 in vals
+
+
+def test_cc11_sparsify(tmp_path):
+    sr = 22050
+    audio = np.ones(sr * 2)
+    inst = pretty_midi.Instrument(program=0)
+    inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=2.0))
+    audio_to_midi_batch._generate_ccs(
+        audio,
+        sr,
+        inst,
+        "voice",
+        cc_strategy="energy",
+        cc11_smoothing_ms=0,
+        cc64_threshold=0.6,
+        cc64_instruments=[],
+        cc11_min_dt_ms=30,
+        cc11_min_delta=3,
+    )
+    events = [cc for cc in inst.control_changes if cc.number == 11]
+    assert len(events) <= 70

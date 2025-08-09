@@ -23,6 +23,8 @@ Each row corresponds to a single note with the following columns:
 | `q_duration` | float | Duration in quarter-note units |
 | `CC64`*      | int   | Sustain pedal value (0–127) at onset |
 | `cc64_ratio`* | float | Fraction of note duration with sustain pedal active |
+| `cc11_onset`* | int | CC11 value at note onset |
+| `cc11_mean`* | float | Mean CC11 value over the note duration |
 | `bend`*      | int   | Pitch-bend value at onset (−8192…8191) |
 | `bend_range`* | int   | Pitch-bend range in semitones (default ±2) |
 | `bend_max_semi`* | float | Maximum absolute bend depth in semitones within the note |
@@ -31,6 +33,7 @@ Each row corresponds to a single note with the following columns:
 
 Columns marked with * are optional and can be omitted with `--no-cc` or
 `--no-bend` when high-resolution controller or pitch-bend data is not needed.
+CC11 columns are included only when `--include-cc11` is specified.
 
 Bar and position derive from PrettyMIDI ticks:
 

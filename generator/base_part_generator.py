@@ -52,6 +52,10 @@ class BasePartGenerator(ABC):
         ml_velocity_model_path: str | None = None,
         duration_model=None,
         velocity_model=None,
+        bend_depth_semitones: float = 2.0,
+        vibrato_rate_hz: float | None = None,
+        portamento_ms: float | None = None,
+        vibrato_shape: str = "sine",
         **kwargs,
     ):
         # optional contextual parameters; shim for backwards compatibility
@@ -99,6 +103,10 @@ class BasePartGenerator(ABC):
         self.ml_velocity_model_path = ml_velocity_model_path
         self.velocity_model = velocity_model
         self.duration_model = duration_model
+        self.bend_depth_semitones = bend_depth_semitones
+        self.vibrato_rate_hz = vibrato_rate_hz
+        self.portamento_ms = portamento_ms
+        self.vibrato_shape = vibrato_shape
         self.ml_velocity_model = None
         self.ml_velocity_cache_key = (
             ml_velocity_model_path if ml_velocity_model_path and torch else None

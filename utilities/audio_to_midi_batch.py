@@ -102,6 +102,29 @@ def _coerce_note_times(inst: pretty_midi.Instrument) -> None:
             n.end = n.start
 
 
+def _coerce_controller_times(inst: pretty_midi.Instrument) -> None:
+    """Ensure controller events use plain Python numbers."""
+    for pb in inst.pitch_bends:
+        pb.time = _to_float(pb.time)
+        pb.pitch = int(pb.pitch)
+    for cc in inst.control_changes:
+        cc.time = _to_float(cc.time)
+        cc.value = int(cc.value)
+
+
+def _emit_pitch_bend_range(
+    inst: pretty_midi.Instrument, bend_range_semitones: float, *, t: float = 0.0
+) -> None:
+    """Insert RPN 0,0 events to set pitch-bend range."""
+    msb = int(max(0, min(127, int(bend_range_semitones))))
+    lsb = 64 if (bend_range_semitones - msb) >= 0.5 else 0
+    cc = inst.control_changes
+    cc.append(pretty_midi.ControlChange(number=101, value=0, time=float(t)))
+    cc.append(pretty_midi.ControlChange(number=100, value=0, time=float(t)))
+    cc.append(pretty_midi.ControlChange(number=6, value=msb, time=float(t)))
+    cc.append(pretty_midi.ControlChange(number=38, value=lsb, time=float(t)))
+
+
 def _fallback_transcribe_stem(
     path: Path, *, min_dur: float, tempo: float | None = None
 ) -> StemResult:
@@ -176,6 +199,10 @@ def _transcribe_stem(
     conf_threshold: float = 0.5,
     min_dur: float = 0.05,
     auto_tempo: bool = True,
+    enable_bend: bool = True,
+    bend_range_semitones: float = 2.0,
+    bend_alpha: float = 0.25,
+    bend_fixed_base: bool = False,
 ) -> StemResult:
     """Transcribe a monophonic WAV file into a MIDI instrument.
 
@@ -192,6 +219,8 @@ def _transcribe_stem(
             "transcription quality may degrade",
             missing,
         )
+        if enable_bend:
+            logger.info("Pitch-bend disabled: missing CREPE/librosa")
         tempo: float | None = None
         if auto_tempo and librosa is not None:
             try:
@@ -224,9 +253,15 @@ def _transcribe_stem(
     inst = pretty_midi.Instrument(program=0, name=path.stem)
     pitch: int | None = None
     start: float = 0.0
+    ema = 0.0
+    prev_bend = 0
+    if enable_bend:
+        inst.pitch_bends.append(pretty_midi.PitchBend(pitch=0, time=0.0))
 
     for t, f, c in zip(time, freq, conf):
+        dev: float | None
         if c < conf_threshold:
+            dev = None
             if pitch is not None and t - start >= min_dur:
                 inst.notes.append(
                     pretty_midi.Note(
@@ -234,25 +269,54 @@ def _transcribe_stem(
                     )
                 )
             pitch = None
-            continue
+        else:
+            nn_float = pretty_midi.hz_to_note_number(f)
+            p = int(round(nn_float))
+            if pitch is None:
+                pitch, start = p, float(t)
+            elif p != pitch:
+                if t - start >= min_dur:
+                    inst.notes.append(
+                        pretty_midi.Note(
+                            velocity=100, pitch=pitch, start=start, end=float(t)
+                        )
+                    )
+                pitch, start = p, float(t)
+            dev = nn_float - (pitch if bend_fixed_base else p)
 
-        p = int(round(pretty_midi.hz_to_note_number(f)))
-        if pitch is None:
-            pitch, start = p, float(t)
-        elif p != pitch:
-            if t - start >= min_dur:
-                inst.notes.append(
-                    pretty_midi.Note(
-                        velocity=100, pitch=pitch, start=start, end=float(t)
+        if enable_bend:
+            target = 0.0 if dev is None else dev
+            ema = bend_alpha * target + (1 - bend_alpha) * ema
+            if dev is None:
+                bend = 0
+            else:
+                bend = int(
+                    round(
+                        max(-1.0, min(1.0, ema / bend_range_semitones)) * 8191
                     )
                 )
-            pitch, start = p, float(t)
+            if bend != prev_bend:
+                inst.pitch_bends.append(
+                    pretty_midi.PitchBend(pitch=int(bend), time=float(t))
+                )
+                prev_bend = bend
 
     if pitch is not None and time.size:
         end = float(time[-1])
         if end - start >= min_dur:
             inst.notes.append(
                 pretty_midi.Note(velocity=100, pitch=pitch, start=start, end=end)
+            )
+
+    if enable_bend:
+        end_time = float(time[-1]) if time.size else 0.0
+        if prev_bend != 0:
+            inst.pitch_bends.append(
+                pretty_midi.PitchBend(pitch=0, time=end_time)
+            )
+        elif inst.pitch_bends[-1].time != end_time:
+            inst.pitch_bends.append(
+                pretty_midi.PitchBend(pitch=0, time=end_time)
             )
 
     return StemResult(inst, tempo)
@@ -290,6 +354,10 @@ def convert_directory(
     merge: bool = False,
     auto_tempo: bool = True,
     tempo_strategy: str = "median",
+    enable_bend: bool = True,
+    bend_range_semitones: float = 2.0,
+    bend_alpha: float = 0.25,
+    bend_fixed_base: bool = False,
 ) -> None:
     """Convert a directory of stems into individual MIDI files.
 
@@ -356,6 +424,10 @@ def convert_directory(
                                 wav,
                                 min_dur=min_dur,
                                 auto_tempo=auto_tempo,
+                                enable_bend=enable_bend,
+                                bend_range_semitones=bend_range_semitones,
+                                bend_alpha=bend_alpha,
+                                bend_fixed_base=bend_fixed_base,
                             ), start)
                         )
                     for fut, start in futures:
@@ -369,7 +441,13 @@ def convert_directory(
                     logging.info("Transcribing %s", wav)
                     start = time.perf_counter()
                     res = _transcribe_stem(
-                        wav, min_dur=min_dur, auto_tempo=auto_tempo
+                        wav,
+                        min_dur=min_dur,
+                        auto_tempo=auto_tempo,
+                        enable_bend=enable_bend,
+                        bend_range_semitones=bend_range_semitones,
+                        bend_alpha=bend_alpha,
+                        bend_fixed_base=bend_fixed_base,
                     )
                     if res.tempo is not None:
                         tempos.append(res.tempo)
@@ -395,7 +473,9 @@ def convert_directory(
             )
             for inst in insts:
                 inst.name = _sanitize_name(inst.name)
+                _emit_pitch_bend_range(inst, bend_range_semitones)
                 _coerce_note_times(inst)
+                _coerce_controller_times(inst)
                 pm.instruments.append(inst)
             pm.write(str(out_song))
             converted = len(insts)
@@ -449,6 +529,10 @@ def convert_directory(
                                 wav,
                                 min_dur=min_dur,
                                 auto_tempo=auto_tempo,
+                                enable_bend=enable_bend,
+                                bend_range_semitones=bend_range_semitones,
+                                bend_alpha=bend_alpha,
+                                bend_fixed_base=bend_fixed_base,
                             )
                         ] = (base, midi_path, start)
                     for fut in as_completed(futures):
@@ -462,7 +546,9 @@ def convert_directory(
                             if tempo is not None
                             else pretty_midi.PrettyMIDI()
                         )
+                        _emit_pitch_bend_range(inst, bend_range_semitones)
                         _coerce_note_times(inst)
+                        _coerce_controller_times(inst)
                         pm.instruments.append(inst)
                         pm.write(str(midi_path))
                         total_time += time.perf_counter() - start
@@ -480,7 +566,13 @@ def convert_directory(
                     logging.info("Transcribing %s", wav)
                     start = time.perf_counter()
                     res = _transcribe_stem(
-                        wav, min_dur=min_dur, auto_tempo=auto_tempo
+                        wav,
+                        min_dur=min_dur,
+                        auto_tempo=auto_tempo,
+                        enable_bend=enable_bend,
+                        bend_range_semitones=bend_range_semitones,
+                        bend_alpha=bend_alpha,
+                        bend_fixed_base=bend_fixed_base,
                     )
                     inst = res.instrument
                     tempo = res.tempo
@@ -491,7 +583,9 @@ def convert_directory(
                         if tempo is not None
                         else pretty_midi.PrettyMIDI()
                     )
+                    _emit_pitch_bend_range(inst, bend_range_semitones)
                     _coerce_note_times(inst)
+                    _coerce_controller_times(inst)
                     pm.instruments.append(inst)
                     pm.write(str(midi_path))
                     converted += 1
@@ -570,6 +664,36 @@ def main(argv: list[str] | None = None) -> None:
         default="median",
         help="How to select tempo when merging stems",
     )
+    parser.add_argument(
+        "--enable-bend",
+        dest="enable_bend",
+        action="store_true",
+        default=True,
+        help="Synthesize 14-bit pitch bends from f0 (default on)",
+    )
+    parser.add_argument(
+        "--no-enable-bend",
+        dest="enable_bend",
+        action="store_false",
+        help="Disable pitch-bend synthesis",
+    )
+    parser.add_argument(
+        "--bend-range-semitones",
+        type=float,
+        default=2.0,
+        help="Pitch-bend range in semitones for scaling (default 2.0)",
+    )
+    parser.add_argument(
+        "--bend-alpha",
+        type=float,
+        default=0.25,
+        help="EMA smoothing coefficient for pitch bends (default 0.25)",
+    )
+    parser.add_argument(
+        "--bend-fixed-base",
+        action="store_true",
+        help="Reference deviations to note onsets for smoother portamento",
+    )
     args = parser.parse_args(argv)
 
     convert_directory(
@@ -584,6 +708,10 @@ def main(argv: list[str] | None = None) -> None:
         merge=args.merge,
         auto_tempo=args.auto_tempo,
         tempo_strategy=args.tempo_strategy,
+        enable_bend=args.enable_bend,
+        bend_range_semitones=args.bend_range_semitones,
+        bend_alpha=args.bend_alpha,
+        bend_fixed_base=args.bend_fixed_base,
     )
 
 

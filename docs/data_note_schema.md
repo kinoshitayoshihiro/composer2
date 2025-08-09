@@ -49,9 +49,16 @@ multiple changes. Future versions may support per-bar time signature updates.
 Coverage statistics for generated CSVs can be obtained with:
 
 ```
+python -m utilities.rich_note_csv path/to/midi_dir --out notes.csv
 python -m utilities.rich_note_csv --coverage notes.csv
 ```
 
 This prints the percentage of non-null values for each column and helps verify
 that the dataset is complete.
+
+Quick pitch-bend inspection:
+
+```
+python -m utilities.rich_note_csv path/to/midi.mid | grep bend
+```
 

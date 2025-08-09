@@ -1,8 +1,4 @@
-import sys
-import types
-from pathlib import Path
-
-import numpy as np
+import importlib.util
 import sys
 import types
 from pathlib import Path
@@ -12,9 +8,17 @@ import pretty_midi
 import pytest
 import wave
 import multiprocessing
+import logging
 
-from utilities import audio_to_midi_batch
-from utilities.audio_to_midi_batch import StemResult
+spec = importlib.util.spec_from_file_location(
+    "utilities.audio_to_midi_batch",
+    Path(__file__).resolve().parents[1] / "utilities" / "audio_to_midi_batch.py",
+)
+audio_to_midi_batch = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = audio_to_midi_batch
+spec.loader.exec_module(audio_to_midi_batch)
+StemResult = audio_to_midi_batch.StemResult
 
 
 def _stub_transcribe(
@@ -24,12 +28,16 @@ def _stub_transcribe(
     conf_threshold: float = 0.5,
     min_dur: float = 0.05,
     auto_tempo: bool = True,
+    enable_bend: bool = True,
+    bend_range_semitones: float = 2.0,
+    bend_alpha: float = 0.25,
+    bend_fixed_base: bool = False,
 ) -> StemResult:
     inst = pretty_midi.Instrument(program=0, name=path.stem)
     inst.notes.append(
         pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=min_dur)
     )
-    return StemResult(inst, 120.0)
+    return types.SimpleNamespace(instrument=inst, tempo=120.0)
 
 
 def _write(path: Path, data: np.ndarray, sr: int) -> None:
@@ -147,6 +155,30 @@ def test_resume_skips_existing(tmp_path, monkeypatch):
     audio_to_midi_batch.main([str(song_dir), str(out_dir), "--resume"])
 
 
+def test_rpn_emitted(tmp_path, monkeypatch):
+    song_dir = tmp_path / "song"
+    out_dir = tmp_path / "out"
+    song_dir.mkdir()
+    sr = 22050
+    t = np.linspace(0, 1, sr, False)
+    wave = 0.1 * np.sin(2 * np.pi * 440 * t)
+    _write(song_dir / "a.wav", wave, sr)
+
+    monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _stub_transcribe)
+
+    audio_to_midi_batch.main(
+        [str(song_dir), str(out_dir), "--bend-range-semitones", "12"]
+    )
+    midi_path = out_dir / song_dir.name / "a.mid"
+    pm = pretty_midi.PrettyMIDI(str(midi_path))
+    ccs = pm.instruments[0].control_changes
+    cc_map = {(cc.number, cc.value) for cc in ccs}
+    assert (101, 0) in cc_map
+    assert (100, 0) in cc_map
+    assert (6, 12) in cc_map
+    assert (38, 0) in cc_map
+
+
 def test_tempo_written(tmp_path, monkeypatch):
     song_dir = tmp_path / "song"
     out_dir = tmp_path / "out"
@@ -163,18 +195,22 @@ def test_tempo_written(tmp_path, monkeypatch):
         conf_threshold: float = 0.5,
         min_dur: float = 0.05,
         auto_tempo: bool = True,
+        enable_bend: bool = True,
+        bend_range_semitones: float = 2.0,
+        bend_alpha: float = 0.25,
+        bend_fixed_base: bool = False,
     ) -> StemResult:
         inst = pretty_midi.Instrument(program=0, name=path.stem)
         inst.notes.append(
             pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=min_dur)
         )
-        return StemResult(inst, 100.0)
+        return types.SimpleNamespace(instrument=inst, tempo=100.0)
 
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", tempo_stub)
     audio_to_midi_batch.main([str(song_dir), str(out_dir), "--auto-tempo"])
     midi_path = out_dir / song_dir.name / "a.mid"
     pm = pretty_midi.PrettyMIDI(str(midi_path))
-    tempi, _ = pm.get_tempo_changes()
+    _, tempi = pm.get_tempo_changes()
     assert tempi[0] == pytest.approx(100.0)
 
 
@@ -207,13 +243,120 @@ def test_auto_tempo_flag(tmp_path, monkeypatch):
 
     audio_to_midi_batch.main([str(song_dir), str(out_auto), "--auto-tempo"])
     pm = pretty_midi.PrettyMIDI(str(out_auto / song_dir.name / "a.mid"))
-    tempi, _ = pm.get_tempo_changes()
+    _, tempi = pm.get_tempo_changes()
     assert tempi[0] == pytest.approx(150.0)
 
     audio_to_midi_batch.main([str(song_dir), str(out_off), "--no-auto-tempo"])
     pm2 = pretty_midi.PrettyMIDI(str(out_off / song_dir.name / "a.mid"))
-    tempi2, _ = pm2.get_tempo_changes()
+    _, tempi2 = pm2.get_tempo_changes()
     assert tempi2[0] == pytest.approx(120.0)
+
+
+def test_pitch_bend_generation(tmp_path, monkeypatch):
+    path = tmp_path / "vib.wav"
+    sr = 16000
+    t = np.linspace(0, 1, sr, False)
+    wave = np.zeros_like(t)
+    _write(path, wave, sr)
+
+    times = np.arange(0, 1, 0.01)
+    freq = 440 * 2 ** (np.sin(2 * np.pi * 5 * times) / 12)
+    conf = np.ones_like(times)
+
+    class FakeCrepe:
+        @staticmethod
+        def predict(audio, sr, step_size=10, model_capacity="full", verbose=0):
+            return times, freq, conf, None
+
+    def fake_load(p, sr=16000, mono=True):
+        return wave, sr
+
+    monkeypatch.setattr(audio_to_midi_batch, "crepe", FakeCrepe)
+    monkeypatch.setattr(
+        audio_to_midi_batch, "librosa", types.SimpleNamespace(load=fake_load)
+    )
+
+    res = audio_to_midi_batch._transcribe_stem(
+        path,
+        enable_bend=True,
+        bend_range_semitones=2.0,
+        bend_alpha=0.5,
+        auto_tempo=False,
+    )
+    pb = res.instrument.pitch_bends
+    assert pb
+    assert pb[0].pitch == 0
+    assert pb[-1].pitch == 0
+    bends = [p.pitch for p in pb]
+    max_b, min_b = max(bends), min(bends)
+
+    nn = pretty_midi.hz_to_note_number(freq)
+    devs = nn - np.round(nn)
+    alpha = 0.5
+    ema = 0.0
+    emas = []
+    for d in devs:
+        ema = alpha * d + (1 - alpha) * ema
+        emas.append(ema)
+    expected = int(round(np.max(np.abs(emas)) / 2.0 * 8191))
+    assert max_b == pytest.approx(expected, rel=0.1)
+    assert min_b == pytest.approx(-expected, rel=0.1)
+
+
+def test_pitch_bend_disabled(tmp_path, monkeypatch):
+    path = tmp_path / "vib.wav"
+    sr = 16000
+    t = np.linspace(0, 1, sr, False)
+    wave = np.zeros_like(t)
+    _write(path, wave, sr)
+
+    times = np.arange(0, 1, 0.01)
+    freq = 440 * np.ones_like(times)
+    conf = np.ones_like(times)
+
+    class FakeCrepe:
+        @staticmethod
+        def predict(audio, sr, step_size=10, model_capacity="full", verbose=0):
+            return times, freq, conf, None
+
+    def fake_load(p, sr=16000, mono=True):
+        return wave, sr
+
+    monkeypatch.setattr(audio_to_midi_batch, "crepe", FakeCrepe)
+    monkeypatch.setattr(
+        audio_to_midi_batch, "librosa", types.SimpleNamespace(load=fake_load)
+    )
+
+    res = audio_to_midi_batch._transcribe_stem(
+        path,
+        enable_bend=False,
+        auto_tempo=False,
+    )
+    assert res.instrument.pitch_bends == []
+
+
+def test_pitch_bend_fallback_no_crepe(tmp_path, monkeypatch, caplog):
+    path = tmp_path / "a.wav"
+    sr = 16000
+    t = np.linspace(0, 1, sr, False)
+    wave = np.zeros_like(t)
+    _write(path, wave, sr)
+
+    monkeypatch.setattr(audio_to_midi_batch, "crepe", None)
+    monkeypatch.setattr(audio_to_midi_batch, "librosa", None)
+
+    def fb(path: Path, *, min_dur: float, tempo: float | None = None):
+        inst = pretty_midi.Instrument(program=0, name=path.stem)
+        return StemResult(inst, tempo)
+
+    monkeypatch.setattr(audio_to_midi_batch, "_fallback_transcribe_stem", fb)
+
+    with caplog.at_level(logging.INFO):
+        res = audio_to_midi_batch._transcribe_stem(
+            path, enable_bend=True, auto_tempo=False
+        )
+    assert res.instrument.pitch_bends == []
+    assert any("Pitch-bend disabled" in r.message for r in caplog.records)
 
 
 @pytest.mark.parametrize(
@@ -239,13 +382,17 @@ def test_tempo_strategy(tmp_path, monkeypatch, strategy, expected):
         conf_threshold: float = 0.5,
         min_dur: float = 0.05,
         auto_tempo: bool = True,
+        enable_bend: bool = True,
+        bend_range_semitones: float = 2.0,
+        bend_alpha: float = 0.25,
+        bend_fixed_base: bool = False,
     ) -> StemResult:
         inst = pretty_midi.Instrument(program=0, name=path.stem)
         inst.notes.append(
             pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=min_dur)
         )
         tempo = tempos.pop(0)
-        return StemResult(inst, tempo)
+        return types.SimpleNamespace(instrument=inst, tempo=tempo)
 
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", stub)
 
@@ -259,5 +406,5 @@ def test_tempo_strategy(tmp_path, monkeypatch, strategy, expected):
         ]
     )
     pm = pretty_midi.PrettyMIDI(str(out_dir / f"{song_dir.name}.mid"))
-    tempi, _ = pm.get_tempo_changes()
+    _, tempi = pm.get_tempo_changes()
     assert tempi[0] == pytest.approx(expected)

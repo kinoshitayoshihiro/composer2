@@ -22,7 +22,12 @@ Each row corresponds to a single note with the following columns:
 | `q_onset`    | float | Onset in quarter-note units |
 | `q_duration` | float | Duration in quarter-note units |
 | `CC64`*      | int   | Sustain pedal value (0–127) at onset |
+| `cc64_ratio`* | float | Fraction of note duration with sustain pedal active |
 | `bend`*      | int   | Pitch-bend value at onset (−8192…8191) |
+| `bend_range`* | int   | Pitch-bend range in semitones (default ±2) |
+| `bend_max_semi`* | float | Maximum absolute bend depth in semitones within the note |
+| `bend_rms_semi`* | float | RMS bend depth in semitones |
+| `vib_rate_hz`* | float | Estimated vibrato rate in Hz |
 
 Columns marked with * are optional and can be omitted with `--no-cc` or
 `--no-bend` when high-resolution controller or pitch-bend data is not needed.

@@ -3,12 +3,13 @@ import sys
 import types
 from pathlib import Path
 
-import numpy as np
-import pretty_midi
 import pytest
+pretty_midi = pytest.importorskip("pretty_midi")
 import wave
 import multiprocessing
 import logging
+
+np = pytest.importorskip("numpy")
 
 spec = importlib.util.spec_from_file_location(
     "utilities.audio_to_midi_batch",
@@ -408,3 +409,178 @@ def test_tempo_strategy(tmp_path, monkeypatch, strategy, expected):
     pm = pretty_midi.PrettyMIDI(str(out_dir / f"{song_dir.name}.mid"))
     _, tempi = pm.get_tempo_changes()
     assert tempi[0] == pytest.approx(expected)
+
+
+def test_tempo_lock_anchor_fold_halves(tmp_path, monkeypatch):
+    song_dir = tmp_path / "song"
+    out_dir = tmp_path / "out"
+    song_dir.mkdir()
+    sr = 22050
+    t = np.linspace(0, 1, sr, False)
+    wave = 0.1 * np.sin(2 * np.pi * 440 * t)
+    _write(song_dir / "drum.wav", wave, sr)
+    _write(song_dir / "bass.wav", wave, sr)
+
+    def stub(path: Path, **_):
+        inst = pretty_midi.Instrument(program=0, name=path.stem)
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=0.1))
+        tempo = 110.3 if "drum" in path.stem else 55.1
+        return types.SimpleNamespace(instrument=inst, tempo=tempo)
+
+    monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", stub)
+
+    audio_to_midi_batch.main(
+        [
+            str(song_dir),
+            str(out_dir),
+            "--tempo-lock",
+            "anchor",
+            "--tempo-anchor-pattern",
+            "(?i)drum",
+            "--tempo-fold-halves",
+        ]
+    )
+    midi_dir = out_dir / song_dir.name
+    tempos = set()
+    for p in midi_dir.glob("*.mid"):
+        _, tempi = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
+        tempos.add(round(float(tempi[0]), 1))
+    assert tempos == {round(110.3, 1)}
+
+
+def test_tempo_lock_median_fold_halves(tmp_path, monkeypatch):
+    song_dir = tmp_path / "song"
+    out_dir = tmp_path / "out"
+    song_dir.mkdir()
+    sr = 22050
+    t = np.linspace(0, 1, sr, False)
+    wave = 0.1 * np.sin(2 * np.pi * 440 * t)
+    _write(song_dir / "a.wav", wave, sr)
+    _write(song_dir / "b.wav", wave, sr)
+    _write(song_dir / "c.wav", wave, sr)
+
+    tempos = {"a": 110.3, "b": 55.1, "c": 220.6}
+
+    def stub(path: Path, **_):
+        inst = pretty_midi.Instrument(program=0, name=path.stem)
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=0.1))
+        tempo = tempos[path.stem]
+        return types.SimpleNamespace(instrument=inst, tempo=tempo)
+
+    monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", stub)
+
+    audio_to_midi_batch.main(
+        [
+            str(song_dir),
+            str(out_dir),
+            "--tempo-lock",
+            "median",
+            "--tempo-fold-halves",
+        ]
+    )
+    midi_dir = out_dir / song_dir.name
+    tempos_out = set()
+    for p in midi_dir.glob("*.mid"):
+        _, tempi = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
+        tempos_out.add(round(float(tempi[0]), 1))
+    assert tempos_out == {round(110.3, 1)}
+
+
+def test_tempo_lock_value(tmp_path, monkeypatch):
+    song_dir = tmp_path / "song"
+    out_dir = tmp_path / "out"
+    song_dir.mkdir()
+    sr = 22050
+    t = np.linspace(0, 1, sr, False)
+    wave = 0.1 * np.sin(2 * np.pi * 440 * t)
+    _write(song_dir / "a.wav", wave, sr)
+    _write(song_dir / "b.wav", wave, sr)
+
+    def stub(path: Path, **_):
+        inst = pretty_midi.Instrument(program=0, name=path.stem)
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=0.1))
+        tempo = 90.0 if path.stem == "a" else 150.0
+        return types.SimpleNamespace(instrument=inst, tempo=tempo)
+
+    monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", stub)
+
+    audio_to_midi_batch.main(
+        [
+            str(song_dir),
+            str(out_dir),
+            "--tempo-lock",
+            "value",
+            "--tempo-lock-value",
+            "128",
+        ]
+    )
+    midi_dir = out_dir / song_dir.name
+    tempos = set()
+    for p in midi_dir.glob("*.mid"):
+        _, tempi = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
+        tempos.add(int(round(float(tempi[0]))))
+    assert tempos == {128}
+
+
+def test_tempo_lock_none_default(tmp_path, monkeypatch):
+    song_dir = tmp_path / "song"
+    out_dir = tmp_path / "out"
+    song_dir.mkdir()
+    sr = 22050
+    t = np.linspace(0, 1, sr, False)
+    wave = 0.1 * np.sin(2 * np.pi * 440 * t)
+    _write(song_dir / "a.wav", wave, sr)
+    _write(song_dir / "b.wav", wave, sr)
+
+    tempos = {"a": 100.0, "b": 150.0}
+
+    def stub(path: Path, **_):
+        inst = pretty_midi.Instrument(program=0, name=path.stem)
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=0.1))
+        tempo = tempos[path.stem]
+        return types.SimpleNamespace(instrument=inst, tempo=tempo)
+
+    monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", stub)
+
+    audio_to_midi_batch.main([str(song_dir), str(out_dir)])
+    midi_dir = out_dir / song_dir.name
+    tempos_out = set()
+    for p in midi_dir.glob("*.mid"):
+        _, tempi = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
+        tempos_out.add(int(round(float(tempi[0]))))
+    assert tempos_out == {100, 150}
+
+
+def test_tempo_lock_merge_anchor(tmp_path, monkeypatch):
+    song_dir = tmp_path / "song"
+    out_dir = tmp_path / "out"
+    song_dir.mkdir()
+    sr = 22050
+    t = np.linspace(0, 1, sr, False)
+    wave = 0.1 * np.sin(2 * np.pi * 440 * t)
+    _write(song_dir / "drum.wav", wave, sr)
+    _write(song_dir / "bass.wav", wave, sr)
+
+    def stub(path: Path, **_):
+        inst = pretty_midi.Instrument(program=0, name=path.stem)
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=0.1))
+        tempo = 110.3 if "drum" in path.stem else 55.1
+        return types.SimpleNamespace(instrument=inst, tempo=tempo)
+
+    monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", stub)
+
+    audio_to_midi_batch.main(
+        [
+            str(song_dir),
+            str(out_dir),
+            "--merge",
+            "--tempo-lock",
+            "anchor",
+            "--tempo-anchor-pattern",
+            "(?i)drum",
+            "--tempo-fold-halves",
+        ]
+    )
+    midi_path = out_dir / f"{song_dir.name}.mid"
+    _, tempi = pretty_midi.PrettyMIDI(str(midi_path)).get_tempo_changes()
+    assert round(float(tempi[0]), 1) == round(110.3, 1)

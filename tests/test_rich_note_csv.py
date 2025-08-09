@@ -1,9 +1,11 @@
 import csv
 from pathlib import Path
 
-import pretty_midi
+import pytest
 import importlib.util
 import sys
+
+pretty_midi = pytest.importorskip("pretty_midi")
 
 SPEC = importlib.util.spec_from_file_location(
     "rich_note_csv", Path(__file__).resolve().parents[1] / "utilities" / "rich_note_csv.py"
@@ -15,7 +17,15 @@ SPEC.loader.exec_module(rich_note_csv)
 build_note_csv = rich_note_csv.build_note_csv
 
 
-def make_midi(path: Path, *, time_signature=(4, 4), notes=None, cc=False, bend=False):
+def make_midi(
+    path: Path,
+    *,
+    time_signature=(4, 4),
+    notes=None,
+    cc=False,
+    bend=False,
+    cc11=False,
+):
     pm = pretty_midi.PrettyMIDI()
     num, den = time_signature
     pm.time_signature_changes.append(pretty_midi.TimeSignature(num, den, 0))
@@ -24,6 +34,8 @@ def make_midi(path: Path, *, time_signature=(4, 4), notes=None, cc=False, bend=F
         inst.notes.append(pretty_midi.Note(velocity=100, pitch=pitch, start=start, end=end))
     if cc:
         inst.control_changes.append(pretty_midi.ControlChange(number=64, value=127, time=0))
+    if cc11:
+        inst.control_changes.append(pretty_midi.ControlChange(number=11, value=100, time=0))
     if bend:
         inst.pitch_bends.append(pretty_midi.PitchBend(pitch=8191, time=0))
     pm.instruments.append(inst)
@@ -66,3 +78,16 @@ def test_cc_bend_flags(tmp_path):
     with out2.open() as f:
         header2 = next(csv.reader(f))
     assert "CC64" in header2 and "bend" in header2
+
+
+def test_include_cc11(tmp_path):
+    midi = tmp_path / "cc.mid"
+    make_midi(midi, notes=[(0, 1, 60)], cc11=True)
+    out = tmp_path / "cc.csv"
+    build_note_csv(tmp_path, out, include_cc11=True)
+    with out.open() as f:
+        reader = csv.DictReader(f)
+        header = reader.fieldnames
+        rows = list(reader)
+    assert header is not None and "cc11_onset" in header and "cc11_mean" in header
+    assert rows[0]["cc11_onset"] == "100"

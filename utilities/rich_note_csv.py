@@ -26,6 +26,8 @@ class NoteRow:
     q_duration: float
     cc64: Optional[int] = None
     cc64_ratio: Optional[float] = None
+    cc11_onset: Optional[int] = None
+    cc11_mean: Optional[float] = None
     bend: Optional[int] = None
     bend_range: Optional[int] = None
     bend_max_semi: Optional[float] = None
@@ -90,6 +92,24 @@ def _active_ratio(
         prev_val = _last_value(times, values, t)
         prev_time = t
     return active / duration if duration > 0 else None
+
+
+def _mean_value(
+    times: List[float], values: List[int], start: float, end: float
+) -> Optional[float]:
+    """Return mean controller value within [start, end]."""
+    if not times or end <= start:
+        return None
+    events = [start] + [t for t in times if start < t < end] + [end]
+    prev_val = _last_value(times, values, start)
+    total = 0.0
+    prev_time = start
+    for t in events[1:]:
+        total += prev_val * (t - prev_time)
+        prev_val = _last_value(times, values, t)
+        prev_time = t
+    duration = end - start
+    return total / duration if duration > 0 else None
 
 
 def _sample_bend(
@@ -162,6 +182,9 @@ def scan_midi_files(
     include_cc: bool,
     include_bend: bool,
     bend_events: Optional[Path] = None,
+    *,
+    include_cc11: bool = False,
+    cc_events: Optional[Path] = None,
 ) -> List[NoteRow]:
     """Return rows of rich note data from ``paths``."""
     if pretty_midi is None:  # pragma: no cover - handled at runtime
@@ -186,6 +209,8 @@ def scan_midi_files(
             for track_idx, inst in enumerate(pm.instruments):
                 cc_times: List[float] = []
                 cc_vals: List[int] = []
+                cc11_times: List[float] = []
+                cc11_vals: List[int] = []
                 if include_cc:
                     pairs = sorted(
                         (float(cc.time), cc.value)
@@ -194,6 +219,14 @@ def scan_midi_files(
                     )
                     if pairs:
                         cc_times, cc_vals = map(list, zip(*pairs))
+                if include_cc11:
+                    pairs = sorted(
+                        (float(cc.time), cc.value)
+                        for cc in inst.control_changes
+                        if cc.number == 11
+                    )
+                    if pairs:
+                        cc11_times, cc11_vals = map(list, zip(*pairs))
                 bend_times: List[float] = []
                 bend_vals: List[int] = []
                 range_times: List[float] = []
@@ -228,6 +261,16 @@ def scan_midi_files(
                     cc64_ratio = (
                         _active_ratio(cc_times, cc_vals, start, end)
                         if include_cc
+                        else None
+                    )
+                    cc11_on = (
+                        _last_value(cc11_times, cc11_vals, start)
+                        if (include_cc11 and cc11_times)
+                        else None
+                    )
+                    cc11_mean = (
+                        _mean_value(cc11_times, cc11_vals, start, end)
+                        if include_cc11
                         else None
                     )
                     if include_bend:
@@ -274,6 +317,8 @@ def scan_midi_files(
                             q_duration=q_duration,
                             cc64=cc64,
                             cc64_ratio=cc64_ratio,
+                            cc11_onset=cc11_on,
+                            cc11_mean=cc11_mean,
                             bend=bend,
                             bend_range=bend_range,
                             bend_max_semi=bend_max_semi,
@@ -291,6 +336,16 @@ def scan_midi_files(
                 process(writer)
         else:
             process(None)
+        if include_cc11 and cc_events is not None:
+            cc_events.mkdir(parents=True, exist_ok=True)
+            ev_path = cc_events / f"{path.stem}_cc11_events.csv"
+            with ev_path.open("w", newline="") as fh:
+                writer = csv.writer(fh)
+                writer.writerow(["time", "value", "track"])
+                for track_idx, inst in enumerate(pm.instruments):
+                    for cc in inst.control_changes:
+                        if cc.number == 11:
+                            writer.writerow([float(cc.time), cc.value, track_idx])
     return rows
 
 
@@ -300,10 +355,20 @@ def build_note_csv(
     include_cc: bool = True,
     include_bend: bool = True,
     bend_events: Optional[Path] = None,
+    *,
+    include_cc11: bool = False,
+    cc_events: Optional[Path] = None,
 ) -> None:
     """Extract rich note data from ``src`` MIDI folder into ``out`` CSV."""
     midi_paths = sorted(src.rglob("*.mid"))
-    rows = scan_midi_files(midi_paths, include_cc, include_bend, bend_events)
+    rows = scan_midi_files(
+        midi_paths,
+        include_cc,
+        include_bend,
+        bend_events,
+        include_cc11=include_cc11,
+        cc_events=cc_events,
+    )
 
     out.parent.mkdir(parents=True, exist_ok=True)
     headers = [
@@ -319,6 +384,8 @@ def build_note_csv(
     ]
     if include_cc:
         headers.extend(["CC64", "cc64_ratio"])
+    if include_cc11:
+        headers.extend(["cc11_onset", "cc11_mean"])
     if include_bend:
         headers.extend(
             ["bend", "bend_range", "bend_max_semi", "bend_rms_semi", "vib_rate_hz"]
@@ -335,6 +402,11 @@ def build_note_csv(
             else:
                 data.pop("cc64")
                 data.pop("cc64_ratio")
+            if not include_cc11:
+                data.pop("cc11_onset")
+                data.pop("cc11_mean")
+            else:
+                pass
             if not include_bend:
                 data.pop("bend")
                 data.pop("bend_range")
@@ -365,12 +437,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-cc", action="store_true", help="Exclude sustain pedal column")
     p.add_argument("--no-bend", action="store_true", help="Exclude pitch bend column")
     p.add_argument(
+        "--include-cc11",
+        action="store_true",
+        help="Include CC11 onset/mean columns",
+    )
+    p.add_argument(
         "--coverage", type=Path, help="Compute coverage stats for an existing CSV"
     )
     p.add_argument(
         "--emit-bend-events",
         type=Path,
         help="Directory to write raw pitch-bend events as CSV",
+    )
+    p.add_argument(
+        "--emit-cc-events",
+        type=Path,
+        help="Directory to write raw CC11 events as CSV",
     )
     args = p.parse_args(argv)
 
@@ -387,6 +469,8 @@ def main(argv: list[str] | None = None) -> int:
         include_cc=not args.no_cc,
         include_bend=not args.no_bend,
         bend_events=args.emit_bend_events,
+        include_cc11=args.include_cc11,
+        cc_events=args.emit_cc_events,
     )
     print(f"✅ Rich note CSV generated: {args.out}")
     return 0

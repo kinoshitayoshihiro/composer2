@@ -116,14 +116,108 @@ def _emit_pitch_bend_range(
     inst: pretty_midi.Instrument, bend_range_semitones: float, *, t: float = 0.0
 ) -> None:
     """Insert RPN 0,0 events to set pitch-bend range."""
-    msb = int(max(0, min(127, int(bend_range_semitones))))
-    lsb = 64 if (bend_range_semitones - msb) >= 0.5 else 0
+    msb = int(max(0, min(127, math.floor(bend_range_semitones))))
+    frac = bend_range_semitones - msb
+    lsb = int(max(0, min(127, round(frac * 100))))
     cc = inst.control_changes
     cc.append(pretty_midi.ControlChange(number=101, value=0, time=float(t)))
     cc.append(pretty_midi.ControlChange(number=100, value=0, time=float(t)))
     cc.append(pretty_midi.ControlChange(number=6, value=msb, time=float(t)))
     cc.append(pretty_midi.ControlChange(number=38, value=lsb, time=float(t)))
 
+
+def _generate_ccs(
+    audio: "np.ndarray | list[float]",
+    sr: int,
+    inst: pretty_midi.Instrument,
+    stem_name: str,
+    *,
+    cc_strategy: str,
+    cc11_smoothing_ms: int,
+    cc64_threshold: float,
+    cc64_instruments: list[str],
+    cc11_min_dt_ms: int,
+    cc11_min_delta: int,
+) -> None:
+    """Populate ``inst`` with CC11/CC64 events derived from ``audio``."""
+    if np is None or not len(audio):
+        return
+    hop = max(1, int(sr * 0.01))
+    env = None
+    if librosa is not None:
+        try:
+            env = librosa.feature.rms(y=audio, hop_length=hop)[0]
+        except Exception:  # pragma: no cover
+            env = None
+    if env is None:
+        win = hop
+        padded = np.pad(audio.astype(float), (win // 2, win // 2), mode="constant")
+        env = np.sqrt(
+            np.convolve(padded ** 2, np.ones(win) / win, mode="valid")[::hop]
+        )
+    if not env.size:
+        return
+    env = env - env.min()
+    if env.max() > 0:
+        env = env / env.max()
+    times = np.arange(env.size) * hop / sr
+
+    cc11_events = 0
+    if cc_strategy in {"energy", "rms"}:
+        alpha = hop / (sr * (cc11_smoothing_ms / 1000.0)) if cc11_smoothing_ms > 0 else 1.0
+        alpha = max(0.0, min(1.0, float(alpha)))
+        ema = 0.0
+        values = []
+        for e in env:
+            ema = alpha * e + (1 - alpha) * ema
+            values.append(ema)
+        prev = -1
+        last_t = -1.0
+        min_dt = cc11_min_dt_ms / 1000.0
+        for t, e in zip(times, values):
+            val = int(round(e * 127))
+            if prev != -1 and abs(val - prev) < cc11_min_delta:
+                continue
+            if last_t != -1.0 and (t - last_t) < min_dt:
+                continue
+            inst.control_changes.append(
+                pretty_midi.ControlChange(number=11, value=val, time=float(t))
+            )
+            prev = val
+            last_t = t
+            cc11_events += 1
+
+    cc64_events = 0
+    if cc64_threshold is not None and any(
+        k.strip().lower() in stem_name.lower() for k in cc64_instruments
+    ):
+        notes = sorted(inst.notes, key=lambda n: n.start)
+        for a, b in zip(notes, notes[1:]):
+            start = float(a.end)
+            end = float(b.start)
+            if end <= start:
+                continue
+            mask = (times >= start) & (times <= end)
+            if not mask.any():
+                continue
+            if env[mask].mean() >= cc64_threshold:
+                inst.control_changes.append(
+                    pretty_midi.ControlChange(number=64, value=127, time=start)
+                )
+                inst.control_changes.append(
+                    pretty_midi.ControlChange(
+                        number=64, value=0, time=max(start, end - 0.01)
+                    )
+                )
+                cc64_events += 2
+    if cc11_events or cc64_events:
+        logger.info(
+            "strategy=%s events_cc11=%d events_cc64=%d smoothing=%dms",
+            cc_strategy,
+            cc11_events,
+            cc64_events,
+            cc11_smoothing_ms,
+        )
 
 def _fallback_transcribe_stem(
     path: Path, *, min_dur: float, tempo: float | None = None
@@ -203,6 +297,12 @@ def _transcribe_stem(
     bend_range_semitones: float = 2.0,
     bend_alpha: float = 0.25,
     bend_fixed_base: bool = False,
+    cc_strategy: str = "none",
+    cc11_smoothing_ms: int = 80,
+    cc64_threshold: float = 0.6,
+    cc64_instruments: list[str] | None = None,
+    cc11_min_dt_ms: int = 30,
+    cc11_min_delta: int = 3,
 ) -> StemResult:
     """Transcribe a monophonic WAV file into a MIDI instrument.
 
@@ -222,9 +322,11 @@ def _transcribe_stem(
         if enable_bend:
             logger.info("Pitch-bend disabled: missing CREPE/librosa")
         tempo: float | None = None
+        audio = None
+        sr = 16000
         if auto_tempo and librosa is not None:
             try:
-                audio, sr = librosa.load(path, sr=16000, mono=True)
+                audio, sr = librosa.load(path, sr=sr, mono=True)
                 tempo, _ = librosa.beat.beat_track(y=audio, sr=sr, trim=False)
                 if not 40 <= tempo <= 300 or not math.isfinite(tempo):
                     tempo = None
@@ -232,7 +334,31 @@ def _transcribe_stem(
                     logger.info("Estimated %.1f BPM for %s", tempo, path.name)
             except Exception:  # pragma: no cover - tempo estimation is optional
                 tempo = None
-        return _fallback_transcribe_stem(path, min_dur=min_dur, tempo=tempo)
+        result = _fallback_transcribe_stem(path, min_dur=min_dur, tempo=tempo)
+        if audio is None:
+            try:
+                from scipy.io import wavfile
+
+                sr, data = wavfile.read(path)
+                audio = data.astype(float)
+                if audio.ndim > 1:
+                    audio = audio.mean(axis=1)
+            except Exception:  # pragma: no cover - best effort
+                audio = None
+        if audio is not None:
+            _generate_ccs(
+                audio,
+                sr,
+                result.instrument,
+                path.stem,
+                cc_strategy=cc_strategy,
+                cc11_smoothing_ms=cc11_smoothing_ms,
+                cc64_threshold=cc64_threshold,
+                cc64_instruments=cc64_instruments or ["piano", "ep", "keys"],
+                cc11_min_dt_ms=cc11_min_dt_ms,
+                cc11_min_delta=cc11_min_delta,
+            )
+        return StemResult(result.instrument, result.tempo)
 
     audio, sr = librosa.load(path, sr=16000, mono=True)
 
@@ -318,7 +444,18 @@ def _transcribe_stem(
             inst.pitch_bends.append(
                 pretty_midi.PitchBend(pitch=0, time=end_time)
             )
-
+    _generate_ccs(
+        audio,
+        sr,
+        inst,
+        path.stem,
+        cc_strategy=cc_strategy,
+        cc11_smoothing_ms=cc11_smoothing_ms,
+        cc64_threshold=cc64_threshold,
+        cc64_instruments=cc64_instruments or ["piano", "ep", "keys"],
+        cc11_min_dt_ms=cc11_min_dt_ms,
+        cc11_min_delta=cc11_min_delta,
+    )
     return StemResult(inst, tempo)
 
 
@@ -358,6 +495,13 @@ def convert_directory(
     bend_range_semitones: float = 2.0,
     bend_alpha: float = 0.25,
     bend_fixed_base: bool = False,
+    cc_strategy: str = "none",
+    cc11_smoothing_ms: int = 80,
+    cc64_threshold: float = 0.6,
+    cc64_instruments: list[str] | None = None,
+    cc11_min_dt_ms: int = 30,
+    cc11_min_delta: int = 3,
+    controls_post_bend: str = "skip",
 ) -> None:
     """Convert a directory of stems into individual MIDI files.
 
@@ -428,6 +572,12 @@ def convert_directory(
                                 bend_range_semitones=bend_range_semitones,
                                 bend_alpha=bend_alpha,
                                 bend_fixed_base=bend_fixed_base,
+                                cc_strategy=cc_strategy,
+                                cc11_smoothing_ms=cc11_smoothing_ms,
+                                cc64_threshold=cc64_threshold,
+                                cc64_instruments=cc64_instruments,
+                                cc11_min_dt_ms=cc11_min_dt_ms,
+                                cc11_min_delta=cc11_min_delta,
                             ), start)
                         )
                     for fut, start in futures:
@@ -448,6 +598,12 @@ def convert_directory(
                         bend_range_semitones=bend_range_semitones,
                         bend_alpha=bend_alpha,
                         bend_fixed_base=bend_fixed_base,
+                        cc_strategy=cc_strategy,
+                        cc11_smoothing_ms=cc11_smoothing_ms,
+                        cc64_threshold=cc64_threshold,
+                        cc64_instruments=cc64_instruments,
+                        cc11_min_dt_ms=cc11_min_dt_ms,
+                        cc11_min_delta=cc11_min_delta,
                     )
                     if res.tempo is not None:
                         tempos.append(res.tempo)
@@ -533,6 +689,12 @@ def convert_directory(
                                 bend_range_semitones=bend_range_semitones,
                                 bend_alpha=bend_alpha,
                                 bend_fixed_base=bend_fixed_base,
+                                cc_strategy=cc_strategy,
+                                cc11_smoothing_ms=cc11_smoothing_ms,
+                                cc64_threshold=cc64_threshold,
+                                cc64_instruments=cc64_instruments,
+                                cc11_min_dt_ms=cc11_min_dt_ms,
+                                cc11_min_delta=cc11_min_delta,
                             )
                         ] = (base, midi_path, start)
                     for fut in as_completed(futures):
@@ -573,6 +735,12 @@ def convert_directory(
                         bend_range_semitones=bend_range_semitones,
                         bend_alpha=bend_alpha,
                         bend_fixed_base=bend_fixed_base,
+                        cc_strategy=cc_strategy,
+                        cc11_smoothing_ms=cc11_smoothing_ms,
+                        cc64_threshold=cc64_threshold,
+                        cc64_instruments=cc64_instruments,
+                        cc11_min_dt_ms=cc11_min_dt_ms,
+                        cc11_min_delta=cc11_min_delta,
                     )
                     inst = res.instrument
                     tempo = res.tempo
@@ -694,6 +862,48 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Reference deviations to note onsets for smoother portamento",
     )
+    parser.add_argument(
+        "--cc-strategy",
+        choices=["none", "energy", "rms"],
+        default="none",
+        help="Derive CC11 from audio energy using the chosen strategy",
+    )
+    parser.add_argument(
+        "--cc11-smoothing-ms",
+        type=int,
+        default=80,
+        help="Smoothing window for CC11 envelope in milliseconds",
+    )
+    parser.add_argument(
+        "--cc64-threshold",
+        type=float,
+        default=0.6,
+        help="Energy threshold for heuristic sustain pedal insertion",
+    )
+    parser.add_argument(
+        "--cc64-instruments",
+        type=str,
+        default="piano,ep,keys",
+        help="Comma-separated substrings enabling sustain heuristic",
+    )
+    parser.add_argument(
+        "--cc11-min-dt-ms",
+        type=int,
+        default=30,
+        help="Minimum interval between successive CC11 events",
+    )
+    parser.add_argument(
+        "--cc11-min-delta",
+        type=int,
+        default=3,
+        help="Minimum value change between CC11 events",
+    )
+    parser.add_argument(
+        "--controls-post-bend",
+        choices=["skip", "add", "replace"],
+        default="skip",
+        help="How to merge synthesized controls after existing pitch bends",
+    )
     args = parser.parse_args(argv)
 
     convert_directory(
@@ -712,6 +922,13 @@ def main(argv: list[str] | None = None) -> None:
         bend_range_semitones=args.bend_range_semitones,
         bend_alpha=args.bend_alpha,
         bend_fixed_base=args.bend_fixed_base,
+        cc_strategy=args.cc_strategy,
+        cc11_smoothing_ms=args.cc11_smoothing_ms,
+        cc64_threshold=args.cc64_threshold,
+        cc64_instruments=[s.strip() for s in args.cc64_instruments.split(",") if s.strip()],
+        cc11_min_dt_ms=args.cc11_min_dt_ms,
+        cc11_min_delta=args.cc11_min_delta,
+        controls_post_bend=args.controls_post_bend,
     )
 
 

@@ -252,6 +252,18 @@ multi-track MIDI per song. Tempo is estimated automatically; pass
 DAW—Ableton Live, for example—and the project BPM will be auto-filled from the
 embedded tempo event.
 
+Expression and sustain controllers can be synthesized directly from the audio
+with `--cc-strategy energy` or `rms`. These modes generate CC11 values roughly
+every 10 ms, smoothed by `--cc11-smoothing-ms` (default 80 ms). For piano-like
+stems, `--cc64-threshold` heuristically inserts sustain-pedal (CC64) on/off
+events when energy remains above the given threshold between notes. Additional
+flags like `--cc64-instruments`, `--cc11-min-dt-ms`, and `--cc11-min-delta`
+control sustain targets and CC11 sparsification. A typical preset is
+`--cc-strategy energy --cc11-smoothing-ms 80 --cc11-min-dt-ms 30 --cc11-min-delta 3`.
+`--controls-post-bend` governs how any synthesized vibrato or portamento curves
+interact with existing pitch bends (`skip`, `add`, or `replace`).
+
+
 Tempo unification:
 Use `--tempo-lock` to enforce a single BPM per song folder (merged output via
 `--merge` also receives this locked tempo):
@@ -267,9 +279,25 @@ Use `--tempo-lock` to enforce a single BPM per song folder (merged output via
 
 Without `--tempo-lock` (default), each stem keeps its own estimated tempo.
 
+
 ```bash
 python -m utilities.audio_to_midi_batch input/ output/ --ext wav,flac --resume
 ```
+
+### Control Curve Regression
+
+`scripts/train_controls.py` and `scripts/infer_controls.py` provide a
+lightweight spline-based model for CC11 and pitch-bend curves. These commands
+run even without heavy ML dependencies:
+
+```bash
+python scripts/train_controls.py notes.parquet -o model.json --targets bend,cc11
+python scripts/infer_controls.py -m model.json -o pred.parquet
+```
+
+Generators built on `BasePartGenerator` now accept optional pitch-bend settings
+(`bend_depth_semitones`, `vibrato_rate_hz`, `portamento_ms`, `vibrato_shape`)
+which can be passed via configuration to synthesize vibrato or portamento.
 
 ### Duration CSV Extraction
 

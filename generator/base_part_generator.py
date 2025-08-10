@@ -1,8 +1,10 @@
 # --- START OF FILE generator/base_part_generator.py (修正版) ---
 import logging
+import math
 import random
 import statistics
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
 
 from music21 import meter, stream
@@ -17,6 +19,7 @@ from utilities import fx_envelope
 from utilities.cc_tools import finalize_cc_events, merge_cc_events
 from utilities.tone_shaper import ToneShaper
 from utilities.velocity_utils import scale_velocity
+from data.export_pretty import stream_to_pretty_midi
 
 try:
     from utilities.humanizer import apply as humanize_apply
@@ -34,6 +37,84 @@ except ModuleNotFoundError as e:
         "Missing optional utilities. Please install dependencies via "
         "'pip install -r requirements.txt'."
     ) from e
+
+
+@dataclass
+class ControlConfig:
+    enable_bend: bool = True
+    bend_depth_semitones: float = 2.0
+    vibrato_rate_hz: float | None = None
+    vibrato_depth_semitones: float = 0.2
+    portamento_ms: int = 0
+    enable_cc11: bool = True
+    cc11_profile: str = "auto"  # "auto" | "flat" | "adsr"
+    cc11_sustain_level: int = 90
+    cc11_attack_ms: int = 20
+    cc11_release_ms: int = 60
+    enable_cc64: bool = False
+
+
+def apply_controls(inst, cfg: ControlConfig) -> None:
+    """Apply simple CC11, CC64, and vibrato templates to ``inst``."""
+    try:
+        import pretty_midi
+    except Exception:  # pragma: no cover - optional dependency
+        return
+    if cfg.enable_cc11 and inst.notes:
+        start = float(inst.notes[0].start)
+        end = float(inst.notes[-1].end)
+        if cfg.cc11_profile == "flat":
+            inst.control_changes.append(
+                pretty_midi.ControlChange(
+                    number=11, value=cfg.cc11_sustain_level, time=start
+                )
+            )
+        else:  # "auto" or "adsr"
+            atk = start + cfg.cc11_attack_ms / 1000.0
+            rel = end + cfg.cc11_release_ms / 1000.0
+            inst.control_changes.extend(
+                [
+                    pretty_midi.ControlChange(number=11, value=0, time=start),
+                    pretty_midi.ControlChange(
+                        number=11, value=cfg.cc11_sustain_level, time=atk
+                    ),
+                    pretty_midi.ControlChange(number=11, value=0, time=rel),
+                ]
+            )
+        if not any(
+            cc.number == 11 and cc.value == 0 and cc.time >= end
+            for cc in inst.control_changes
+        ):
+            inst.control_changes.append(
+                pretty_midi.ControlChange(number=11, value=0, time=end)
+            )
+    if cfg.enable_cc64 and inst.notes:
+        start = float(inst.notes[0].start)
+        end = float(inst.notes[-1].end)
+        if not any(cc.number == 64 and cc.value >= 64 for cc in inst.control_changes):
+            inst.control_changes.append(
+                pretty_midi.ControlChange(number=64, value=127, time=start)
+            )
+        if not any(
+            cc.number == 64 and cc.value == 0 and cc.time >= end
+            for cc in inst.control_changes
+        ):
+            inst.control_changes.append(
+                pretty_midi.ControlChange(number=64, value=0, time=end)
+            )
+    if cfg.enable_bend and cfg.vibrato_rate_hz and inst.notes:
+        base = float(inst.notes[0].start)
+        end = float(inst.notes[-1].end)
+        depth = int(
+            round(8191 * (cfg.vibrato_depth_semitones / max(cfg.bend_depth_semitones, 1e-5)))
+        )
+        t = base
+        step = 1.0 / (cfg.vibrato_rate_hz * 8)
+        while t <= end:
+            val = int(round(depth * math.sin(2 * math.pi * (t - base) * cfg.vibrato_rate_hz)))
+            inst.pitch_bends.append(pretty_midi.PitchBend(pitch=val, time=float(t)))
+            t += step
+        inst.pitch_bends.append(pretty_midi.PitchBend(pitch=0, time=float(end)))
 
 
 class BasePartGenerator(ABC):
@@ -56,6 +137,7 @@ class BasePartGenerator(ABC):
         vibrato_rate_hz: float | None = None,
         portamento_ms: float | None = None,
         vibrato_shape: str = "sine",
+        control_config: ControlConfig | None = None,
         **kwargs,
     ):
         # optional contextual parameters; shim for backwards compatibility
@@ -64,6 +146,7 @@ class BasePartGenerator(ABC):
         emotion = kwargs.pop("emotion", None)
 
         self.global_settings = global_settings or {}
+        self.control_config = control_config
         self.part_name = kwargs.get("part_name")
         self.default_instrument = default_instrument
         self.emotion = emotion
@@ -416,6 +499,30 @@ class BasePartGenerator(ABC):
             self._apply_velocity_model(part)
             self._apply_duration_model(part)
             finalize_cc_events(part)
+            cfg = self.control_config or ControlConfig()
+            try:
+                pm = stream_to_pretty_midi(part)
+                if pm.instruments:
+                    inst_pm = pm.instruments[0]
+                    apply_controls(inst_pm, cfg)
+                    extra = [
+                        {"time": cc.time, "cc": cc.number, "val": cc.value}
+                        for cc in inst_pm.control_changes
+                    ]
+                    if inst_pm.pitch_bends:
+                        extra.extend(
+                            {
+                                "time": pb.time,
+                                "cc": -1,
+                                "val": pb.pitch,
+                            }
+                            for pb in inst_pm.pitch_bends
+                        )
+                    if extra:
+                        base = getattr(part, "extra_cc", [])
+                        part.extra_cc = merge_cc_events(base, extra)
+            except Exception:  # pragma: no cover - best effort
+                pass
             self._last_section = section_data
             return part
 

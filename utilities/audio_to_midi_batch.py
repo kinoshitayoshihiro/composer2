@@ -42,6 +42,7 @@ import re
 import statistics
 import time
 import unicodedata
+import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,6 +64,8 @@ try:  # Optional heavy deps
     import librosa  # type: ignore
 except Exception:  # pragma: no cover - handled by fallback
     librosa = None  # type: ignore
+
+from . import cc_utils
 
 
 @dataclass(frozen=True)
@@ -149,98 +152,6 @@ def _emit_pitch_bend_range(
     cc.append(pretty_midi.ControlChange(number=38, value=lsb, time=float(t)))
 
 
-def _generate_ccs(
-    audio: "np.ndarray | list[float]",
-    sr: int,
-    inst: pretty_midi.Instrument,
-    stem_name: str,
-    *,
-    cc_strategy: str,
-    cc11_smoothing_ms: int,
-    cc64_threshold: float,
-    cc64_instruments: list[str],
-    cc11_min_dt_ms: int,
-    cc11_min_delta: int,
-) -> None:
-    """Populate ``inst`` with CC11/CC64 events derived from ``audio``."""
-    if np is None or not len(audio):
-        return
-    hop = max(1, int(sr * 0.01))
-    env = None
-    if librosa is not None:
-        try:
-            env = librosa.feature.rms(y=audio, hop_length=hop)[0]
-        except Exception:  # pragma: no cover
-            env = None
-    if env is None:
-        win = hop
-        padded = np.pad(audio.astype(float), (win // 2, win // 2), mode="constant")
-        env = np.sqrt(
-            np.convolve(padded ** 2, np.ones(win) / win, mode="valid")[::hop]
-        )
-    if not env.size:
-        return
-    env = env - env.min()
-    if env.max() > 0:
-        env = env / env.max()
-    times = np.arange(env.size) * hop / sr
-
-    cc11_events = 0
-    if cc_strategy in {"energy", "rms"}:
-        alpha = hop / (sr * (cc11_smoothing_ms / 1000.0)) if cc11_smoothing_ms > 0 else 1.0
-        alpha = max(0.0, min(1.0, float(alpha)))
-        ema = 0.0
-        values = []
-        for e in env:
-            ema = alpha * e + (1 - alpha) * ema
-            values.append(ema)
-        prev = -1
-        last_t = -1.0
-        min_dt = cc11_min_dt_ms / 1000.0
-        for t, e in zip(times, values):
-            val = int(round(e * 127))
-            if prev != -1 and abs(val - prev) < cc11_min_delta:
-                continue
-            if last_t != -1.0 and (t - last_t) < min_dt:
-                continue
-            inst.control_changes.append(
-                pretty_midi.ControlChange(number=11, value=val, time=float(t))
-            )
-            prev = val
-            last_t = t
-            cc11_events += 1
-
-    cc64_events = 0
-    if cc64_threshold is not None and any(
-        k.strip().lower() in stem_name.lower() for k in cc64_instruments
-    ):
-        notes = sorted(inst.notes, key=lambda n: n.start)
-        for a, b in zip(notes, notes[1:]):
-            start = float(a.end)
-            end = float(b.start)
-            if end <= start:
-                continue
-            mask = (times >= start) & (times <= end)
-            if not mask.any():
-                continue
-            if env[mask].mean() >= cc64_threshold:
-                inst.control_changes.append(
-                    pretty_midi.ControlChange(number=64, value=127, time=start)
-                )
-                inst.control_changes.append(
-                    pretty_midi.ControlChange(
-                        number=64, value=0, time=max(start, end - 0.01)
-                    )
-                )
-                cc64_events += 2
-    if cc11_events or cc64_events:
-        logger.info(
-            "strategy=%s events_cc11=%d events_cc64=%d smoothing=%dms",
-            cc_strategy,
-            cc11_events,
-            cc64_events,
-            cc11_smoothing_ms,
-        )
 
 def _fallback_transcribe_stem(
     path: Path, *, min_dur: float, tempo: float | None = None
@@ -352,8 +263,7 @@ def _transcribe_stem(
     bend_fixed_base: bool = False,
     cc_strategy: str = "none",
     cc11_smoothing_ms: int = 80,
-    cc64_threshold: float = 0.6,
-    cc64_instruments: list[str] | None = None,
+    sustain_threshold: float = 0.12,
     cc11_min_dt_ms: int = 30,
     cc11_min_delta: int = 3,
 ) -> StemResult:
@@ -398,19 +308,46 @@ def _transcribe_stem(
                     audio = audio.mean(axis=1)
             except Exception:  # pragma: no cover - best effort
                 audio = None
-        if audio is not None:
-            _generate_ccs(
-                audio,
-                sr,
-                result.instrument,
-                path.stem,
-                cc_strategy=cc_strategy,
-                cc11_smoothing_ms=cc11_smoothing_ms,
-                cc64_threshold=cc64_threshold,
-                cc64_instruments=cc64_instruments or ["piano", "ep", "keys"],
-                cc11_min_dt_ms=cc11_min_dt_ms,
-                cc11_min_delta=cc11_min_delta,
+        if audio is not None and cc_strategy in {"energy", "rms"}:
+            events = cc_utils.energy_to_cc11(
+                audio, sr, smooth_ms=cc11_smoothing_ms, strategy=cc_strategy
             )
+            prev = -1
+            last_t = -1.0
+            min_dt = cc11_min_dt_ms / 1000.0
+            for t, val in events:
+                if prev != -1 and abs(val - prev) < cc11_min_delta:
+                    continue
+                if last_t != -1.0 and (t - last_t) < min_dt:
+                    continue
+                result.instrument.control_changes.append(
+                    pretty_midi.ControlChange(number=11, value=int(val), time=float(t))
+                )
+                prev = val
+                last_t = t
+        if sustain_threshold <= 0:
+            cc11_count = sum(
+                1 for c in result.instrument.control_changes if c.number == 11
+            )
+            logger.info("CC11=%d events, CC64_on=0", cc11_count)
+            return StemResult(result.instrument, result.tempo)
+        if any(
+            k in path.stem.lower() for k in ["piano", "ep", "rhodes", "keys"]
+        ):
+            cc64_events = list(
+                cc_utils.infer_cc64_from_overlaps(
+                    result.instrument.notes, sustain_threshold
+                )
+            )
+            for t, v in cc64_events:
+                result.instrument.control_changes.append(
+                    pretty_midi.ControlChange(number=64, value=v, time=float(t))
+                )
+            cc64_pairs = sum(1 for _, v in cc64_events if v >= 64)
+        else:
+            cc64_pairs = 0
+        cc11_count = sum(1 for c in result.instrument.control_changes if c.number == 11)
+        logger.info("CC11=%d events, CC64_on=%d", cc11_count, cc64_pairs)
         return StemResult(result.instrument, result.tempo)
 
     audio, sr = librosa.load(path, sr=16000, mono=True)
@@ -497,18 +434,37 @@ def _transcribe_stem(
             inst.pitch_bends.append(
                 pretty_midi.PitchBend(pitch=0, time=end_time)
             )
-    _generate_ccs(
-        audio,
-        sr,
-        inst,
-        path.stem,
-        cc_strategy=cc_strategy,
-        cc11_smoothing_ms=cc11_smoothing_ms,
-        cc64_threshold=cc64_threshold,
-        cc64_instruments=cc64_instruments or ["piano", "ep", "keys"],
-        cc11_min_dt_ms=cc11_min_dt_ms,
-        cc11_min_delta=cc11_min_delta,
-    )
+    if cc_strategy in {"energy", "rms"}:
+        events = cc_utils.energy_to_cc11(
+            audio, sr, smooth_ms=cc11_smoothing_ms, strategy=cc_strategy
+        )
+        prev = -1
+        last_t = -1.0
+        min_dt = cc11_min_dt_ms / 1000.0
+        for t, val in events:
+            if prev != -1 and abs(val - prev) < cc11_min_delta:
+                continue
+            if last_t != -1.0 and (t - last_t) < min_dt:
+                continue
+            inst.control_changes.append(
+                pretty_midi.ControlChange(number=11, value=int(val), time=float(t))
+            )
+            prev = val
+            last_t = t
+    if sustain_threshold <= 0:
+        cc11_count = sum(1 for c in inst.control_changes if c.number == 11)
+        logger.info("CC11=%d events, CC64_on=0", cc11_count)
+        return StemResult(inst, tempo)
+    cc64_events: list[tuple[float, int]] = []
+    if any(k in path.stem.lower() for k in ["piano", "ep", "rhodes", "keys"]):
+        cc64_events = list(cc_utils.infer_cc64_from_overlaps(inst.notes, sustain_threshold))
+        for t, v in cc64_events:
+            inst.control_changes.append(
+                pretty_midi.ControlChange(number=64, value=v, time=float(t))
+            )
+    cc64_pairs = sum(1 for _, v in cc64_events if v >= 64)
+    cc11_count = sum(1 for c in inst.control_changes if c.number == 11)
+    logger.info("CC11=%d events, CC64_on=%d", cc11_count, cc64_pairs)
     return StemResult(inst, tempo)
 
 
@@ -555,8 +511,7 @@ def convert_directory(
     bend_fixed_base: bool = False,
     cc_strategy: str = "none",
     cc11_smoothing_ms: int = 80,
-    cc64_threshold: float = 0.6,
-    cc64_instruments: list[str] | None = None,
+    sustain_threshold: float = 0.12,
     cc11_min_dt_ms: int = 30,
     cc11_min_delta: int = 3,
     controls_post_bend: str = "skip",
@@ -631,8 +586,7 @@ def convert_directory(
                                 bend_fixed_base=bend_fixed_base,
                                 cc_strategy=cc_strategy,
                                 cc11_smoothing_ms=cc11_smoothing_ms,
-                                cc64_threshold=cc64_threshold,
-                                cc64_instruments=cc64_instruments,
+                                sustain_threshold=sustain_threshold,
                                 cc11_min_dt_ms=cc11_min_dt_ms,
                                 cc11_min_delta=cc11_min_delta,
                             ), start)
@@ -657,8 +611,7 @@ def convert_directory(
                         bend_fixed_base=bend_fixed_base,
                         cc_strategy=cc_strategy,
                         cc11_smoothing_ms=cc11_smoothing_ms,
-                        cc64_threshold=cc64_threshold,
-                        cc64_instruments=cc64_instruments,
+                        sustain_threshold=sustain_threshold,
                         cc11_min_dt_ms=cc11_min_dt_ms,
                         cc11_min_delta=cc11_min_delta,
                     )
@@ -812,8 +765,7 @@ def convert_directory(
                                 bend_fixed_base=bend_fixed_base,
                                 cc_strategy=cc_strategy,
                                 cc11_smoothing_ms=cc11_smoothing_ms,
-                                cc64_threshold=cc64_threshold,
-                                cc64_instruments=cc64_instruments,
+                                sustain_threshold=sustain_threshold,
                                 cc11_min_dt_ms=cc11_min_dt_ms,
                                 cc11_min_delta=cc11_min_delta,
                             )
@@ -840,8 +792,7 @@ def convert_directory(
                         bend_fixed_base=bend_fixed_base,
                         cc_strategy=cc_strategy,
                         cc11_smoothing_ms=cc11_smoothing_ms,
-                        cc64_threshold=cc64_threshold,
-                        cc64_instruments=cc64_instruments,
+                        sustain_threshold=sustain_threshold,
                         cc11_min_dt_ms=cc11_min_dt_ms,
                         cc11_min_delta=cc11_min_delta,
                     )
@@ -1074,16 +1025,16 @@ def main(argv: list[str] | None = None) -> None:
         help="Smoothing window for CC11 envelope in milliseconds",
     )
     parser.add_argument(
-        "--cc64-threshold",
+        "--sustain-threshold",
         type=float,
-        default=0.6,
-        help="Energy threshold for heuristic sustain pedal insertion",
+        default=0.12,
+        help="Gap threshold in seconds for heuristic sustain-pedal insertion",
     )
     parser.add_argument(
-        "--cc64-instruments",
-        type=str,
-        default="piano,ep,keys",
-        help="Comma-separated substrings enabling sustain heuristic",
+        "--cc64-threshold",
+        dest="cc64_threshold",
+        type=float,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--cc11-min-dt-ms",
@@ -1104,6 +1055,15 @@ def main(argv: list[str] | None = None) -> None:
         help="How to merge synthesized controls after existing pitch bends",
     )
     args = parser.parse_args(argv)
+
+    if getattr(args, "cc64_threshold", None) is not None:
+        warnings.warn(
+            "--cc64-threshold is deprecated; use --sustain-threshold",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if args.sustain_threshold == parser.get_default("sustain_threshold"):
+            args.sustain_threshold = args.cc64_threshold
 
     if args.tempo_lock == "value" and args.tempo_lock_value is None:
         parser.error("--tempo-lock-value is required when --tempo-lock=value")
@@ -1131,8 +1091,7 @@ def main(argv: list[str] | None = None) -> None:
         bend_fixed_base=args.bend_fixed_base,
         cc_strategy=args.cc_strategy,
         cc11_smoothing_ms=args.cc11_smoothing_ms,
-        cc64_threshold=args.cc64_threshold,
-        cc64_instruments=[s.strip() for s in args.cc64_instruments.split(",") if s.strip()],
+        sustain_threshold=args.sustain_threshold,
         cc11_min_dt_ms=args.cc11_min_dt_ms,
         cc11_min_delta=args.cc11_min_delta,
         controls_post_bend=args.controls_post_bend,

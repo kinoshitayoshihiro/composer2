@@ -76,6 +76,16 @@ This installs the same list as
 
 `miditoolkit` will be used if `pretty_midi` is unavailable.
 
+Convert a piano stem with basic CC options:
+
+```bash
+python -m utilities.audio_to_midi_batch input/ output/ \
+    --cc11-strategy energy --cc11-map log --cc11-smooth-ms 80 \
+    --cc11-gain 1.0 --cc64-mode heuristic --cc64-gap-beats 0.25
+```
+
+Use `--cc64-mode heuristic` on piano-like stems to glue short gaps with sustain.
+
 
 ### Install from PyPI
 
@@ -85,6 +95,7 @@ pip install articulation-tagger==0.9.0
 
 ```python
 from music21 import converter
+
 from articulation_tagger import MLArticulationModel, predict_many
 
 model = MLArticulationModel(num_labels=9)
@@ -252,21 +263,32 @@ multi-track MIDI per song. Tempo is estimated automatically; pass
 DAW—Ableton Live, for example—and the project BPM will be auto-filled from the
 embedded tempo event.
 
-Expression and sustain controllers can be synthesized directly from the audio
-with `--cc-strategy energy` or `rms`. These modes generate CC11 values roughly
-every 10 ms, smoothed by `--cc11-smoothing-ms` (default 80 ms). For piano-like
-stems, `--cc64-threshold` heuristically inserts sustain-pedal (CC64) on/off
-events when energy remains above the given threshold between notes. Additional
-flags like `--cc64-instruments`, `--cc11-min-dt-ms`, and `--cc11-min-delta`
-control sustain targets and CC11 sparsification. A typical preset is
-`--cc-strategy energy --cc11-smoothing-ms 80 --cc11-min-dt-ms 30 --cc11-min-delta 3`.
-`--controls-post-bend` governs how any synthesized vibrato or portamento curves
-interact with existing pitch bends (`skip`, `add`, or `replace`).
+Expression (CC11) and sustain (CC64) controllers can be synthesized directly
+from the audio. `--cc11-strategy energy` (default) derives an RMS envelope
+smoothed by `--cc11-smooth-ms` (80 ms by default) and scaled by
+`--cc11-gain` before mapping to 0–127. `--cc11-map` selects linear or
+logarithmic mapping, while `--cc11-hyst-up`, `--cc11-hyst-down`, and
+`--cc11-min-dt-ms` control hysteresis and event density. Piano-like stems can
+enable `--cc64-mode heuristic` which links short inter-note gaps with
+`--cc64-gap-beats` and enforces a minimum dwell time via
+`--cc64-min-dwell-ms`. `--controls-post-bend` governs how any synthesized
+vibrato or portamento curves interact with existing pitch bends (`skip`,
+`add`, or `replace`). `--bend-integer-range` forces the pitch-bend range to
+whole semitones.
+
+Example:
+
+```bash
+python -m utilities.audio_to_midi_batch input/ output/ \
+    --cc11-strategy energy --cc11-map log --cc11-smooth-ms 80 \
+    --cc11-gain 1.0 --cc64-mode heuristic --cc64-gap-beats 0.25 --bend-integer-range
+```
 
 
 Tempo unification:
 Use `--tempo-lock` to enforce a single BPM per song folder (merged output via
-`--merge` also receives this locked tempo):
+`--merge` also receives this locked tempo). This inserts a single tempo event
+and does not time-stretch stems:
 
 - `--tempo-lock anchor --tempo-anchor-pattern "(?i)(drum|perc|beat)"`  
   Use the matched stem’s BPM as the song BPM.
@@ -504,26 +526,10 @@ tom_run_short:
 `export_random_walk_cc: true` を設定すると、ランダムウォーク値を CC20 として書き出せます。
 
 ## Running Tests
-
-
-Before running the tests make sure the requirements are installed:
+Install the core and optional audio dependencies, then run the tests:
 
 ```bash
-bash setup.sh
-```
-
-With the dependencies available you can verify the build with:
-Install the core requirements and the additional test packages before
-running any tests:
-
-```bash
-pip install -r requirements/base.txt
-pip install -r requirements-test.txt
-```
-
-Then verify the build with:
-
-```bash
+pip install -e '.[audio,test]'
 pytest -q
 ```
 Run coverage with:

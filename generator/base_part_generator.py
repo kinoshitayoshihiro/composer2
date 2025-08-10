@@ -1,6 +1,7 @@
 # --- START OF FILE generator/base_part_generator.py (修正版) ---
 import logging
 import random
+import re
 import statistics
 from abc import ABC, abstractmethod
 from typing import Any
@@ -14,7 +15,13 @@ except Exception:  # pragma: no cover - optional
     torch = None  # type: ignore
 
 from utilities import fx_envelope
-from utilities.cc_tools import finalize_cc_events, merge_cc_events
+
+try:  # pragma: no cover - optional add_cc_events
+    from utilities.cc_tools import add_cc_events, finalize_cc_events, merge_cc_events
+except ImportError:  # fallback if add_cc_events is absent
+    from utilities.cc_tools import finalize_cc_events, merge_cc_events
+
+    add_cc_events = None  # type: ignore
 from utilities.tone_shaper import ToneShaper
 from utilities.velocity_utils import scale_velocity
 
@@ -56,6 +63,7 @@ class BasePartGenerator(ABC):
         vibrato_rate_hz: float | None = None,
         portamento_ms: float | None = None,
         vibrato_shape: str = "sine",
+        controls: dict | None = None,
         **kwargs,
     ):
         # optional contextual parameters; shim for backwards compatibility
@@ -66,6 +74,13 @@ class BasePartGenerator(ABC):
         self.global_settings = global_settings or {}
         self.part_name = kwargs.get("part_name")
         self.default_instrument = default_instrument
+        self.controls = controls or {
+            "enable_cc11": False,
+            "cc11_shape": "pad",
+            "cc11_depth": 1.0,
+            "enable_sustain": False,
+            "sustain_mode": "heuristic",
+        }
         self.emotion = emotion
         self.global_tempo = tempo or global_tempo
         self.global_time_signature = global_time_signature or "4/4"
@@ -285,6 +300,86 @@ class BasePartGenerator(ABC):
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.debug("ML duration inference failed: %s", exc)
 
+    # --------------------------------------------------------------
+    # Continuous Controls
+    # --------------------------------------------------------------
+
+    def _is_piano_like(self) -> bool:
+        name = str(self.default_instrument).lower()
+        return bool(re.search(r"(piano|keys|ep|rhodes)", name))
+
+    def _build_cc11_events(self, part: stream.Part) -> list[tuple[float, int, int]]:
+        shape = self.controls.get("cc11_shape", "pad")
+        depth = float(self.controls.get("cc11_depth", 1.0))
+        params = {
+            "bowed": (0.1, 0.0, 1.0, 0.1),
+            "pluck": (0.01, 0.05, 0.4, 0.1),
+            "pad": (0.05, 0.0, 1.0, 0.2),
+        }
+        attack, decay, sustain, release = params.get(shape, params["pad"])
+        events: list[tuple[float, int, int]] = []
+        for n in part.recurse().notes:
+            start = float(n.offset)
+            end = float(n.offset + n.quarterLength)
+            atk = min(attack, max(0.0, end - start))
+            rel = min(release, max(0.0, end - start - atk))
+            dec = min(decay, max(0.0, end - start - atk - rel))
+            peak = int(round(127 * depth))
+            sus = int(round(127 * depth * sustain))
+            events.append((start, 11, 0))
+            events.append((start + atk, 11, peak))
+            if dec > 0:
+                events.append((start + atk + dec, 11, sus))
+            events.append((end - rel, 11, sus))
+            events.append((end, 11, 0))
+        return events
+
+    def _build_cc64_events(self, part: stream.Part) -> list[tuple[float, int, int]]:
+        notes = sorted(part.recurse().notes, key=lambda n: float(n.offset))
+        if len(notes) < 2:
+            return []
+        tempo = float(self.global_tempo or 120.0)
+        beat = 60.0 / tempo
+        thresh = beat * 0.25
+        min_dwell = 0.08
+        events: list[tuple[float, int, int]] = []
+        for a, b in zip(notes, notes[1:]):
+            a_end = float(a.offset + a.quarterLength)
+            b_start = float(b.offset)
+            gap = b_start - a_end
+            if 0 < gap < thresh:
+                on = a_end
+                off = max(a_end, b_start - 1e-3)
+                if off - on >= min_dwell:
+                    events.append((on, 64, 127))
+                    events.append((off, 64, 0))
+        out: list[tuple[float, int, int]] = []
+        last_val: int | None = None
+        for t, cc, v in sorted(events):
+            if v != last_val:
+                out.append((t, cc, v))
+                last_val = v
+        return out
+
+    def _apply_controls(self, part: stream.Part) -> None:
+        if not self.controls:
+            return
+        events: list[tuple[float, int, int]] = []
+        if self.controls.get("enable_cc11"):
+            events.extend(self._build_cc11_events(part))
+        if (
+            self.controls.get("enable_sustain")
+            and self.controls.get("sustain_mode", "heuristic") == "heuristic"
+            and self._is_piano_like()
+        ):
+            events.extend(self._build_cc64_events(part))
+        if events:
+            if add_cc_events is not None:
+                add_cc_events(part, events)
+            else:  # pragma: no cover - legacy fallback
+                existing = getattr(part, "extra_cc", [])
+                part.extra_cc = merge_cc_events(existing, events, as_dict=True)
+
     def compose(
         self,
         *,
@@ -415,6 +510,7 @@ class BasePartGenerator(ABC):
             self._apply_ml_velocity(part)
             self._apply_velocity_model(part)
             self._apply_duration_model(part)
+            self._apply_controls(part)
             finalize_cc_events(part)
             self._last_section = section_data
             return part

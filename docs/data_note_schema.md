@@ -23,7 +23,7 @@ Each row corresponds to a single note with the following columns:
 | `q_duration` | float | Duration in quarter-note units |
 | `CC64`*      | int   | Sustain pedal value (0–127) at onset |
 | `cc64_ratio`* | float | Fraction of note duration with sustain pedal active |
-| `cc11_onset`* | int | CC11 value at note onset |
+| `cc11_at_onset`* | int | CC11 value at note onset |
 | `cc11_mean`* | float | Mean CC11 value over the note duration |
 | `bend`*      | int   | Pitch-bend value at onset (−8192…8191) |
 | `bend_range`* | int   | Pitch-bend range in semitones (default ±2) |

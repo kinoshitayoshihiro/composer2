@@ -26,7 +26,7 @@ class NoteRow:
     q_duration: float
     cc64: Optional[int] = None
     cc64_ratio: Optional[float] = None
-    cc11_onset: Optional[int] = None
+    cc11_at_onset: Optional[int] = None
     cc11_mean: Optional[float] = None
     bend: Optional[int] = None
     bend_range: Optional[int] = None
@@ -317,7 +317,7 @@ def scan_midi_files(
                             q_duration=q_duration,
                             cc64=cc64,
                             cc64_ratio=cc64_ratio,
-                            cc11_onset=cc11_on,
+                            cc11_at_onset=cc11_on,
                             cc11_mean=cc11_mean,
                             bend=bend,
                             bend_range=bend_range,
@@ -385,7 +385,8 @@ def build_note_csv(
     if include_cc:
         headers.extend(["CC64", "cc64_ratio"])
     if include_cc11:
-        headers.extend(["cc11_onset", "cc11_mean"])
+        # Ensure CC11 columns are always emitted even when no CC events exist
+        headers.extend(["cc11_at_onset", "cc11_mean"])
     if include_bend:
         headers.extend(
             ["bend", "bend_range", "bend_max_semi", "bend_rms_semi", "vib_rate_hz"]
@@ -403,7 +404,7 @@ def build_note_csv(
                 data.pop("cc64")
                 data.pop("cc64_ratio")
             if not include_cc11:
-                data.pop("cc11_onset")
+                data.pop("cc11_at_onset")
                 data.pop("cc11_mean")
             else:
                 pass

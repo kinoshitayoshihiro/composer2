@@ -255,13 +255,14 @@ embedded tempo event.
 Expression and sustain controllers can be synthesized directly from the audio
 with `--cc-strategy energy` or `rms`. These modes generate CC11 values roughly
 every 10 ms, smoothed by `--cc11-smoothing-ms` (default 80 ms). For piano-like
-stems, `--cc64-threshold` heuristically inserts sustain-pedal (CC64) on/off
-events when energy remains above the given threshold between notes. Additional
-flags like `--cc64-instruments`, `--cc11-min-dt-ms`, and `--cc11-min-delta`
-control sustain targets and CC11 sparsification. A typical preset is
-`--cc-strategy energy --cc11-smoothing-ms 80 --cc11-min-dt-ms 30 --cc11-min-delta 3`.
+stems, `--sustain-threshold` heuristically inserts sustain-pedal (CC64) on/off
+events when gaps between notes are shorter than the given threshold. Optional
+flags like `--cc11-min-dt-ms` and `--cc11-min-delta` sparsify the CC11 stream.
 `--controls-post-bend` governs how any synthesized vibrato or portamento curves
 interact with existing pitch bends (`skip`, `add`, or `replace`).
+
+Example:
+`--cc-strategy energy --cc11-smoothing-ms 80 --cc11-min-dt-ms 30 --cc11-min-delta 3 --sustain-threshold 0.12`
 
 
 Tempo unification:

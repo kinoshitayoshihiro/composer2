@@ -284,6 +284,9 @@ python -m utilities.audio_to_midi_batch input/ output/ \
     --cc11-gain 1.0 --cc64-mode heuristic --cc64-gap-beats 0.25 --bend-integer-range
 ```
 
+Example:
+`--cc-strategy energy --cc11-smoothing-ms 80 --cc11-min-dt-ms 30 --cc11-min-delta 3 --sustain-threshold 0.12`
+
 
 Tempo unification:
 Use `--tempo-lock` to enforce a single BPM per song folder (merged output via

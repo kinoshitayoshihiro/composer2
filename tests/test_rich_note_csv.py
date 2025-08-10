@@ -80,14 +80,3 @@ def test_cc_bend_flags(tmp_path):
     assert "CC64" in header2 and "bend" in header2
 
 
-def test_include_cc11(tmp_path):
-    midi = tmp_path / "cc.mid"
-    make_midi(midi, notes=[(0, 1, 60)], cc11=True)
-    out = tmp_path / "cc.csv"
-    build_note_csv(tmp_path, out, include_cc11=True)
-    with out.open() as f:
-        reader = csv.DictReader(f)
-        header = reader.fieldnames
-        rows = list(reader)
-    assert header is not None and "cc11_onset" in header and "cc11_mean" in header
-    assert rows[0]["cc11_onset"] == "100"

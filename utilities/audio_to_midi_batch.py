@@ -42,6 +42,7 @@ import re
 import statistics
 import time
 import unicodedata
+import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,6 +66,8 @@ try:  # Optional heavy deps
     import librosa  # type: ignore
 except Exception:  # pragma: no cover - handled by fallback
     librosa = None  # type: ignore
+
+from . import cc_utils
 
 
 @dataclass(frozen=True)
@@ -484,7 +487,7 @@ def _transcribe_stem(
 
                 sr, data = wavfile.read(path)
                 audio = data.astype(float)
-                if audio.ndim > 1:
+                if getattr(audio, "ndim", 1) > 1:
                     audio = audio.mean(axis=1)
             except Exception:  # pragma: no cover - best effort
                 audio = None
@@ -592,6 +595,7 @@ def _transcribe_stem(
             inst.pitch_bends.append(pretty_midi.PitchBend(pitch=0, time=end_time))
         elif inst.pitch_bends[-1].time != end_time:
             inst.pitch_bends.append(pretty_midi.PitchBend(pitch=0, time=end_time))
+
     cc11_c, cc64_c = apply_cc_curves(
         inst,
         audio=audio,
@@ -971,28 +975,28 @@ def convert_directory(
                     for wav, base, midi_path in tasks:
                         logger.info("Transcribing %s", wav)
                         start = time.perf_counter()
-                    futures[
-                        ex.submit(
-                            _transcribe_stem,
-                            wav,
-                            min_dur=min_dur,
-                            auto_tempo=auto_tempo,
-                            enable_bend=enable_bend,
-                            bend_range_semitones=bend_range_semitones,
-                            bend_alpha=bend_alpha,
-                            bend_fixed_base=bend_fixed_base,
-                            cc11_strategy=cc11_strategy,
-                            cc11_map=cc11_map,
-                            cc11_smooth_ms=cc11_smooth_ms,
-                            cc11_gain=cc11_gain,
-                            cc11_hyst_up=cc11_hyst_up,
-                            cc11_hyst_down=cc11_hyst_down,
-                            cc11_min_dt_ms=cc11_min_dt_ms,
-                            cc64_mode=cc64_mode,
-                            cc64_gap_beats=cc64_gap_beats,
-                            cc64_min_dwell_ms=cc64_min_dwell_ms,
-                        )
-                    ] = (base, midi_path, start)
+                        futures[
+                            ex.submit(
+                                _transcribe_stem,
+                                wav,
+                                min_dur=min_dur,
+                                auto_tempo=auto_tempo,
+                                enable_bend=enable_bend,
+                                bend_range_semitones=bend_range_semitones,
+                                bend_alpha=bend_alpha,
+                                bend_fixed_base=bend_fixed_base,
+                                cc11_strategy=cc11_strategy,
+                                cc11_map=cc11_map,
+                                cc11_smooth_ms=cc11_smooth_ms,
+                                cc11_gain=cc11_gain,
+                                cc11_hyst_up=cc11_hyst_up,
+                                cc11_hyst_down=cc11_hyst_down,
+                                cc11_min_dt_ms=cc11_min_dt_ms,
+                                cc64_mode=cc64_mode,
+                                cc64_gap_beats=cc64_gap_beats,
+                                cc64_min_dwell_ms=cc64_min_dwell_ms,
+                            )
+                        ] = (base, midi_path, start)
                     for fut in as_completed(futures):
                         base, midi_path, start = futures[fut]
                         res = fut.result()

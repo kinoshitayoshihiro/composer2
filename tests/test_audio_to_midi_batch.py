@@ -37,8 +37,7 @@ def _stub_transcribe(
     bend_fixed_base: bool = False,
     cc_strategy: str = "none",
     cc11_smoothing_ms: int = 80,
-    cc64_threshold: float = 0.6,
-    cc64_instruments: list[str] | None = None,
+    sustain_threshold: float = 0.6,
     cc11_min_dt_ms: int = 30,
     cc11_min_delta: int = 3,
     **kwargs,
@@ -434,18 +433,14 @@ def test_cc11_energy(tmp_path, monkeypatch):
     def stub(path: Path, **kwargs):
         inst = pretty_midi.Instrument(program=0, name=path.stem)
         inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=2.0))
-        audio_to_midi_batch._generate_ccs(
-            audio,
-            sr,
-            inst,
-            path.stem,
-            cc_strategy=kwargs.get("cc_strategy", "none"),
-            cc11_smoothing_ms=kwargs.get("cc11_smoothing_ms", 80),
-            cc64_threshold=kwargs.get("cc64_threshold", 0.6),
-            cc64_instruments=kwargs.get("cc64_instruments", ["piano", "ep", "keys"]),
-            cc11_min_dt_ms=kwargs.get("cc11_min_dt_ms", 30),
-            cc11_min_delta=kwargs.get("cc11_min_delta", 3),
+        events = audio_to_midi_batch.cc_utils.energy_to_cc11(
+            audio, sr, smooth_ms=kwargs.get("cc11_smoothing_ms", 80), strategy=kwargs.get("cc_strategy", "none"),
         )
+        prev = -1
+        for t, v in events:
+            if v != prev:
+                inst.control_changes.append(pretty_midi.ControlChange(number=11, value=v, time=float(t)))
+                prev = v
         return types.SimpleNamespace(instrument=inst, tempo=120.0)
 
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", stub)
@@ -457,7 +452,7 @@ def test_cc11_energy(tmp_path, monkeypatch):
     assert sum(vals[-5:]) < sum(vals[:5])
 
 
-def test_cc64_threshold(tmp_path, monkeypatch):
+def test_sustain_threshold(tmp_path, monkeypatch):
     in_dir = tmp_path / "piano_song"
     out_dir = tmp_path / "out"
     in_dir.mkdir()
@@ -469,25 +464,29 @@ def test_cc64_threshold(tmp_path, monkeypatch):
         inst = pretty_midi.Instrument(program=0, name=path.stem)
         inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=0.4))
         inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.6, end=1.0))
-        audio_to_midi_batch._generate_ccs(
-            audio,
-            sr,
-            inst,
-            path.stem,
-            cc_strategy=kwargs.get("cc_strategy", "none"),
-            cc11_smoothing_ms=kwargs.get("cc11_smoothing_ms", 80),
-            cc64_threshold=kwargs.get("cc64_threshold", 0.5),
-            cc64_instruments=kwargs.get("cc64_instruments", ["piano", "ep", "keys"]),
-            cc11_min_dt_ms=kwargs.get("cc11_min_dt_ms", 30),
-            cc11_min_delta=kwargs.get("cc11_min_delta", 3),
-        )
+        if kwargs.get("cc_strategy", "none") != "none":
+            events = audio_to_midi_batch.cc_utils.energy_to_cc11(
+                audio,
+                sr,
+                smooth_ms=kwargs.get("cc11_smoothing_ms", 80),
+                strategy=kwargs.get("cc_strategy", "none"),
+            )
+            prev = -1
+            for t, v in events:
+                if v != prev:
+                    inst.control_changes.append(pretty_midi.ControlChange(number=11, value=v, time=float(t)))
+                    prev = v
+        for t, v in audio_to_midi_batch.cc_utils.infer_cc64_from_overlaps(
+            inst.notes, kwargs.get("sustain_threshold", 0.5)
+        ):
+            inst.control_changes.append(pretty_midi.ControlChange(number=64, value=v, time=float(t)))
         return types.SimpleNamespace(instrument=inst, tempo=None)
 
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", stub)
     audio_to_midi_batch.main([
         str(in_dir),
         str(out_dir),
-        "--cc64-threshold",
+        "--sustain-threshold",
         "0.5",
     ])
     pm = pretty_midi.PrettyMIDI(str(out_dir / in_dir.name / "piano.mid"))
@@ -500,18 +499,14 @@ def test_cc11_sparsify(tmp_path):
     audio = np.ones(sr * 2)
     inst = pretty_midi.Instrument(program=0)
     inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=2.0))
-    audio_to_midi_batch._generate_ccs(
-        audio,
-        sr,
-        inst,
-        "voice",
-        cc_strategy="energy",
-        cc11_smoothing_ms=0,
-        cc64_threshold=0.6,
-        cc64_instruments=[],
-        cc11_min_dt_ms=30,
-        cc11_min_delta=3,
+    events = audio_to_midi_batch.cc_utils.energy_to_cc11(
+        audio, sr, smooth_ms=0, strategy="energy"
     )
+    prev = -1
+    for t, v in events:
+        if v != prev:
+            inst.control_changes.append(pretty_midi.ControlChange(number=11, value=v, time=float(t)))
+            prev = v
     events = [cc for cc in inst.control_changes if cc.number == 11]
     assert len(events) <= 70
 

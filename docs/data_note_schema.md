@@ -34,6 +34,8 @@ Each row corresponds to a single note with the following columns:
 Columns marked with * are optional and can be omitted with `--no-cc` or
 `--no-bend` when high-resolution controller or pitch-bend data is not needed.
 CC11 columns are included only when `--include-cc11` is specified.
+Future revisions will add explicit CC columns for automatically generated
+expression and sustain data.
 
 Bar and position derive from PrettyMIDI ticks:
 

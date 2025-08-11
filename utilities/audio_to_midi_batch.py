@@ -55,6 +55,8 @@ import pretty_midi
 
 logger = logging.getLogger(__name__)
 
+_WARNED_ALIASES: set[str] = set()
+
 try:  # Optional heavy deps
     import crepe  # type: ignore
 except Exception:  # pragma: no cover - handled by fallback
@@ -72,6 +74,12 @@ from . import cc_utils
 class StemResult:
     instrument: pretty_midi.Instrument
     tempo: float | None
+
+
+def _warn_once(key: str, msg: str) -> None:
+    if key not in _WARNED_ALIASES:
+        logger.warning(msg)
+        _WARNED_ALIASES.add(key)
 
 
 def _sanitize_name(name: str) -> str:
@@ -139,18 +147,184 @@ def _folded_median(tempos: list[float]) -> float:
 
 
 def _emit_pitch_bend_range(
-    inst: pretty_midi.Instrument, bend_range_semitones: float, *, t: float = 0.0
+    inst: pretty_midi.Instrument,
+    bend_range_semitones: float,
+    *,
+    t: float = 0.0,
+    integer_only: bool = False,
 ) -> None:
     """Insert RPN 0,0 events to set pitch-bend range."""
     msb = int(max(0, min(127, math.floor(bend_range_semitones))))
     frac = bend_range_semitones - msb
-    lsb = int(max(0, min(127, round(frac * 100))))
+    lsb = 0 if integer_only else int(max(0, min(127, round(frac * 127))))
     cc = inst.control_changes
     cc.append(pretty_midi.ControlChange(number=101, value=0, time=float(t)))
     cc.append(pretty_midi.ControlChange(number=100, value=0, time=float(t)))
     cc.append(pretty_midi.ControlChange(number=6, value=msb, time=float(t)))
     cc.append(pretty_midi.ControlChange(number=38, value=lsb, time=float(t)))
 
+
+def _is_piano_like(name: str, program: int | None = None) -> bool:
+    del program  # placeholder for future use
+    return bool(re.search(r"(?i)(piano|keys|ep|rhodes)", name))
+
+
+def apply_cc_curves(
+    inst: pretty_midi.Instrument,
+    *,
+    audio: np.ndarray | None,
+    sr: int | None,
+    tempo: float | None,
+    cc11_strategy: str,
+    cc11_map: str,
+    cc11_smooth_ms: float,
+    cc11_gain: float,
+    cc11_hyst_up: float,
+    cc11_hyst_down: float,
+    cc11_min_dt_ms: float,
+    cc64_mode: str,
+    cc64_gap_beats: float,
+    cc64_min_dwell_ms: float,
+    track_name: str,
+) -> tuple[int, int]:
+    """Populate ``inst`` with CC11/CC64 events based on audio or note gaps.
+
+    Returns
+    -------
+    tuple[int, int]
+        Number of emitted (CC11, CC64) events.
+    """
+    cc11_count = 0
+    cc64_count = 0
+
+    # --- CC11 from audio energy ---
+    if cc11_strategy == "energy":
+        if audio is not None and sr and np is not None:
+            hop = max(1, int(sr / 50))  # ~20 ms cadence
+            env = None
+            if librosa is not None:
+                try:
+                    env = librosa.feature.rms(y=audio, hop_length=hop)[0]
+                except Exception:  # pragma: no cover - librosa failure
+                    env = None
+            if env is None:
+                win = hop
+                padded = np.pad(
+                    audio.astype(float), (win // 2, win // 2), mode="constant"
+                )
+                env = np.sqrt(
+                    np.convolve(padded**2, np.ones(win) / win, mode="valid")[::hop]
+                )
+            if env.size:
+                env = env - env.min()
+                if env.max() > 0:
+                    env = env / env.max()
+                if cc11_map == "log":
+                    k = 9.0
+                    env = np.log1p(k * env) / math.log1p(k)
+                alpha = (
+                    hop / (sr * (cc11_smooth_ms / 1000.0))
+                    if cc11_smooth_ms > 0
+                    else 1.0
+                )
+                alpha = max(0.0, min(1.0, float(alpha)))
+                ema = 0.0
+                smoothed = []
+                for e in env:
+                    ema = alpha * e + (1 - alpha) * ema
+                    smoothed.append(ema)
+                times = np.arange(len(smoothed)) * hop / sr
+                prev_val = None
+                last_t = -1e9
+                min_dt = cc11_min_dt_ms / 1000.0
+                for t, e in zip(times, smoothed):
+                    val = int(round(max(0.0, min(1.0, e * cc11_gain)) * 127))
+                    if (
+                        prev_val is None
+                        or (
+                            (val > prev_val and val - prev_val >= cc11_hyst_up)
+                            or (val < prev_val and prev_val - val >= cc11_hyst_down)
+                        )
+                        and (t - last_t >= min_dt)
+                    ):
+                        inst.control_changes.append(
+                            pretty_midi.ControlChange(
+                                number=11, value=val, time=float(t)
+                            )
+                        )
+                        prev_val = val
+                        last_t = float(t)
+                        cc11_count += 1
+        else:  # Fallback to ADSR derived from notes
+            notes = sorted(inst.notes, key=lambda n: n.start)
+            if notes:
+                attack = cc11_smooth_ms / 1000.0
+                release = cc11_smooth_ms / 1000.0
+                end_time = max(n.end for n in notes)
+                dt = 0.02
+                times = [i * dt for i in range(int(end_time / dt) + 1)]
+
+                def env_at(t: float) -> float:
+                    val = 0.0
+                    for n in notes:
+                        if n.start <= t <= n.end:
+                            if t < n.start + attack:
+                                val = max(val, (t - n.start) / max(attack, 1e-6))
+                            elif t > n.end - release:
+                                val = max(val, (n.end - t) / max(release, 1e-6))
+                            else:
+                                val = max(val, 1.0)
+                    return val
+
+                prev_val = None
+                last_t = -1e9
+                min_dt = cc11_min_dt_ms / 1000.0
+                for t in times:
+                    e = env_at(t)
+                    val = int(round(max(0.0, min(1.0, e * cc11_gain)) * 127))
+                    if (
+                        prev_val is None
+                        or (
+                            (val > prev_val and val - prev_val >= cc11_hyst_up)
+                            or (val < prev_val and prev_val - val >= cc11_hyst_down)
+                        )
+                        and (t - last_t >= min_dt)
+                    ):
+                        inst.control_changes.append(
+                            pretty_midi.ControlChange(
+                                number=11, value=val, time=float(t)
+                            )
+                        )
+                        prev_val = val
+                        last_t = float(t)
+                        cc11_count += 1
+
+    # --- CC64 heuristic sustain ---
+    if cc64_mode == "heuristic" and _is_piano_like(track_name):
+        notes = sorted(inst.notes, key=lambda n: n.start)
+        beat = 60.0 / (tempo if tempo and tempo > 0 else 120.0)
+        thresh = beat * cc64_gap_beats
+        min_dwell = cc64_min_dwell_ms / 1000.0
+        events: list[tuple[float, int]] = []
+        for a, b in zip(notes, notes[1:]):
+            gap = float(b.start) - float(a.end)
+            if 0 < gap < thresh:
+                on = float(a.end)
+                off = float(max(a.end, b.start - 0.001))
+                if off - on >= min_dwell:
+                    events.append((on, 127))
+                    events.append((off, 0))
+        events.sort()
+        last_val: int | None = None
+        for t, val in events:
+            if val != last_val:
+                inst.control_changes.append(
+                    pretty_midi.ControlChange(number=64, value=int(val), time=float(t))
+                )
+                last_val = val
+                cc64_count += 1
+
+    return cc11_count, cc64_count
 
 
 def _fallback_transcribe_stem(
@@ -207,7 +381,9 @@ def _fallback_transcribe_stem(
         gap = 60.0 / (tempo if tempo and tempo > 0 else 120.0) / 4.0
         min_gap = int(sr * gap)
         envelope = np.abs(audio)
-        onset_idxs = np.where((envelope[1:] >= threshold) & (envelope[:-1] < threshold))[0]
+        onset_idxs = np.where(
+            (envelope[1:] >= threshold) & (envelope[:-1] < threshold)
+        )[0]
         last_idx = -min_gap
         for idx in onset_idxs:
             if idx - last_idx < min_gap:
@@ -223,7 +399,9 @@ def _fallback_transcribe_stem(
             )
             last_idx = idx
     else:  # pragma: no cover - numpy may be absent
-        logger.info("numpy not available; using simple onset detector for %s", path.name)
+        logger.info(
+            "numpy not available; using simple onset detector for %s", path.name
+        )
         audio = [float(x) for x in audio]
         if not audio:
             return StemResult(inst, tempo)
@@ -261,11 +439,16 @@ def _transcribe_stem(
     bend_range_semitones: float = 2.0,
     bend_alpha: float = 0.25,
     bend_fixed_base: bool = False,
-    cc_strategy: str = "none",
-    cc11_smoothing_ms: int = 80,
-    sustain_threshold: float = 0.12,
-    cc11_min_dt_ms: int = 30,
-    cc11_min_delta: int = 3,
+    cc11_strategy: str = "energy",
+    cc11_map: str = "linear",
+    cc11_smooth_ms: float = 80.0,
+    cc11_gain: float = 1.0,
+    cc11_hyst_up: float = 3.0,
+    cc11_hyst_down: float = 3.0,
+    cc11_min_dt_ms: float = 30.0,
+    cc64_mode: str = "none",
+    cc64_gap_beats: float = 0.25,
+    cc64_min_dwell_ms: float = 80.0,
 ) -> StemResult:
     """Transcribe a monophonic WAV file into a MIDI instrument.
 
@@ -304,50 +487,34 @@ def _transcribe_stem(
 
                 sr, data = wavfile.read(path)
                 audio = data.astype(float)
-                if audio.ndim > 1:
+                if getattr(audio, "ndim", 1) > 1:
                     audio = audio.mean(axis=1)
             except Exception:  # pragma: no cover - best effort
                 audio = None
-        if audio is not None and cc_strategy in {"energy", "rms"}:
-            events = cc_utils.energy_to_cc11(
-                audio, sr, smooth_ms=cc11_smoothing_ms, strategy=cc_strategy
-            )
-            prev = -1
-            last_t = -1.0
-            min_dt = cc11_min_dt_ms / 1000.0
-            for t, val in events:
-                if prev != -1 and abs(val - prev) < cc11_min_delta:
-                    continue
-                if last_t != -1.0 and (t - last_t) < min_dt:
-                    continue
-                result.instrument.control_changes.append(
-                    pretty_midi.ControlChange(number=11, value=int(val), time=float(t))
-                )
-                prev = val
-                last_t = t
-        if sustain_threshold <= 0:
-            cc11_count = sum(
-                1 for c in result.instrument.control_changes if c.number == 11
-            )
-            logger.info("CC11=%d events, CC64_on=0", cc11_count)
-            return StemResult(result.instrument, result.tempo)
-        if any(
-            k in path.stem.lower() for k in ["piano", "ep", "rhodes", "keys"]
-        ):
-            cc64_events = list(
-                cc_utils.infer_cc64_from_overlaps(
-                    result.instrument.notes, sustain_threshold
-                )
-            )
-            for t, v in cc64_events:
-                result.instrument.control_changes.append(
-                    pretty_midi.ControlChange(number=64, value=v, time=float(t))
-                )
-            cc64_pairs = sum(1 for _, v in cc64_events if v >= 64)
-        else:
-            cc64_pairs = 0
-        cc11_count = sum(1 for c in result.instrument.control_changes if c.number == 11)
-        logger.info("CC11=%d events, CC64_on=%d", cc11_count, cc64_pairs)
+        cc11_c, cc64_c = apply_cc_curves(
+            result.instrument,
+            audio=audio,
+            sr=sr,
+            tempo=result.tempo,
+            cc11_strategy=cc11_strategy,
+            cc11_map=cc11_map,
+            cc11_smooth_ms=cc11_smooth_ms,
+            cc11_gain=cc11_gain,
+            cc11_hyst_up=cc11_hyst_up,
+            cc11_hyst_down=cc11_hyst_down,
+            cc11_min_dt_ms=cc11_min_dt_ms,
+            cc64_mode=cc64_mode,
+            cc64_gap_beats=cc64_gap_beats,
+            cc64_min_dwell_ms=cc64_min_dwell_ms,
+            track_name=path.stem,
+        )
+        logger.info(
+            "cc11=%d cc64=%d bends=%d for %s",
+            cc11_c,
+            cc64_c,
+            len(result.instrument.pitch_bends),
+            path.name,
+        )
         return StemResult(result.instrument, result.tempo)
 
     audio, sr = librosa.load(path, sr=16000, mono=True)
@@ -407,9 +574,7 @@ def _transcribe_stem(
                 bend = 0
             else:
                 bend = int(
-                    round(
-                        max(-1.0, min(1.0, ema / bend_range_semitones)) * 8191
-                    )
+                    round(max(-1.0, min(1.0, ema / bend_range_semitones)) * 8191)
                 )
             if bend != prev_bend:
                 inst.pitch_bends.append(
@@ -427,44 +592,34 @@ def _transcribe_stem(
     if enable_bend:
         end_time = float(time[-1]) if time.size else 0.0
         if prev_bend != 0:
-            inst.pitch_bends.append(
-                pretty_midi.PitchBend(pitch=0, time=end_time)
-            )
+            inst.pitch_bends.append(pretty_midi.PitchBend(pitch=0, time=end_time))
         elif inst.pitch_bends[-1].time != end_time:
-            inst.pitch_bends.append(
-                pretty_midi.PitchBend(pitch=0, time=end_time)
-            )
-    if cc_strategy in {"energy", "rms"}:
-        events = cc_utils.energy_to_cc11(
-            audio, sr, smooth_ms=cc11_smoothing_ms, strategy=cc_strategy
-        )
-        prev = -1
-        last_t = -1.0
-        min_dt = cc11_min_dt_ms / 1000.0
-        for t, val in events:
-            if prev != -1 and abs(val - prev) < cc11_min_delta:
-                continue
-            if last_t != -1.0 and (t - last_t) < min_dt:
-                continue
-            inst.control_changes.append(
-                pretty_midi.ControlChange(number=11, value=int(val), time=float(t))
-            )
-            prev = val
-            last_t = t
-    if sustain_threshold <= 0:
-        cc11_count = sum(1 for c in inst.control_changes if c.number == 11)
-        logger.info("CC11=%d events, CC64_on=0", cc11_count)
-        return StemResult(inst, tempo)
-    cc64_events: list[tuple[float, int]] = []
-    if any(k in path.stem.lower() for k in ["piano", "ep", "rhodes", "keys"]):
-        cc64_events = list(cc_utils.infer_cc64_from_overlaps(inst.notes, sustain_threshold))
-        for t, v in cc64_events:
-            inst.control_changes.append(
-                pretty_midi.ControlChange(number=64, value=v, time=float(t))
-            )
-    cc64_pairs = sum(1 for _, v in cc64_events if v >= 64)
-    cc11_count = sum(1 for c in inst.control_changes if c.number == 11)
-    logger.info("CC11=%d events, CC64_on=%d", cc11_count, cc64_pairs)
+            inst.pitch_bends.append(pretty_midi.PitchBend(pitch=0, time=end_time))
+
+    cc11_c, cc64_c = apply_cc_curves(
+        inst,
+        audio=audio,
+        sr=sr,
+        tempo=tempo,
+        cc11_strategy=cc11_strategy,
+        cc11_map=cc11_map,
+        cc11_smooth_ms=cc11_smooth_ms,
+        cc11_gain=cc11_gain,
+        cc11_hyst_up=cc11_hyst_up,
+        cc11_hyst_down=cc11_hyst_down,
+        cc11_min_dt_ms=cc11_min_dt_ms,
+        cc64_mode=cc64_mode,
+        cc64_gap_beats=cc64_gap_beats,
+        cc64_min_dwell_ms=cc64_min_dwell_ms,
+        track_name=path.stem,
+    )
+    logger.info(
+        "cc11=%d cc64=%d bends=%d for %s",
+        cc11_c,
+        cc64_c,
+        len(inst.pitch_bends),
+        path.name,
+    )
     return StemResult(inst, tempo)
 
 
@@ -509,11 +664,17 @@ def convert_directory(
     bend_range_semitones: float = 2.0,
     bend_alpha: float = 0.25,
     bend_fixed_base: bool = False,
-    cc_strategy: str = "none",
-    cc11_smoothing_ms: int = 80,
-    sustain_threshold: float = 0.12,
-    cc11_min_dt_ms: int = 30,
-    cc11_min_delta: int = 3,
+    bend_integer_range: bool = False,
+    cc11_strategy: str = "energy",
+    cc11_map: str = "linear",
+    cc11_smooth_ms: float = 80.0,
+    cc11_gain: float = 1.0,
+    cc11_hyst_up: float = 3.0,
+    cc11_hyst_down: float = 3.0,
+    cc11_min_dt_ms: float = 30.0,
+    cc64_mode: str = "none",
+    cc64_gap_beats: float = 0.25,
+    cc64_min_dwell_ms: float = 80.0,
     controls_post_bend: str = "skip",
 ) -> None:
     """Convert a directory of stems into individual MIDI files.
@@ -575,21 +736,29 @@ def convert_directory(
                         logger.info("Transcribing %s", wav)
                         start = time.perf_counter()
                         futures.append(
-                            (ex.submit(
-                                _transcribe_stem,
-                                wav,
-                                min_dur=min_dur,
-                                auto_tempo=auto_tempo,
-                                enable_bend=enable_bend,
-                                bend_range_semitones=bend_range_semitones,
-                                bend_alpha=bend_alpha,
-                                bend_fixed_base=bend_fixed_base,
-                                cc_strategy=cc_strategy,
-                                cc11_smoothing_ms=cc11_smoothing_ms,
-                                sustain_threshold=sustain_threshold,
-                                cc11_min_dt_ms=cc11_min_dt_ms,
-                                cc11_min_delta=cc11_min_delta,
-                            ), start)
+                            (
+                                ex.submit(
+                                    _transcribe_stem,
+                                    wav,
+                                    min_dur=min_dur,
+                                    auto_tempo=auto_tempo,
+                                    enable_bend=enable_bend,
+                                    bend_range_semitones=bend_range_semitones,
+                                    bend_alpha=bend_alpha,
+                                    bend_fixed_base=bend_fixed_base,
+                                    cc11_strategy=cc11_strategy,
+                                    cc11_map=cc11_map,
+                                    cc11_smooth_ms=cc11_smooth_ms,
+                                    cc11_gain=cc11_gain,
+                                    cc11_hyst_up=cc11_hyst_up,
+                                    cc11_hyst_down=cc11_hyst_down,
+                                    cc11_min_dt_ms=cc11_min_dt_ms,
+                                    cc64_mode=cc64_mode,
+                                    cc64_gap_beats=cc64_gap_beats,
+                                    cc64_min_dwell_ms=cc64_min_dwell_ms,
+                                ),
+                                start,
+                            )
                         )
                     for fut, start in futures:
                         res = fut.result()
@@ -609,11 +778,16 @@ def convert_directory(
                         bend_range_semitones=bend_range_semitones,
                         bend_alpha=bend_alpha,
                         bend_fixed_base=bend_fixed_base,
-                        cc_strategy=cc_strategy,
-                        cc11_smoothing_ms=cc11_smoothing_ms,
-                        sustain_threshold=sustain_threshold,
+                        cc11_strategy=cc11_strategy,
+                        cc11_map=cc11_map,
+                        cc11_smooth_ms=cc11_smooth_ms,
+                        cc11_gain=cc11_gain,
+                        cc11_hyst_up=cc11_hyst_up,
+                        cc11_hyst_down=cc11_hyst_down,
                         cc11_min_dt_ms=cc11_min_dt_ms,
-                        cc11_min_delta=cc11_min_delta,
+                        cc64_mode=cc64_mode,
+                        cc64_gap_beats=cc64_gap_beats,
+                        cc64_min_dwell_ms=cc64_min_dwell_ms,
                     )
                     name = _sanitize_name(res.instrument.name)
                     res.instrument.name = name
@@ -622,10 +796,18 @@ def convert_directory(
 
             tempo: float | None = None
             summary_line: str | None = None
-            tempos = [float(t) for _, _, t in results if t is not None and math.isfinite(float(t))]
+            tempos = [
+                float(t)
+                for _, _, t in results
+                if t is not None and math.isfinite(float(t))
+            ]
             if tempo_lock != "none":
                 orig_mode = tempo_lock
-                candidates = [(n, float(t)) for n, _, t in results if t is not None and math.isfinite(float(t))]
+                candidates = [
+                    (n, float(t))
+                    for n, _, t in results
+                    if t is not None and math.isfinite(float(t))
+                ]
                 cand_count = len(candidates)
                 if tempo_lock == "value" and tempo_lock_value is not None:
                     tempo = float(tempo_lock_value)
@@ -649,19 +831,41 @@ def convert_directory(
                                 anchor_bpm = t
                                 break
                         if anchor_bpm is not None:
+                            orig_vals = [t for _, t in candidates]
                             if tempo_fold_halves:
-                                candidates = [(n, _fold_to_ref(t, anchor_bpm)) for n, t in candidates]
+                                folded_vals = [
+                                    _fold_to_ref(t, anchor_bpm) for t in orig_vals
+                                ]
+                            else:
+                                folded_vals = orig_vals
                             tempo = float(anchor_bpm)
+                            if tempo_fold_halves:
+                                b_min, b_med, b_max = (
+                                    min(orig_vals),
+                                    statistics.median(orig_vals),
+                                    max(orig_vals),
+                                )
+                                f_min, f_med, f_max = (
+                                    min(folded_vals),
+                                    statistics.median(folded_vals),
+                                    max(folded_vals),
+                                )
+                                fold_str = (
+                                    f", fold {b_min:.1f}/{b_med:.1f}/{b_max:.1f}"
+                                    f"->{f_min:.1f}/{f_med:.1f}/{f_max:.1f}"
+                                )
+                            else:
+                                fold_str = ""
                             summary_line = (
                                 f"Tempo-lock(anchor): {song_name} → BPM={tempo:.1f} "
-                                f"(pattern='{tempo_anchor_pattern}', fold_halves={tempo_fold_halves}, "
-                                f"candidates={cand_count}, anchor='{anchor_name}')"
+                                f"(pattern='{tempo_anchor_pattern}', candidates={cand_count}"
+                                f"{fold_str}, anchor='{anchor_name}')"
                             )
                         else:
                             tempo_lock = "median"
                     if tempo_lock == "median":
-                        vals = [t for _, t in candidates]
-                        if not vals:
+                        orig_vals = [t for _, t in candidates]
+                        if not orig_vals:
                             tempo = 120.0
                             logger.warning(
                                 "Tempo-lock(%s): %s has no valid tempo estimates (%d stems); using 120 BPM",
@@ -670,15 +874,31 @@ def convert_directory(
                                 len(results),
                             )
                         else:
-                            tempo = (
-                                _folded_median(vals)
-                                if tempo_fold_halves
-                                else statistics.median(vals)
-                            )
+                            if tempo_fold_halves:
+                                b_min, b_med, b_max = (
+                                    min(orig_vals),
+                                    statistics.median(orig_vals),
+                                    max(orig_vals),
+                                )
+                                folded_vals = [
+                                    _fold_to_ref(t, b_med) for t in orig_vals
+                                ]
+                                tempo = statistics.median(folded_vals)
+                                f_min, f_med, f_max = (
+                                    min(folded_vals),
+                                    statistics.median(folded_vals),
+                                    max(folded_vals),
+                                )
+                                fold_str = (
+                                    f", fold {b_min:.1f}/{b_med:.1f}/{b_max:.1f}"
+                                    f"->{f_min:.1f}/{f_med:.1f}/{f_max:.1f}"
+                                )
+                            else:
+                                tempo = statistics.median(orig_vals)
+                                fold_str = ""
                         summary_line = (
-                            "Tempo-lock(median): "
-                            f"{song_name} → BPM={tempo:.1f} "
-                            f"(fold_halves={tempo_fold_halves}, candidates={cand_count})"
+                            f"Tempo-lock(median): {song_name} → BPM={tempo:.1f} "
+                            f"(candidates={cand_count}{fold_str})"
                         )
             else:
                 if tempo_strategy == "first":
@@ -700,7 +920,9 @@ def convert_directory(
                 else pretty_midi.PrettyMIDI()
             )
             for name, inst, _ in results:
-                _emit_pitch_bend_range(inst, bend_range_semitones)
+                _emit_pitch_bend_range(
+                    inst, bend_range_semitones, integer_only=bend_integer_range
+                )
                 _coerce_note_times(inst)
                 _coerce_controller_times(inst)
                 pm.instruments.append(inst)
@@ -763,11 +985,16 @@ def convert_directory(
                                 bend_range_semitones=bend_range_semitones,
                                 bend_alpha=bend_alpha,
                                 bend_fixed_base=bend_fixed_base,
-                                cc_strategy=cc_strategy,
-                                cc11_smoothing_ms=cc11_smoothing_ms,
-                                sustain_threshold=sustain_threshold,
+                                cc11_strategy=cc11_strategy,
+                                cc11_map=cc11_map,
+                                cc11_smooth_ms=cc11_smooth_ms,
+                                cc11_gain=cc11_gain,
+                                cc11_hyst_up=cc11_hyst_up,
+                                cc11_hyst_down=cc11_hyst_down,
                                 cc11_min_dt_ms=cc11_min_dt_ms,
-                                cc11_min_delta=cc11_min_delta,
+                                cc64_mode=cc64_mode,
+                                cc64_gap_beats=cc64_gap_beats,
+                                cc64_min_dwell_ms=cc64_min_dwell_ms,
                             )
                         ] = (base, midi_path, start)
                     for fut in as_completed(futures):
@@ -790,11 +1017,16 @@ def convert_directory(
                         bend_range_semitones=bend_range_semitones,
                         bend_alpha=bend_alpha,
                         bend_fixed_base=bend_fixed_base,
-                        cc_strategy=cc_strategy,
-                        cc11_smoothing_ms=cc11_smoothing_ms,
-                        sustain_threshold=sustain_threshold,
+                        cc11_strategy=cc11_strategy,
+                        cc11_map=cc11_map,
+                        cc11_smooth_ms=cc11_smooth_ms,
+                        cc11_gain=cc11_gain,
+                        cc11_hyst_up=cc11_hyst_up,
+                        cc11_hyst_down=cc11_hyst_down,
                         cc11_min_dt_ms=cc11_min_dt_ms,
-                        cc11_min_delta=cc11_min_delta,
+                        cc64_mode=cc64_mode,
+                        cc64_gap_beats=cc64_gap_beats,
+                        cc64_min_dwell_ms=cc64_min_dwell_ms,
                     )
                     inst = res.instrument
                     tempo = res.tempo
@@ -814,7 +1046,9 @@ def convert_directory(
                 cand_count = len(candidates)
                 if tempo_lock == "value" and tempo_lock_value is not None:
                     locked_tempo = float(tempo_lock_value)
-                    summary_line = f"Tempo-lock(value): {song_name} → BPM={locked_tempo:.1f}"
+                    summary_line = (
+                        f"Tempo-lock(value): {song_name} → BPM={locked_tempo:.1f}"
+                    )
                 elif tempo_lock == "anchor":
                     try:
                         pattern = re.compile(tempo_anchor_pattern)
@@ -834,19 +1068,41 @@ def convert_directory(
                                 anchor_bpm = t
                                 break
                         if anchor_bpm is not None:
+                            orig_vals = [t for _, t in candidates]
                             if tempo_fold_halves:
-                                candidates = [(n, _fold_to_ref(t, anchor_bpm)) for n, t in candidates]
+                                folded_vals = [
+                                    _fold_to_ref(t, anchor_bpm) for t in orig_vals
+                                ]
+                            else:
+                                folded_vals = orig_vals
                             locked_tempo = float(anchor_bpm)
+                            if tempo_fold_halves:
+                                b_min, b_med, b_max = (
+                                    min(orig_vals),
+                                    statistics.median(orig_vals),
+                                    max(orig_vals),
+                                )
+                                f_min, f_med, f_max = (
+                                    min(folded_vals),
+                                    statistics.median(folded_vals),
+                                    max(folded_vals),
+                                )
+                                fold_str = (
+                                    f", fold {b_min:.1f}/{b_med:.1f}/{b_max:.1f}"
+                                    f"->{f_min:.1f}/{f_med:.1f}/{f_max:.1f}"
+                                )
+                            else:
+                                fold_str = ""
                             summary_line = (
                                 f"Tempo-lock(anchor): {song_name} → BPM={locked_tempo:.1f} "
-                                f"(pattern='{tempo_anchor_pattern}', fold_halves={tempo_fold_halves}, "
-                                f"candidates={cand_count}, anchor='{anchor_name}')"
+                                f"(pattern='{tempo_anchor_pattern}', candidates={cand_count}"
+                                f"{fold_str}, anchor='{anchor_name}')"
                             )
                         else:
                             tempo_lock = "median"
                 if tempo_lock == "median":
-                    vals = [t for _, t in candidates]
-                    if not vals:
+                    orig_vals = [t for _, t in candidates]
+                    if not orig_vals:
                         locked_tempo = 120.0
                         logger.warning(
                             "Tempo-lock(%s): %s has no valid tempo estimates (%d stems); using 120 BPM",
@@ -855,13 +1111,29 @@ def convert_directory(
                             len(results),
                         )
                     else:
-                        locked_tempo = (
-                            _folded_median(vals) if tempo_fold_halves else statistics.median(vals)
-                        )
+                        if tempo_fold_halves:
+                            b_min, b_med, b_max = (
+                                min(orig_vals),
+                                statistics.median(orig_vals),
+                                max(orig_vals),
+                            )
+                            folded_vals = [_fold_to_ref(t, b_med) for t in orig_vals]
+                            locked_tempo = statistics.median(folded_vals)
+                            f_min, f_med, f_max = (
+                                min(folded_vals),
+                                statistics.median(folded_vals),
+                                max(folded_vals),
+                            )
+                            fold_str = (
+                                f", fold {b_min:.1f}/{b_med:.1f}/{b_max:.1f}"
+                                f"->{f_min:.1f}/{f_med:.1f}/{f_max:.1f}"
+                            )
+                        else:
+                            locked_tempo = statistics.median(orig_vals)
+                            fold_str = ""
                     summary_line = (
-                        "Tempo-lock(median): "
-                        f"{song_name} → BPM={locked_tempo:.1f} "
-                        f"(fold_halves={tempo_fold_halves}, candidates={cand_count})"
+                        f"Tempo-lock(median): {song_name} → BPM={locked_tempo:.1f} "
+                        f"(candidates={cand_count}{fold_str})"
                     )
 
             for base, inst, tempo, midi_path in results:
@@ -871,7 +1143,9 @@ def convert_directory(
                     if use_tempo is not None
                     else pretty_midi.PrettyMIDI()
                 )
-                _emit_pitch_bend_range(inst, bend_range_semitones)
+                _emit_pitch_bend_range(
+                    inst, bend_range_semitones, integer_only=bend_integer_range
+                )
                 _coerce_note_times(inst)
                 _coerce_controller_times(inst)
                 pm.instruments.append(inst)
@@ -1013,40 +1287,89 @@ def main(argv: list[str] | None = None) -> None:
         help="Reference deviations to note onsets for smoother portamento",
     )
     parser.add_argument(
-        "--cc-strategy",
-        choices=["none", "energy", "rms"],
-        default="none",
-        help="Derive CC11 from audio energy using the chosen strategy",
+        "--bend-integer-range",
+        action="store_true",
+        help="Force integer pitch-bend range (LSB=0)",
     )
     parser.add_argument(
-        "--cc11-smoothing-ms",
-        type=int,
-        default=80,
+        "--cc11-strategy",
+        choices=["energy", "none"],
+        default="energy",
+        help="Derive CC11 from audio energy or disable it",
+    )
+    parser.add_argument(
+        "--cc11-map",
+        choices=["linear", "log"],
+        default="linear",
+        help="Mapping from RMS to 0–1 before scaling",
+    )
+    parser.add_argument(
+        "--cc11-smooth-ms",
+        type=float,
+        default=80.0,
         help="Smoothing window for CC11 envelope in milliseconds",
     )
     parser.add_argument(
-        "--sustain-threshold",
+        "--cc11-gain",
         type=float,
-        default=0.12,
-        help="Gap threshold in seconds for heuristic sustain-pedal insertion",
+        default=1.0,
+        help="Gain applied to CC11 envelope before scaling to 0–127",
     )
     parser.add_argument(
-        "--cc64-threshold",
-        dest="cc64_threshold",
+        "--cc11-hyst-up",
+        type=float,
+        default=3.0,
+        help="Upward hysteresis threshold for CC11 values",
+    )
+    parser.add_argument(
+        "--cc11-hyst-down",
+        type=float,
+        default=3.0,
+        help="Downward hysteresis threshold for CC11 values",
+    )
+    parser.add_argument(
+        "--cc11-min-dt-ms",
+        type=float,
+        default=30.0,
+        help="Minimum time between CC11 events in milliseconds",
+    )
+    parser.add_argument(
+        "--cc64-mode",
+        choices=["none", "heuristic"],
+        default="none",
+        help="Sustain-pedal generation mode",
+    )
+    parser.add_argument(
+        "--cc64-gap-beats",
+        type=float,
+        default=0.25,
+        help="Maximum inter-note gap in quarter-note beats to link with sustain",
+    )
+    parser.add_argument(
+        "--cc64-min-dwell-ms",
+        type=float,
+        default=80.0,
+        help="Minimum sustain on/off duration in milliseconds",
+    )
+    # Deprecated aliases
+    parser.add_argument(
+        "--cc-strategy",
+        choices=["energy", "none"],
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--cc11-smoothing-ms",
         type=float,
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
-        "--cc11-min-dt-ms",
-        type=int,
-        default=30,
-        help="Minimum interval between successive CC11 events",
+        "--cc64-threshold",
+        type=float,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
-        "--cc11-min-delta",
-        type=int,
-        default=3,
-        help="Minimum value change between CC11 events",
+        "--cc64-instruments",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--controls-post-bend",
@@ -1056,14 +1379,24 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    if getattr(args, "cc64_threshold", None) is not None:
-        warnings.warn(
-            "--cc64-threshold is deprecated; use --sustain-threshold",
-            DeprecationWarning,
-            stacklevel=2,
+    if getattr(args, "cc_strategy", None) is not None:
+        _warn_once("cc-strategy", "--cc-strategy is deprecated; use --cc11-strategy")
+        args.cc11_strategy = args.cc_strategy
+    if getattr(args, "cc11_smoothing_ms", None) is not None:
+        _warn_once(
+            "cc11-smoothing-ms",
+            "--cc11-smoothing-ms is deprecated; use --cc11-smooth-ms",
         )
-        if args.sustain_threshold == parser.get_default("sustain_threshold"):
-            args.sustain_threshold = args.cc64_threshold
+        args.cc11_smooth_ms = args.cc11_smoothing_ms
+    if (
+        getattr(args, "cc64_threshold", None) is not None
+        or getattr(args, "cc64_instruments", None) is not None
+    ):
+        _warn_once(
+            "cc64-threshold",
+            "--cc64-threshold/--cc64-instruments are deprecated; use --cc64-mode heuristic",
+        )
+        args.cc64_mode = "heuristic"
 
     if args.tempo_lock == "value" and args.tempo_lock_value is None:
         parser.error("--tempo-lock-value is required when --tempo-lock=value")
@@ -1089,11 +1422,17 @@ def main(argv: list[str] | None = None) -> None:
         bend_range_semitones=args.bend_range_semitones,
         bend_alpha=args.bend_alpha,
         bend_fixed_base=args.bend_fixed_base,
-        cc_strategy=args.cc_strategy,
-        cc11_smoothing_ms=args.cc11_smoothing_ms,
-        sustain_threshold=args.sustain_threshold,
+        bend_integer_range=args.bend_integer_range,
+        cc11_strategy=args.cc11_strategy,
+        cc11_map=args.cc11_map,
+        cc11_smooth_ms=args.cc11_smooth_ms,
+        cc11_gain=args.cc11_gain,
+        cc11_hyst_up=args.cc11_hyst_up,
+        cc11_hyst_down=args.cc11_hyst_down,
         cc11_min_dt_ms=args.cc11_min_dt_ms,
-        cc11_min_delta=args.cc11_min_delta,
+        cc64_mode=args.cc64_mode,
+        cc64_gap_beats=args.cc64_gap_beats,
+        cc64_min_dwell_ms=args.cc64_min_dwell_ms,
         controls_post_bend=args.controls_post_bend,
     )
 

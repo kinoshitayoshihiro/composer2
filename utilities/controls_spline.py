@@ -8,8 +8,9 @@ to per-channel instruments, e.g. instruments named ``"channel0"``.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from typing import Callable, Iterable, List, Literal, Sequence, Tuple
+import warnings
+from collections.abc import Callable, Sequence
+from typing import Iterable, List, Tuple
 
 try:  # optional dependency
     import numpy as np  # type: ignore
@@ -25,6 +26,10 @@ __all__ = [
 ]
 
 
+# -----------------------------------------------------------------------------
+# Small helpers
+# -----------------------------------------------------------------------------
+
 def ensure_scalar_floats(seq: Iterable[float]) -> List[float]:
     """Return ``seq`` as a list of Python ``float`` values."""
 
@@ -34,20 +39,33 @@ def ensure_scalar_floats(seq: Iterable[float]) -> List[float]:
 def dedupe_events(
     times: Sequence[float],
     values: Sequence[float],
-    eps: float = 0.5,
-) -> Tuple[List[float], List[float]]:
-    """Collapse consecutive ``values`` within ``eps`` keeping first ``time``."""
+    *,
+    value_eps: float = 1e-6,
+    time_eps: float = 1e-9,
+):
+    """Deduplicate nearly-identical consecutive ``times``/``values`` pairs.
+
+    Keeps the first sample in any run of (nearly) equal events.
+    Returns numpy arrays when numpy is available, otherwise Python lists.
+    """
 
     if not times:
+        if np is not None:
+            return np.asarray([], dtype=float), np.asarray([], dtype=float)
         return [], []
-    out_t = [times[0]]
-    out_v = [values[0]]
-    prev = values[0]
+
+    out_t: List[float] = [float(times[0])]
+    out_v: List[float] = [float(values[0])]
     for t, v in zip(times[1:], values[1:]):
-        if abs(v - prev) > eps:
-            out_t.append(t)
-            out_v.append(v)
-            prev = v
+        t = float(t)
+        v = float(v)
+        if abs(t - out_t[-1]) <= time_eps and abs(v - out_v[-1]) <= value_eps:
+            continue
+        out_t.append(t)
+        out_v.append(v)
+
+    if np is not None:
+        return np.asarray(out_t), np.asarray(out_v)
     return out_t, out_v
 
 
@@ -63,12 +81,16 @@ def catmull_rom_monotone(
     x = ensure_scalar_floats(times)
     y = ensure_scalar_floats(values)
     q = ensure_scalar_floats(query_times)
+    if len(x) == 0:
+        return []
     if len(x) == 1:
         return [y[0] for _ in q]
 
+    # Slopes and secants
     h = [x[i + 1] - x[i] for i in range(len(x) - 1)]
-    delta = [(y[i + 1] - y[i]) / h[i] for i in range(len(x) - 1)]
+    delta = [(y[i + 1] - y[i]) / h[i] if h[i] != 0 else 0.0 for i in range(len(x) - 1)]
 
+    # Tangents m[i]
     m = [0.0] * len(x)
     m[0] = delta[0]
     m[-1] = delta[-1]
@@ -78,9 +100,10 @@ def catmull_rom_monotone(
         else:
             w1 = 2 * h[i] + h[i - 1]
             w2 = h[i] + 2 * h[i - 1]
-            m[i] = (w1 + w2) / (w1 / delta[i - 1] + w2 / delta[i])
+            denom = (w1 / delta[i - 1]) + (w2 / delta[i])
+            m[i] = (w1 + w2) / denom if denom != 0 else 0.0
 
-    res = []
+    res: List[float] = []
     for t in q:
         if t <= x[0]:
             res.append(y[0])
@@ -88,137 +111,382 @@ def catmull_rom_monotone(
         if t >= x[-1]:
             res.append(y[-1])
             continue
+        # Find segment j such that x[j] <= t <= x[j+1]
         j = 0
         for k in range(len(x) - 1):
             if x[k] <= t <= x[k + 1]:
                 j = k
                 break
         h_j = x[j + 1] - x[j]
-        s = (t - x[j]) / h_j
+        s = (t - x[j]) / h_j if h_j != 0 else 0.0
         s2 = s * s
         s3 = s2 * s
         h00 = 2 * s3 - 3 * s2 + 1
         h10 = s3 - 2 * s2 + s
         h01 = -2 * s3 + 3 * s2
         h11 = s3 - s2
-        val = h00 * y[j] + h10 * h_j * m[j] + h01 * y[j + 1] + h11 * h_j * m[j + 1]
+        val = (
+            h00 * y[j]
+            + h10 * h_j * m[j]
+            + h01 * y[j + 1]
+            + h11 * h_j * m[j + 1]
+        )
         res.append(val)
 
     return res
 
 
-@dataclass
+# -----------------------------------------------------------------------------
+# Tempo mapping helpers
+# -----------------------------------------------------------------------------
+
+def tempo_map_from_events(
+    events: "Sequence[tuple[float, float]]",
+) -> "Callable[[float], float]":
+    """Return a piecewise-constant tempo map callable.
+
+    Parameters
+    ----------
+    events:
+        Sequence of ``(beat, bpm)`` pairs with non-decreasing beats and
+        strictly positive BPM values.
+    """
+
+    beats: List[float] = []
+    bpms: List[float] = []
+    last_beat = float("-inf")
+    for beat, bpm in events:
+        if beat < last_beat:
+            raise ValueError("tempo events must have non-decreasing beats")
+        if bpm <= 0:
+            raise ValueError("bpm must be positive")
+        beats.append(float(beat))
+        bpms.append(float(bpm))
+        last_beat = float(beat)
+
+    def tempo(beat: float) -> float:
+        idx = 0
+        for i, b in enumerate(beats):
+            if beat >= b:
+                idx = i
+            else:
+                break
+        return float(bpms[idx])
+
+    return tempo
+
+
+# -----------------------------------------------------------------------------
+# Internal numeric helpers
+# -----------------------------------------------------------------------------
+
+def _resample(
+    t_knots, v_knots, sample_rate_hz: float
+):
+    """Resample ``t_knots``/``v_knots`` on an equally spaced time grid."""
+    if sample_rate_hz <= 0 or len(t_knots) < 2:
+        return t_knots, v_knots
+    step = 1.0 / float(sample_rate_hz)
+    t0 = float(t_knots[0])
+    t1 = float(t_knots[-1])
+    # Build grid; ensure the exact last time is included
+    grid = []
+    g = t0
+    while g < t1 - 1e-12:
+        grid.append(g)
+        g += step
+    grid.append(t1)
+    vals = catmull_rom_monotone(t_knots, v_knots, grid)
+    if np is not None:
+        return np.asarray(grid, dtype=float), np.asarray(vals, dtype=float)
+    return grid, vals
+
+
+def _dedupe_int(
+    times, values, *, time_eps: float, keep_last: bool = False
+):
+    out_t: List[float] = [float(times[0])]
+    out_v: List[int] = [int(values[0])]
+    for idx in range(1, len(times)):
+        t = float(times[idx])
+        v = int(values[idx])
+        if v == out_v[-1] or abs(t - out_t[-1]) <= time_eps:
+            if keep_last and idx == len(times) - 1:
+                out_t.append(t)
+                out_v.append(v)
+            continue
+        out_t.append(t)
+        out_v.append(v)
+    if keep_last and (out_t[-1] != float(times[-1]) or out_v[-1] != int(values[-1])):
+        out_t.append(float(times[-1]))
+        out_v.append(int(values[-1]))
+    if np is not None:
+        return np.asarray(out_t), np.asarray(out_v)
+    return out_t, out_v
+
+
+def _rdp_indices(t, v, max_points: int) -> list[int]:
+    """Return indices subsampled via a simple RDP-like algorithm."""
+
+    n = len(t)
+    if n <= max_points:
+        return list(range(n))
+
+    keep: List[int] = [0, n - 1]
+
+    def _seg_error(a: int, b: int) -> tuple[float, int | None]:
+        ta, tb = float(t[a]), float(t[b])
+        va, vb = float(v[a]), float(v[b])
+        dt = tb - ta
+        dv = vb - va
+        denom = dt * dt + dv * dv
+        max_dist = -1.0
+        max_idx: int | None = None
+        for i in range(a + 1, b):
+            tt = float(t[i]) - ta
+            vv = float(v[i]) - va
+            if denom == 0:
+                dist = abs(vv)
+            else:
+                proj = (tt * dt + vv * dv) / denom
+                proj_t = ta + proj * dt
+                proj_v = va + proj * dv
+                dist = math.hypot(float(t[i]) - proj_t, float(v[i]) - proj_v)
+            if dist > max_dist:
+                max_dist = dist
+                max_idx = i
+        return max_dist, max_idx
+
+    while len(keep) < max_points:
+        max_dist = -1.0
+        max_idx: int | None = None
+        keep_sorted = sorted(keep)
+        for a, b in zip(keep_sorted[:-1], keep_sorted[1:]):
+            dist, idx = _seg_error(a, b)
+            if idx is not None and dist > max_dist:
+                max_dist = dist
+                max_idx = idx
+        if max_idx is None:
+            break
+        keep.append(max_idx)
+
+    return sorted(keep)
+
+
+# -----------------------------------------------------------------------------
+# ControlCurve
+# -----------------------------------------------------------------------------
+
 class ControlCurve:
-    """Sparse control curve which can render MIDI events."""
+    """Simple spline-based control curve.
 
-    target: Literal["cc11", "cc64", "bend"]
-    domain: Literal["time", "beats"] = "time"
-    knots: list[tuple[float, float]] | None = None
-    resolution_hz: float = 100.0
-    clamp: bool = True
-    units: Literal["semitones", "normalized"] = "semitones"
-    eps_cc: float = 0.5
-    eps_bend: float = 1.0
+    Parameters
+    ----------
+    times, values:
+        Sample locations and values.  ``domain`` controls whether ``times``
+        are in seconds (``"time"``) or beats (``"beats"``).
+    domain:
+        ``"time"`` for absolute seconds or ``"beats"`` for beat positions.
+    offset_sec:
+        Shift applied to all rendered event times.  Negative values are
+        clamped to ``0.0`` with a warning.
+    """
 
-    def __post_init__(self) -> None:  # pragma: no cover - thin wrapper
-        if self.knots is None:
-            self.knots = []
+    def __init__(
+        self,
+        times: "Sequence[float]",
+        values: "Sequence[float]",
+        *,
+        domain: str = "time",
+        offset_sec: float = 0.0,
+        units: str | None = None,
+        resolution_hz: float | None = None,
+        eps_cc: float | None = None,
+        eps_bend: float | None = None,
+    ) -> None:
+        # Numpy arrays where available for speed/consistency
+        self.times = np.asarray(times, dtype=float) if np is not None else list(map(float, times))
+        self.values = np.asarray(values, dtype=float) if np is not None else list(map(float, values))
+        self.domain = domain
+        if offset_sec < 0.0:
+            warnings.warn("offset_sec must be non-negative; clamping to 0.0")
+            offset_sec = 0.0
+        self.offset_sec = float(offset_sec)
+        # Optional defaults (kept for compatibility with older ctor usage in some code)
+        self.units = units or "semitones"
+        self.resolution_hz = resolution_hz if (resolution_hz is not None) else 0.0
+        self.eps_cc = eps_cc if (eps_cc is not None) else 0.5
+        self.eps_bend = eps_bend if (eps_bend is not None) else 1.0
 
     # ---- validation -------------------------------------------------
     def validate(self) -> None:
-        """Validate internal state raising ``ValueError`` on issues."""
+        times = self.times if np is None else self.times.tolist()
+        if len(times) != (len(self.values) if np is None else int(self.values.size)):
+            raise ValueError("times and values must be same length")
+        if len(times) == 0:
+            return
+        diffs = [times[i + 1] - times[i] for i in range(len(times) - 1)]
+        if any(d < 0 for d in diffs):
+            raise ValueError("times must be non-decreasing")
 
-        if self.target not in {"cc11", "cc64", "bend"}:
-            raise ValueError("Invalid target")
-        if self.domain not in {"time", "beats"}:
-            raise ValueError("Invalid domain")
-        if self.units not in {"semitones", "normalized"}:
-            raise ValueError("Invalid units")
-        if not self.knots:
-            raise ValueError("ControlCurve requires at least one knot")
-        prev_t = -math.inf
-        for t, v in self.knots:
-            if not math.isfinite(t) or t <= prev_t:
-                raise ValueError("Knots must be strictly increasing and finite")
-            if not math.isfinite(v):
-                raise ValueError("Invalid knot value")
-            prev_t = t
-
-    # ---- sampling ---------------------------------------------------
-    def sample(self, times: Sequence[float]) -> List[float]:
-        """Return interpolated values at ``times``."""
-
-        self.validate()
-        k_t = [k[0] for k in self.knots]
-        k_v = [k[1] for k in self.knots]
-        vals = catmull_rom_monotone(k_t, k_v, times)
-        if np is not None:
-            vals = np.nan_to_num(vals).tolist()
+    # ---- domain conversion -----------------------------------------
+    def _beats_to_times(
+        self,
+        beats,  # array-like
+        tempo_map: float | Sequence[tuple[float, float]] | Callable[[float], float],
+    ) -> List[float]:
+        if callable(tempo_map):
+            tempo = tempo_map
+        elif isinstance(tempo_map, (int, float)):
+            const = float(tempo_map)
+            tempo = lambda _b: const  # noqa: E731
         else:
-            vals = [0.0 if not math.isfinite(v) else v for v in vals]
-        if self.clamp and self.target != "bend":
-            vals = [min(127, max(0, v)) for v in vals]
-        return [float(v) for v in vals]
+            tempo = tempo_map_from_events(tempo_map)
+        beats_list = beats if isinstance(beats, list) else (beats.tolist() if np is not None else list(beats))
+        times: List[float] = [0.0]
+        for a, b in zip(beats_list[:-1], beats_list[1:]):
+            mid = (a + b) / 2.0
+            bpm = tempo(mid)
+            dt = (b - a) * 60.0 / bpm
+            times.append(times[-1] + dt)
+        return times
 
-    # ---- MIDI rendering ---------------------------------------------
+    def _prep(
+        self,
+        tempo_map: float | Sequence[tuple[float, float]] | Callable[[float], float],
+    ):
+        self.validate()
+        t, v = dedupe_events(self.times, self.values)
+        if self.domain == "beats":
+            t = self._beats_to_times(t, tempo_map)
+        return t, v
+
+    # ---- MIDI CC rendering -----------------------------------------
     def to_midi_cc(
         self,
-        channel: int,
+        inst,
         cc_number: int,
         *,
+        tempo_map: (
+            float | Sequence[tuple[float, float]] | Callable[[float], float]
+        ) = 120.0,
+        sample_rate_hz: float | None = None,
+        resolution_hz: float | None = None,
         max_events: int | None = None,
-        tempo_map: Callable[[float], float] | None = None,
-        start_offset_sec: float = 0.0,
-    ) -> list[pretty_midi.ControlChange]:
-        """Render the curve as MIDI CC events."""
+        value_eps: float = 1e-6,
+        time_eps: float = 1e-9,
+    ) -> None:
+        """Render the curve as MIDI CC events onto ``inst``.
 
-        if self.target not in {"cc11", "cc64"}:
-            raise ValueError("ControlCurve target must be CC")
-        step_sec = 1.0 / self.resolution_hz
-        start = self.knots[0][0]
-        end = self.knots[-1][0]
+        ``tempo_map`` may be a constant BPM number, a callable ``beat → bpm``
+        function, or a list of ``(beat, bpm)`` pairs.  Endpoint events are
+        preserved even when ``max_events`` trims intermediate points.
+        ``resolution_hz`` is a deprecated alias for ``sample_rate_hz`` and is
+        slated for removal in a future release.
+        """
 
-        if self.domain == "time":
-            n = int(math.ceil((end - start) / step_sec))
-            t_query = [start + i * step_sec for i in range(n + 1)]
-            out_times = t_query
+        if resolution_hz is not None and sample_rate_hz is None:
+            warnings.warn(
+                "resolution_hz is deprecated; use sample_rate_hz",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            sample_rate_hz = resolution_hz
+
+        if max_events is not None and max_events < 2:
+            max_events = 2
+
+        t, v = self._prep(tempo_map)
+        if sample_rate_hz and sample_rate_hz > 0:
+            t, v = _resample(t, v, float(sample_rate_hz))
+        t, v = dedupe_events(t, v, value_eps=value_eps, time_eps=time_eps)
+        # clamp + round to MIDI domain
+        if np is not None:
+            vals = np.clip(np.rint(v), 0, 127).astype(int)
         else:
-            if tempo_map is None:
-                raise ValueError("tempo_map required for beats domain")
-            beats = [start]
-            b = start
-            while b < end:
-                bpm = tempo_map(b)
-                b += step_sec * bpm / 60.0
-                beats.append(min(b, end))
-            t_query = beats
-            # convert beats to seconds
-            out_times = [0.0]
-            prev_b = beats[0]
-            for bt in beats[1:]:
-                bpm = tempo_map(prev_b)
-                out_times.append(out_times[-1] + (bt - prev_b) * 60.0 / bpm)
-                prev_b = bt
-
-        v = self.sample(t_query)
-        t_list, v_list = dedupe_events(
-            ensure_scalar_floats(out_times), ensure_scalar_floats(v), eps=self.eps_cc
+            vals = [int(round(max(0, min(127, float(x))))) for x in v]
+        t, vals = _dedupe_int(
+            t, vals, time_eps=time_eps, keep_last=max_events is not None
         )
-        if max_events is not None and len(t_list) > max_events:
-            simplified = ControlCurve.from_dense(
-                t_list, v_list, tol=1e-9, max_knots=max_events, target=self.target
+        if max_events is not None and len(vals) > max_events:
+            idx = _rdp_indices(t, vals, max_events)
+            t = [t[i] for i in idx]
+            vals = [int(vals[i]) for i in idx]
+            t, vals = _dedupe_int(t, vals, time_eps=time_eps, keep_last=True)
+        for tt, vv in zip(t, vals):
+            inst.control_changes.append(
+                pretty_midi.ControlChange(
+                    number=int(cc_number), value=int(vv), time=float(tt + self.offset_sec)
+                )
             )
-            t_list = [t for t, _ in simplified.knots]
-            v_list = [v for _, v in simplified.knots]
-        t_list = [t + start_offset_sec for t in t_list]
-        events = [
-            pretty_midi.ControlChange(
-                number=cc_number, value=int(round(val)), time=float(time)
-            )
-            for time, val in zip(t_list, v_list)
-        ]
-        return events
 
+    # ---- Pitch bend rendering --------------------------------------
+    def to_pitch_bend(
+        self,
+        inst,
+        *,
+        tempo_map: (
+            float | Sequence[tuple[float, float]] | Callable[[float], float]
+        ) = 120.0,
+        bend_range_semitones: float = 2.0,
+        sample_rate_hz: float | None = None,
+        resolution_hz: float | None = None,
+        max_events: int | None = None,
+        value_eps: float = 1e-6,
+        time_eps: float = 1e-9,
+        units: str = "semitones",
+    ) -> None:
+        """Render the curve as MIDI pitch-bend events onto ``inst``.
+
+        Values are interpreted in ``units``: either ``"semitones"`` (scaled by
+        ``bend_range_semitones``) or ``"normalized"`` where ``-1``..``1`` maps
+        directly to the 14-bit bend range ``[-8192, 8191]``.  ``tempo_map`` has
+        the same semantics as in :meth:`to_midi_cc`.  ``resolution_hz`` is a
+        deprecated alias for ``sample_rate_hz``.
+        Endpoint events are preserved when ``max_events`` is specified.
+        """
+
+        if resolution_hz is not None and sample_rate_hz is None:
+            warnings.warn(
+                "resolution_hz is deprecated; use sample_rate_hz",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            sample_rate_hz = resolution_hz
+
+        if max_events is not None and max_events < 2:
+            max_events = 2
+
+        t, v = self._prep(tempo_map)
+        if sample_rate_hz and sample_rate_hz > 0:
+            t, v = _resample(t, v, float(sample_rate_hz))
+        t, v = dedupe_events(t, v, value_eps=value_eps, time_eps=time_eps)
+        # convert to 14-bit domain
+        if units == "normalized":
+            if np is not None:
+                vals = np.clip(np.rint(np.asarray(v) * 8192.0), -8192, 8191).astype(int)
+            else:
+                vals = [int(round(max(-8192, min(8191, float(x) * 8192.0)))) for x in v]
+        else:
+            scale = 8192.0 / float(bend_range_semitones)
+            if np is not None:
+                vals = np.clip(np.rint(np.asarray(v) * scale), -8192, 8191).astype(int)
+            else:
+                vals = [int(round(max(-8192, min(8191, float(x) * scale)))) for x in v]
+        t, vals = _dedupe_int(
+            t, vals, time_eps=time_eps, keep_last=max_events is not None
+        )
+        if max_events is not None and len(vals) > max_events:
+            idx = _rdp_indices(t, vals, max_events)
+            t = [t[i] for i in idx]
+            vals = [int(vals[i]) for i in idx]
+            t, vals = _dedupe_int(t, vals, time_eps=time_eps, keep_last=True)
+        for tt, vv in zip(t, vals):
+            inst.pitch_bends.append(
+                pretty_midi.PitchBend(pitch=int(vv), time=float(tt + self.offset_sec))
+            )
+
+    # ---- utils ------------------------------------------------------
     @staticmethod
     def convert_to_14bit(
         values: Sequence[float],
@@ -227,85 +495,20 @@ class ControlCurve:
     ) -> List[int]:
         """Convert ``values`` to 14-bit pitch-bend integers.
 
-        Parameters
-        ----------
-        values:
-            Sequence of bend values.
-        range_semitones:
-            Pitch-bend range in semitones.
-        units:
-            ``"semitones"`` interprets ``values`` directly in semitones,
-            while ``"normalized"`` treats ``values`` as the range ``[-1, 1]``.
+        ``units`` can be ``"semitones"`` (default) or ``"normalized"``.
         """
 
         vals = ensure_scalar_floats(values)
-        scale = 8192.0
         if units == "normalized":
+            arr = [v * 8192.0 for v in vals]
+        else:
+            scale = 8192.0 / float(range_semitones)
             arr = [v * scale for v in vals]
-        else:
-            arr = [v / range_semitones * scale for v in vals]
         if np is not None:
-            return np.round(np.clip(arr, -8192, 8191)).astype(int).tolist()
-        return [int(round(max(-8192, min(8191, v)))) for v in arr]
+            return np.rint(np.clip(arr, -8192, 8191)).astype(int).tolist()
+        return [int(round(max(-8192, min(8191, a)))) for a in arr]
 
-    def to_pitch_bend(
-        self,
-        channel: int,
-        range_semitones: float = 2.0,
-        *,
-        max_events: int | None = None,
-        tempo_map: Callable[[float], float] | None = None,
-        units: str | None = None,
-        start_offset_sec: float = 0.0,
-    ) -> list[pretty_midi.PitchBend]:
-        """Render the curve as pitch-bend events."""
-
-        if self.target != "bend":
-            raise ValueError("ControlCurve target must be 'bend'")
-        step_sec = 1.0 / self.resolution_hz
-        start = self.knots[0][0]
-        end = self.knots[-1][0]
-
-        if self.domain == "time":
-            n = int(math.ceil((end - start) / step_sec))
-            t_query = [start + i * step_sec for i in range(n + 1)]
-            out_times = t_query
-        else:
-            if tempo_map is None:
-                raise ValueError("tempo_map required for beats domain")
-            beats = [start]
-            b = start
-            while b < end:
-                bpm = tempo_map(b)
-                b += step_sec * bpm / 60.0
-                beats.append(min(b, end))
-            t_query = beats
-            out_times = [0.0]
-            prev_b = beats[0]
-            for bt in beats[1:]:
-                bpm = tempo_map(prev_b)
-                out_times.append(out_times[-1] + (bt - prev_b) * 60.0 / bpm)
-                prev_b = bt
-
-        v = self.sample(t_query)
-        v = self.convert_to_14bit(v, range_semitones, units=units or self.units)
-        t_list, v_list = dedupe_events(
-            ensure_scalar_floats(out_times), ensure_scalar_floats(v), eps=self.eps_bend
-        )
-        if max_events is not None and len(t_list) > max_events:
-            simplified = ControlCurve.from_dense(
-                t_list, v_list, tol=1e-9, max_knots=max_events, target=self.target
-            )
-            t_list = [t for t, _ in simplified.knots]
-            v_list = [v for _, v in simplified.knots]
-        t_list = [t + start_offset_sec for t in t_list]
-        events = [
-            pretty_midi.PitchBend(pitch=int(val), time=float(time))
-            for time, val in zip(t_list, v_list)
-        ]
-        return events
-
-    # ---- simplification ---------------------------------------------
+    # ---- simplification --------------------------------------------
     @staticmethod
     def from_dense(
         times: Sequence[float],
@@ -313,7 +516,7 @@ class ControlCurve:
         *,
         tol: float = 1.5,
         max_knots: int = 256,
-        target: Literal["cc11", "cc64", "bend"] = "cc11",
+        target: str | None = None,  # kept for compatibility with older code
     ) -> "ControlCurve":
         """Create :class:`ControlCurve` from dense ``times``/``values``.
 
@@ -325,6 +528,9 @@ class ControlCurve:
         pts = list(zip(ensure_scalar_floats(times), ensure_scalar_floats(values)))
         if not pts:
             raise ValueError("from_dense requires at least one point")
+        if len(pts) == 1:
+            t0, v0 = pts[0]
+            return ControlCurve([t0], [v0])
 
         def _dp(start: int, end: int, out: List[Tuple[float, float]]) -> None:
             if len(out) >= max_knots:
@@ -335,7 +541,7 @@ class ControlCurve:
                 return
             # line distance
             max_dist = -1.0
-            idx = None
+            idx: int | None = None
             for i in range(start + 1, end):
                 t, v = pts[i]
                 if t1 == t0 and v1 == v0:
@@ -357,5 +563,6 @@ class ControlCurve:
         simplified.append(pts[-1])
         simplified = sorted(set(simplified), key=lambda p: p[0])
         if len(simplified) > max_knots:
-            simplified = simplified[:max_knots]
-        return ControlCurve(target=target, knots=simplified)
+            simplified = simplified[: max_knots]
+        t_s, v_s = zip(*simplified)
+        return ControlCurve(list(t_s), list(v_s))

@@ -1,11 +1,35 @@
 from __future__ import annotations
 
+import argparse
+import importlib.util
+import json
 import warnings
 from collections.abc import Callable, Mapping
+from pathlib import Path
+from typing import TypedDict
 
 import pretty_midi
 
 from .controls_spline import ControlCurve
+
+
+class TargetMap(TypedDict, total=False):
+    cc11: ControlCurve
+    cc64: ControlCurve
+    bend: ControlCurve
+
+
+Routing = dict[int, TargetMap]
+
+TempoFunc = Callable[[float], float]
+# CLI helper type (not used by the core API)
+TempoMap = TempoFunc | dict[int, TempoFunc] | dict[int, dict[str, TempoFunc]]
+
+
+class EventCaps(TypedDict, total=False):
+    cc11: int
+    cc64: int
+    bend: int
 
 
 def ensure_instrument_for_channel(
@@ -125,7 +149,7 @@ def apply_controls(
     bend_max_events: int | None = None,
     value_eps: float = 1e-6,
     time_eps: float = 1e-9,
-    tempo_map: (float | list[tuple[float, float]] | Callable[[float], float] | None) = None,
+    tempo_map: float | list[tuple[float, float]] | Callable[[float], float] | None = None,
 ) -> None:
     """Apply ``curves_by_channel`` to ``pm`` grouped by MIDI channel.
 
@@ -157,6 +181,9 @@ def apply_controls(
         raise ValueError("lsb_mode must be '128th' or 'cents'")
 
     for ch, targets in curves_by_channel.items():
+        if not 0 <= ch <= 15:
+            raise ValueError("MIDI channel must be in 0..15")
+
         inst = ensure_instrument_for_channel(pm, ch)
 
         if write_rpn:
@@ -178,7 +205,8 @@ def apply_controls(
                 }
                 if tempo_map is not None:
                     kwargs["tempo_map"] = tempo_map
-                curve.to_pitch_bend(inst, **kwargs)  # writes into ``inst``
+                # Writes into inst in-place
+                curve.to_pitch_bend(inst, **kwargs)  # type: ignore[arg-type]
             else:
                 cc_num = _CC_MAP.get(name)
                 if cc_num is None:
@@ -191,4 +219,139 @@ def apply_controls(
                 }
                 if tempo_map is not None:
                     kwargs["tempo_map"] = tempo_map
-                curve.to_midi_cc(inst, cc_num, **kwargs)  # writes into ``inst``
+                # Writes into inst in-place
+                curve.to_midi_cc(inst, cc_num, **kwargs)  # type: ignore[arg-type]
+
+        # keep deterministic ordering
+        inst.control_changes.sort(key=lambda c: c.time)
+        inst.pitch_bends.sort(key=lambda b: b.time)
+
+
+# ----------------------------- CLI helpers ---------------------------------
+
+
+def _load_curve_from_json(path: Path) -> ControlCurve:
+    """Load a curve description JSON and return a ControlCurve(times, values,...).
+
+    Expected JSON schema:
+    {
+      "domain": "time" | "beats",
+      "knots": [[t0, v0], [t1, v1], ...]
+    }
+    """
+    with path.open() as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise ValueError(f"Curve file {path} must contain a JSON object")
+    domain = data.get("domain", "time")
+    knots = data.get("knots")
+    if not isinstance(knots, list) or not knots:
+        raise ValueError(f"Curve file {path} missing non-empty 'knots' list")
+    try:
+        times = [float(t) for t, _ in knots]
+        values = [float(v) for _, v in knots]
+    except Exception as exc:  # pragma: no cover
+        raise ValueError(f"Invalid knots in {path}: {exc}") from exc
+    return ControlCurve(times, values, domain=domain)
+
+
+def _load_tempo_func(spec: str) -> TempoFunc:
+    """Load a tempo-map callable from 'FILE.py:FUNC'."""
+    module_path, func_name = spec.split(":", 1)
+    module_path = str(module_path)
+    mod_name = Path(module_path).stem
+    spec_obj = importlib.util.spec_from_file_location(mod_name, module_path)
+    if spec_obj is None or spec_obj.loader is None:
+        raise ValueError(f"Cannot load tempo-map module {module_path}")
+    module = importlib.util.module_from_spec(spec_obj)
+    spec_obj.loader.exec_module(module)
+    func = getattr(module, func_name, None)
+    if not callable(func):
+        raise ValueError(f"tempo-map function {func_name} not found in {module_path}")
+    return func  # type: ignore[return-value]
+
+
+def main(argv: list[str] | None = None) -> pretty_midi.PrettyMIDI:
+    """CLI: Apply control curves described in a routing JSON onto a MIDI file."""
+    parser = argparse.ArgumentParser(description="Apply control curves to MIDI")
+    parser.add_argument("in_mid")
+    parser.add_argument("routing_json")
+    parser.add_argument("--out", default="out.mid")
+    parser.add_argument("--bend-range-semitones", type=float, default=2.0)
+    parser.add_argument(
+        "--write-rpn", action="store_true", help="Emit RPN(0,0) bend range before bends"
+    )
+    parser.add_argument(
+        "--no-rpn-null",
+        dest="send_rpn_null",
+        action="store_false",
+        default=True,
+        help="Do not append RPN Null after range",
+    )
+    parser.add_argument(
+        "--lsb-mode",
+        choices=["128th", "cents"],
+        default="128th",
+        help="Fractional bend-range encoding for CC#38",
+    )
+    parser.add_argument("--max-bend", type=int)
+    parser.add_argument("--max-cc11", type=int)
+    parser.add_argument("--max-cc64", type=int)
+    parser.add_argument(
+        "--tempo-map",
+        help="Tempo map callable as FILE.py:FUNC for beats-domain curves",
+    )
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args(argv)
+
+    try:
+        pm = pretty_midi.PrettyMIDI(args.in_mid)
+    except TypeError:  # pragma: no cover - stub compatibility
+        pm = pretty_midi.PrettyMIDI()
+
+    # Load routing JSON: { "0": {"cc11": "expr.json", "bend": "vibrato.json"}, ... }
+    with Path(args.routing_json).open() as fh:
+        routing_desc = json.load(fh)
+    if not isinstance(routing_desc, dict):
+        raise ValueError("routing JSON must be an object mapping channels")
+
+    curves_by_channel: dict[int, dict[str, ControlCurve]] = {}
+    for ch_str, targets in routing_desc.items():
+        ch = int(ch_str)
+        mapping: dict[str, ControlCurve] = {}
+        if not isinstance(targets, dict):
+            raise ValueError(f"routing for channel {ch} must be an object")
+        for tgt, file_path in targets.items():
+            mapping[tgt] = _load_curve_from_json(Path(file_path))
+        curves_by_channel[ch] = mapping
+
+    # Build event caps (shared cap per class of target)
+    cc_cap = min(x for x in [args.max_cc11, args.max_cc64] if x is not None) if any(
+        v is not None for v in (args.max_cc11, args.max_cc64)
+    ) else None
+    bend_cap = args.max_bend
+
+    tempo_callable: TempoFunc | None = None
+    if args.tempo_map is not None:
+        tempo_callable = _load_tempo_func(args.tempo_map)
+
+    apply_controls(
+        pm,
+        curves_by_channel,
+        write_rpn=args.write_rpn,
+        bend_range_semitones=args.bend_range_semitones,
+        send_rpn_null=args.send_rpn_null,
+        lsb_mode=args.lsb_mode,
+        cc_max_events=cc_cap,
+        bend_max_events=bend_cap,
+        tempo_map=tempo_callable,
+    )
+
+    if not args.dry_run and hasattr(pm, "write"):
+        pm.write(args.out)
+
+    return pm
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry
+    main()

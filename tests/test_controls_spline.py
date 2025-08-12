@@ -5,6 +5,8 @@ import math
 import sys
 from pathlib import Path
 
+import pytest
+
 try:
     import pretty_midi  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - fallback stub
@@ -97,6 +99,22 @@ def test_dedupe():
     assert len(events) == 1
 
 
+def test_dedupe_tolerance_cc():
+    times = [0.0, 1.0]
+    values = [64.0, 64.0005]
+    curve = ControlCurve(target="cc11", knots=list(zip(times, values)), dedupe_tol=1e-3)
+    events = curve.to_midi_cc(channel=0, cc_number=11)
+    assert len(events) == 1
+
+
+def test_catmull_rom_bisect_linear():
+    times = [0.0, 1.0, 2.0]
+    values = [0.0, 1.0, 2.0]
+    query = [0.5, 1.5]
+    out = module.catmull_rom_monotone(times, values, query)
+    assert out == pytest.approx([0.5, 1.5])
+
+
 def test_from_dense_simplifies():
     times = [i / 99 for i in range(100)]
     values = [t * 127.0 for t in times]
@@ -143,31 +161,22 @@ def test_domain_beats_with_tempo_map():
     assert values == sorted(values)
 
 
-def test_apply_controls_beats_domain():
-    def tempo_map(b: float) -> float:
-        return 120.0 if b < 1.0 else 60.0
+@pytest.mark.parametrize("bpm", [0.0, -1.0, float("nan")])
+def test_beats_domain_invalid_bpm_raises(bpm: float):
+    curve = ControlCurve(target="cc11", domain="beats", knots=[(0.0, 0.0), (1.0, 1.0)])
 
-    pm = pretty_midi.PrettyMIDI()
-    curve = ControlCurve(
-        target="cc11",
-        domain="beats",
-        knots=[(0.0, 0.0), (2.0, 127.0)],
-        resolution_hz=2.0,
-    )
-    apply_controls(pm, {"cc11": curve}, {"cc11": 0}, tempo_map=tempo_map)
-    inst = [i for i in pm.instruments if i.name == "channel0"][0]
-    times = [e.time for e in inst.control_changes]
-    values = [e.value for e in inst.control_changes]
-    assert abs(times[1] - 0.5) < 1e-6
-    assert abs(times[-1] - 1.5) < 1e-6
-    assert values == sorted(values)
+    def tempo_map(_: float) -> float:
+        return bpm
+
+    with pytest.raises(ValueError):
+        curve.to_midi_cc(channel=0, cc_number=11, tempo_map=tempo_map)
 
 
 def test_rpn_emitted_once():
     pm = pretty_midi.PrettyMIDI()
     curve = ControlCurve(target="bend", knots=[(0.0, 0.0), (1.0, 1.0)])
-    apply_controls(pm, {"bend": curve}, {"bend": 0})
-    apply_controls(pm, {"bend": curve}, {"bend": 0})
+    apply_controls(pm, {0: {"bend": curve}})
+    apply_controls(pm, {0: {"bend": curve}})
     inst = [i for i in pm.instruments if i.name == "channel0"][0]
     nums = inst.control_changes
     assert sum(1 for cc in nums if cc.number == 101 and cc.value == 0) == 1
@@ -215,11 +224,7 @@ def test_instrument_routing():
     pm = pretty_midi.PrettyMIDI()
     cc_curve = ControlCurve(target="cc11", knots=[(0.0, 64.0), (1.0, 64.0)])
     bend_curve = ControlCurve(target="bend", knots=[(0.0, 0.0), (1.0, 1.0)])
-    apply_controls(
-        pm,
-        {"cc11": cc_curve, "bend": bend_curve},
-        {"cc11": 0, "bend": 1},
-    )
+    apply_controls(pm, {0: {"cc11": cc_curve}, 1: {"bend": bend_curve}})
     inst0 = [i for i in pm.instruments if i.name == "channel0"][0]
     inst1 = [i for i in pm.instruments if i.name == "channel1"][0]
     assert inst0.control_changes and not inst0.pitch_bends
@@ -231,19 +236,22 @@ def test_fractional_bend_range():
     values = [2.5 * math.sin(2 * math.pi * t) for t in times]
     curve = ControlCurve(target="bend", knots=list(zip(times, values)))
     pm = pretty_midi.PrettyMIDI()
-    apply_controls(
-        pm,
-        {"bend": curve},
-        {"bend": 0},
-        bend_range_semitones=2.5,
-    )
+    apply_controls(pm, {0: {"bend": curve}}, bend_range_semitones=2.5)
     inst = [i for i in pm.instruments if i.name == "channel0"][0]
     peak = max(abs(pb.pitch) for pb in inst.pitch_bends)
     assert 0.9 * 8191 <= peak <= 1.1 * 8191
     msb = [cc.value for cc in inst.control_changes if cc.number == 6][0]
     lsb = [cc.value for cc in inst.control_changes if cc.number == 38][0]
     assert msb == 2
-    assert 48 <= lsb <= 52
+    assert lsb == 64
+
+
+def test_pitch_bend_clipping():
+    curve = ControlCurve(target="bend", knots=[(0.0, -3.0), (1.0, 3.0)])
+    bends = curve.to_pitch_bend(channel=0, range_semitones=2.0, sample_rate_hz=1.0)
+    pitches = [b.pitch for b in bends]
+    assert min(pitches) == -8192
+    assert max(pitches) == 8191
 
 
 def test_min_clamp_negative():

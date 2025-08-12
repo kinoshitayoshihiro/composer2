@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from bisect import bisect_right
 from collections.abc import Callable, Sequence
 from typing import Iterable, List, Tuple
 
@@ -32,7 +33,6 @@ __all__ = [
 
 def ensure_scalar_floats(seq: Iterable[float]) -> List[float]:
     """Return ``seq`` as a list of Python ``float`` values."""
-
     return [float(x) for x in seq]
 
 
@@ -112,11 +112,7 @@ def catmull_rom_monotone(
             res.append(y[-1])
             continue
         # Find segment j such that x[j] <= t <= x[j+1]
-        j = 0
-        for k in range(len(x) - 1):
-            if x[k] <= t <= x[k + 1]:
-                j = k
-                break
+        j = bisect_right(x, t) - 1
         h_j = x[j + 1] - x[j]
         s = (t - x[j]) / h_j if h_j != 0 else 0.0
         s2 = s * s
@@ -180,25 +176,27 @@ def tempo_map_from_events(
 # Internal numeric helpers
 # -----------------------------------------------------------------------------
 
-def _resample(
-    t_knots, v_knots, sample_rate_hz: float
-):
+def _resample(t_knots, v_knots, sample_rate_hz: float):
     """Resample ``t_knots``/``v_knots`` on an equally spaced time grid."""
     if sample_rate_hz <= 0 or len(t_knots) < 2:
         return t_knots, v_knots
     step = 1.0 / float(sample_rate_hz)
     t0 = float(t_knots[0])
     t1 = float(t_knots[-1])
-    # Build grid; ensure the exact last time is included
-    grid = []
+    if np is not None:
+        grid = np.arange(t0, t1, step, dtype=float)
+        if grid.size == 0 or float(grid[-1]) < t1:
+            grid = np.append(grid, t1)
+        vals = catmull_rom_monotone(t_knots, v_knots, grid.tolist())
+        return grid, np.asarray(vals, dtype=float)
+    # Fallback without numpy
+    grid: List[float] = []
     g = t0
     while g < t1 - 1e-12:
         grid.append(g)
         g += step
     grid.append(t1)
     vals = catmull_rom_monotone(t_knots, v_knots, grid)
-    if np is not None:
-        return np.asarray(grid, dtype=float), np.asarray(vals, dtype=float)
     return grid, vals
 
 
@@ -312,7 +310,7 @@ class ControlCurve:
             warnings.warn("offset_sec must be non-negative; clamping to 0.0")
             offset_sec = 0.0
         self.offset_sec = float(offset_sec)
-        # Optional defaults (kept for compatibility with older ctor usage in some code)
+        # Optional defaults (compat with older ctor usage in some code)
         self.units = units or "semitones"
         self.resolution_hz = resolution_hz if (resolution_hz is not None) else 0.0
         self.eps_cc = eps_cc if (eps_cc is not None) else 0.5

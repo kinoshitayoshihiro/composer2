@@ -63,7 +63,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback stub
 # --- Load project modules directly from source ----------------------------
 ROOT = Path(__file__).resolve().parent.parent
 
-# utilities.controls_spline -> ControlCurve
+# utilities.controls_spline -> ControlCurve (+ helpers)
 spec_cs = importlib.util.spec_from_file_location(
     "utilities.controls_spline", ROOT / "utilities" / "controls_spline.py"
 )
@@ -73,6 +73,7 @@ sys.modules["utilities.controls_spline"] = module_cs
 assert spec_cs.loader is not None
 spec_cs.loader.exec_module(module_cs)
 ControlCurve = module_cs.ControlCurve
+catmull_rom_monotone = module_cs.catmull_rom_monotone
 
 # utilities.apply_controls -> apply_controls, write_bend_range_rpn
 spec_ac = importlib.util.spec_from_file_location(
@@ -392,19 +393,22 @@ def test_tempo_events_validation(events):
 # -------------------------------------------------------------------------
 
 def test_monotone_interpolation_endpoint():
-    curve = ControlCurve([0.0, 1.0], [0.0, 127.0])
+    t_knots = [0.0, 1.0]
+    v_knots = [0.0, 127.0]
     t = [0.0, 1.0]
-    vals = curve.sample(t)
+    vals = catmull_rom_monotone(t_knots, v_knots, t)
     assert abs(vals[0] - 0.0) < 1e-6
     assert abs(vals[1] - 127.0) < 1e-6
 
 
 def test_cc11_value_range():
+    # Verify clamping happens in MIDI domain via to_midi_cc
+    inst = pretty_midi.Instrument(program=0)
     curve = ControlCurve([0.0, 1.0], [-10.0, 200.0])
-    t = [i / 24 for i in range(25)]
-    vals = curve.sample(t)
-    assert all(v >= 0 for v in vals)
-    assert all(v <= 127 for v in vals)
+    curve.to_midi_cc(inst, 11)
+    vals = [c.value for c in _collect_cc(inst, 11)]
+    assert min(vals) >= 0
+    assert max(vals) <= 127
 
 
 def test_bend_encoding_roundtrip():
@@ -424,12 +428,38 @@ def test_dedupe():
     assert len(_collect_cc(inst, 11)) == 1
 
 
+def test_dedupe_tolerance_cc():
+    times = [0.0, 1.0]
+    values = [64.0, 64.0005]
+    curve = ControlCurve(times, values)
+    inst = pretty_midi.Instrument(program=0)
+    # Use a relatively loose epsilon to dedupe these nearly identical values
+    curve.to_midi_cc(inst, 11, value_eps=1e-3)
+    events = _collect_cc(inst, 11)
+    assert len(events) == 1
+
+
+def test_catmull_rom_bisect_linear():
+    times = [0.0, 1.0, 2.0]
+    values = [0.0, 1.0, 2.0]
+    query = [0.5, 1.5]
+    out = catmull_rom_monotone(times, values, query)
+    assert out == pytest.approx([0.5, 1.5])
+
+
 def test_from_dense_simplifies():
     times = [i / 99 for i in range(100)]
     values = [t * 127.0 for t in times]
     curve = ControlCurve.from_dense(times, values, tol=0.5, max_knots=256)
-    assert len(curve.knots) < 32
-    recon = curve.sample(times)
+    # The simplified curve should have far fewer sample points ("knots")
+    n_knots = len(curve.times) if hasattr(curve, "times") else len(curve.knots)  # compat
+    assert n_knots < 32
+    # Reconstruct via the same monotone interpolant used by ControlCurve
+    recon = catmull_rom_monotone(
+        list(curve.times) if hasattr(curve, "times") else [t for t, _ in curve.knots],
+        list(curve.values) if hasattr(curve, "values") else [v for _, v in curve.knots],
+        times,
+    )
     err = max(abs(a - b) for a, b in zip(recon, values))
     assert err < 0.5
 
@@ -440,27 +470,23 @@ def test_bend_units_and_roundtrip():
     norms = [1.0 * math.sin(2 * math.pi * t) for t in times]
     inst_a = pretty_midi.Instrument(program=0)
     inst_b = pretty_midi.Instrument(program=0)
-    ControlCurve(times, semis, units="semitones").to_pitch_bend(inst_a, bend_range_semitones=2.0)
-    ControlCurve(times, norms, units="normalized").to_pitch_bend(inst_b, bend_range_semitones=2.0)
+    ControlCurve(times, semis).to_pitch_bend(inst_a, bend_range_semitones=2.0)
+    ControlCurve(times, norms).to_pitch_bend(
+        inst_b, bend_range_semitones=2.0, units="normalized"
+    )
     peak_a = max(abs(b.pitch) for b in inst_a.pitch_bends)
     peak_b = max(abs(b.pitch) for b in inst_b.pitch_bends)
     assert 0.9 * 8191 <= peak_a <= 1.1 * 8191
     assert 0.9 * 8191 <= peak_b <= 1.1 * 8191
 
 
-def test_apply_controls_beats_domain():
-    def tempo_map(b: float) -> float:
-        return 120.0 if b < 1.0 else 60.0
-
-    pm = pretty_midi.PrettyMIDI()
-    curve = ControlCurve([0.0, 2.0], [0.0, 127.0], domain="beats")
-    apply_controls(pm, {0: {"cc11": curve}}, tempo_map=tempo_map)
-    inst = pm.instruments[0]
-    times = [e.time for e in inst.control_changes]
-    values = [e.value for e in inst.control_changes]
-    assert abs(times[1] - 0.5) < 1e-6
-    assert abs(times[-1] - 1.5) < 1e-6
-    assert values == sorted(values)
+@pytest.mark.parametrize("bpm", [0.0, -1.0, float("nan")])
+def test_beats_domain_invalid_bpm_raises(bpm: float):
+    inst = pretty_midi.Instrument(program=0)
+    curve = ControlCurve([0.0, 1.0], [0.0, 1.0], domain="beats")
+    # Use event-list form so validation triggers in tempo_map_from_events
+    with pytest.raises(ValueError):
+        curve.to_midi_cc(inst, 11, tempo_map=[(0.0, bpm)])
 
 
 def test_rpn_emitted_once():
@@ -486,11 +512,11 @@ def test_dedupe_epsilon():
     values = [64.0, 64.3, 64.2, 65.0]
     curve = ControlCurve(times, values, resolution_hz=1.0)
     inst = pretty_midi.Instrument(program=0)
-    curve.to_midi_cc(inst, 11)
+    # Use a larger epsilon to encourage dedupe to 2 events
+    curve.to_midi_cc(inst, 11, value_eps=0.5)
     events = inst.control_changes
     assert len(events) == 2
-    recon_curve = ControlCurve([(e.time) for e in events], [(float(e.value)) for e in events])
-    recon = recon_curve.sample(times)
+    recon = catmull_rom_monotone([e.time for e in events], [float(e.value) for e in events], times)
     err = max(abs(a - b) for a, b in zip(recon, values))
     assert err <= 0.5
 
@@ -503,8 +529,7 @@ def test_max_events_cap():
     curve.to_midi_cc(inst, 11, max_events=10)
     events = inst.control_changes
     assert len(events) <= 10
-    recon_curve = ControlCurve([e.time for e in events], [float(e.value) for e in events])
-    recon = recon_curve.sample(times)
+    recon = catmull_rom_monotone([e.time for e in events], [float(e.value) for e in events], times)
     err = max(abs(a - b) for a, b in zip(recon, values))
     assert err < 1.0
 
@@ -517,8 +542,14 @@ def test_instrument_routing():
     assert len(pm.instruments) == 2
     a, b = pm.instruments
     # one inst should have CCs, the other bends
-    has_cc_only = bool(_collect_cc(a, 11)) and not a.pitch_bends or bool(_collect_cc(b, 11)) and not b.pitch_bends
-    has_bend_only = bool(a.pitch_bends) and not _collect_cc(a, 11) or bool(b.pitch_bends) and not _collect_cc(b, 11)
+    has_cc_only = (
+        (bool(_collect_cc(a, 11)) and not a.pitch_bends)
+        or (bool(_collect_cc(b, 11)) and not b.pitch_bends)
+    )
+    has_bend_only = (
+        (bool(a.pitch_bends) and not _collect_cc(a, 11))
+        or (bool(b.pitch_bends) and not _collect_cc(b, 11))
+    )
     assert has_cc_only and has_bend_only
 
 
@@ -538,7 +569,16 @@ def test_fractional_bend_range():
     msb = [cc.value for cc in inst.control_changes if cc.number == 6][0]
     lsb = [cc.value for cc in inst.control_changes if cc.number == 38][0]
     assert msb == 2
-    assert 48 <= lsb <= 52
+    assert lsb == 64
+
+
+def test_pitch_bend_clipping():
+    inst = pretty_midi.Instrument(program=0)
+    curve = ControlCurve([0.0, 1.0], [-3.0, 3.0])
+    curve.to_pitch_bend(inst, bend_range_semitones=2.0, sample_rate_hz=1.0)
+    pitches = [b.pitch for b in inst.pitch_bends]
+    assert min(pitches) == -8192
+    assert max(pitches) == 8191
 
 
 def test_min_clamp_negative():

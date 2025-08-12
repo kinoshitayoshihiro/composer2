@@ -8,8 +8,11 @@ to per-channel instruments, e.g. instruments named ``"channel0"``.
 from __future__ import annotations
 
 import math
+import warnings
+from bisect import bisect_right
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Iterable, List, Literal, Sequence, Tuple
+from typing import Literal
 
 try:  # optional dependency
     import numpy as np  # type: ignore
@@ -25,7 +28,7 @@ __all__ = [
 ]
 
 
-def ensure_scalar_floats(seq: Iterable[float]) -> List[float]:
+def ensure_scalar_floats(seq: Iterable[float]) -> list[float]:
     """Return ``seq`` as a list of Python ``float`` values."""
 
     return [float(x) for x in seq]
@@ -35,7 +38,7 @@ def dedupe_events(
     times: Sequence[float],
     values: Sequence[float],
     eps: float = 0.5,
-) -> Tuple[List[float], List[float]]:
+) -> tuple[list[float], list[float]]:
     """Collapse consecutive ``values`` within ``eps`` keeping first ``time``."""
 
     if not times:
@@ -51,9 +54,27 @@ def dedupe_events(
     return out_t, out_v
 
 
+def _dedupe_by_tolerance(
+    times: Sequence[float], values: Sequence[float], tol: float
+) -> tuple[list[float], list[float]]:
+    """Collapse consecutive ``values`` differing by less than ``tol``."""
+
+    if not times:
+        return [], []
+    out_t = [float(times[0])]
+    out_v = [float(values[0])]
+    prev = values[0]
+    for t, v in zip(times[1:], values[1:]):
+        if abs(v - prev) >= tol:
+            out_t.append(float(t))
+            out_v.append(float(v))
+            prev = v
+    return out_t, out_v
+
+
 def catmull_rom_monotone(
     times: Sequence[float], values: Sequence[float], query_times: Sequence[float]
-) -> List[float]:
+) -> list[float]:
     """Return monotone cubic interpolation of ``values`` over ``times``.
 
     Uses the Fritsch–Carlson method which ensures the interpolant is
@@ -88,11 +109,7 @@ def catmull_rom_monotone(
         if t >= x[-1]:
             res.append(y[-1])
             continue
-        j = 0
-        for k in range(len(x) - 1):
-            if x[k] <= t <= x[k + 1]:
-                j = k
-                break
+        j = bisect_right(x, t) - 1
         h_j = x[j + 1] - x[j]
         s = (t - x[j]) / h_j
         s2 = s * s
@@ -114,15 +131,25 @@ class ControlCurve:
     target: Literal["cc11", "cc64", "bend"]
     domain: Literal["time", "beats"] = "time"
     knots: list[tuple[float, float]] | None = None
-    resolution_hz: float = 100.0
+    sample_rate_hz: float = 100.0
+    resolution_hz: float | None = None
     clamp: bool = True
     units: Literal["semitones", "normalized"] = "semitones"
     eps_cc: float = 0.5
     eps_bend: float = 1.0
+    max_events: int | None = None
+    dedupe_tol: float = 1e-9
 
     def __post_init__(self) -> None:  # pragma: no cover - thin wrapper
         if self.knots is None:
             self.knots = []
+        if self.resolution_hz is not None:
+            warnings.warn(
+                "resolution_hz is deprecated, use sample_rate_hz",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.sample_rate_hz = float(self.resolution_hz)
 
     # ---- validation -------------------------------------------------
     def validate(self) -> None:
@@ -145,7 +172,7 @@ class ControlCurve:
             prev_t = t
 
     # ---- sampling ---------------------------------------------------
-    def sample(self, times: Sequence[float]) -> List[float]:
+    def sample(self, times: Sequence[float]) -> list[float]:
         """Return interpolated values at ``times``."""
 
         self.validate()
@@ -166,6 +193,7 @@ class ControlCurve:
         channel: int,
         cc_number: int,
         *,
+        sample_rate_hz: float | None = None,
         max_events: int | None = None,
         tempo_map: Callable[[float], float] | None = None,
         start_offset_sec: float = 0.0,
@@ -174,7 +202,8 @@ class ControlCurve:
 
         if self.target not in {"cc11", "cc64"}:
             raise ValueError("ControlCurve target must be CC")
-        step_sec = 1.0 / self.resolution_hz
+        sr = sample_rate_hz or self.sample_rate_hz
+        step_sec = 1.0 / sr
         start = self.knots[0][0]
         end = self.knots[-1][0]
 
@@ -189,33 +218,38 @@ class ControlCurve:
             b = start
             while b < end:
                 bpm = tempo_map(b)
+                if not math.isfinite(bpm) or bpm <= 0:
+                    raise ValueError("tempo_map must return finite positive BPM")
                 b += step_sec * bpm / 60.0
                 beats.append(min(b, end))
             t_query = beats
-            # convert beats to seconds
             out_times = [0.0]
             prev_b = beats[0]
             for bt in beats[1:]:
                 bpm = tempo_map(prev_b)
+                if not math.isfinite(bpm) or bpm <= 0:
+                    raise ValueError("tempo_map must return finite positive BPM")
                 out_times.append(out_times[-1] + (bt - prev_b) * 60.0 / bpm)
                 prev_b = bt
 
         v = self.sample(t_query)
-        t_list, v_list = dedupe_events(
-            ensure_scalar_floats(out_times), ensure_scalar_floats(v), eps=self.eps_cc
-        )
-        if max_events is not None and len(t_list) > max_events:
+        t_raw, v_raw = _dedupe_by_tolerance(out_times, v, self.dedupe_tol)
+        v_int = [int(round(min(127, max(0, v)))) for v in v_raw]
+        t_list, v_list = dedupe_events(t_raw, v_int, eps=self.eps_cc)
+        max_e = max_events if max_events is not None else self.max_events
+        if max_e is not None and len(t_list) > max_e:
             simplified = ControlCurve.from_dense(
-                t_list, v_list, tol=1e-9, max_knots=max_events, target=self.target
+                t_raw, v_raw, tol=self.dedupe_tol, max_knots=max_e, target=self.target
             )
-            t_list = [t for t, _ in simplified.knots]
-            v_list = [v for _, v in simplified.knots]
+            t_raw = [t for t, _ in simplified.knots]
+            v_raw = [v for _, v in simplified.knots]
+            v_int = [int(round(min(127, max(0, v)))) for v in v_raw]
+            t_list, v_list = dedupe_events(t_raw, v_int, eps=self.eps_cc)
         t_list = [t + start_offset_sec for t in t_list]
+        pairs = sorted(zip(t_list, v_list), key=lambda p: p[0])
         events = [
-            pretty_midi.ControlChange(
-                number=cc_number, value=int(round(val)), time=float(time)
-            )
-            for time, val in zip(t_list, v_list)
+            pretty_midi.ControlChange(number=cc_number, value=int(v), time=float(t))
+            for t, v in pairs
         ]
         return events
 
@@ -224,7 +258,7 @@ class ControlCurve:
         values: Sequence[float],
         range_semitones: float,
         units: str = "semitones",
-    ) -> List[int]:
+    ) -> list[int]:
         """Convert ``values`` to 14-bit pitch-bend integers.
 
         Parameters
@@ -245,14 +279,18 @@ class ControlCurve:
         else:
             arr = [v / range_semitones * scale for v in vals]
         if np is not None:
-            return np.round(np.clip(arr, -8192, 8191)).astype(int).tolist()
-        return [int(round(max(-8192, min(8191, v)))) for v in arr]
+            arr = np.round(arr).astype(int)
+            arr = np.clip(arr, -8192, 8191)
+            return arr.tolist()
+        out = [int(round(v)) for v in arr]
+        return [min(8191, max(-8192, v)) for v in out]
 
     def to_pitch_bend(
         self,
         channel: int,
         range_semitones: float = 2.0,
         *,
+        sample_rate_hz: float | None = None,
         max_events: int | None = None,
         tempo_map: Callable[[float], float] | None = None,
         units: str | None = None,
@@ -262,7 +300,8 @@ class ControlCurve:
 
         if self.target != "bend":
             raise ValueError("ControlCurve target must be 'bend'")
-        step_sec = 1.0 / self.resolution_hz
+        sr = sample_rate_hz or self.sample_rate_hz
+        step_sec = 1.0 / sr
         start = self.knots[0][0]
         end = self.knots[-1][0]
 
@@ -277,6 +316,8 @@ class ControlCurve:
             b = start
             while b < end:
                 bpm = tempo_map(b)
+                if not math.isfinite(bpm) or bpm <= 0:
+                    raise ValueError("tempo_map must return finite positive BPM")
                 b += step_sec * bpm / 60.0
                 beats.append(min(b, end))
             t_query = beats
@@ -284,25 +325,26 @@ class ControlCurve:
             prev_b = beats[0]
             for bt in beats[1:]:
                 bpm = tempo_map(prev_b)
+                if not math.isfinite(bpm) or bpm <= 0:
+                    raise ValueError("tempo_map must return finite positive BPM")
                 out_times.append(out_times[-1] + (bt - prev_b) * 60.0 / bpm)
                 prev_b = bt
 
         v = self.sample(t_query)
-        v = self.convert_to_14bit(v, range_semitones, units=units or self.units)
-        t_list, v_list = dedupe_events(
-            ensure_scalar_floats(out_times), ensure_scalar_floats(v), eps=self.eps_bend
-        )
-        if max_events is not None and len(t_list) > max_events:
+        v_raw = self.convert_to_14bit(v, range_semitones, units=units or self.units)
+        t_raw, v_raw = _dedupe_by_tolerance(out_times, v_raw, self.dedupe_tol)
+        t_list, v_list = dedupe_events(t_raw, v_raw, eps=self.eps_bend)
+        max_e = max_events if max_events is not None else self.max_events
+        if max_e is not None and len(t_list) > max_e:
             simplified = ControlCurve.from_dense(
-                t_list, v_list, tol=1e-9, max_knots=max_events, target=self.target
+                t_raw, v_raw, tol=self.dedupe_tol, max_knots=max_e, target=self.target
             )
-            t_list = [t for t, _ in simplified.knots]
-            v_list = [v for _, v in simplified.knots]
+            t_raw = [t for t, _ in simplified.knots]
+            v_raw = [v for _, v in simplified.knots]
+            t_list, v_list = dedupe_events(t_raw, v_raw, eps=self.eps_bend)
         t_list = [t + start_offset_sec for t in t_list]
-        events = [
-            pretty_midi.PitchBend(pitch=int(val), time=float(time))
-            for time, val in zip(t_list, v_list)
-        ]
+        pairs = sorted(zip(t_list, v_list), key=lambda p: p[0])
+        events = [pretty_midi.PitchBend(pitch=int(v), time=float(t)) for t, v in pairs]
         return events
 
     # ---- simplification ---------------------------------------------
@@ -314,7 +356,7 @@ class ControlCurve:
         tol: float = 1.5,
         max_knots: int = 256,
         target: Literal["cc11", "cc64", "bend"] = "cc11",
-    ) -> "ControlCurve":
+    ) -> ControlCurve:
         """Create :class:`ControlCurve` from dense ``times``/``values``.
 
         Douglas–Peucker simplification is performed in ``(time, value)`` space
@@ -326,7 +368,7 @@ class ControlCurve:
         if not pts:
             raise ValueError("from_dense requires at least one point")
 
-        def _dp(start: int, end: int, out: List[Tuple[float, float]]) -> None:
+        def _dp(start: int, end: int, out: list[tuple[float, float]]) -> None:
             if len(out) >= max_knots:
                 return
             t0, v0 = pts[start]
@@ -352,7 +394,7 @@ class ControlCurve:
                 out.append(pts[idx])
                 _dp(idx, end, out)
 
-        simplified: List[Tuple[float, float]] = [pts[0]]
+        simplified: list[tuple[float, float]] = [pts[0]]
         _dp(0, len(pts) - 1, simplified)
         simplified.append(pts[-1])
         simplified = sorted(set(simplified), key=lambda p: p[0])

@@ -29,6 +29,7 @@ It automatically generates chords, melodies and instrumental parts for each chap
 - [Phrase Diversity](docs/diversity.md)
 - [Strings Articulations](docs/strings_generator.md)
 - [Effects & Automation](docs/effects.md)
+- [Control Curves](docs/controls.md)
 - [Vocal Generator](docs/vocal_generator.md)
 - [Sax Generator](docs/sax_generator.md)
 - [Realtime WebSocket Streaming](docs/realtime_ws.md)

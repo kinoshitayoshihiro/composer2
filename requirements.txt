@@ -1,5 +1,5 @@
 numpy<2.3
-numba==0.59.1
+numba>=0.60.0
 librosa==0.10.2.post1
 torch==2.3.*  # CPU 版は setup.sh で wheel URL 指定
 -r requirements/base.txt

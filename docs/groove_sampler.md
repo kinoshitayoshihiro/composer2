@@ -36,6 +36,23 @@ modcompose groove sample model.pkl -l 4 --temperature 0.8 --seed 42 > out.mid
 - ``--beats-per-bar``: override bar length when inferring resolution
 - ``--temperature-end``: final sampling temperature for scheduling
 - ``--top-k`` / ``--top-p``: filter sampling candidates
+- ``--tempo-policy``: how to handle missing/invalid tempo (skip|fallback|accept)
+- ``--fallback-bpm``: BPM used when ``tempo-policy=fallback`` (default 120)
+- ``--min-bpm`` / ``--max-bpm``: flag tempos outside this range as invalid
+- ``--fold-halves``: fold near double/half-time tempos into the valid range
+- ``--tempo-verbose``: print summary statistics for tempo handling
+- ``--min-bars`` / ``--min-notes``: skip loops shorter than a bar or lacking notes
+- ``--drum-only`` / ``--pitched-only``: restrict to drum or melodic material
+- ``--exclude-fills``: drop files tagged as fills (by filename)
+- ``--len-sampling``: weighting for loop length (uniform|sqrt|proportional)
+- ``--inject-default-tempo``: write a tempo event when missing (0 disables)
+
+A separate `scripts/scan_loops.py` utility inventories a loop folder and
+produces `loop_inventory.csv` with per-file statistics:
+
+```bash
+python scripts/scan_loops.py --root data/loops --out loop_inventory.csv
+```
 
 Example:
 
@@ -205,6 +222,7 @@ Run as a FastAPI server:
 
 ```python
 from fastapi import FastAPI, Response
+
 from utilities.vocal_synth import synthesize
 
 app = FastAPI()

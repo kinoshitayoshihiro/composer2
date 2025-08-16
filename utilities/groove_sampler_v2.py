@@ -10,27 +10,32 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import pickle
+import re
 import sys
 import time
 
 try:
     import yaml  # type: ignore
 except Exception:
+
     class _DummyYAML:
         @staticmethod
         def safe_load(stream):
             return {}
 
     yaml = _DummyYAML()
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from random import Random
+from typing import Any
 
 try:
     import yaml
 except ImportError:  # pragma: no cover - optional dependency
+
     class _DummyYAML:
         @staticmethod
         def safe_load(stream):
@@ -42,23 +47,29 @@ import pretty_midi
 
 log = logging.getLogger(__name__)
 
-import numpy as np
-from joblib import Parallel, delayed
-from tqdm import tqdm
+import numpy as np  # noqa: E402
+from joblib import Parallel, delayed  # noqa: E402
 
-from utilities.loop_ingest import load_meta
+try:  # pragma: no cover - optional dependency
+    from tqdm import tqdm  # noqa: E402
+except Exception:  # pragma: no cover
+
+    def tqdm(x, **k):
+        return x
+
+
+from utilities.loop_ingest import load_meta  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
 try:
-    from .groove_sampler import _PITCH_TO_LABEL, _iter_drum_notes, infer_resolution
+    from .groove_sampler import _PITCH_TO_LABEL, infer_resolution
 except ImportError:  # fallback when executed as a script
     import os
 
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     from utilities.groove_sampler import (
         _PITCH_TO_LABEL,
-        _iter_drum_notes,
         infer_resolution,
     )
 
@@ -131,6 +142,7 @@ class NGramModel:
     prob: list[np.ndarray] | None = None
     aux_key: str | None = None
     aux_counts: dict[int, dict[str, np.ndarray]] | None = None
+    file_weights: list[float] | None = None
     files_scanned: int = 0
     files_skipped: int = 0
     total_events: int = 0
@@ -150,7 +162,7 @@ logger = logging.getLogger(__name__)
 
 def convert_wav_to_midi(
     path: Path, *, fixed_bpm: float | None = None
-) -> "pretty_midi.PrettyMIDI" | None:
+) -> pretty_midi.PrettyMIDI | None:
     """Convert a WAV file to a PrettyMIDI object containing a single drum track
     (kick on MIDI pitch 36).  Returns ``None`` and logs a warning on failure.
 
@@ -162,8 +174,8 @@ def convert_wav_to_midi(
         If given, use this BPM instead of automatic tempo estimation.
     """
     try:
-        import soundfile as sf
         import numpy as np
+        import soundfile as sf
     except Exception as exc:  # pragma: no cover
         logger.warning("Audio-to-MIDI failed for %s: %s", path, exc)
         return None
@@ -202,9 +214,7 @@ def convert_wav_to_midi(
                         )
                         tempo = 120.0
                     else:
-                        logger.info(
-                            "Estimated tempo %.1f BPM for %s", tempo, path.name
-                        )
+                        logger.info("Estimated tempo %.1f BPM for %s", tempo, path.name)
         else:
             tempo = float(fixed_bpm)
 
@@ -236,11 +246,20 @@ def convert_wav_to_midi(
         return None
 
 
-def midi_to_events(pm: "pretty_midi.PrettyMIDI") -> List[Tuple[float, int]]:
-    """Extract ``(beat, pitch)`` tuples from a PrettyMIDI drum track."""
-    _times, tempi = pm.get_tempo_changes()
-    tempo = float(tempi[0]) if len(tempi) > 0 else 120.0
-    if tempo <= 0:
+def midi_to_events(
+    pm: pretty_midi.PrettyMIDI, tempo: float
+) -> list[tuple[float, int]]:
+    """Extract ``(beat, pitch)`` tuples from a PrettyMIDI drum track.
+
+    Parameters
+    ----------
+    pm
+        Source MIDI.
+    tempo
+        Tempo in beats-per-minute.  If non-positive or non-finite, a warning
+        is emitted and the default 120 BPM is used.
+    """
+    if not np.isfinite(tempo) or tempo <= 0:
         logger.warning(
             "Non-positive tempo %.2f detected; using default 120 BPM.", tempo
         )
@@ -258,7 +277,152 @@ def midi_to_events(pm: "pretty_midi.PrettyMIDI") -> List[Tuple[float, int]]:
     return events
 
 
-def collect_files(root: Path, include_audio: bool = True) -> List[Path]:
+def _safe_read_bpm(
+    pm: pretty_midi.PrettyMIDI,
+    *,
+    default_bpm: float,
+    fold_halves: bool,
+) -> float:
+    """Return a reasonable tempo for ``pm``.
+
+    PrettyMIDI is queried first; if it fails to provide a finite positive
+    tempo, the underlying :mod:`mido` object is searched for the first
+    ``set_tempo`` meta message.  If all methods fail, ``default_bpm`` is
+    returned.  When ``fold_halves`` is true, tempos close to a double or
+    half-time interpretation are folded into common buckets (60–180 BPM).
+    ``_safe_read_bpm.last_source`` records the provenance of the returned
+    tempo and can be inspected by callers for logging.
+    """
+
+    import math
+
+    bpm: float | None = None
+    source = "default"
+
+    times, tempi = pm.get_tempo_changes()
+    if len(tempi) and math.isfinite(tempi[0]) and tempi[0] > 0:
+        bpm = float(tempi[0])
+        source = "pretty_midi"
+    else:  # fall back to mido
+        try:  # pragma: no cover - optional dependency
+            import mido
+        except Exception:  # pragma: no cover
+            mido = None
+        if mido is not None:
+            for track in pm.midi_data.tracks:  # type: ignore[attr-defined]
+                for msg in track:
+                    if msg.type == "set_tempo":
+                        bpm = mido.tempo2bpm(msg.tempo)
+                        source = "mido"
+                        break
+                if bpm is not None:
+                    break
+
+    if bpm is None or not math.isfinite(bpm) or bpm <= 0:
+        bpm = float(default_bpm)
+        source = "default"
+
+    if fold_halves:
+        buckets = [60, 90, 120, 150, 180]
+        tol = 0.05
+        best_base = bpm
+        best_diff = float("inf")
+        for base in buckets:
+            for mult in (1, 0.5, 2):
+                cand = base * mult
+                diff = abs(bpm - cand) / cand
+                if diff < best_diff:
+                    best_diff = diff
+                    best_base = base
+        if best_diff <= tol:
+            bpm = float(best_base)
+
+    _safe_read_bpm.last_source = source  # type: ignore[attr-defined]
+    return float(bpm)
+
+
+def _fold_to_range(bpm: float, lo: float, hi: float) -> float | None:
+    """Fold *bpm* by factors of two into ``[lo, hi]`` if possible."""
+
+    candidates = [bpm]
+    for _ in range(2):
+        candidates += [c * 2 for c in candidates] + [c / 2 for c in candidates]
+    valid = [c for c in candidates if lo <= c <= hi]
+    if not valid:
+        return None
+    return min(valid, key=lambda x: abs(x - bpm))
+
+
+def _resolve_tempo(
+    pm: pretty_midi.PrettyMIDI,
+    *,
+    tempo_policy: str,
+    fallback_bpm: float,
+    min_bpm: float,
+    max_bpm: float,
+    fold_halves: bool,
+) -> tuple[float | None, str]:
+    """Resolve tempo according to *tempo_policy*.
+
+    Returns ``(bpm, reason)`` where ``bpm`` may be ``None`` when the policy is
+    ``skip``. ``_resolve_tempo.last_source`` records the tempo source
+    (``pretty_midi`` or ``mido``).
+    """
+
+    import math
+
+    bpm: float | None = None
+    source = "unknown"
+    times, tempi = pm.get_tempo_changes()
+    if len(tempi) and math.isfinite(tempi[0]):
+        bpm = float(tempi[0])
+        source = "pretty_midi"
+    else:
+        try:  # pragma: no cover - optional dependency
+            import mido
+        except Exception:  # pragma: no cover
+            mido = None
+        if mido is not None:
+            for track in pm.midi_data.tracks:  # type: ignore[attr-defined]
+                for msg in track:
+                    if msg.type == "set_tempo":
+                        bpm = mido.tempo2bpm(msg.tempo)
+                        source = "mido"
+                        break
+                if bpm is not None:
+                    break
+
+    orig_bpm = bpm
+    reason = "accept"
+    if bpm is not None and fold_halves:
+        folded = _fold_to_range(bpm, min_bpm, max_bpm)
+        if folded is not None and abs(folded - bpm) > 1e-6:
+            bpm = folded
+            reason = "fold"
+
+    invalid = (
+        bpm is None
+        or not math.isfinite(bpm)
+        or bpm <= 0
+        or bpm < min_bpm
+        or bpm > max_bpm
+    )
+
+    if invalid:
+        if tempo_policy == "skip":
+            _resolve_tempo.last_source = source  # type: ignore[attr-defined]
+            return None, "invalid"
+        if tempo_policy == "fallback":
+            _resolve_tempo.last_source = "fallback"  # type: ignore[attr-defined]
+            return float(fallback_bpm), f"fallback:{orig_bpm}"
+        _resolve_tempo.last_source = "fallback"  # type: ignore[attr-defined]
+        return float(fallback_bpm), "accept"
+
+    _resolve_tempo.last_source = source  # type: ignore[attr-defined]
+    return float(bpm), reason
+
+
+def collect_files(root: Path, include_audio: bool = True) -> list[Path]:
     """Recursively collect MIDI and (optionally) WAV files under *root*."""
     exts = {".mid", ".midi"}
     if include_audio:
@@ -279,14 +443,30 @@ def train(
     progress: bool = False,
     include_audio: bool = True,
     aux_key: str | None = None,
+    tempo_policy: str = "fallback",
+    fallback_bpm: float = 120.0,
+    min_bpm: float = 40.0,
+    max_bpm: float = 300.0,
+    fold_halves: bool = False,
+    tempo_verbose: bool = False,
+    min_bars: float = 1.0,
+    min_notes: int = 8,
+    drum_only: bool = False,
+    pitched_only: bool = False,
+    tag_fill_from_filename: bool = True,
+    exclude_fills: bool = False,
+    separate_fills: bool = False,
+    len_sampling: str = "sqrt",
+    inject_default_tempo: float = 0.0,
 ):
     """Build a hashed n‑gram model from drum loops located in *loop_dir*."""
 
-    from concurrent.futures import ProcessPoolExecutor, as_completed
 
     paths = collect_files(loop_dir, include_audio)
     total_events = 0
     files_skipped = 0
+    tempo_stats = {"accept": 0, "fold": 0, "fallback": 0, "skip": 0}
+    skipped_paths: list[Path] = []
 
     if not paths:
         raise SystemExit("No files found — training aborted")
@@ -296,15 +476,94 @@ def train(
             if p.suffix.lower() in {".wav", ".wave"}:
                 pm = convert_wav_to_midi(p, fixed_bpm=fixed_bpm)
                 if pm is None:
-                    return None
+                    return None, "error"
             else:
                 pm = pretty_midi.PrettyMIDI(str(p))
-            notes = midi_to_events(pm)
+
+            times, tempi = pm.get_tempo_changes()
+            if inject_default_tempo > 0 and len(tempi) == 0:
+                try:
+                    import mido
+
+                    msg = mido.MetaMessage(
+                        "set_tempo", tempo=mido.bpm2tempo(inject_default_tempo), time=0
+                    )
+                    pm.midi_data.tracks[0].insert(0, msg)  # type: ignore[attr-defined]
+                    pm.write(str(p))
+                    logger.warning(
+                        "Injected tempo %.2f BPM into %s", inject_default_tempo, p
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to inject tempo into %s: %s", p, exc)
+
+            tempo, reason = _resolve_tempo(
+                pm,
+                tempo_policy=tempo_policy,
+                fallback_bpm=fallback_bpm,
+                min_bpm=min_bpm,
+                max_bpm=max_bpm,
+                fold_halves=fold_halves,
+            )
+            src = getattr(_resolve_tempo, "last_source", "unknown")
+            if tempo is None:
+                tempo_stats["skip"] += 1
+                skipped_paths.append(p)
+                logger.warning("Skipping %s due to %s tempo", p, reason)
+                return None, "skip"
+            if reason.startswith("fallback"):
+                tempo_stats["fallback"] += 1
+            elif reason == "fold":
+                tempo_stats["fold"] += 1
+            else:
+                tempo_stats["accept"] += 1
+            if src == "fallback" and reason == "accept":
+                logger.warning("Invalid tempo in %s; using fallback %.2f BPM", p, tempo)
+            else:
+                logger.info("Tempo=%.2f via %s for %s", tempo, src, p)
+
+            notes = midi_to_events(pm, tempo)
             offs = [off for off, _ in notes]
-            return notes, offs
+
+            midi = pm.midi_data
+            ticks_per_beat = midi.ticks_per_beat  # type: ignore[attr-defined]
+            total_ticks = max(
+                sum(msg.time for msg in tr) for tr in midi.tracks  # type: ignore[attr-defined]
+            )
+            ts_msg = None
+            for tr in midi.tracks:  # type: ignore[attr-defined]
+                for msg in tr:
+                    if msg.type == "time_signature":
+                        ts_msg = msg
+                        break
+                if ts_msg:
+                    break
+            beats_per_bar = (
+                ts_msg.numerator * (4 / ts_msg.denominator)
+                if ts_msg is not None
+                else 4.0
+            )
+            bars = total_ticks / (ticks_per_beat * beats_per_bar)
+
+            all_notes = [n for inst in pm.instruments for n in inst.notes]
+            note_cnt = len(all_notes)
+            uniq_pitches = len({n.pitch for n in all_notes})
+            is_drum = any(inst.is_drum for inst in pm.instruments)
+            is_fill = bool(
+                tag_fill_from_filename and re.search(r"\bfill\b", p.name, re.IGNORECASE)
+            )
+
+            return (
+                notes,
+                offs,
+                bars,
+                note_cnt,
+                uniq_pitches,
+                is_drum,
+                is_fill,
+            ), src
         except Exception as exc:
             logger.warning("Failed to load %s: %s", p, exc)
-            return None
+            return None, "error"
 
     if n_jobs == 1 or n_jobs == 0:
         loaded = [_load(p) for p in paths]
@@ -312,14 +571,50 @@ def train(
         loaded = Parallel(n_jobs=n_jobs)(delayed(_load)(p) for p in paths)
 
     aux_values: list[str | None] = []
-    results = []
+    results: list[tuple[list[tuple[float, int]], list[float]]] = []
+    bars_list: list[float] = []
+    reason_counts: dict[str, int] = {}
     for p, r in zip(paths, loaded):
-        if r is None:
+        if r[0] is None:
             files_skipped += 1
-        else:
-            results.append(r)
-            meta = load_meta(p)
-            aux_values.append(meta.get(aux_key) if aux_key else None)
+            continue
+        notes, offs, bars, note_cnt, uniq_pitches, is_drum, is_fill = r[0]
+        reason: str | None = None
+        if bars < min_bars:
+            reason = "bars"
+        elif note_cnt < min_notes:
+            reason = "notes"
+        elif drum_only and not is_drum:
+            reason = "drum_only"
+        elif pitched_only and is_drum:
+            reason = "pitched_only"
+        elif exclude_fills and is_fill:
+            reason = "fill"
+
+        if reason is not None:
+            files_skipped += 1
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+            continue
+
+        results.append((notes, offs))
+        bars_list.append(bars)
+        meta = load_meta(p)
+        aux_values.append(meta.get(aux_key) if aux_key else None)
+
+    if tempo_verbose:
+        logger.info(
+            "tempo summary: total=%d accept=%d fold=%d fallback=%d skip=%d",
+            len(paths),
+            tempo_stats["accept"],
+            tempo_stats["fold"],
+            tempo_stats["fallback"],
+            tempo_stats["skip"],
+        )
+        if skipped_paths:
+            preview = ", ".join(str(p) for p in skipped_paths[:20])
+            if len(skipped_paths) > 20:
+                preview += f", ... and {len(skipped_paths) - 20} more"
+            logger.info("skipped files: %s", preview)
 
     if not results:
         raise SystemExit("No events collected — training aborted")
@@ -355,6 +650,13 @@ def train(
         seqs.append(seq)
 
     total_events = sum(len(s) for s in seqs)
+
+    if len_sampling == "uniform":
+        file_weights = [1.0 for _ in bars_list]
+    elif len_sampling == "proportional":
+        file_weights = [float(b) for b in bars_list]
+    else:
+        file_weights = [math.sqrt(max(1e-6, float(b))) for b in bars_list]
 
     n_states = len(idx_to_state)
     freq: list[FreqTable] = [dict() for _ in range(n)]
@@ -434,10 +736,12 @@ def train(
         total_events,
         len(idx_to_state),
     )
+    for k, v in reason_counts.items():
+        logger.info("  %s: %d", k, v)
     if total_events == 0 or len(idx_to_state) == 0:
         raise SystemExit("No events collected - check your data directory")
 
-    return NGramModel(
+    model = NGramModel(
         n=n,
         resolution=resolution,
         resolution_coarse=resolution_coarse,
@@ -450,10 +754,12 @@ def train(
         prob=prob_arrays,
         aux_key=aux_key,
         aux_counts=aux_counts,
+        file_weights=file_weights,
         files_scanned=len(paths),
         files_skipped=files_skipped,
         total_events=total_events,
     )
+    return model
 
 
 def _choose(probs: np.ndarray, rng: Random) -> int:
@@ -674,10 +980,10 @@ def generate_events(
             cond=cond,
         )
         if model.idx_to_state and idx < len(model.idx_to_state):
-            bar_mod, bin_in_bar, lbl = model.idx_to_state[idx]
+            _, bin_in_bar, lbl = model.idx_to_state[idx]
         else:
             # フォールバック: デフォルト値を使用
-            bar_mod, bin_in_bar, lbl = 0, 0, "kick"
+            _, bin_in_bar, lbl = 0, 0, "kick"
         if model.resolution_coarse != res:
             bin_in_bar *= 4
         abs_bin = (next_bin // bar_len) * bar_len + bin_in_bar
@@ -751,20 +1057,6 @@ def generate_events(
     return events
 
 
-def style_aux_sampling(
-    model: NGramModel,
-    *,
-    cond: dict[str, str],
-    bars: int = 1,
-    **kwargs,
-) -> list[dict[str, float | str]]:
-    """Generate events for a style and limit to four entries."""
-
-    events = generate_events(model, bars=bars, cond=cond, **kwargs)
-    events = events[:4]
-    return events
-
-
 def save(model: NGramModel, path: Path) -> None:
     data = {
         "n": model.n,
@@ -778,6 +1070,7 @@ def save(model: NGramModel, path: Path) -> None:
         "prob_paths": model.prob_paths,
         "aux_key": model.aux_key,
         "aux_counts": model.aux_counts,
+        "file_weights": model.file_weights,
         "files_scanned": model.files_scanned,
         "files_skipped": model.files_skipped,
         "total_events": model.total_events,
@@ -808,6 +1101,7 @@ def load(path: Path) -> NGramModel:
         prob=None,
         aux_key=data.get("aux_key"),
         aux_counts=data.get("aux_counts"),
+        file_weights=data.get("file_weights"),
         files_scanned=data.get("files_scanned", 0),
         files_skipped=data.get("files_skipped", 0),
         total_events=data.get("total_events", 0),
@@ -847,6 +1141,33 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
         help="ignore .wav/.wave files during training",
     )
     parser.add_argument(
+        "--tempo-policy",
+        choices=["skip", "fallback", "accept"],
+        default="fallback",
+    )
+    parser.add_argument("--fallback-bpm", type=float, default=120.0)
+    parser.add_argument("--min-bpm", type=float, default=40.0)
+    parser.add_argument("--max-bpm", type=float, default=300.0)
+    parser.add_argument("--fold-halves", action="store_true")
+    parser.add_argument("--tempo-verbose", action="store_true")
+    parser.add_argument("--min-bars", type=float, default=1.0)
+    parser.add_argument("--min-notes", type=int, default=8)
+    parser.add_argument("--drum-only", action="store_true")
+    parser.add_argument("--pitched-only", action="store_true")
+    parser.add_argument(
+        "--tag-fill-from-filename",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--exclude-fills", action="store_true")
+    parser.add_argument("--separate-fills", action="store_true")
+    parser.add_argument(
+        "--len-sampling",
+        choices=["uniform", "sqrt", "proportional"],
+        default="sqrt",
+    )
+    parser.add_argument("--inject-default-tempo", type=float, default=0.0)
+    parser.add_argument(
         "--print-model",
         action="store_true",
         help="print model parameters after training",
@@ -866,6 +1187,21 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
         progress=not quiet and not no_tqdm,
         include_audio=not ns.no_audio,
         aux_key=ns.aux_key,
+        tempo_policy=ns.tempo_policy,
+        fallback_bpm=ns.fallback_bpm,
+        min_bpm=ns.min_bpm,
+        max_bpm=ns.max_bpm,
+        fold_halves=ns.fold_halves,
+        tempo_verbose=ns.tempo_verbose,
+        min_bars=ns.min_bars,
+        min_notes=ns.min_notes,
+        drum_only=ns.drum_only,
+        pitched_only=ns.pitched_only,
+        tag_fill_from_filename=ns.tag_fill_from_filename,
+        exclude_fills=ns.exclude_fills,
+        separate_fills=ns.separate_fills,
+        len_sampling=ns.len_sampling,
+        inject_default_tempo=ns.inject_default_tempo,
     )
     elapsed = time.perf_counter() - t0
     save(model, ns.output)
@@ -935,6 +1271,7 @@ def _cmd_stats(args: list[str]) -> None:
 # Compatibility layer
 # ---------------------------------------------------------------------------
 
+
 def style_aux_sampling(
     model: NGramModel,
     *,
@@ -992,13 +1329,14 @@ def style_aux_sampling(
         events.extend(pad)
     return events[:8]
 
+
 # Alias for backward compatibility
 style_aux = style_aux_sampling
 
 
 def main(argv: list[str] | None = None) -> None:
-    import sys as _sys
     import argparse
+    import sys as _sys
 
     argv = list(argv or _sys.argv[1:])
     parser = argparse.ArgumentParser(prog="groove_sampler_v2", add_help=False)

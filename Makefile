@@ -7,6 +7,9 @@ demo-sax:
 test:
         pytest tests
 
+test-controls:
+	pytest tests/test_controls_spline.py tests/test_apply_controls.py -q
+
 dev:
         python -m venv .venv && \
         . .venv/bin/activate && \

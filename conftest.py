@@ -1,3 +1,9 @@
+# Ensure sitecustomize is imported during tests even if sys.path/working dir differs.
+try:
+    import sitecustomize  # noqa: F401
+except Exception:
+    pass
+
 pytest_plugins = ("tests._asyncio_plugin",)
 
 import pytest

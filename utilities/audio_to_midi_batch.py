@@ -42,7 +42,6 @@ import re
 import statistics
 import time
 import unicodedata
-import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,11 +50,14 @@ try:  # Optional dependency
     import numpy as np
 except Exception:  # pragma: no cover - numpy may be absent
     np = None  # type: ignore
+import warnings
+
 import pretty_midi
 
 logger = logging.getLogger(__name__)
 
 _WARNED_ALIASES: set[str] = set()
+_WARN_CONTROLS_RES = False
 
 try:  # Optional heavy deps
     import crepe  # type: ignore
@@ -67,7 +69,7 @@ try:  # Optional heavy deps
 except Exception:  # pragma: no cover - handled by fallback
     librosa = None  # type: ignore
 
-from . import cc_utils
+from .controls_spline import ControlCurve  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -167,6 +169,106 @@ def _emit_pitch_bend_range(
 def _is_piano_like(name: str, program: int | None = None) -> bool:
     del program  # placeholder for future use
     return bool(re.search(r"(?i)(piano|keys|ep|rhodes)", name))
+
+
+def parse_channel_map(spec: str) -> dict[str, int]:
+    """Parse a ``"target:ch"`` comma string into a mapping."""
+    mapping: dict[str, int] = {}
+    for item in spec.split(","):
+        if not item:
+            continue
+        if ":" not in item:
+            continue
+        key, val = item.split(":", 1)
+        try:
+            mapping[key.strip()] = int(val)
+        except Exception:
+            continue
+    return mapping
+
+
+def build_control_curves_for_stem(
+    path: Path,
+    inst: pretty_midi.Instrument,
+    args,
+    *,
+    tempo: float | None = None,
+) -> dict[str, ControlCurve]:
+    """Return ``target -> ControlCurve`` for a stem.
+
+    This is a lightweight helper used by tests and the CLI to derive control
+    curves (CC11, CC64, bend) from audio and notes.  It intentionally favours
+    robustness over perfect realism so that it can run in minimal test
+    environments.
+    """
+
+    curves: dict[str, ControlCurve] = {}
+
+    sr = 16000
+    audio = None
+    res = getattr(args, "controls_res_hz", None)
+    if res is not None:
+        global _WARN_CONTROLS_RES
+        if not _WARN_CONTROLS_RES:
+            warnings.warn(
+                "--controls-res-hz is deprecated; use --controls-sample-rate-hz",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            _WARN_CONTROLS_RES = True
+        if getattr(args, "controls_sample_rate_hz", None) in (None, 0):
+            args.controls_sample_rate_hz = res
+    if args.emit_cc11 and args.cc_strategy != "none":
+        if librosa is not None:
+            try:
+                audio, sr = librosa.load(path, sr=sr, mono=True)
+            except Exception:  # pragma: no cover - best effort
+                audio = None
+        if audio is not None and np is not None and audio.size:
+            hop = max(1, int(sr / max(1.0, float(args.controls_sample_rate_hz))))
+            env = np.abs(audio)
+            if hop > 1:
+                env = env.reshape(-1, hop).mean(axis=1)
+            times_sec = np.arange(env.size) * hop / sr
+            if env.max() > 0:
+                env = env / env.max() * 127.0
+            values = env.tolist()
+            if args.controls_domain == "beats":
+                bpm = tempo or 120.0
+                times = (times_sec * bpm / 60.0).tolist()
+            else:
+                times = times_sec.tolist()
+            curves["cc11"] = ControlCurve(
+                times,
+                values,
+                domain=args.controls_domain,
+                sample_rate_hz=args.controls_sample_rate_hz,
+            )
+
+    if args.emit_cc64 and _is_piano_like(inst.name or ""):
+        if inst.notes:
+            start = float(inst.notes[0].start)
+            end = max(n.end for n in inst.notes)
+            curves["cc64"] = ControlCurve(
+                [0.0, start, end],
+                [0.0, 127.0, 0.0],
+                domain="time",
+                sample_rate_hz=0.0,
+            )
+
+    if inst.pitch_bends:
+        times = [float(pb.time) for pb in inst.pitch_bends]
+        vals = [float(pb.pitch) / 8192.0 for pb in inst.pitch_bends]
+        curves["bend"] = ControlCurve(
+            times,
+            vals,
+            domain="time",
+            sample_rate_hz=args.controls_sample_rate_hz,
+            units="normalized",
+        )
+        inst.pitch_bends.clear()
+
+    return curves
 
 
 def apply_cc_curves(
@@ -1350,6 +1452,49 @@ def main(argv: list[str] | None = None) -> None:
         type=float,
         default=80.0,
         help="Minimum sustain on/off duration in milliseconds",
+    )
+    parser.add_argument(
+        "--controls-domain",
+        choices=["time", "beats"],
+        default="time",
+        help="Domain for synthesized control curves",
+    )
+    parser.add_argument(
+        "--controls-sample-rate-hz",
+        type=float,
+        default=100.0,
+        help="Sampling rate for synthesized control curves",
+    )
+    parser.add_argument(
+        "--controls-res-hz",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--controls-max-events",
+        type=int,
+        help="Per-curve event cap",
+    )
+    parser.add_argument(
+        "--controls-total-max-events",
+        type=int,
+        help="Global control-event cap",
+    )
+    parser.add_argument(
+        "--controls-channel-map",
+        default="bend:0,cc11:0,cc64:0",
+        help="Mapping like 'bend:0,cc11:0'",
+    )
+    parser.add_argument(
+        "--write-rpn-range",
+        dest="write_rpn_range",
+        action="store_true",
+        default=True,
+    )
+    parser.add_argument(
+        "--no-write-rpn-range",
+        dest="write_rpn_range",
+        action="store_false",
     )
     # Deprecated aliases
     parser.add_argument(

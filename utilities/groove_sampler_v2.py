@@ -15,7 +15,6 @@ import os
 import pickle
 import re
 import sys
-import tempfile
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -35,6 +34,8 @@ except Exception:  # pragma: no cover
     yaml = _DummyYAML()  # type: ignore
 
 import pretty_midi
+import tempfile
+
 try:  # pragma: no cover - optional dependency
     import mido  # type: ignore
 except Exception:  # pragma: no cover
@@ -52,32 +53,10 @@ except Exception:  # pragma: no cover
 
 
 from utilities.loop_ingest import load_meta  # noqa: E402
+from utilities.pretty_midi_safe import pm_to_mido  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-
-def _pm_to_mido(pm: pretty_midi.PrettyMIDI):
-    """Return a :class:`mido.MidiFile` for *pm* using a temporary file.
-
-    ``RuntimeError`` is raised when :mod:`mido` is unavailable.  The conversion
-    uses a real temporary file (not ``BytesIO``) and cleans it up afterwards so
-    it also works on Windows.
-    """
-
-    if mido is None:  # pragma: no cover - dependency is missing
-        raise RuntimeError("mido is required; pip install mido")
-
-    tmp = tempfile.NamedTemporaryFile(suffix=".mid", delete=False)
-    try:
-        tmp.close()
-        pm.write(tmp.name)
-        midi = mido.MidiFile(tmp.name)
-        return midi
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:  # pragma: no cover - best effort cleanup
-            pass
 
 
 def _ensure_tempo(
@@ -101,7 +80,7 @@ def _ensure_tempo(
         _ensure_tempo.injected = False  # type: ignore[attr-defined]
         return pm
     try:
-        midi = _pm_to_mido(pm)
+        midi = pm_to_mido(pm)
     except Exception:  # pragma: no cover - failed conversion
         _ensure_tempo.injected = False  # type: ignore[attr-defined]
         return pm
@@ -364,7 +343,7 @@ def _safe_read_bpm(
         source = "pretty_midi"
     elif mido is not None:  # pragma: no branch - optional dependency
         try:
-            midi = _pm_to_mido(pm)
+            midi = pm_to_mido(pm)
             for track in midi.tracks:
                 for msg in track:
                     if msg.type == "set_tempo":
@@ -435,7 +414,7 @@ def _resolve_tempo(
         source = "pretty_midi"
     elif mido is not None:  # pragma: no branch - optional dependency
         try:
-            midi = _pm_to_mido(pm)
+            midi = pm_to_mido(pm)
             for track in midi.tracks:
                 for msg in track:
                     if msg.type == "set_tempo":
@@ -577,7 +556,7 @@ def train(
             offs = [off for off, _ in notes]
 
             try:
-                midi = _pm_to_mido(pm)
+                midi = pm_to_mido(pm)
             except Exception as exc:
                 logger.warning("Failed to convert %s to mido: %s", p, exc)
                 return None, "error"

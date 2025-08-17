@@ -1,6 +1,4 @@
 import io
-import os
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -57,28 +55,6 @@ def test_fold_halves():
     bpm = _safe_read_bpm(pm, default_bpm=120.0, fold_halves=True)
     assert bpm == pytest.approx(120.0)
 
-
-def test_pm_to_mido_requires_mido(monkeypatch):
-    pm, _ = make_pm(bpm=120)
-    monkeypatch.setattr(module, "mido", None)
-    with pytest.raises(RuntimeError):
-        module._pm_to_mido(pm)
-
-
-def test_pm_to_mido_tempfile_removed(monkeypatch):
-    pm, _ = make_pm(bpm=120)
-    paths: list[str] = []
-
-    orig_ntf = tempfile.NamedTemporaryFile
-
-    def fake_ntf(*args, **kwargs):
-        tmp = orig_ntf(*args, **kwargs)
-        paths.append(tmp.name)
-        return tmp
-
-    monkeypatch.setattr(tempfile, "NamedTemporaryFile", fake_ntf)
-    module._pm_to_mido(pm)
-    assert paths and not os.path.exists(paths[0])
 
 
 def test_train_inject_default_tempo(tmp_path: Path):

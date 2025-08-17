@@ -134,7 +134,8 @@ Without these packages `pytest` and the composer modules will fail to import.
 - **pydantic** – configuration models
 - **librosa** – WAV feature extraction (install via `[groove]`)
 - **pydub** (optional) – audio post‑processing
-- **mido** – MIDI utilities
+- **mido** – MIDI utilities (required for groove sampling; tempo-less files
+  fall back to a default 120 BPM without modifying the original MIDI)
 - **scipy** – signal processing helpers
 - **tqdm** – progress bars
 - **colorama** – colored CLI output

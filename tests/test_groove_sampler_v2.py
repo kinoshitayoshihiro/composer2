@@ -4,11 +4,12 @@ import sys
 import time
 from pathlib import Path
 
-import pretty_midi
 import pytest
 
+pretty_midi = pytest.importorskip("pretty_midi")
+mido = pytest.importorskip("mido")
+
 import importlib.util
-import sys
 from pathlib import Path as _Path
 
 _spec = importlib.util.spec_from_file_location(

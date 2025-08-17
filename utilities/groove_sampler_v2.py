@@ -11,30 +11,21 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import pickle
 import re
 import sys
+import tempfile
 import time
-
-try:
-    import yaml  # type: ignore
-except Exception:
-
-    class _DummyYAML:
-        @staticmethod
-        def safe_load(stream):
-            return {}
-
-    yaml = _DummyYAML()
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from random import Random
 from typing import Any
 
-try:
-    import yaml
-except ImportError:  # pragma: no cover - optional dependency
+try:  # pragma: no cover - optional dependency
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover
 
     class _DummyYAML:
         @staticmethod
@@ -44,8 +35,10 @@ except ImportError:  # pragma: no cover - optional dependency
     yaml = _DummyYAML()  # type: ignore
 
 import pretty_midi
-
-log = logging.getLogger(__name__)
+try:  # pragma: no cover - optional dependency
+    import mido  # type: ignore
+except Exception:  # pragma: no cover
+    mido = None  # type: ignore
 
 import numpy as np  # noqa: E402
 from joblib import Parallel, delayed  # noqa: E402
@@ -61,6 +54,77 @@ except Exception:  # pragma: no cover
 from utilities.loop_ingest import load_meta  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+
+def _pm_to_mido(pm: pretty_midi.PrettyMIDI):
+    """Return a :class:`mido.MidiFile` for *pm* using a temporary file.
+
+    ``RuntimeError`` is raised when :mod:`mido` is unavailable.  The conversion
+    uses a real temporary file (not ``BytesIO``) and cleans it up afterwards so
+    it also works on Windows.
+    """
+
+    if mido is None:  # pragma: no cover - dependency is missing
+        raise RuntimeError("mido is required; pip install mido")
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".mid", delete=False)
+    try:
+        tmp.close()
+        pm.write(tmp.name)
+        midi = mido.MidiFile(tmp.name)
+        return midi
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:  # pragma: no cover - best effort cleanup
+            pass
+
+
+def _ensure_tempo(
+    pm: pretty_midi.PrettyMIDI, default_bpm: float = 120.0
+) -> pretty_midi.PrettyMIDI:
+    """Ensure ``pm`` has an initial tempo.
+
+    PrettyMIDI's own tempo information is consulted first.  If no tempo is
+    present, the MIDI data is searched for a ``set_tempo`` meta message via
+    :mod:`mido`.  When still missing, a default tempo is injected by writing to
+    a temporary MIDI file and reloading it.  ``_ensure_tempo.injected`` records
+    whether a tempo was inserted.
+    """
+
+    injected = False
+    times, tempi = pm.get_tempo_changes()
+    if len(tempi):
+        _ensure_tempo.injected = False  # type: ignore[attr-defined]
+        return pm
+    if mido is None:  # pragma: no cover - dependency is required for injection
+        _ensure_tempo.injected = False  # type: ignore[attr-defined]
+        return pm
+    try:
+        midi = _pm_to_mido(pm)
+    except Exception:  # pragma: no cover - failed conversion
+        _ensure_tempo.injected = False  # type: ignore[attr-defined]
+        return pm
+    for track in midi.tracks:
+        for msg in track:
+            if msg.type == "set_tempo":
+                _ensure_tempo.injected = False  # type: ignore[attr-defined]
+                return pm
+    msg = mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(default_bpm), time=0)
+    midi.tracks[0].insert(0, msg)
+    tmp = tempfile.NamedTemporaryFile(suffix=".mid", delete=False)
+    try:
+        tmp.close()
+        midi.save(tmp.name)
+        pm = pretty_midi.PrettyMIDI(tmp.name)
+        injected = True
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:  # pragma: no cover - best effort cleanup
+            pass
+    _ensure_tempo.injected = injected  # type: ignore[attr-defined]
+    return pm
 
 try:
     from .groove_sampler import _PITCH_TO_LABEL, infer_resolution
@@ -155,9 +219,6 @@ def _encode_state(bar_mod: int, bin_in_bar: int, label: str) -> State:
 def _hash_ctx(ctx: Iterable[int]) -> int:
     arr = np.fromiter(ctx, dtype=np.uint32)
     return _murmurhash3(arr.tobytes())
-
-
-logger = logging.getLogger(__name__)
 
 
 def convert_wav_to_midi(
@@ -294,8 +355,6 @@ def _safe_read_bpm(
     tempo and can be inspected by callers for logging.
     """
 
-    import math
-
     bpm: float | None = None
     source = "default"
 
@@ -303,13 +362,10 @@ def _safe_read_bpm(
     if len(tempi) and math.isfinite(tempi[0]) and tempi[0] > 0:
         bpm = float(tempi[0])
         source = "pretty_midi"
-    else:  # fall back to mido
-        try:  # pragma: no cover - optional dependency
-            import mido
-        except Exception:  # pragma: no cover
-            mido = None
-        if mido is not None:
-            for track in pm.midi_data.tracks:  # type: ignore[attr-defined]
+    elif mido is not None:  # pragma: no branch - optional dependency
+        try:
+            midi = _pm_to_mido(pm)
+            for track in midi.tracks:
                 for msg in track:
                     if msg.type == "set_tempo":
                         bpm = mido.tempo2bpm(msg.tempo)
@@ -317,6 +373,8 @@ def _safe_read_bpm(
                         break
                 if bpm is not None:
                     break
+        except Exception:  # pragma: no cover - failed conversion
+            pass
 
     if bpm is None or not math.isfinite(bpm) or bpm <= 0:
         bpm = float(default_bpm)
@@ -369,21 +427,16 @@ def _resolve_tempo(
     (``pretty_midi`` or ``mido``).
     """
 
-    import math
-
     bpm: float | None = None
     source = "unknown"
     times, tempi = pm.get_tempo_changes()
     if len(tempi) and math.isfinite(tempi[0]):
         bpm = float(tempi[0])
         source = "pretty_midi"
-    else:
-        try:  # pragma: no cover - optional dependency
-            import mido
-        except Exception:  # pragma: no cover
-            mido = None
-        if mido is not None:
-            for track in pm.midi_data.tracks:  # type: ignore[attr-defined]
+    elif mido is not None:  # pragma: no branch - optional dependency
+        try:
+            midi = _pm_to_mido(pm)
+            for track in midi.tracks:
                 for msg in track:
                     if msg.type == "set_tempo":
                         bpm = mido.tempo2bpm(msg.tempo)
@@ -391,6 +444,8 @@ def _resolve_tempo(
                         break
                 if bpm is not None:
                     break
+        except Exception:  # pragma: no cover - failed conversion
+            pass
 
     orig_bpm = bpm
     reason = "accept"
@@ -460,7 +515,10 @@ def train(
     inject_default_tempo: float = 0.0,
 ):
     """Build a hashed n‑gram model from drum loops located in *loop_dir*."""
-
+    if mido is None:  # pragma: no cover - dependency is missing
+        raise RuntimeError(
+            "mido is required for groove sampler training; install via 'pip install mido'"
+        )
 
     paths = collect_files(loop_dir, include_audio)
     total_events = 0
@@ -480,21 +538,15 @@ def train(
             else:
                 pm = pretty_midi.PrettyMIDI(str(p))
 
-            times, tempi = pm.get_tempo_changes()
-            if inject_default_tempo > 0 and len(tempi) == 0:
+            if inject_default_tempo > 0:
                 try:
-                    import mido
-
-                    msg = mido.MetaMessage(
-                        "set_tempo", tempo=mido.bpm2tempo(inject_default_tempo), time=0
-                    )
-                    pm.midi_data.tracks[0].insert(0, msg)  # type: ignore[attr-defined]
-                    pm.write(str(p))
-                    logger.warning(
-                        "Injected tempo %.2f BPM into %s", inject_default_tempo, p
-                    )
+                    pm = _ensure_tempo(pm, inject_default_tempo)
+                    if getattr(_ensure_tempo, "injected", False):
+                        logger.warning(
+                            "Injected tempo %.2f BPM for %s", inject_default_tempo, p
+                        )
                 except Exception as exc:
-                    logger.warning("Failed to inject tempo into %s: %s", p, exc)
+                    logger.warning("Failed to ensure tempo for %s: %s", p, exc)
 
             tempo, reason = _resolve_tempo(
                 pm,
@@ -524,13 +576,15 @@ def train(
             notes = midi_to_events(pm, tempo)
             offs = [off for off, _ in notes]
 
-            midi = pm.midi_data
-            ticks_per_beat = midi.ticks_per_beat  # type: ignore[attr-defined]
-            total_ticks = max(
-                sum(msg.time for msg in tr) for tr in midi.tracks  # type: ignore[attr-defined]
-            )
+            try:
+                midi = _pm_to_mido(pm)
+            except Exception as exc:
+                logger.warning("Failed to convert %s to mido: %s", p, exc)
+                return None, "error"
+            ticks_per_beat = midi.ticks_per_beat
+            total_ticks = max(sum(msg.time for msg in tr) for tr in midi.tracks)
             ts_msg = None
-            for tr in midi.tracks:  # type: ignore[attr-defined]
+            for tr in midi.tracks:
                 for msg in tr:
                     if msg.type == "time_signature":
                         ts_msg = msg

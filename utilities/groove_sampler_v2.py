@@ -16,25 +16,9 @@ import re
 import sys
 import time
 
-try:
+try:  # pragma: no cover - optional dependency
     import yaml  # type: ignore
-except Exception:
-
-    class _DummyYAML:
-        @staticmethod
-        def safe_load(stream):
-            return {}
-
-    yaml = _DummyYAML()
-from collections.abc import Iterable
-from dataclasses import dataclass
-from pathlib import Path
-from random import Random
-from typing import Any
-
-try:
-    import yaml
-except ImportError:  # pragma: no cover - optional dependency
+except Exception:  # pragma: no cover
 
     class _DummyYAML:
         @staticmethod
@@ -42,13 +26,34 @@ except ImportError:  # pragma: no cover - optional dependency
             return {}
 
     yaml = _DummyYAML()  # type: ignore
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+from random import Random
+from typing import Any
+
+try:  # pragma: no cover - optional dependency
+    import numpy as np  # type: ignore
+
+    NDArray = np.ndarray
+except Exception:  # pragma: no cover
+    np = None  # type: ignore
+    NDArray = Any
 
 import pretty_midi
 
-log = logging.getLogger(__name__)
+try:  # pragma: no cover - optional dependency
+    from joblib import Parallel, delayed  # type: ignore
+except Exception:  # pragma: no cover
 
-import numpy as np  # noqa: E402
-from joblib import Parallel, delayed  # noqa: E402
+    def Parallel(funcs, **k):  # type: ignore
+        return [f() for f in funcs]
+
+    def delayed(fn):  # type: ignore
+        return fn
+
+
+from .aux_vocab import AuxVocab
 
 try:  # pragma: no cover - optional dependency
     from tqdm import tqdm  # noqa: E402
@@ -68,16 +73,13 @@ except ImportError:  # fallback when executed as a script
     import os
 
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-    from utilities.groove_sampler import (
-        _PITCH_TO_LABEL,
-        infer_resolution,
-    )
+    from utilities.groove_sampler import _PITCH_TO_LABEL, infer_resolution
 
 State = tuple[int, int, str]
 """Model state encoded as ``(bar_mod2, bin_in_bar, drum_label)``."""
 
-FreqTable = dict[int, np.ndarray]
-"""Mapping from hashed context id to next-state count array."""
+FreqTable = dict[tuple[int, int], NDArray]
+"""Mapping from ``(ctx_hash, aux_id)`` to next-state count array."""
 
 
 def _murmurhash3(data: bytes, seed: int = 0) -> int:
@@ -140,8 +142,8 @@ class NGramModel:
     ctx_maps: list[dict[int, int]]
     prob_paths: list[str] | None = None
     prob: list[np.ndarray] | None = None
-    aux_key: str | None = None
-    aux_counts: dict[int, dict[str, np.ndarray]] | None = None
+    aux_vocab: AuxVocab | None = None
+    version: int = 2
     file_weights: list[float] | None = None
     files_scanned: int = 0
     files_skipped: int = 0
@@ -152,9 +154,31 @@ def _encode_state(bar_mod: int, bin_in_bar: int, label: str) -> State:
     return bar_mod, bin_in_bar, label
 
 
+def _extract_aux(
+    path: Path,
+    *,
+    aux_map: dict[str, dict[str, str]] | None = None,
+    aux_key: str | None = None,
+    filename_pattern: str = r"__([^-]+)-([^_]+)",
+) -> dict[str, str] | None:
+    """Extract auxiliary conditions for *path*.
+
+    Priority is ``aux_map`` > ``aux_key`` > filename pattern.
+    """
+
+    if aux_map is not None and path.name in aux_map:
+        return {k: str(v) for k, v in aux_map[path.name].items()}
+    if aux_key is not None:
+        meta = load_meta(path)
+        if aux_key in meta:
+            return {aux_key: str(meta[aux_key])}
+    matches = dict(re.findall(filename_pattern, path.stem))
+    return matches or None
+
+
 def _hash_ctx(ctx: Iterable[int]) -> int:
     arr = np.fromiter(ctx, dtype=np.uint32)
-    return _murmurhash3(arr.tobytes())
+    return _murmurhash3(arr.tobytes(), seed=0xC0DE)
 
 
 logger = logging.getLogger(__name__)
@@ -246,9 +270,7 @@ def convert_wav_to_midi(
         return None
 
 
-def midi_to_events(
-    pm: pretty_midi.PrettyMIDI, tempo: float
-) -> list[tuple[float, int]]:
+def midi_to_events(pm: pretty_midi.PrettyMIDI, tempo: float) -> list[tuple[float, int]]:
     """Extract ``(beat, pitch)`` tuples from a PrettyMIDI drum track.
 
     Parameters
@@ -460,7 +482,6 @@ def train(
     inject_default_tempo: float = 0.0,
 ):
     """Build a hashed n‑gram model from drum loops located in *loop_dir*."""
-
 
     paths = collect_files(loop_dir, include_audio)
     total_events = 0
@@ -812,36 +833,26 @@ def sample_next(
     top_p: float | None = None,
     cond_kick: str | None = None,
     cond: dict[str, str] | None = None,
+    strength: float = 1.0,
+    aux_fallback: str = "prefer",
 ) -> int:
-    """Sample next state index using hashed back-off.
-
-    Parameters
-    ----------
-    top_k:
-        Limit choices to the ``k`` highest-probability states.
-    top_p:
-        Nucleus sampling threshold applied after ``top_k``.
-    """
+    """Sample next state index using hashed back-off."""
 
     n = model.n if model.n is not None else 4
-    aux_val = None
-    if cond is not None and model.aux_key:
-        aux_val = cond.get(model.aux_key)
+    aux_id = 0
+    if cond and model.aux_vocab:
+        aux_id = model.aux_vocab.encode(cond)
     for order in range(min(len(history), n - 1), 0, -1):
         ctx_id = _hash_ctx(history[-order:])
+        arr_spec = model.freq[order].get((ctx_id, aux_id))
+        arr_any = model.freq[order].get((ctx_id, 0))
         arr = None
-        if aux_val is not None and model.aux_counts is not None:
-            arr = model.aux_counts.get(ctx_id, {}).get(aux_val)
-            if arr is not None:
-                arr = arr.astype(float)
-        if model.prob is not None:
-            row = model.ctx_maps[order].get(ctx_id)
-            if row is not None:
-                arr = np.asarray(model.prob[order][row])
-        if arr is None:
-            arr = model.freq[order].get(ctx_id)
-            if arr is not None:
-                arr = arr.astype(float)
+        if arr_spec is not None:
+            arr = arr_spec.astype(float)
+            if arr_any is not None:
+                arr = arr_any.astype(float) * (1 - strength) + arr * strength
+        elif aux_fallback in {"prefer", "loose"} and arr_any is not None:
+            arr = arr_any.astype(float)
         if arr is not None and arr.sum() > 0:
             probs = arr.astype(float)
             if cond_kick in {"four_on_floor", "sparse"} and model.idx_to_state:
@@ -862,54 +873,30 @@ def sample_next(
             probs /= total
             return _choose(probs, rng)
 
-    arr = None
-    if aux_val is not None and model.aux_counts is not None:
-        arr = model.aux_counts.get(0, {}).get(aux_val)
-        if arr is not None:
-            arr = arr.astype(float)
-    if arr is None and model.prob is not None:
-        arr = np.asarray(model.prob[0][model.ctx_maps[0].get(0, 0)])
-    if arr is None:
-        arr = model.freq[0].get(0)
-        if arr is not None:
-            arr = arr.astype(float)
+    arr_spec = model.freq[0].get((0, aux_id))
+    arr_any = model.freq[0].get((0, 0))
+    if arr_spec is None:
+        arr = arr_any
+    else:
+        arr = arr_spec.astype(float)
+        if arr_any is not None:
+            arr = arr_any.astype(float) * (1 - strength) + arr * strength
     if arr is not None and arr.sum() > 0:
         probs = arr.astype(float)
-        if cond_kick in {"four_on_floor", "sparse"} and model.idx_to_state:
-            for i, st in enumerate(model.idx_to_state):
-                if st[2] == "kick":
-                    if cond_kick == "four_on_floor" and bucket == 0:
-                        probs[i] *= 16
-                    elif cond_kick == "sparse":
-                        probs[i] *= 0.5
         if temperature != 1.0:
             probs = np.power(probs, 1.0 / temperature)
         probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
-        total = probs.sum()
-        if total == 0:
-            return rng.randrange(len(model.idx_to_state) if model.idx_to_state else 1)
-        probs /= total
+        probs /= probs.sum()
         return _choose(probs, rng)
 
     b_arr = model.bucket_freq.get(bucket) if model.bucket_freq is not None else None
     if b_arr is not None and b_arr.sum() > 0:
         probs = b_arr.astype(float)
-        if cond_kick in {"four_on_floor", "sparse"} and model.idx_to_state:
-            for i, st in enumerate(model.idx_to_state):
-                if st[2] == "kick":
-                    if cond_kick == "four_on_floor" and bucket == 0:
-                        probs[i] *= 16
-                    elif cond_kick == "sparse":
-                        probs[i] *= 0.5
         if temperature != 1.0:
             probs = np.power(probs, 1.0 / temperature)
         probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
-        total = probs.sum()
-        if total == 0:
-            return rng.randrange(len(model.idx_to_state) if model.idx_to_state else 1)
-        probs /= total
+        probs /= probs.sum()
         return _choose(probs, rng)
-
     return rng.randrange(len(model.idx_to_state) if model.idx_to_state else 1)
 
 
@@ -1068,8 +1055,8 @@ def save(model: NGramModel, path: Path) -> None:
         "bucket_freq": model.bucket_freq,
         "ctx_maps": model.ctx_maps,
         "prob_paths": model.prob_paths,
-        "aux_key": model.aux_key,
-        "aux_counts": model.aux_counts,
+        "aux_vocab": model.aux_vocab.id_to_str if model.aux_vocab else None,
+        "version": model.version,
         "file_weights": model.file_weights,
         "files_scanned": model.files_scanned,
         "files_skipped": model.files_skipped,
@@ -1083,24 +1070,38 @@ def save(model: NGramModel, path: Path) -> None:
 def load(path: Path) -> NGramModel:
     with path.open("rb") as fh:
         data = pickle.load(fh)
+    version = data.get("version", 1)
+    freq_raw = data.get("freq", [])
+    if version == 1:
+        # Convert v1 frequency tables (ctx_id -> counts) to v2 format
+        freq: list[FreqTable] = []
+        for table in freq_raw:
+            new_table: FreqTable = {}
+            for ctx_id, arr in table.items():
+                new_table[(ctx_id, 0)] = arr
+            freq.append(new_table)
+        aux_vocab = AuxVocab()
+    else:
+        freq = freq_raw
+        vocab_list = data.get("aux_vocab")
+        aux_vocab = (
+            AuxVocab({s: i for i, s in enumerate(vocab_list)}, vocab_list)
+            if vocab_list
+            else AuxVocab()
+        )
     model = NGramModel(
-        **{
-            k: data.get(k)
-            for k in [
-                "n",
-                "resolution",
-                "resolution_coarse",
-                "state_to_idx",
-                "idx_to_state",
-                "freq",
-                "bucket_freq",
-                "ctx_maps",
-                "prob_paths",
-            ]
-        },
+        n=data.get("n"),
+        resolution=data.get("resolution"),
+        resolution_coarse=data.get("resolution_coarse"),
+        state_to_idx=data.get("state_to_idx"),
+        idx_to_state=data.get("idx_to_state"),
+        freq=freq,
+        bucket_freq=data.get("bucket_freq", {}),
+        ctx_maps=data.get("ctx_maps", []),
+        prob_paths=data.get("prob_paths"),
         prob=None,
-        aux_key=data.get("aux_key"),
-        aux_counts=data.get("aux_counts"),
+        aux_vocab=aux_vocab,
+        version=version,
         file_weights=data.get("file_weights"),
         files_scanned=data.get("files_scanned", 0),
         files_skipped=data.get("files_skipped", 0),

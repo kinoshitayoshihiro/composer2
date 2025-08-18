@@ -1,49 +1,50 @@
 # Continuous Control Curves
 
 The `ControlCurve` class and `apply_controls` helper render sparse automation into
-MIDI control change (CC) and pitch-bend events.
+MIDI control change (CC) and pitch-bend events. Events are routed per MIDI channel
+by attaching them to instruments named `channel0`, `channel1`, … within the
+`pretty_midi.PrettyMIDI` object; individual `ControlChange` and `PitchBend`
+messages carry no explicit channel number.
 
-## Pitch-bend range and RPN Null
+## Pitch-bend range
 
-By default `apply_controls` configures the pitch-bend range via the standard RPN
-sequence `(101=0, 100=0, 6=MSB, 38=LSB)` and emits it once per channel. Some
-external devices require an additional *RPN Null* to be sent after the range is
-set. Pass `rpn_null=True` to `apply_controls` to append `(101=127, 100=127)` and
-close the RPN session.
+`apply_controls` writes a bend‑range RPN `(101=0,100=0,6=MSB,38=LSB)` once per
+instrument before any pitch bends when enabled. The library default emits this
+sequence (`write_rpn=True`); the command‑line wrapper requires `--write-rpn`.
+The LSB encodes the fractional portion in 1/128th‑semitone steps.
 
-> **LSB encoding**
-> The `RPN 0,0` LSB is commonly interpreted as 1/128th of a semitone. The
-> optional `cents` mode provided by `write_bend_range_rpn` is for convenience
-> and may not map perfectly on all devices.
+## Examples
 
-## Routing example
-
-Given a JSON routing description
-
-```json
-{"0": {"cc11": "expr.json", "bend": "vibrato.json"}}
-```
-
-you can render the controls into a MIDI file using the CLI (if installed):
+Time‑domain rendering with RPN:
 
 ```bash
-python -m utilities.apply_controls song.mid routing.json
+python -m utilities.apply_controls_cli song.mid --curves curves.json \
+  --controls bend:on,cc11:on --write-rpn
 ```
 
-CLI flags:
+Beats‑domain rendering (tempo map extracted from the MIDI):
 
-| Flag | Description |
-| ---- | ----------- |
-| `--out OUT.mid` | write to a new file (default `out.mid`) |
-| `--bend-range-semitones N` | configure pitch‑bend range |
-| `--write-rpn` | emit RPN 0,0 range before bends |
-| `--rpn-reset` / `--no-rpn-reset` | append or suppress the RPN Null |
-| `--coarse-only` | omit the LSB for whole‑semitone ranges |
-| `--lsb-mode {128th,cents}` | fractional range encoding; `cents` may not match all devices |
-| `--ensure-zero-at-edges` / `--no-ensure-zero-at-edges` | force pitch‑bend back to 0 at curve boundaries |
+```bash
+python -m utilities.apply_controls_cli song.mid --curves curves.json \
+  --controls bend:on --controls-domain beats \
+  --tempo-map-from-midi song.mid --write-rpn
+```
+
+### Useful flags
+
+| Flag | Default | Meaning |
+| ---- | ------- | ------- |
+| `--controls bend:on,cc11:off,cc64:off` | – | enable targets |
+| `--controls-resolution-hz` | `100.0` | sampling rate of curves |
+| `--controls-max-events` | `200` | cap events per curve |
+| `--dedup-eps-time` | `1e-4` | merge events closer than this time Δ |
+| `--dedup-eps-value` | `1.0` | merge events with small value Δ |
+| `--bend-range-semitones` | `2.0` | pitch‑bend range | 
 | `--sample-rate-hz` | overrides like `bend=80,cc=30` |
 | `--max-bend`, `--max-cc11`, `--max-cc64` | cap emitted events per target |
 | `--value-eps`, `--time-eps` | de‑duplication thresholds |
+| `--dedup-eps-value`, `--dedup-eps-time` | pre-deduplication thresholds for knots |
+| `--rpn-at` | timestamp for the bend-range RPN (default 0.0 seconds) |
 | `--tempo-map` | tempo map as `FILE.py:FUNC` or JSON `[(beat,bpm),...]` |
 | `--dry-run` | skip writing the output file but print a summary |
 
@@ -52,8 +53,8 @@ mapping of channels to callables, or a nested mapping of channels and targets.
 
 ## Sampling rate
 
-`ControlCurve` accepts `resolution_hz` controlling how densely the curve is
-sampled. The older `sample_rate_hz` alias is still accepted but triggers a
+`ControlCurve` accepts `sample_rate_hz` controlling how densely the curve is
+sampled. The older `resolution_hz` alias is still accepted but triggers a
 `DeprecationWarning` and will be removed in a future release.
 
 Recommended sampling rates are around ``20–50`` Hz for CC curves and ``50–100`` Hz for
@@ -76,22 +77,22 @@ Both :py:meth:`ControlCurve.to_midi_cc` and :py:meth:`ControlCurve.to_pitch_bend
 When `write_rpn` is enabled the sequence `RPN 0,0` followed by `Data Entry` (MSB/LSB)
 sets the bend range.  A final `RPN Null` (`101=127`, `100=127`) clears the selection
 so subsequent RPN operations are unaffected.
-`write_bend_range_rpn` offers `coarse_only=True` to emit only the MSB for
-coarse semitone resolution, `lsb_mode` to choose between `"128th"` semitones
-or `"cents"` for the LSB encoding, and `send_rpn_null` to control whether the
-RPN Null is written.
-**The `cents` LSB mode is not part of the MIDI specification; some devices may
-interpret it differently.**
+`write_bend_range_rpn` encodes the coarse semitone count via CC#6 and the
+fractional remainder via CC#38. Setting `rpn_null=True` appends the RPN Null
+sequence after data entry.
 
 Pitch‑bend curves accept values in semitones (default) or normalized units
 (`units="normalized"`) where `-1..1` maps to the full 14‑bit range.
+The renderer automatically appends a final zero‑bend event so synths return to
+pitch centre.
 
 ## Domains and tempo
 
 Curves may be defined in absolute seconds (`domain="time"`) or in beats
 (`domain="beats"`).  For beat‑domain curves a tempo map can be supplied either as a
-callable `beat→bpm` or as an event list `[(beat, bpm), ...]`.  The callable should
-return the BPM at the queried beat.
+callable `beat→bpm`, via `--tempo-map-from-midi`, or inline JSON with
+`--tempo-map` such as `'[[0,120],[4,90]]'`.  The callable should return the BPM
+at the queried beat.
 
 ```python
 pm = pretty_midi.PrettyMIDI()
@@ -110,12 +111,13 @@ this release.
 
 `apply_controls` exposes per-target `max_events`, `value_eps`, and `time_eps` to
 limit or thin events after resampling. Endpoint samples are always preserved.
-Negative values for `offset_sec` are clamped to `0.0` with a warning. A global
-`controls_total_max_events` cap may be supplied to proportionally thin all
-targets after per-target caps. `rpn_reset` appends the optional RPN Null
-sequence, while `rpn_coarse_only` omits the LSB for whole‑semitone ranges.
-Recommended starting values are `sample_rate_hz=20–50` for CC and `50–100` for
-pitch bend with `max_events≈8–16` per curve.
+Negative offsets are clamped to `0.0` with a warning. A global
+Recommended starting values are `sample_rate_hz=20–50` for CC and
+`50–100` for pitch bend with `max_events≈8–16` per curve.
+
+Event timestamps are coerced to be strictly increasing (by at least
+`time_eps`, default `1e-9`) to avoid zero-length deltas that some MIDI parsers
+cannot handle.
 
 ## Examples
 

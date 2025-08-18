@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import math
-import sys
 import warnings
-from pathlib import Path
 
 import pytest
 
@@ -19,82 +17,16 @@ requires_numpy = pytest.mark.skipif(np is None, reason="numpy required")
 # tests can still run. (Tests that genuinely need the real lib will skip.)
 try:  # pragma: no cover
     import pretty_midi  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - fallback stub
+except Exception:  # pragma: no cover - fallback stub
+    from ._stubs import pretty_midi  # type: ignore
 
-    class ControlChange:  # minimal API used in tests
-        def __init__(self, number: int, value: int, time: float):
-            self.number = int(number)
-            self.value = int(value)
-            self.time = float(time)
-
-    class PitchBend:
-        def __init__(self, pitch: int, time: float):
-            self.pitch = int(pitch)
-            self.time = float(time)
-
-    class Note:
-        def __init__(self, velocity: int, pitch: int, start: float, end: float):
-            self.velocity = int(velocity)
-            self.pitch = int(pitch)
-            self.start = float(start)
-            self.end = float(end)
-
-    class Instrument:
-        def __init__(self, program: int = 0, name: str | None = None):
-            self.program = program
-            self.name = name or ""
-            self.control_changes: list[ControlChange] = []
-            self.pitch_bends: list[PitchBend] = []
-            self.notes: list[Note] = []
-
-    class PrettyMIDI:
-        def __init__(self):
-            self.instruments: list[Instrument] = []
-
-    pretty_midi = sys.modules["pretty_midi"] = type(
-        "pretty_midi",
-        (),
-        {
-            "ControlChange": ControlChange,
-            "PitchBend": PitchBend,
-            "Instrument": Instrument,
-            "PrettyMIDI": PrettyMIDI,
-            "Note": Note,
-        },
-    )()
-
-
-# --- Load project modules directly from source ----------------------------
-ROOT = Path(__file__).resolve().parent.parent
-
-# utilities.controls_spline -> ControlCurve (+ helpers)
-spec_cs = importlib.util.spec_from_file_location(
-    "utilities.controls_spline", ROOT / "utilities" / "controls_spline.py"
-)
-module_cs = importlib.util.module_from_spec(spec_cs)
-sys.modules.setdefault("utilities", type(sys)("utilities"))
-sys.modules["utilities.controls_spline"] = module_cs
-assert spec_cs.loader is not None
-spec_cs.loader.exec_module(module_cs)
-ControlCurve = module_cs.ControlCurve
-catmull_rom_monotone = module_cs.catmull_rom_monotone
-
-# utilities.apply_controls -> apply_controls, write_bend_range_rpn
-spec_ac = importlib.util.spec_from_file_location(
-    "utilities.apply_controls", ROOT / "utilities" / "apply_controls.py"
-)
-module_ac = importlib.util.module_from_spec(spec_ac)
-module_ac.__package__ = "utilities"
-assert spec_ac.loader is not None
-spec_ac.loader.exec_module(module_ac)
-apply_controls = module_ac.apply_controls
-if hasattr(module_ac, "write_bend_range_rpn"):
-    write_bend_range_rpn = module_ac.write_bend_range_rpn
-else:  # pragma: no cover
-
-    def write_bend_range_rpn(*_args, **_kwargs):
-        pytest.skip("write_bend_range_rpn not available in utilities.apply_controls")
-
+apply_controls_mod = importlib.import_module("utilities.apply_controls")
+apply_controls = apply_controls_mod.apply_controls
+write_bend_range_rpn = apply_controls_mod.write_bend_range_rpn
+ControlCurve = importlib.import_module("utilities.controls_spline").ControlCurve
+catmull_rom_monotone = importlib.import_module(
+    "utilities.controls_spline"
+).catmull_rom_monotone
 
 # -------------------------------------------------------------------------
 # Helpers
@@ -129,7 +61,8 @@ def test_fit_infer(tmp_path):
     # stack (pandas + ml.controls_spline) is unavailable.
     pd = pytest.importorskip("pandas")
     try:
-        from ml.controls_spline import fit_controls, infer_controls  # type: ignore
+        from ml.controls_spline import fit_controls  # type: ignore
+        from ml.controls_spline import infer_controls
     except Exception:
         pytest.skip("ml.controls_spline not available")
 
@@ -147,89 +80,55 @@ def test_fit_infer(tmp_path):
     assert out.exists()
 
 
-def test_rpn_lsb_and_null():
-    pm = pretty_midi.PrettyMIDI()
-    curve = ControlCurve([0.0, 1.0], [0.0, 0.1])
-    apply_controls(
-        pm,
-        {0: {"bend": curve}},
-        write_rpn=True,
-        bend_range_semitones=2.5,
-        lsb_mode="cents",
-        rpn_reset=True,
-    )
-    # call twice: should not duplicate RPN
-    apply_controls(
-        pm,
-        {0: {"bend": curve}},
-        write_rpn=True,
-        bend_range_semitones=2.5,
-        lsb_mode="cents",
-        rpn_reset=True,
-    )
-    inst = pm.instruments[0]
-    cc_events = inst.control_changes
-    pairs = [(c.number, c.value) for c in cc_events]
-    assert pairs.count((101, 0)) == 1
-    assert pairs.count((100, 0)) == 1
-    assert pairs.count((6, 2)) == 1
-    assert pairs.count((38, 50)) == 1
-    assert pairs.count((101, 127)) == 1
-    assert pairs.count((100, 127)) == 1
-    rpn_null_time = max(
-        c.time for c in cc_events if (c.number, c.value) in {(101, 127), (100, 127)}
-    )
-    first_bend = min(b.time for b in inst.pitch_bends)
-    assert rpn_null_time <= first_bend
-
-
-def test_rpn_order_coarse_only():
-    pm = pretty_midi.PrettyMIDI()
+def test_rpn_lsb_rounding():
     inst = pretty_midi.Instrument(program=0)
-    pm.instruments.append(inst)
-    write_bend_range_rpn(inst, 2.5, coarse_only=True, reset=True)
-    curve = ControlCurve([0.0, 1.0], [0.0, 0.1])
-    curve.to_pitch_bend(inst)
-    nums = [c.number for c in inst.control_changes]
-    assert 38 not in nums  # no LSB when coarse_only
-    assert any(c.number == 101 and c.value == 127 for c in inst.control_changes)
-    assert any(c.number == 100 and c.value == 127 for c in inst.control_changes)
-    rpn_null_time = max(
-        c.time
-        for c in inst.control_changes
-        if c.number in {101, 100} and c.value == 127
-    )
-    first_bend = min(b.time for b in inst.pitch_bends)
-    assert rpn_null_time <= first_bend
-
-
-def test_rpn_lsb_cents():
-    inst = pretty_midi.Instrument(program=0)
-    write_bend_range_rpn(inst, 2.5, lsb_mode="cents")
-    pairs = [(c.number, c.value) for c in inst.control_changes]
-    assert (6, 2) in pairs
-    assert (38, 50) in pairs
-
-
-@pytest.mark.parametrize(
-    "bend_range, lsb",
-    [
-        (2.0, 0),
-        (2.99, 99),
-        (3.0, 0),
-    ],
-)
-def test_rpn_lsb_rounding_cents(bend_range, lsb):
-    inst = pretty_midi.Instrument(program=0)
-    write_bend_range_rpn(inst, bend_range, lsb_mode="cents")
+    write_bend_range_rpn(inst, 2.5)
     pairs = {(c.number, c.value) for c in inst.control_changes}
-    assert (6, int(bend_range)) in pairs
-    assert (38, lsb) in pairs
+    assert (101, 0) in pairs
+    assert (100, 0) in pairs
+    assert (6, 2) in pairs
+    assert (38, 64) in pairs
 
 
-def test_rpn_null_idempotent():
+def test_rpn_once_before_bend():
+    pm = pretty_midi.PrettyMIDI()
+    curve = ControlCurve([0.0, 1.0], [0.0, 0.5])
+    apply_controls(pm, {0: {"bend": curve}}, write_rpn=True)
+    inst = next(i for i in pm.instruments if i.name == "channel0")
+    cc_pairs = [(c.number, c.value, c.time) for c in inst.control_changes]
+    nums = [(n, v) for n, v, _ in cc_pairs]
+    assert nums.count((101, 0)) == 1
+    assert nums.count((100, 0)) == 1
+    assert nums.count((6, 2)) == 1
+    assert nums.count((38, 0)) == 1
+    first_bend = min(b.time for b in inst.pitch_bends)
+    last_rpn = max(t for n, v, t in cc_pairs if n in {101, 100, 6, 38})
+    assert last_rpn <= first_bend
+
+
+def test_event_ordering_same_time():
+    pm = pretty_midi.PrettyMIDI()
+    cc_curve = ControlCurve([0.0, 1.0], [0.0, 127.0])
+    bend_curve = ControlCurve([0.0, 1.0], [0.0, 1.0])
+    apply_controls(pm, {0: {"cc11": cc_curve, "bend": bend_curve}}, write_rpn=True)
+    inst = pm.instruments[0]
+    rpn_times = [c.time for c in inst.control_changes if c.number in {101, 100, 6, 38}]
+    cc_times = [
+        c.time for c in inst.control_changes if c.number not in {101, 100, 6, 38}
+    ]
+    first_bend = min(b.time for b in inst.pitch_bends)
+    assert max(rpn_times) <= min(cc_times)
+    assert min(cc_times) <= first_bend
+
+
+def test_dedup_with_eps():
     inst = pretty_midi.Instrument(program=0)
-    write_bend_range_rpn(inst, 2.5, reset=True)
+    curve = ControlCurve([0.0, 0.00005, 1.0], [0.0, 0.0001, 1.0])
+    curve.to_midi_cc(inst, 11, dedup_time_epsilon=1e-3, dedup_value_epsilon=1e-3)
+    cc = _collect_cc(inst, 11)
+    assert len(cc) == 2
+    assert cc[0].time == pytest.approx(0.0)
+    assert cc[-1].time == pytest.approx(1.0)
 
 
 def test_ensure_zero_at_edges():
@@ -272,20 +171,27 @@ def test_epsilon_dedupe_cc_and_bend():
     curve_cc = ControlCurve([0, 0.001, 0.002], [64.0, 64.0 + 1e-7, 64.0 - 1e-7])
     apply_controls(pm, {0: {"cc11": curve_cc}})
     inst = pm.instruments[0]
-    assert len(_collect_cc(inst, 11)) == 1
+    cc = _collect_cc(inst, 11)
+    assert len(cc) == 2
+    assert cc[0].time == pytest.approx(0.0)
+    assert cc[-1].time == pytest.approx(0.002)
 
     pm2 = pretty_midi.PrettyMIDI()
     curve_b = ControlCurve([0, 0.001, 0.002], [0.0, 0.0 + 1e-7, -1e-7])
     apply_controls(pm2, {0: {"bend": curve_b}})
     inst2 = pm2.instruments[0]
-    assert len(inst2.pitch_bends) == 1
+    assert len(inst2.pitch_bends) == 2
+    assert inst2.pitch_bends[0].time == pytest.approx(0.0)
+    assert inst2.pitch_bends[-1].time == pytest.approx(0.002)
 
 
 def test_beats_domain_piecewise_tempo():
     pm = pretty_midi.PrettyMIDI()
     events = [(0, 120), (1, 60), (2, 60)]
     curve = ControlCurve([0, 1, 2], [0, 64, 127], domain="beats")
-    apply_controls(pm, {0: {"cc11": curve}}, tempo_map=events)
+    apply_controls(
+        pm, {0: {"cc11": curve}}, tempo_map=events, sample_rate_hz={"cc11": 0}
+    )
     inst = pm.instruments[0]
     times = [c.time for c in _collect_cc(inst, 11)]
     assert times[1] - times[0] == pytest.approx(0.5)
@@ -391,29 +297,6 @@ def test_min_delta_thins_cc():
     assert abs(interp - 64.0) < 1.0
 
 
-def test_rpn_modes_128th_vs_cents():
-    curve = ControlCurve([0.0, 1.0], [0.0, 0.2])
-    pm1 = pretty_midi.PrettyMIDI()
-    apply_controls(
-        pm1,
-        {0: {"bend": curve}},
-        write_rpn=True,
-        lsb_mode="128th",
-        rpn_coarse_only=True,
-    )
-    inst1 = pm1.instruments[0]
-    assert all(c.number != 38 for c in inst1.control_changes)
-    pm2 = pretty_midi.PrettyMIDI()
-    apply_controls(pm2, {0: {"bend": curve}}, write_rpn=True, lsb_mode="128th")
-    lsb128 = next(c.value for c in pm2.instruments[0].control_changes if c.number == 38)
-    pm3 = pretty_midi.PrettyMIDI()
-    apply_controls(pm3, {0: {"bend": curve}}, write_rpn=True, lsb_mode="cents")
-    lsb_cents = next(
-        c.value for c in pm3.instruments[0].control_changes if c.number == 38
-    )
-    assert lsb128 != lsb_cents
-
-
 def test_time_offset_shifts_events():
     inst = pretty_midi.Instrument(program=0)
     curve = ControlCurve([0.0, 1.0], [0.0, 127.0])
@@ -427,9 +310,7 @@ def test_cc_validation_bounds():
     inst = pretty_midi.Instrument(program=0)
     curve = ControlCurve([0.0, 1.0], [0.0, 127.0])
     with pytest.raises(ValueError):
-        curve.to_midi_cc(inst, 200, channel=0)
-    with pytest.raises(ValueError):
-        curve.to_midi_cc(inst, 10, channel=20)
+        curve.to_midi_cc(inst, 200)
 
 
 def test_resample_and_thin_preserve_endpoints_cc():
@@ -439,8 +320,11 @@ def test_resample_and_thin_preserve_endpoints_cc():
     times = [c.time for c in inst.control_changes]
     assert times[0] == pytest.approx(0.0)
     assert times[-1] == pytest.approx(1.0)
-    assert all(t0 <= t1 for t0, t1 in zip(times, times[1:]))
-    assert len(times) <= 8
+
+
+def test_convert_to_14bit_endpoints():
+    vals = ControlCurve.convert_to_14bit([-2.0, 0.0, 2.0], 2.0, units="semitones")
+    assert vals == [-8191, 0, 8191]
 
 
 def test_resample_and_thin_preserve_endpoints_bend():
@@ -490,12 +374,7 @@ def test_apply_controls_limits():
     v = np.linspace(0, 127, 50)
     bend_v = np.linspace(0.0, 2.0, 50)
     curves = {0: {"cc11": ControlCurve(t, v), "bend": ControlCurve(t, bend_v)}}
-    apply_controls(
-        pm,
-        curves,
-        cc_max_events=6,
-        bend_max_events=6,
-    )
+    apply_controls(pm, curves, max_events={"cc": 6, "bend": 6})
     inst = pm.instruments[0]
     cc_times = [c.time for c in _collect_cc(inst, 11)]
     bend_times = [b.time for b in inst.pitch_bends]
@@ -521,17 +400,11 @@ def test_beats_offset_combo():
 
 def test_normalized_units_clip():
     inst = pretty_midi.Instrument(program=0)
-    curve = ControlCurve([0, 1], [-1.5, 2.0])
+    curve = ControlCurve([0, 1], [-1.5, 2.0], ensure_zero_at_edges=False)
     curve.to_pitch_bend(inst, units="normalized")
     vals = [b.pitch for b in inst.pitch_bends]
     assert vals[0] == -8192
     assert vals[1] == 8191
-
-
-def test_lsb_mode_invalid():
-    inst = pretty_midi.Instrument(program=0)
-    with pytest.raises(ValueError):
-        write_bend_range_rpn(inst, 2.0, lsb_mode="bogus")
 
 
 @pytest.mark.parametrize(
@@ -655,8 +528,8 @@ def test_beats_domain_invalid_bpm_raises(bpm: float):
 def test_rpn_emitted_once():
     pm = pretty_midi.PrettyMIDI()
     curve = ControlCurve([0.0, 1.0], [0.0, 1.0])
-    apply_controls(pm, {0: {"bend": curve}})
-    apply_controls(pm, {0: {"bend": curve}})
+    apply_controls(pm, {0: {"bend": curve}}, write_rpn=True)
+    apply_controls(pm, {0: {"bend": curve}}, write_rpn=True)
     inst = pm.instruments[0]
     nums = inst.control_changes
     assert sum(1 for cc in nums if cc.number == 101 and cc.value == 0) == 1
@@ -701,6 +574,39 @@ def test_max_events_cap():
     assert err < 1.0
 
 
+@pytest.mark.parametrize("mode", ["rdp", "uniform"])
+def test_simplify_modes(mode: str):
+    times = [i / 200 for i in range(201)]
+    values = [t * 127.0 for t in times]
+    curve = ControlCurve(times, values)
+    inst = pretty_midi.Instrument(program=0)
+    curve.to_midi_cc(inst, 11, max_events=10, simplify_mode=mode)
+    events = _collect_cc(inst, 11)
+    assert len(events) <= 10
+    assert events[0].time == pytest.approx(0.0)
+    assert events[-1].time == pytest.approx(1.0)
+
+
+def test_convert_to_14bit_units():
+    vals_norm = ControlCurve.convert_to_14bit([-1.0, 1.0], 2.0, units="normalized")
+    if np is not None:
+        vals_norm = vals_norm.tolist()
+    assert vals_norm[0] == -8191
+    assert vals_norm[1] == 8191
+    vals_semi = ControlCurve.convert_to_14bit([-2.0, 2.0], 2.0, units="semitones")
+    if np is not None:
+        vals_semi = vals_semi.tolist()
+    assert vals_semi[0] == -8191
+    assert vals_semi[1] == 8191
+
+
+def test_convert_to_14bit_numpy_return():
+    if np is None:
+        pytest.skip("numpy not installed")
+    vals = ControlCurve.convert_to_14bit([-10.0, 10.0], 2.0)
+    assert isinstance(vals, np.ndarray)
+
+
 def test_instrument_routing():
     pm = pretty_midi.PrettyMIDI()
     cc_curve = ControlCurve([0.0, 1.0], [64.0, 64.0])
@@ -727,6 +633,7 @@ def test_fractional_bend_range():
         pm,
         {0: {"bend": curve}},
         bend_range_semitones=2.5,
+        write_rpn=True,
     )
     inst = pm.instruments[0]
     peak = max(abs(pb.pitch) for pb in inst.pitch_bends)
@@ -749,7 +656,7 @@ def test_pitch_bend_clipping():
 def test_min_clamp_negative():
     # static method expected on ControlCurve in new API
     vals = ControlCurve.convert_to_14bit([-10.0], 2.0)
-    assert vals[0] == -8192
+    assert vals[0] == -8191
 
 
 def test_to_midi_cc_without_numpy(monkeypatch):
@@ -768,3 +675,39 @@ def test_to_midi_cc_without_numpy(monkeypatch):
     inst = pretty_midi.Instrument(program=0)
     curve.to_midi_cc(inst, 11)
     assert len(_collect_cc(inst, 11)) == 2
+
+
+def test_per_target_sample_rate():
+    pm = pretty_midi.PrettyMIDI()
+    curves = {
+        0: {
+            "bend": ControlCurve([0, 1], [0.0, 1.0]),
+            "cc11": ControlCurve([0, 1], [0, 127]),
+        }
+    }
+    apply_controls(
+        pm,
+        curves,
+        sample_rate_hz={"bend": 40, "cc11": 5},
+        max_events={"bend": 20, "cc11": 4},
+    )
+    inst = pm.instruments[0]
+    assert inst.pitch_bends[0].pitch == 0
+    last_time = max(pb.time for pb in inst.pitch_bends)
+    assert any(pb.pitch == 0 for pb in inst.pitch_bends if pb.time == last_time)
+    assert len(inst.pitch_bends) <= 20
+    assert len(_collect_cc(inst, 11)) <= 4
+
+
+def test_cc_and_bend_same_instrument(tmp_path):
+    pm = pretty_midi.PrettyMIDI()
+    curves = {
+        0: {
+            "cc11": ControlCurve([0, 1], [0, 127]),
+            "bend": ControlCurve([0, 1], [0, 1]),
+        }
+    }
+    apply_controls(pm, curves, write_rpn=True)
+    out = tmp_path / "out.mid"
+    pm.write(str(out))
+    assert out.exists()

@@ -63,6 +63,35 @@ def test_rpn_existing_idempotent():
     assert rpn_time <= first_bend
 
 
+def test_skip_preexisting_rpn():
+    inst = pretty_midi.Instrument(program=0)
+    t = 0.0
+    inst.control_changes.extend(
+        [
+            pretty_midi.ControlChange(number=101, value=0, time=t),
+            pretty_midi.ControlChange(number=100, value=0, time=t),
+            pretty_midi.ControlChange(number=6, value=2, time=t),
+            pretty_midi.ControlChange(number=38, value=0, time=t),
+        ]
+    )
+    write_bend_range_rpn(inst, 2.0, at_time=t)
+    pairs = [(c.number, c.value) for c in inst.control_changes]
+    assert pairs.count((101, 0)) == 1
+
+
+def test_rpn_sort_priority_same_timestamp():
+    inst = pretty_midi.Instrument(program=0)
+    t = 0.0
+    inst.control_changes.append(pretty_midi.ControlChange(number=11, value=64, time=t))
+    inst.pitch_bends.append(pretty_midi.PitchBend(pitch=0, time=t))
+    write_bend_range_rpn(inst, 2.0, at_time=t)
+    apply_controls._sort_events(inst)
+    nums = [c.number for c in inst.control_changes]
+    assert nums[:4] == [101, 100, 6, 38]
+    assert nums[4] == 11
+    assert inst.pitch_bends[0].time == t
+
+
 def test_strictly_increasing_times():
     curve = ControlCurve([0, 1, 2], [0, 64, 127], domain="beats")
     pm = pretty_midi.PrettyMIDI()

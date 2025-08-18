@@ -14,6 +14,14 @@ New flags for continuous control generation:
 - `--controls-channel-map "bend:0,cc11:0,cc64:0"` – route targets to MIDI channels.
  - `--write-rpn-range/--no-write-rpn-range` – emit an RPN bend-range message once per channel (default on).
 
+Deprecated flag mappings:
+
+| Old flag | Replacement |
+| --- | --- |
+| `--controls-res-hz` | `--controls-sample-rate-hz` |
+| `--controls-resolution-hz` | `--controls-sample-rate-hz` |
+| `--write-rpn` | `--write-rpn-range` |
+
 Example (time-domain):
 
 ```bash

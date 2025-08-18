@@ -60,20 +60,26 @@ def write_bend_range_rpn(
     The LSB encodes the fractional semitone portion in 1/128th steps.
     """
 
-    if getattr(inst, "_rpn_written", False):  # pragma: no cover - defensive
-        return
     msb = int(range_semitones)
     lsb = int(round((range_semitones - msb) * 128))
     lsb = max(0, min(127, lsb))
 
-    # Scan existing events for an identical RPN 0,0 with matching data entry.
-    # Events are grouped by timestamp to avoid false positives across times.
-    for t in {c.time for c in inst.control_changes}:
-        pairs = {(c.number, c.value) for c in inst.control_changes if c.time == t}
-        if (101, 0) in pairs and (100, 0) in pairs and (6, msb) in pairs:
-            if (38, lsb) in pairs or not any(c.number == 38 for c in inst.control_changes if c.time == t):
-                inst._rpn_written = True  # type: ignore[attr-defined]
+    for i in range(len(inst.control_changes) - 3):
+        a, b, c, d = inst.control_changes[i : i + 4]
+        if (a.number, a.value) == (101, 0) and (b.number, b.value) == (100, 0) and c.number == 6:
+            old_msb = c.value
+            old_lsb = 0
+            if d.number == 38:
+                old_lsb = d.value
+            inst._rpn_written = True  # type: ignore[attr-defined]
+            inst._rpn_range = old_msb + old_lsb / 128.0  # type: ignore[attr-defined]
+            if old_msb == msb and old_lsb == lsb:
                 return
+            del inst.control_changes[i : i + 4]
+            break
+
+    if getattr(inst, "_rpn_written", False) and getattr(inst, "_rpn_range", None) == range_semitones:
+        return
 
     t = float(at_time)
     inst.control_changes.extend(
@@ -85,6 +91,7 @@ def write_bend_range_rpn(
         ]
     )
     inst._rpn_written = True  # type: ignore[attr-defined]
+    inst._rpn_range = range_semitones  # type: ignore[attr-defined]
 
 
 _CC_MAP = {"cc11": 11, "cc64": 64}

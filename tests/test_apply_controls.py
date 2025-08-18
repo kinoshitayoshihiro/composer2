@@ -211,3 +211,19 @@ def test_total_max_cap_keeps_endpoints():
     assert cc[-1].time == pytest.approx(1.0)
     assert inst.pitch_bends[0].time == pytest.approx(0.0)
     assert inst.pitch_bends[-1].time == pytest.approx(1.0)
+
+
+def test_total_cap_proportional():
+    curve = ControlCurve([0, 1], [0, 1], sample_rate_hz=100)
+    pm = pretty_midi.PrettyMIDI()
+    apply_controls.apply_controls(
+        pm,
+        {0: {"cc11": curve}, 1: {"bend": curve}},
+        total_max_events=6,
+    )
+    inst0, inst1 = pm.instruments
+    cc = [c for c in inst0.control_changes if c.number == 11]
+    bends = inst1.pitch_bends
+    assert len(cc) + len(bends) <= 6
+    assert len(cc) >= 2 and len(bends) >= 2
+    assert abs(len(cc) - len(bends)) <= 2

@@ -85,6 +85,30 @@ Each snapshot updates the memmap arrays and frees the temporary buffers so that
 peak RSS remains low.  After training completes the shards are merged into the
 final model and the temporary directory can be removed.
 
+### Memory-efficient training with SQLite
+
+For very large corpora you can offload n-gram accumulation to an on-disk
+SQLite database instead of keeping all counts in memory.  The sampler exposes a
+few flags to control this behaviour:
+
+```bash
+python -m utilities.groove_sampler_v2 train loops/ \
+    --store-backend sqlite \
+    --db-path ngrams.db \
+    --commit-every 10000 \
+    --db-busy-timeout-ms 120000 \
+    --db-synchronous NORMAL \
+    --db-mmap-mb 128 \
+    --dedup-filter cuckoo \
+    --min-count 2
+```
+
+`--store-backend` defaults to `sqlite`; for tiny corpora you can switch to the
+in-memory backend via `--store-backend memory`.  Large runs may benefit from a
+higher `--commit-every` and a longer `--db-busy-timeout-ms` to avoid lock
+contention.  The store issues `ANALYZE` and `VACUUM` on shutdown to compact the
+database.
+
 An experimental RNN baseline can be trained from the cached loops:
 
 ```bash

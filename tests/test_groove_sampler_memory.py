@@ -3,6 +3,7 @@ import platform
 import sys
 import types
 from pathlib import Path
+import json
 
 import pytest
 
@@ -20,9 +21,7 @@ pkg = types.ModuleType("utilities")
 pkg.loop_ingest = types.SimpleNamespace(load_meta=lambda *a, **k: {})
 pkg.pretty_midi_safe = types.SimpleNamespace(pm_to_mido=lambda pm: pm)
 pkg.aux_vocab = types.SimpleNamespace(AuxVocab=object)
-pkg.groove_sampler = types.SimpleNamespace(
-    _PITCH_TO_LABEL={}, infer_resolution=lambda *a, **k: 16
-)
+pkg.groove_sampler = types.SimpleNamespace(_PITCH_TO_LABEL={}, infer_resolution=lambda *a, **k: 16)
 sys.modules["utilities"] = pkg
 sys.modules["utilities.loop_ingest"] = pkg.loop_ingest
 sys.modules["utilities.pretty_midi_safe"] = pkg.pretty_midi_safe
@@ -44,7 +43,7 @@ def _make_loop(path: Path, notes: int) -> None:
 
 def test_hash_deterministic() -> None:
     h = module._hash_ctx([1, 2, 3])
-    assert h == 11402386789778234582
+    assert h == 9397225192840052537
 
 
 def test_memmap_memory_and_probs(tmp_path: Path) -> None:
@@ -55,10 +54,10 @@ def test_memmap_memory_and_probs(tmp_path: Path) -> None:
         tmp_path,
         memmap_dir=mem_dir,
         snapshot_interval=1,
-        counts_dtype="uint16",
         hash_buckets=256,
+        train_mode="stream",
     )
-    model_ram = module.train(tmp_path, hash_buckets=256)
+    model_ram = module.train(tmp_path, hash_buckets=256, train_mode="inmemory")
     hb = model_ram.hash_buckets
     h = module._hash_ctx([0, 0]) % hb
     arr1 = model_ram.freq[0][h]
@@ -67,5 +66,42 @@ def test_memmap_memory_and_probs(tmp_path: Path) -> None:
     p2 = arr2 / arr2.sum()
     assert np.allclose(p1, p2)
     if platform.system() == "Linux":
-        rss = psutil.Process().memory_info().rss / (1024 ** 2)
+        rss = psutil.Process().memory_info().rss / (1024**2)
         assert rss < 300
+
+
+def test_resume(tmp_path: Path) -> None:
+    for i in range(2):
+        _make_loop(tmp_path / f"loop{i}.mid", 16)
+    mem_dir = tmp_path / "mm"
+    model1 = module.train(
+        tmp_path,
+        memmap_dir=mem_dir,
+        hash_buckets=256,
+        train_mode="stream",
+        resume=True,
+    )
+    model2 = module.train(
+        tmp_path,
+        memmap_dir=mem_dir,
+        hash_buckets=256,
+        train_mode="stream",
+        resume=True,
+    )
+    h = module._hash_ctx([0, 0]) % model1.hash_buckets
+    assert np.array_equal(model1.freq[0][h], model2.freq[0][h])
+
+
+def test_dtype_promotion(tmp_path: Path) -> None:
+    store = module.MemmapNGramStore(tmp_path, 1, 1, 1, dtype="uint32")
+    table = {0: np.array([0xFFFFFFFF], dtype=np.uint32)}
+    store.flush([table])
+    table = {0: np.array([1], dtype=np.uint32)}
+    store.flush([table])
+    store.write_meta()
+    meta = json.loads((tmp_path / "meta.json").read_text())
+    assert meta["dtype"] == "u64"
+    merged = store.merge()
+    arr = merged[0][0]
+    assert arr.dtype == np.uint64
+    assert arr[0] == 0x1_0000_0000

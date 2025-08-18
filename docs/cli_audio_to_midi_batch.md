@@ -12,7 +12,8 @@ New flags for continuous control generation:
 - `--controls-post-bend {skip,add,replace}` – handle existing pitch bends before applying new curves.
 - `--cc-strategy {energy,rms,none}` – source for CC11 dynamics.
 - `--controls-channel-map "bend:0,cc11:0,cc64:0"` – route targets to MIDI channels.
- - `--write-rpn-range/--no-write-rpn-range` – emit an RPN bend-range message once per channel (default on).
+- `--write-rpn-range/--no-write-rpn-range` – emit an RPN bend-range message once per channel (default on).
+- `--controls-total-max-events INT` – proportional cap across all control events.
 
 Deprecated flag mappings:
 
@@ -21,6 +22,14 @@ Deprecated flag mappings:
 | `--controls-res-hz` | `--controls-sample-rate-hz` |
 | `--controls-resolution-hz` | `--controls-sample-rate-hz` |
 | `--write-rpn` | `--write-rpn-range` |
+
+`--controls-post-bend` modes:
+
+| Mode | Behaviour |
+| --- | --- |
+| `skip` | keep existing bends, ignore new ones |
+| `add` | keep existing bends and add new ones |
+| `replace` | drop existing bends before applying new ones |
 
 Example (time-domain):
 

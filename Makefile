@@ -8,7 +8,10 @@ test:
 	pytest tests
 
 test-controls:
-	pytest tests/test_controls_spline.py tests/test_apply_controls.py -q
+        pytest tests/test_controls_spline.py tests/test_apply_controls.py -q
+
+format:
+	black .
 
 dev:
 	python -m venv .venv && \

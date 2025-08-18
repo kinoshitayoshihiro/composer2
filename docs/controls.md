@@ -37,6 +37,7 @@ python -m utilities.apply_controls_cli song.mid --curves curves.json \
 | `--controls bend:on,cc11:off,cc64:off` | – | enable targets |
 | `--controls-resolution-hz` | `100.0` | sampling rate of curves |
 | `--controls-max-events` | `200` | cap events per curve |
+| `--controls-total-max-events` | – | cap total control events |
 | `--dedup-eps-time` | `1e-4` | merge events closer than this time Δ |
 | `--dedup-eps-value` | `1.0` | merge events with small value Δ |
 | `--bend-range-semitones` | `2.0` | pitch‑bend range | 
@@ -47,6 +48,8 @@ python -m utilities.apply_controls_cli song.mid --curves curves.json \
 | `--rpn-at` | timestamp for the bend-range RPN (default 0.0 seconds) |
 | `--tempo-map` | tempo map as `FILE.py:FUNC` or JSON `[(beat,bpm),...]` |
 | `--dry-run` | skip writing the output file but print a summary |
+
+`--write-rpn` is a deprecated alias of `--write-rpn-range`.
 
 The tempo map may also be passed directly to `apply_controls` as a callable, a
 mapping of channels to callables, or a nested mapping of channels and targets.

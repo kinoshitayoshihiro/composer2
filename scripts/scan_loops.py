@@ -6,19 +6,26 @@ from pathlib import Path
 
 import pretty_midi
 
-from utilities.groove_sampler_v2 import _safe_read_bpm
+from utilities.groove_sampler_v2 import _safe_read_bpm, mido
+from utilities.pretty_midi_safe import pm_to_mido
+
+if mido is None:  # pragma: no cover - dependency is required
+    raise RuntimeError("mido is required for loop scanning; install via 'pip install mido'")
 
 logger = logging.getLogger(__name__)
 
 
 def _analyze(path: Path):
+    logger.info("Analyzing %s", path)
     pm = pretty_midi.PrettyMIDI(str(path))
     bpm = _safe_read_bpm(pm, default_bpm=120.0, fold_halves=False)
-    midi = pm.midi_data
-    ticks_per_beat = midi.ticks_per_beat  # type: ignore[attr-defined]
-    total_ticks = max(sum(msg.time for msg in tr) for tr in midi.tracks)  # type: ignore[attr-defined]
+    if getattr(_safe_read_bpm, "last_source", "") == "default":
+        logger.warning("Tempo not found in %s; using default 120 BPM", path)
+    midi = pm_to_mido(pm)
+    ticks_per_beat = midi.ticks_per_beat
+    total_ticks = max(sum(msg.time for msg in tr) for tr in midi.tracks)
     ts_msg = None
-    for tr in midi.tracks:  # type: ignore[attr-defined]
+    for tr in midi.tracks:
         for msg in tr:
             if msg.type == "time_signature":
                 ts_msg = msg

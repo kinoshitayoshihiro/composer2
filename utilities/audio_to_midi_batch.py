@@ -39,7 +39,10 @@ import math
 import multiprocessing
 import os
 import re
+import shlex
 import statistics
+import subprocess
+import sys
 import time
 import unicodedata
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -52,7 +55,10 @@ except Exception:  # pragma: no cover - numpy may be absent
     np = None  # type: ignore
 import warnings
 
-import pretty_midi
+try:  # pragma: no cover - optional dependency
+    import pretty_midi  # type: ignore
+except Exception:  # pragma: no cover
+    from tests._stubs import pretty_midi  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +75,9 @@ try:  # Optional heavy deps
 except Exception:  # pragma: no cover - handled by fallback
     librosa = None  # type: ignore
 
+from .apply_controls import apply_controls
 from .controls_spline import ControlCurve  # noqa: E402
+from .controls_spline import tempo_map_from_prettymidi
 
 
 @dataclass(frozen=True)
@@ -1067,6 +1075,7 @@ def convert_directory(
                 used_names.add(base)
                 tasks.append((wav, base, midi_path))
 
+            path_by_base = {b: w for w, b, _ in tasks}
             results: list[tuple[str, pretty_midi.Instrument, float | None, Path]] = []
             if jobs > 1:
                 ex_kwargs = {"max_workers": jobs}
@@ -1251,7 +1260,122 @@ def convert_directory(
                 _coerce_note_times(inst)
                 _coerce_controller_times(inst)
                 pm.instruments.append(inst)
+                if args.controls_spec:
+                    enabled = {k for k, v in args.controls_spec.items() if v}
+                    if enabled:
+                        end_time = max((n.end for n in inst.notes), default=0.0)
+                        curves: dict[str, ControlCurve] = {}
+                        if "cc11" in enabled and args.cc_strategy in {"energy", "rms"}:
+                            wav_path = path_by_base.get(base)
+                            if librosa is None or wav_path is None:
+                                logger.info("CC11 disabled: missing audio/libs")
+                            else:
+                                y, sr = librosa.load(wav_path, sr=None, mono=True)
+                                hop = max(1, int(sr / args.controls_sample_rate_hz))
+                                rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+                                win = max(
+                                    1,
+                                    int(
+                                        args.cc11_smoothing_ms
+                                        / 1000.0
+                                        * args.controls_sample_rate_hz
+                                    ),
+                                )
+                                if win > 1:
+                                    rms = np.convolve(
+                                        rms, np.ones(win) / win, mode="same"
+                                    )
+                                if rms.size:
+                                    rms = rms - rms.min()
+                                    if rms.max() > 0:
+                                        rms = rms / rms.max()
+                                    vals = (rms * 127).tolist()
+                                    times_sec = (
+                                        np.arange(len(vals)) * hop / sr
+                                    ).tolist()
+                                    if args.controls_domain == "beats":
+                                        times = [
+                                            pm.time_to_tick(t) / pm.resolution
+                                            for t in times_sec
+                                        ]
+                                    else:
+                                        times = times_sec
+                                    curves["cc11"] = ControlCurve(
+                                        times,
+                                        vals,
+                                        domain=args.controls_domain,
+                                        sample_rate_hz=args.controls_sample_rate_hz,
+                                    )
+                        ch_map = {
+                            tgt: args.controls_channel_map.get(tgt, 0) for tgt in curves
+                        }
+                        by_ch: dict[int, dict[str, ControlCurve]] = {}
+                        for tgt, curve in curves.items():
+                            ch = ch_map.get(tgt, 0)
+                            by_ch.setdefault(ch, {})[tgt] = curve
+                        tempo_map = None
+                        if args.controls_domain == "beats":
+                            tempo_map = tempo_map_from_prettymidi(pm)
+                        max_map: dict[str, int] = {}
+                        if args.controls_max_events:
+                            for t in curves:
+                                max_map[t] = args.controls_max_events
+                        if args.max_cc_events:
+                            for t in curves:
+                                if t.startswith("cc"):
+                                    max_map[t] = args.max_cc_events
+                        if args.max_bend_events:
+                            max_map["bend"] = args.max_bend_events
+                        if args.controls_post_bend in {"replace", "skip"}:
+                            has_existing = bool(inst.pitch_bends)
+                            if args.controls_post_bend == "replace" and has_existing:
+                                inst.pitch_bends.clear()
+                            elif args.controls_post_bend == "skip" and has_existing:
+                                ch_bend = ch_map.get("bend", 0)
+                                if ch_bend in by_ch and "bend" in by_ch[ch_bend]:
+                                    del by_ch[ch_bend]["bend"]
+                                    if not by_ch[ch_bend]:
+                                        del by_ch[ch_bend]
+                        apply_controls(
+                            pm,
+                            by_ch,
+                            bend_range_semitones=args.bend_range_semitones,
+                            write_rpn=args.write_rpn_range,
+                            sample_rate_hz={
+                                "cc11": args.controls_sample_rate_hz,
+                                "cc64": args.controls_sample_rate_hz,
+                                "bend": args.controls_sample_rate_hz,
+                            },
+                            max_events=max_map or None,
+                            total_max_events=args.controls_total_max_events,
+                            simplify_mode=args.controls_simplify_mode,
+                            value_eps=args.dedup_eps_value,
+                            time_eps=args.dedup_eps_time,
+                            tempo_map=tempo_map,
+                        )
                 pm.write(str(midi_path))
+                if args.controls_routing:
+                    routing_path = Path(args.controls_routing)
+                    if routing_path.exists():
+                        cmd = [
+                            sys.executable,
+                            "-m",
+                            "utilities.apply_controls",
+                            str(midi_path),
+                            str(routing_path),
+                        ]
+                        if args.controls_args:
+                            cmd += shlex.split(args.controls_args)
+                        log_cmd = " ".join(shlex.quote(c) for c in cmd)
+                        logger.info("apply_controls: %s", log_cmd)
+                        try:
+                            subprocess.run(
+                                cmd, check=True, capture_output=True, text=True
+                            )
+                        except Exception as exc:  # pragma: no cover
+                            logger.warning(
+                                "apply_controls failed for %s: %s", midi_path, exc
+                            )
                 converted += 1
                 processed.add(base)
                 if resume:
@@ -1394,12 +1518,6 @@ def main(argv: list[str] | None = None) -> None:
         help="Force integer pitch-bend range (LSB=0)",
     )
     parser.add_argument(
-        "--cc11-strategy",
-        choices=["energy", "none"],
-        default="energy",
-        help="Derive CC11 from audio energy or disable it",
-    )
-    parser.add_argument(
         "--cc11-map",
         choices=["linear", "log"],
         default="linear",
@@ -1453,86 +1571,182 @@ def main(argv: list[str] | None = None) -> None:
         default=80.0,
         help="Minimum sustain on/off duration in milliseconds",
     )
-    parser.add_argument(
+    controls = parser.add_argument_group("Continuous Controls")
+    controls.add_argument(
+        "--emit-cc11",
+        dest="emit_cc11",
+        action="store_true",
+        default=False,
+        help="Enable expression (CC11) curves",
+    )
+    controls.add_argument(
+        "--no-emit-cc11",
+        dest="emit_cc11",
+        action="store_false",
+        help="Disable CC11 curves",
+    )
+    controls.add_argument(
+        "--emit-cc64",
+        dest="emit_cc64",
+        action="store_true",
+        default=False,
+        help="Enable sustain pedal (CC64) curves",
+    )
+    controls.add_argument(
+        "--no-emit-cc64",
+        dest="emit_cc64",
+        action="store_false",
+        help="Disable CC64 curves",
+    )
+    controls.add_argument(
+        "--cc-strategy",
+        choices=["energy", "rms", "none"],
+        default="energy",
+        dest="cc_strategy",
+        help="Source for CC11 dynamics",
+    )
+    controls.add_argument(
+        "--cc11-strategy",
+        choices=["energy", "rms", "none"],
+        dest="cc_strategy_alias",
+        help=argparse.SUPPRESS,
+    )
+    controls.add_argument(
+        "--cc11-smoothing-ms",
+        type=float,
+        default=150.0,
+        help="Smoothing window for CC11 strategies",
+    )
+    controls.add_argument(
         "--controls-domain",
         choices=["time", "beats"],
         default="time",
         help="Domain for synthesized control curves",
     )
-    parser.add_argument(
+    controls.add_argument(
         "--controls-sample-rate-hz",
         type=float,
         default=100.0,
+        dest="controls_sample_rate_hz",
         help="Sampling rate for synthesized control curves",
     )
-    parser.add_argument(
+    controls.add_argument(
         "--controls-res-hz",
         type=float,
+        dest="controls_res_hz",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument(
+    controls.add_argument(
         "--controls-max-events",
         type=int,
         help="Per-curve event cap",
     )
-    parser.add_argument(
+    controls.add_argument(
         "--controls-total-max-events",
         type=int,
         help="Global control-event cap",
     )
-    parser.add_argument(
+    controls.add_argument(
+        "--controls-value-eps",
+        type=float,
+        default=1e-6,
+        help="Epsilon for deduplicating nearly equal control values",
+    )
+    controls.add_argument(
         "--controls-channel-map",
         default="bend:0,cc11:0,cc64:0",
         help="Mapping like 'bend:0,cc11:0'",
     )
-    parser.add_argument(
+    controls.add_argument(
         "--write-rpn-range",
         dest="write_rpn_range",
         action="store_true",
         default=True,
+        help="Emit RPN bend-range once per channel",
     )
-    parser.add_argument(
+    controls.add_argument(
         "--no-write-rpn-range",
         dest="write_rpn_range",
         action="store_false",
+        help="Disable RPN bend-range messages",
     )
-    # Deprecated aliases
-    parser.add_argument(
-        "--cc-strategy",
-        choices=["energy", "none"],
+    controls.add_argument(
+        "--write-rpn",
+        dest="write_rpn_range_alias",
+        action="store_true",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument(
-        "--cc11-smoothing-ms",
-        type=float,
+    controls.add_argument(
+        "--no-write-rpn",
+        dest="write_rpn_range_alias",
+        action="store_false",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument(
-        "--cc64-threshold",
-        type=float,
-        help=argparse.SUPPRESS,
+    controls.add_argument("--max-cc-events", type=int, default=0)
+    controls.add_argument("--max-bend-events", type=int, default=0)
+    controls.add_argument("--dedup-eps-time", type=float, default=1e-4)
+    controls.add_argument("--dedup-eps-value", type=float, default=1.0)
+    controls.add_argument(
+        "--bend-units",
+        choices=["semitones", "normalized"],
+        default="semitones",
     )
-    parser.add_argument(
-        "--cc64-instruments",
-        help=argparse.SUPPRESS,
+    controls.add_argument(
+        "--controls-routing",
+        help="Apply controls using routing JSON after transcription",
     )
-    parser.add_argument(
+    controls.add_argument(
+        "--controls-args",
+        default="",
+        help="Extra flags for apply_controls",
+    )
+    controls.add_argument(
         "--controls-post-bend",
         choices=["skip", "add", "replace"],
         default="skip",
         help="How to merge synthesized controls after existing pitch bends",
     )
+    global args  # make available to helper functions
     args = parser.parse_args(argv)
 
-    if getattr(args, "cc_strategy", None) is not None:
-        _warn_once("cc-strategy", "--cc-strategy is deprecated; use --cc11-strategy")
-        args.cc11_strategy = args.cc_strategy
-    if getattr(args, "cc11_smoothing_ms", None) is not None:
-        _warn_once(
-            "cc11-smoothing-ms",
-            "--cc11-smoothing-ms is deprecated; use --cc11-smooth-ms",
-        )
-        args.cc11_smooth_ms = args.cc11_smoothing_ms
+    controls_spec: dict[str, bool] = {}
+    if getattr(args, "emit_cc11", False):
+        controls_spec["cc11"] = True
+    if getattr(args, "emit_cc64", False):
+        controls_spec["cc64"] = True
+    if getattr(args, "controls", None):
+        for part in args.controls.split(","):
+            if not part or ":" not in part:
+                continue
+            key, val = part.split(":", 1)
+            controls_spec[key.strip()] = val.strip().lower() == "on"
+    args.controls_spec = controls_spec
+
+    def _parse_ch_map(spec: str) -> dict[str, int]:
+        mapping: dict[str, int] = {}
+        for part in spec.split(","):
+            if not part or ":" not in part:
+                continue
+            k, v = part.split(":", 1)
+            try:
+                ch = int(v)
+            except ValueError:
+                logger.warning("invalid channel %s for %s", v, k)
+                continue
+            if 0 <= ch <= 15:
+                mapping[k.strip()] = ch
+            else:
+                logger.warning("channel %s out of range", v)
+        return mapping
+
+    args.controls_channel_map = _parse_ch_map(args.controls_channel_map)
+
+    if getattr(args, "cc_strategy_alias", None) is not None:
+        _warn_once("cc11-strategy", "--cc11-strategy is deprecated; use --cc-strategy")
+        args.cc_strategy = args.cc_strategy_alias
+    if getattr(args, "write_rpn_range_alias", None) is not None:
+        _warn_once("write-rpn", "--write-rpn is deprecated; use --write-rpn-range")
+        args.write_rpn_range = args.write_rpn_range_alias
     if (
         getattr(args, "cc64_threshold", None) is not None
         or getattr(args, "cc64_instruments", None) is not None
@@ -1568,7 +1782,7 @@ def main(argv: list[str] | None = None) -> None:
         bend_alpha=args.bend_alpha,
         bend_fixed_base=args.bend_fixed_base,
         bend_integer_range=args.bend_integer_range,
-        cc11_strategy=args.cc11_strategy,
+        cc11_strategy=args.cc_strategy,
         cc11_map=args.cc11_map,
         cc11_smooth_ms=args.cc11_smooth_ms,
         cc11_gain=args.cc11_gain,

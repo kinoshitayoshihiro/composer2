@@ -27,17 +27,20 @@ try:
     import pretty_midi
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     pretty_midi = None  # type: ignore
-_orig = pretty_midi.PrettyMIDI.get_tempo_changes if pretty_midi else None
+_orig = (
+    pretty_midi.PrettyMIDI.get_tempo_changes if pretty_midi and np is not None else None
+)
 
 
 def _patched_get_tempo_changes(self, *args, **kwargs):
     """Return numpy arrays if the original returns lists."""
     times, tempi = _orig(self, *args, **kwargs)
-    if np is None:
-        return tempi, times
-    if isinstance(tempi, list) and os.environ.get("COMPOSER2_DISABLE_PM_PATCH") != "1":
-        return np.asarray(tempi), np.asarray(times)
-    return tempi, times
+    if np is not None and os.environ.get("COMPOSER2_DISABLE_PM_PATCH") != "1":
+        if isinstance(times, list):
+            times = np.asarray(times)
+        if isinstance(tempi, list):
+            tempi = np.asarray(tempi)
+    return times, tempi
 
 
 if pretty_midi is not None and _orig is not None:
@@ -92,10 +95,8 @@ __all__.append("load_chordmap")
 from typing import Any  # noqa: E402
 
 try:
-    from .section_validator import (  # noqa: E402
-        SectionValidationError,
-        validate_sections,
-    )
+    from .section_validator import SectionValidationError  # noqa: E402
+    from .section_validator import validate_sections
 except Exception:  # pragma: no cover - optional dependency missing
 
     class SectionValidationError(Exception):  # type: ignore
@@ -106,6 +107,7 @@ except Exception:  # pragma: no cover - optional dependency missing
             "pretty_midi とその依存関係 (setuptools) がインストールされていないため "
             "validate_sections を実行できません。"
         )
+
 
 __all__.extend(["validate_sections", "SectionValidationError"])
 

@@ -61,6 +61,30 @@ groove_sampler_v2 train loops/ --auto-res --beats-per-bar 8
 groove_sampler_v2 sample model.pkl -l 4 --top-k 5 --top-p 0.8 > out.json
 ```
 
+## Memory & Scale
+
+Large loop corpora can exceed RAM when every n-gram count is stored in memory.
+The trainer supports spilling intermediate counts to disk using ``numpy``
+memmaps.
+
+- ``--memmap-dir``: directory for memmap shards
+- ``--snapshot-interval``: flush counts every N files
+- ``--counts-dtype``: dtype for on-disk counters (``uint32`` or ``uint16``)
+
+Example workflow:
+
+```bash
+python -m utilities.groove_sampler_v2 train loops/ \
+    --memmap-dir tmp/mm \
+    --snapshot-interval 10 \
+    --counts-dtype uint16 \
+    -o model.pkl
+```
+
+Each snapshot updates the memmap arrays and frees the temporary buffers so that
+peak RSS remains low.  After training completes the shards are merged into the
+final model and the temporary directory can be removed.
+
 An experimental RNN baseline can be trained from the cached loops:
 
 ```bash

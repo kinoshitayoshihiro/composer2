@@ -64,23 +64,36 @@ The legacy directory-based training remains available and unchanged.
 
 ## Memory-controlled n-gram training
 
-Standard directory training now streams n-gram counts to an on-disk SQLite
-store, greatly reducing peak RAM usage:
+Directory training can stream n‑gram counts directly to **numpy.memmap** shards,
+avoiding large in-memory frequency tables. SQLite support may arrive in a
+future release.
 
 ```
 python -m utilities.groove_sampler_v2 train loops/ -o model.pkl \
-    --ram-budget-mb 512 --flush-every 100000 \
-    --sqlite-path tmp/groove_ngrams.sqlite
+    --train-mode stream --memmap-dir /fast_ssd/tmp \
+    --hash-buckets 1048576 --max-rows-per-shard 1000000 \
+    --n-jobs 4
 ```
 
-Additional flags:
+Counts are stored in per-order shards under `--memmap-dir`.  Each shard starts as
+`uint32` and automatically promotes to `uint64` if any counter would overflow.
+Shards are created via atomic rename so partially written files are not left
+behind.  Metadata (`meta.json`) records `schema_version=2` and the final dtype.
 
-* **`--ram-budget-mb`** – approximate RAM budget for the in-memory n-gram buffer.
-* **`--flush-every`** – force a flush to SQLite after N n-grams.
-* **`--min-count`** – drop n-grams with counts below this value when finalising.
-* **`--max-ngrams`** – safety cap on total processed n-grams.
-* **`--hash-buckets`** – size of the hashing space for contexts.
-* **`--sqlite-path`** – path to the SQLite database.
+### Operations
 
-The resulting model references the SQLite file and loads distributions lazily
-with a small LRU cache when sampling.
+* Use a fast **local SSD** for `--memmap-dir`; network filesystems may be slow
+  or unreliable.
+* Recommended flags for large corpora:
+  `--train-mode stream --memmap-dir /fast_ssd/tmp --hash-buckets 1048576 --max-rows-per-shard 1000000 --n-jobs 4`
+* `--resume` can restart unfinished runs and skips already processed files.
+* Checkpoints with `--save-every` allow shard0→中断→再開のような運用。
+
+SQLite remains a future option and is not yet supported.
+
+## Memory & Scale
+
+SQLite runs in WAL mode with `synchronous=NORMAL` by default, trading a small
+risk of last‑commit loss for speed. Only one writer can hold the database lock
+at a time; for multi‑process training use sharded databases or ensure a
+single‑writer pattern.

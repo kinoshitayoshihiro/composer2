@@ -1267,45 +1267,93 @@ def convert_directory(
                         curves: dict[str, ControlCurve] = {}
                         if "cc11" in enabled and args.cc_strategy in {"energy", "rms"}:
                             wav_path = path_by_base.get(base)
-                            if librosa is None or wav_path is None:
-                                logger.info("CC11 disabled: missing audio/libs")
-                            else:
-                                y, sr = librosa.load(wav_path, sr=None, mono=True)
-                                hop = max(1, int(sr / args.controls_sample_rate_hz))
-                                rms = librosa.feature.rms(y=y, hop_length=hop)[0]
-                                win = max(
-                                    1,
-                                    int(
-                                        args.cc11_smoothing_ms
-                                        / 1000.0
-                                        * args.controls_sample_rate_hz
-                                    ),
-                                )
-                                if win > 1:
-                                    rms = np.convolve(
-                                        rms, np.ones(win) / win, mode="same"
+                            times: list[float] = []
+                            vals: list[float] = []
+                            if (
+                                librosa is not None
+                                and wav_path is not None
+                                and os.path.exists(wav_path)
+                            ):
+                                try:
+                                    y, sr = librosa.load(wav_path, sr=None, mono=True)
+                                    hop = max(1, int(sr / args.controls_sample_rate_hz))
+                                    rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+                                    win = max(
+                                        1,
+                                        int(
+                                            args.cc11_smoothing_ms
+                                            / 1000.0
+                                            * args.controls_sample_rate_hz
+                                        ),
                                     )
-                                if rms.size:
-                                    rms = rms - rms.min()
-                                    if rms.max() > 0:
-                                        rms = rms / rms.max()
-                                    vals = (rms * 127).tolist()
-                                    times_sec = (
-                                        np.arange(len(vals)) * hop / sr
-                                    ).tolist()
-                                    if args.controls_domain == "beats":
-                                        times = [
-                                            pm.time_to_tick(t) / pm.resolution
-                                            for t in times_sec
+                                    if win > 1:
+                                        rms = np.convolve(
+                                            rms, np.ones(win) / win, mode="same"
+                                        )
+                                    if rms.size:
+                                        rms = rms - rms.min()
+                                        if rms.max() > 0:
+                                            rms = rms / rms.max()
+                                        vals = (rms * 127 * args.cc11_gain).clip(0, 127).tolist()
+                                        times_sec = (
+                                            np.arange(len(vals)) * hop / sr
+                                        ).tolist()
+                                        times = (
+                                            [pm.time_to_tick(t) / pm.resolution for t in times_sec]
+                                            if args.controls_domain == "beats"
+                                            else times_sec
+                                        )
+                                except Exception:  # pragma: no cover - best effort
+                                    vals = []
+                            if not vals:
+                                notes = sorted(inst.notes, key=lambda n: n.start)
+                                if notes:
+                                    sr_env = max(1.0, float(args.controls_sample_rate_hz))
+                                    dt = 1.0 / sr_env
+                                    end_time = max(n.end for n in notes)
+                                    bins = int(end_time / dt) + 1
+                                    acc = [0.0] * bins
+                                    cnt = [0] * bins
+                                    for n in notes:
+                                        s = int(n.start / dt)
+                                        e = int(n.end / dt) + 1
+                                        for i in range(s, e):
+                                            acc[i] += n.velocity
+                                            cnt[i] += 1
+                                    avg = [acc[i] / cnt[i] if cnt[i] else 0.0 for i in range(bins)]
+                                    win = max(
+                                        1,
+                                        int(args.cc11_smoothing_ms / 1000.0 * sr_env),
+                                    )
+                                    if win > 1 and np is not None:
+                                        avg = (
+                                            np.convolve(avg, np.ones(win) / win, mode="same")
+                                            .tolist()
+                                        )
+                                    if avg:
+                                        max_val = max(avg) or 1.0
+                                        avg = [
+                                            max(0.0, min(127.0, v / max_val * 127 * args.cc11_gain))
+                                            for v in avg
                                         ]
-                                    else:
-                                        times = times_sec
-                                    curves["cc11"] = ControlCurve(
-                                        times,
-                                        vals,
-                                        domain=args.controls_domain,
-                                        sample_rate_hz=args.controls_sample_rate_hz,
-                                    )
+                                        vals = avg
+                                        times_sec = [i * dt for i in range(len(avg))]
+                                        times = (
+                                            [pm.time_to_tick(t) / pm.resolution for t in times_sec]
+                                            if args.controls_domain == "beats"
+                                            else times_sec
+                                        )
+                            if vals:
+                                curves["cc11"] = ControlCurve(
+                                    times,
+                                    vals,
+                                    domain=args.controls_domain,
+                                    sample_rate_hz=args.controls_sample_rate_hz,
+                                    dedup_time_epsilon=args.dedup_eps_time,
+                                    dedup_value_epsilon=args.dedup_eps_value,
+                                )
+                            else:
+                                logger.info("CC11 disabled: insufficient data for %s", inst.name)
                         ch_map = {
                             tgt: args.controls_channel_map.get(tgt, 0) for tgt in curves
                         }
@@ -1330,29 +1378,62 @@ def convert_directory(
                             has_existing = bool(inst.pitch_bends)
                             if args.controls_post_bend == "replace" and has_existing:
                                 inst.pitch_bends.clear()
+                                logger.info(
+                                    "controls-post-bend=replace: cleared bends on %s", inst.name
+                                )
                             elif args.controls_post_bend == "skip" and has_existing:
                                 ch_bend = ch_map.get("bend", 0)
                                 if ch_bend in by_ch and "bend" in by_ch[ch_bend]:
                                     del by_ch[ch_bend]["bend"]
                                     if not by_ch[ch_bend]:
                                         del by_ch[ch_bend]
-                        apply_controls(
-                            pm,
-                            by_ch,
-                            bend_range_semitones=args.bend_range_semitones,
-                            write_rpn=args.write_rpn_range,
-                            sample_rate_hz={
-                                "cc11": args.controls_sample_rate_hz,
-                                "cc64": args.controls_sample_rate_hz,
-                                "bend": args.controls_sample_rate_hz,
-                            },
-                            max_events=max_map or None,
-                            total_max_events=args.controls_total_max_events,
-                            simplify_mode=args.controls_simplify_mode,
-                            value_eps=args.dedup_eps_value,
-                            time_eps=args.dedup_eps_time,
-                            tempo_map=tempo_map,
-                        )
+                                    logger.info(
+                                        "controls-post-bend=skip: kept existing bends on %s",
+                                        inst.name,
+                                    )
+                            else:
+                                logger.info(
+                                    "controls-post-bend=%s: no existing bends on %s",
+                                    args.controls_post_bend,
+                                    inst.name,
+                                )
+                        else:
+                            logger.info("controls-post-bend=add on %s", inst.name)
+                        if not args.controls_routing:
+                            apply_controls(
+                                pm,
+                                by_ch,
+                                bend_range_semitones=args.bend_range_semitones,
+                                write_rpn=args.write_rpn_range,
+                                sample_rate_hz={
+                                    "cc11": args.controls_sample_rate_hz,
+                                    "cc64": args.controls_sample_rate_hz,
+                                    "bend": args.controls_sample_rate_hz,
+                                },
+                                max_events=max_map or None,
+                                total_max_events=args.controls_total_max_events,
+                                simplify_mode=getattr(args, "controls_simplify_mode", "rdp"),
+                                value_eps=args.dedup_eps_value,
+                                time_eps=args.dedup_eps_time,
+                                tempo_map=tempo_map,
+                            )
+                            merged = False
+                            for ci in list(pm.instruments):
+                                if ci is inst:
+                                    continue
+                                if ci.name.startswith("channel"):
+                                    inst.control_changes.extend(ci.control_changes)
+                                    inst.pitch_bends.extend(ci.pitch_bends)
+                                    pm.instruments.remove(ci)
+                                    merged = True
+                            if merged:
+                                inst.control_changes.sort(key=lambda c: c.time)
+                                inst.pitch_bends.sort(key=lambda b: b.time)
+                        elif args.emit_cc11 or args.cc64_mode != "none" or curves:
+                            _warn_once(
+                                "controls-routing-skipped",
+                                "--controls-routing overrides in-process controls; skipping",
+                            )
                 pm.write(str(midi_path))
                 if args.controls_routing:
                     routing_path = Path(args.controls_routing)
@@ -1360,7 +1441,7 @@ def convert_directory(
                         cmd = [
                             sys.executable,
                             "-m",
-                            "utilities.apply_controls",
+                            "utilities.apply_controls_cli",
                             str(midi_path),
                             str(routing_path),
                         ]
@@ -1688,6 +1769,7 @@ def main(argv: list[str] | None = None) -> None:
         action="store_false",
         help=argparse.SUPPRESS,
     )
+    controls.set_defaults(write_rpn_range_alias=None)
     controls.add_argument("--max-cc-events", type=int, default=0)
     controls.add_argument("--max-bend-events", type=int, default=0)
     controls.add_argument("--dedup-eps-time", type=float, default=1e-4)

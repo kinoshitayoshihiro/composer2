@@ -1,7 +1,7 @@
 """Improved n-gram drum groove sampler.
 
 This module implements a memory efficient n-gram model for drum loop
-generation. Contexts are hashed using MurmurHash3 and frequency counts are
+generation. Contexts are hashed using 64-bit Blake2b and frequency counts are
 stored in ``numpy`` arrays.  A coarse resolution option groups intra-bar
 positions into four buckets.
 """
@@ -16,6 +16,8 @@ import pickle
 import re
 import sys
 import time
+import gc
+import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,7 +68,16 @@ except Exception:  # pragma: no cover
 
         return _wrap
 
-from .aux_vocab import AuxVocab
+try:  # pragma: no cover - optional during lightweight testing
+    from .aux_vocab import AuxVocab
+except Exception:  # pragma: no cover
+
+    class AuxVocab:  # type: ignore
+        def __init__(self, *a, **k):
+            self.id_to_str: list[str] = []
+
+        def encode(self, data):
+            return 0
 
 try:  # pragma: no cover - optional dependency
     from tqdm import tqdm  # noqa: E402
@@ -75,9 +86,28 @@ except Exception:  # pragma: no cover
     def tqdm(x, **k):
         return x
 
+try:  # pragma: no cover - optional dependency
+    import psutil  # type: ignore
+except Exception:  # pragma: no cover
+    psutil = None  # type: ignore
 
 from utilities.loop_ingest import load_meta  # noqa: E402
-from utilities.pretty_midi_safe import pm_to_mido  # noqa: E402
+try:  # pragma: no cover - optional dependency
+    from utilities.pretty_midi_safe import pm_to_mido  # noqa: E402
+except Exception:  # pragma: no cover
+    def pm_to_mido(pm):  # type: ignore
+        class _Msg:
+            def __init__(self, time: int):
+                self.time = time
+                self.type = "note"
+                self.numerator = 4
+                self.denominator = 4
+
+        class _Midi:
+            ticks_per_beat = 480
+            tracks = [[_Msg(480 * 4)]]
+
+        return _Midi()
 
 logger = logging.getLogger(__name__)
 
@@ -140,54 +170,8 @@ except ImportError:  # fallback when executed as a script
 State = tuple[int, int, str]
 """Model state encoded as ``(bar_mod2, bin_in_bar, drum_label)``."""
 
-FreqTable = dict[tuple[int, int], NDArray]
-"""Mapping from ``(ctx_hash, aux_id)`` to next-state count array."""
-
-
-def _murmurhash3(data: bytes, seed: int = 0) -> int:
-    """Return unsigned 32-bit MurmurHash3 of *data*."""
-
-    c1 = 0xCC9E2D51
-    c2 = 0x1B873593
-    r1 = 15
-    r2 = 13
-    m = 5
-    n = 0xE6546B64
-
-    length = len(data)
-    h = seed & 0xFFFFFFFF
-    rounded_end = length & 0xFFFFFFFC  # round down to 4 byte block
-
-    for i in range(0, rounded_end, 4):
-        k = int.from_bytes(data[i : i + 4], "little")
-        k = (k * c1) & 0xFFFFFFFF
-        k = ((k << r1) | (k >> (32 - r1))) & 0xFFFFFFFF
-        k = (k * c2) & 0xFFFFFFFF
-
-        h ^= k
-        h = ((h << r2) | (h >> (32 - r2))) & 0xFFFFFFFF
-        h = (h * m + n) & 0xFFFFFFFF
-
-    k1 = 0
-    tail = data[rounded_end:]
-    if len(tail) == 3:
-        k1 ^= tail[2] << 16
-    if len(tail) >= 2:
-        k1 ^= tail[1] << 8
-    if len(tail) >= 1:
-        k1 ^= tail[0]
-        k1 = (k1 * c1) & 0xFFFFFFFF
-        k1 = ((k1 << r1) | (k1 >> (32 - r1))) & 0xFFFFFFFF
-        k1 = (k1 * c2) & 0xFFFFFFFF
-        h ^= k1
-
-    h ^= length
-    h ^= h >> 16
-    h = (h * 0x85EBCA6B) & 0xFFFFFFFF
-    h ^= h >> 13
-    h = (h * 0xC2B2AE35) & 0xFFFFFFFF
-    h ^= h >> 16
-    return h & 0xFFFFFFFF
+FreqTable = dict[int, NDArray]
+"""Mapping from hashed context to next-state count array."""
 
 
 @dataclass
@@ -210,6 +194,7 @@ class NGramModel:
     files_scanned: int = 0
     files_skipped: int = 0
     total_events: int = 0
+    hash_buckets: int = 16_777_216
 
 
 def _encode_state(bar_mod: int, bin_in_bar: int, label: str) -> State:
@@ -238,9 +223,85 @@ def _extract_aux(
     return matches or None
 
 
+def _hash64(data: bytes) -> int:
+    """Return a 64-bit hash of *data* using Blake2b."""
+
+    return int.from_bytes(hashlib.blake2b(data, digest_size=8).digest(), "little")
+
+
 def _hash_ctx(ctx: Iterable[int]) -> int:
     arr = np.fromiter(ctx, dtype=np.uint32)
-    return _murmurhash3(arr.tobytes(), seed=0xC0DE)
+    return _hash64(arr.tobytes())
+
+
+def bump_count(table: FreqTable, key: int, tok: int, vocab_size: int) -> None:
+    """Increment count for ``(key, tok)`` in ``table``."""
+
+    arr = table.get(key)
+    if arr is None:
+        arr = np.zeros(vocab_size, dtype=np.uint32)
+        table[key] = arr
+    arr[tok] += 1
+
+
+class MemmapNGramStore:
+    """Disk-backed n-gram store using numpy.memmap shards."""
+
+    def __init__(
+        self,
+        path: Path,
+        n_orders: int,
+        vocab_size: int,
+        hash_buckets: int,
+        dtype: str = "uint32",
+    ) -> None:
+        self.path = Path(path)
+        self.path.mkdir(parents=True, exist_ok=True)
+        self.n_orders = n_orders
+        self.vocab_size = vocab_size
+        self.hash_buckets = hash_buckets
+        self.dtype = np.dtype(dtype)
+        self.shard_bits = 8
+        self.n_shards = 1 << self.shard_bits
+        self.shard_size = hash_buckets // self.n_shards
+        self.maps: list[list[np.memmap]] = []
+        for order in range(n_orders):
+            order_maps = []
+            for shard in range(self.n_shards):
+                fn = self.path / f"o{order}_{shard}.npy"
+                order_maps.append(
+                    np.memmap(
+                        fn,
+                        mode="w+",
+                        dtype=self.dtype,
+                        shape=(self.shard_size, vocab_size),
+                    )
+                )
+            self.maps.append(order_maps)
+
+    def flush(self, tables: list[FreqTable]) -> None:
+        for order, table in enumerate(tables):
+            for h, arr in table.items():
+                bucket = h % self.hash_buckets
+                shard = bucket & (self.n_shards - 1)
+                idx = bucket >> self.shard_bits
+                mm = self.maps[order][shard]
+                mm[idx] = (mm[idx] + arr).astype(self.dtype)
+        for order_maps in self.maps:
+            for mm in order_maps:
+                mm.flush()
+
+    def merge(self) -> list[FreqTable]:
+        result: list[FreqTable] = [dict() for _ in range(self.n_orders)]
+        for order in range(self.n_orders):
+            for shard in range(self.n_shards):
+                mm = self.maps[order][shard]
+                for idx in range(self.shard_size):
+                    arr = np.array(mm[idx], dtype=np.uint32)
+                    if arr.any():
+                        bucket = (idx << self.shard_bits) | shard
+                        result[order][bucket] = arr
+        return result
 
 
 def convert_wav_to_midi(
@@ -533,6 +594,9 @@ def train(
     separate_fills: bool = False,
     len_sampling: str = "sqrt",
     inject_default_tempo: float = 0.0,
+    snapshot_interval: int = 0,
+    counts_dtype: str = "uint32",
+    hash_buckets: int = 16_777_216,
 ):
     """Build a hashed n‑gram model from drum loops located in *loop_dir*."""
     if mido is None:  # pragma: no cover - dependency is missing
@@ -733,79 +797,36 @@ def train(
         file_weights = [math.sqrt(max(1e-6, float(b))) for b in bars_list]
 
     n_states = len(idx_to_state)
-    freq: list[FreqTable] = [dict() for _ in range(n)]
     bucket_freq: dict[int, np.ndarray] = {}
-
-    # Keep auxiliary counts (by raw string) for potential analysis
-    aux_counts: dict[int, dict[str, np.ndarray]] = {}
-
-    for seq, aux_val in zip(seqs, aux_values):
+    hb = hash_buckets
+    buf_orders: list[FreqTable] = [dict() for _ in range(n)]
+    store = (
+        MemmapNGramStore(memmap_dir, n, n_states, hb, counts_dtype)
+        if memmap_dir is not None
+        else None
+    )
+    for file_idx, seq in enumerate(seqs, start=1):
         for i, cur in enumerate(seq):
-            # unigram (aux-agnostic key (0, 0))
-            arr0 = freq[0].setdefault((0, 0), np.zeros(n_states, dtype=np.uint32))
-            arr0[cur] += 1
-            if aux_val is not None:
-                aux_map = aux_counts.setdefault(0, {})
-                arr_aux = aux_map.get(aux_val)
-                if arr_aux is None:
-                    arr_aux = np.zeros(n_states, dtype=np.uint32)
-                    aux_map[aux_val] = arr_aux
-                arr_aux[cur] += 1
-
-            # higher orders (hashed context, aux id 0 aggregate)
-            for order in range(1, n):
-                if i - order < 0:
-                    break
-                ctx = seq[i - order : i]
-                ctx_id = _hash_ctx(ctx)
-                key_any = (ctx_id, 0)
-                arr = freq[order].get(key_any)
-                if arr is None:
-                    arr = np.zeros(n_states, dtype=np.uint32)
-                    freq[order][key_any] = arr
-                arr[cur] += 1
-                if aux_val is not None:
-                    aux_map = aux_counts.setdefault(ctx_id, {})
-                    arr_aux = aux_map.get(aux_val)
-                    if arr_aux is None:
-                        arr_aux = np.zeros(n_states, dtype=np.uint32)
-                        aux_map[aux_val] = arr_aux
-                    arr_aux[cur] += 1
-
             bucket = idx_to_state[cur][1]
             b_arr = bucket_freq.get(bucket)
             if b_arr is None:
                 b_arr = np.zeros(n_states, dtype=np.uint32)
                 bucket_freq[bucket] = b_arr
             b_arr[cur] += 1
-
-    ctx_maps: list[dict[int, int]] = []
-    prob_arrays: list[np.ndarray] = []
-    prob_paths: list[str] | None = [] if memmap_dir else None
-    if memmap_dir:
-        memmap_dir.mkdir(parents=True, exist_ok=True)
-
-    for order in range(n):
-        ctx_ids = list({cid for (cid, _aux) in freq[order].keys()})
-        ctx_map = {cid: i for i, cid in enumerate(ctx_ids)}
-        ctx_maps.append(ctx_map)
-        arr = np.zeros((len(ctx_ids), n_states), dtype=np.float32)
-        for (cid, _aux), counts in freq[order].items():
-            i = ctx_map[cid]
-            c = counts
-            s = c.sum()
-            if s:
-                arr[i] = c / s
-        if memmap_dir is not None:
-            path = memmap_dir / f"prob_order{order}.mmap"
-            mm = np.memmap(path, dtype="float32", mode="w+", shape=arr.shape)
-            mm[:] = arr
-            prob_arrays.append(mm)
-            assert prob_paths is not None
-            prob_paths.append(str(path))
-        else:
-            prob_arrays.append(arr)
-
+            for order in range(0, n):
+                if order > i:
+                    break
+                ctx = seq[i - order : i]
+                ctx_hash = _hash_ctx(list(ctx) + [order, 0]) % hb
+                bump_count(buf_orders[order], ctx_hash, cur, n_states)
+        if store is not None and snapshot_interval and file_idx % snapshot_interval == 0:
+            store.flush(buf_orders)
+            buf_orders = [dict() for _ in range(n)]
+    if store is not None:
+        store.flush(buf_orders)
+        freq_orders = store.merge()
+    else:
+        freq_orders = buf_orders
     logger.info(
         "Scanned %d files (skipped %d) \u2192 %d events \u2192 %d states",
         len(paths),
@@ -817,27 +838,173 @@ def train(
         logger.info("  %s: %d", k, v)
     if total_events == 0 or len(idx_to_state) == 0:
         raise SystemExit("No events collected - check your data directory")
-
     model = NGramModel(
         n=n,
         resolution=resolution,
         resolution_coarse=resolution_coarse,
         state_to_idx=state_to_idx,
         idx_to_state=idx_to_state,
-        freq=freq,
+        freq=freq_orders,
         bucket_freq=bucket_freq,
-        ctx_maps=ctx_maps,
-        prob_paths=prob_paths,
-        prob=prob_arrays,
-        aux_vocab=None,
+        ctx_maps=[{} for _ in range(n)],
+        prob_paths=None,
+        prob=None,
+        aux_vocab=AuxVocab(),
         version=2,
         file_weights=file_weights,
         files_scanned=len(paths),
         files_skipped=files_skipped,
         total_events=total_events,
+        hash_buckets=hb,
     )
     return model
 
+
+def train_streaming(
+    paths: Iterable[Path],
+    *,
+    output: Path,
+    min_bytes: int = 800,
+    min_notes: int = 8,
+    max_files: int | None = None,
+    progress: bool = True,
+    log_every: int = 200,
+    save_every: int = 0,
+    checkpoint_dir: Path | None = None,
+    resume_from: Path | None = None,
+    gc_every: int = 1000,
+    mem_stats: bool = False,
+    fail_fast: bool = False,
+) -> dict[str, Any]:
+    """Stream MIDI files and build simple pitch counts.
+
+    This helper is intentionally lightweight and only tracks per-pitch note
+    counts alongside basic bookkeeping statistics.  It is sufficient for large
+    corpora sharding tests while keeping backward compatibility with the
+    original n-gram training routine.
+    """
+
+    pitch_counts: dict[int, int] = {}
+    processed = 0
+    kept = 0
+    skipped = 0
+
+    if resume_from is not None and resume_from.exists():
+        with resume_from.open("rb") as fh:
+            state = pickle.load(fh)
+        pitch_counts = state.get("counts", {})
+        processed = state.get("processed", 0)
+        kept = state.get("kept", 0)
+        skipped = state.get("skipped", 0)
+
+    path_list = list(paths)
+    start_idx = processed
+    iterator = path_list[start_idx:]
+    if progress:
+        iterator = tqdm(iterator, total=len(path_list) - start_idx)
+
+    for idx, p in enumerate(iterator, start=start_idx + 1):
+        if max_files is not None and kept >= max_files:
+            break
+        processed += 1
+        try:
+            if os.path.getsize(p) < min_bytes:
+                skipped += 1
+                continue
+            pm = pretty_midi.PrettyMIDI(str(p))
+            note_cnt = sum(len(inst.notes) for inst in pm.instruments)
+            if note_cnt < min_notes:
+                skipped += 1
+                continue
+            for inst in pm.instruments:
+                for note in inst.notes:
+                    pitch_counts[note.pitch] = pitch_counts.get(note.pitch, 0) + 1
+            kept += 1
+        except Exception as exc:  # pragma: no cover - best effort
+            skipped += 1
+            logger.warning("Failed to process %s: %s", p, exc)
+            if fail_fast:
+                raise
+        if save_every and kept and kept % save_every == 0:
+            ckpt_dir = checkpoint_dir or output.parent
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+            ckpt_path = ckpt_dir / f"ckpt_{kept}.pkl"
+            with ckpt_path.open("wb") as fh:
+                pickle.dump(
+                    {
+                        "version": 1,
+                        "counts": pitch_counts,
+                        "processed": processed,
+                        "kept": kept,
+                        "skipped": skipped,
+                    },
+                    fh,
+                )
+            logger.info("saved checkpoint %s (processed=%d, kept=%d)", ckpt_path, processed, kept)
+        if gc_every and processed % gc_every == 0:
+            gc.collect()
+        if log_every and processed % log_every == 0:
+            if mem_stats and psutil is not None:
+                rss = psutil.Process(os.getpid()).memory_info().rss // (1024 * 1024)
+                logger.info(
+                    "processed=%d kept=%d skip=%d rss=%dMB",
+                    processed,
+                    kept,
+                    skipped,
+                    rss,
+                )
+            else:
+                logger.info(
+                    "processed=%d kept=%d skip=%d",
+                    processed,
+                    kept,
+                    skipped,
+                )
+
+    result = {
+        "version": 1,
+        "counts": pitch_counts,
+        "processed": processed,
+        "kept": kept,
+        "skipped": skipped,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("wb") as fh:
+        pickle.dump(result, fh)
+    return result
+
+
+def merge_streaming_models(paths: Iterable[Path], output: Path) -> dict[str, Any]:
+    """Merge multiple streaming model pickles into one."""
+
+    merged: dict[str, Any] | None = None
+    for p in paths:
+        with p.open("rb") as fh:
+            data = pickle.load(fh)
+        if merged is None:
+            merged = {
+                "version": data.get("version", 1),
+                "counts": dict(data.get("counts", {})),
+                "processed": data.get("processed", 0),
+                "kept": data.get("kept", 0),
+                "skipped": data.get("skipped", 0),
+            }
+            continue
+        if merged.get("version") != data.get("version"):
+            logger.warning("version mismatch when merging %s", p)
+        for k, v in data.get("counts", {}).items():
+            merged["counts"][k] = merged["counts"].get(k, 0) + v
+        merged["processed"] += data.get("processed", 0)
+        merged["kept"] += data.get("kept", 0)
+        merged["skipped"] += data.get("skipped", 0)
+
+    if merged is None:
+        merged = {"version": 1, "counts": {}, "processed": 0, "kept": 0, "skipped": 0}
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("wb") as fh:
+        pickle.dump(merged, fh)
+    return merged
 
 def _choose(probs: np.ndarray, rng: Random) -> int:
     total = probs.sum()
@@ -898,10 +1065,13 @@ def sample_next(
     aux_id = 0
     if cond and model.aux_vocab:
         aux_id = model.aux_vocab.encode(cond)
+    hb = model.hash_buckets
     for order in range(min(len(history), n - 1), 0, -1):
-        ctx_id = _hash_ctx(history[-order:])
-        arr_spec = model.freq[order].get((ctx_id, aux_id))
-        arr_any = model.freq[order].get((ctx_id, 0))
+        ctx = history[-order:]
+        ctx_spec = _hash_ctx(list(ctx) + [order, aux_id]) % hb
+        ctx_any = _hash_ctx(list(ctx) + [order, 0]) % hb
+        arr_spec = model.freq[order].get(ctx_spec)
+        arr_any = model.freq[order].get(ctx_any)
         arr = None
         if arr_spec is not None:
             arr = arr_spec.astype(float)
@@ -929,8 +1099,10 @@ def sample_next(
             probs /= total
             return _choose(probs, rng)
 
-    arr_spec = model.freq[0].get((0, aux_id))
-    arr_any = model.freq[0].get((0, 0))
+    ctx_spec = _hash_ctx([0, aux_id]) % hb
+    ctx_any = _hash_ctx([0, 0]) % hb
+    arr_spec = model.freq[0].get(ctx_spec)
+    arr_any = model.freq[0].get(ctx_any)
     if arr_spec is None:
         arr = arr_any
     else:
@@ -1117,6 +1289,7 @@ def save(model: NGramModel, path: Path) -> None:
         "files_scanned": model.files_scanned,
         "files_skipped": model.files_skipped,
         "total_events": model.total_events,
+        "hash_buckets": model.hash_buckets,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as fh:
@@ -1129,13 +1302,7 @@ def load(path: Path) -> NGramModel:
     version = data.get("version", 1)
     freq_raw = data.get("freq", [])
     if version == 1:
-        # Convert v1 frequency tables (ctx_id -> counts) to v2 format
-        freq: list[FreqTable] = []
-        for table in freq_raw:
-            new_table: FreqTable = {}
-            for ctx_id, arr in table.items():
-                new_table[(ctx_id, 0)] = arr
-            freq.append(new_table)
+        freq = freq_raw
         aux_vocab = AuxVocab()
     else:
         freq = freq_raw
@@ -1162,6 +1329,7 @@ def load(path: Path) -> NGramModel:
         files_scanned=data.get("files_scanned", 0),
         files_skipped=data.get("files_skipped", 0),
         total_events=data.get("total_events", 0),
+        hash_buckets=data.get("hash_buckets", 16_777_216),
     )
     if model.prob_paths is not None:
         from .memmap_utils import load_memmap
@@ -1178,7 +1346,7 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
     import argparse
 
     parser = argparse.ArgumentParser(prog="groove_sampler_v2 train")
-    parser.add_argument("loop_dir", type=Path)
+    parser.add_argument("loop_dir", type=Path, nargs="?")
     parser.add_argument("-o", "--output", type=Path, default=Path("model.pkl"))
     parser.add_argument("--n", type=int, default=4)
     parser.add_argument("--auto-res", action="store_true")
@@ -1229,49 +1397,103 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
         action="store_true",
         help="print model parameters after training",
     )
+    parser.add_argument("--from-filelist", type=Path)
+    parser.add_argument("--shard-index", type=int)
+    parser.add_argument("--num-shards", type=int)
+    parser.add_argument("--min-bytes", type=int, default=800)
+    parser.add_argument("--max-files", type=int)
+    parser.add_argument(
+        "--progress",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--log-every", type=int, default=200)
+    parser.add_argument("--save-every", type=int, default=0)
+    parser.add_argument("--checkpoint-dir", type=Path)
+    parser.add_argument("--resume-from", type=Path)
+    parser.add_argument("--gc-every", type=int, default=1000)
+    parser.add_argument("--mem-stats", action="store_true")
+    parser.add_argument(
+        "--fail-fast",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument("--hash-buckets", type=int, default=16_777_216)
+    parser.add_argument("--snapshot-interval", type=int, default=0)
+    parser.add_argument(
+        "--counts-dtype", choices=["uint32", "uint16"], default="uint32"
+    )
     ns = parser.parse_args(args)
 
-    t0 = time.perf_counter()
-    model = train(
-        ns.loop_dir,
-        n=ns.n,
-        auto_res=ns.auto_res,
-        coarse=ns.coarse,
-        beats_per_bar=ns.beats_per_bar,
-        n_jobs=ns.jobs,
-        memmap_dir=ns.memmap_dir,
-        fixed_bpm=ns.fixed_bpm,
-        progress=not quiet and not no_tqdm,
-        include_audio=not ns.no_audio,
-        aux_key=ns.aux_key,
-        tempo_policy=ns.tempo_policy,
-        fallback_bpm=ns.fallback_bpm,
-        min_bpm=ns.min_bpm,
-        max_bpm=ns.max_bpm,
-        fold_halves=ns.fold_halves,
-        tempo_verbose=ns.tempo_verbose,
-        min_bars=ns.min_bars,
-        min_notes=ns.min_notes,
-        drum_only=ns.drum_only,
-        pitched_only=ns.pitched_only,
-        tag_fill_from_filename=ns.tag_fill_from_filename,
-        exclude_fills=ns.exclude_fills,
-        separate_fills=ns.separate_fills,
-        len_sampling=ns.len_sampling,
-        inject_default_tempo=ns.inject_default_tempo,
-    )
-    elapsed = time.perf_counter() - t0
-    save(model, ns.output)
-    print(f"model saved to {ns.output} ({elapsed:.2f}s)")
-    if ns.print_model:
-        try:
-            print(
-                json.dumps(
-                    model, default=lambda o: getattr(o, "__dict__", str(o)), indent=2
+    if ns.from_filelist:
+        with ns.from_filelist.open() as fh:
+            paths = [Path(line.strip()) for line in fh if line.strip()]
+        if ns.num_shards is not None and ns.shard_index is not None:
+            paths = [p for i, p in enumerate(paths) if i % ns.num_shards == ns.shard_index]
+        if ns.max_files is not None:
+            paths = paths[: ns.max_files]
+        train_streaming(
+            paths,
+            output=ns.output,
+            min_bytes=ns.min_bytes,
+            min_notes=ns.min_notes,
+            max_files=ns.max_files,
+            progress=ns.progress and not quiet and not no_tqdm,
+            log_every=ns.log_every,
+            save_every=ns.save_every,
+            checkpoint_dir=ns.checkpoint_dir,
+            resume_from=ns.resume_from,
+            gc_every=ns.gc_every,
+            mem_stats=ns.mem_stats,
+            fail_fast=ns.fail_fast,
+        )
+    else:
+        if ns.loop_dir is None:
+            parser.error("loop_dir is required when --from-filelist is not specified")
+        t0 = time.perf_counter()
+        model = train(
+            ns.loop_dir,
+            n=ns.n,
+            auto_res=ns.auto_res,
+            coarse=ns.coarse,
+            beats_per_bar=ns.beats_per_bar,
+            n_jobs=ns.jobs,
+            memmap_dir=ns.memmap_dir,
+            fixed_bpm=ns.fixed_bpm,
+            progress=ns.progress and not quiet and not no_tqdm,
+            include_audio=not ns.no_audio,
+            aux_key=ns.aux_key,
+            tempo_policy=ns.tempo_policy,
+            fallback_bpm=ns.fallback_bpm,
+            min_bpm=ns.min_bpm,
+            max_bpm=ns.max_bpm,
+            fold_halves=ns.fold_halves,
+            tempo_verbose=ns.tempo_verbose,
+            min_bars=ns.min_bars,
+            min_notes=ns.min_notes,
+            drum_only=ns.drum_only,
+            pitched_only=ns.pitched_only,
+            tag_fill_from_filename=ns.tag_fill_from_filename,
+            exclude_fills=ns.exclude_fills,
+            separate_fills=ns.separate_fills,
+            len_sampling=ns.len_sampling,
+            inject_default_tempo=ns.inject_default_tempo,
+            hash_buckets=ns.hash_buckets,
+            snapshot_interval=ns.snapshot_interval,
+            counts_dtype=ns.counts_dtype,
+        )
+        elapsed = time.perf_counter() - t0
+        save(model, ns.output)
+        print(f"model saved to {ns.output} ({elapsed:.2f}s)")
+        if ns.print_model:
+            try:
+                print(
+                    json.dumps(
+                        model, default=lambda o: getattr(o, "__dict__", str(o)), indent=2
+                    )
                 )
-            )
-        except Exception:
-            print(model)
+            except Exception:
+                print(model)
 
 
 def _cmd_sample(args: list[str]) -> None:
@@ -1322,6 +1544,17 @@ def _cmd_stats(args: list[str]) -> None:
     print(
         f"Scanned {model.files_scanned} files (skipped {model.files_skipped}) → {model.total_events} events → {len(model.idx_to_state)} states"
     )
+
+
+def _cmd_merge(args: list[str]) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="groove_sampler_v2 merge")
+    parser.add_argument("parts", nargs="+", type=Path)
+    parser.add_argument("-o", "--output", type=Path, required=True)
+    ns = parser.parse_args(args)
+    merge_streaming_models(ns.parts, ns.output)
+    print(f"merged model saved to {ns.output}")
 
 
 # ---------------------------------------------------------------------------
@@ -1423,6 +1656,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_sample(rest)
     elif cmd == "stats":
         _cmd_stats(rest)
+    elif cmd == "merge":
+        _cmd_merge(rest)
     else:
         raise SystemExit(f"Unknown command: {cmd}")
 

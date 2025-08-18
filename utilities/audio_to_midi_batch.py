@@ -1372,6 +1372,12 @@ def convert_directory(
                             subprocess.run(
                                 cmd, check=True, capture_output=True, text=True
                             )
+                        except subprocess.CalledProcessError as exc:  # pragma: no cover
+                            logger.warning(
+                                "apply_controls failed for %s: %s", midi_path, exc
+                            )
+                            if exc.stderr:
+                                logger.warning("stderr: %s", exc.stderr)
                         except Exception as exc:  # pragma: no cover
                             logger.warning(
                                 "apply_controls failed for %s: %s", midi_path, exc

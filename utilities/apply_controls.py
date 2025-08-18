@@ -65,6 +65,16 @@ def write_bend_range_rpn(
     msb = int(range_semitones)
     lsb = int(round((range_semitones - msb) * 128))
     lsb = max(0, min(127, lsb))
+
+    # Scan existing events for an identical RPN 0,0 with matching data entry.
+    # Events are grouped by timestamp to avoid false positives across times.
+    for t in {c.time for c in inst.control_changes}:
+        pairs = {(c.number, c.value) for c in inst.control_changes if c.time == t}
+        if (101, 0) in pairs and (100, 0) in pairs and (6, msb) in pairs:
+            if (38, lsb) in pairs or not any(c.number == 38 for c in inst.control_changes if c.time == t):
+                inst._rpn_written = True  # type: ignore[attr-defined]
+                return
+
     t = float(at_time)
     inst.control_changes.extend(
         [

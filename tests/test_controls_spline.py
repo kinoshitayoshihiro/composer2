@@ -199,6 +199,15 @@ def test_beats_domain_piecewise_tempo():
     assert times[-1] == pytest.approx(1.5)
 
 
+def test_beats_domain_extreme_tempo_monotone():
+    inst = pretty_midi.Instrument(program=0)
+    events = [(0, 30), (1, 240)]
+    curve = ControlCurve([0, 1, 2], [0, 64, 127], domain="beats")
+    curve.to_midi_cc(inst, 11, tempo_map=events, sample_rate_hz=5)
+    times = [c.time for c in inst.control_changes]
+    assert all(t0 <= t1 for t0, t1 in zip(times, times[1:]))
+
+
 def test_beats_domain_constant_bpm():
     inst = pretty_midi.Instrument(program=0)
     curve = ControlCurve([0, 1, 2], [0, 64, 127], domain="beats")

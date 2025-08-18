@@ -86,6 +86,9 @@ Pitch‑bend curves accept values in semitones (default) or normalized units
 The renderer automatically appends a final zero‑bend event so synths return to
 pitch centre.
 
+Values are quantized to the MIDI 14‑bit pitch‑bend range and clipped to
+`-8192..+8191` (due to rounding the minimum representable value is `-8191`).
+
 ## Domains and tempo
 
 Curves may be defined in absolute seconds (`domain="time"`) or in beats

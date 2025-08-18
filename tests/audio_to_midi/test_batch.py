@@ -6,8 +6,9 @@ from pathlib import Path
 import sys
 import types
 
-import numpy as np
-import pretty_midi
+import pytest
+np = pytest.importorskip("numpy")
+pretty_midi = pytest.importorskip("pretty_midi")
 import wave
 
 # Mock basic_pitch module before any imports that might use it

@@ -67,3 +67,25 @@ Quick pitch-bend inspection:
 python -m utilities.rich_note_csv path/to/midi.mid | grep bend
 ```
 
+## Retrofitting continuous controls
+
+Existing MIDI files can be enhanced with expression (CC11) and pitch bends via
+`apply_controls_cli`:
+
+```
+python -m utilities.apply_controls_cli in.mid out.mid --controls bend:on,cc11:on --write-rpn
+```
+
+The batching tool `audio_to_midi_batch` can render these curves automatically
+when invoked with `--controls`:
+
+```
+python -m utilities.audio_to_midi_batch input_dir output_dir --controls bend:on,cc11:on
+```
+
+Both interfaces accept flags such as `--controls-resolution-hz`,
+`--controls-max-events`, and `--dedup-eps` to control sampling density, event
+caps, and epsilon-based de-duplication.  Beat-domain rendering requires a tempo
+map, either derived from the MIDI (`--tempo-map-from-midi`) or supplied via
+`--tempo-map`.
+

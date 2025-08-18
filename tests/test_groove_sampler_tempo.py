@@ -12,7 +12,7 @@ _safe_read_bpm = module._safe_read_bpm
 train = module.train
 
 
-def make_pm(bpm=None, extra=None):
+def make_pm(bpm: float | None = None, extra: list[float] | None = None):
     mid = mido.MidiFile()
     track = mido.MidiTrack()
     mid.tracks.append(track)
@@ -37,15 +37,11 @@ def test_safe_read_bpm_basic():
     assert _safe_read_bpm.last_source == "pretty_midi"
 
 
-def test_safe_read_bpm_default_and_skip(tmp_path: Path):
-    pm, mid = make_pm(bpm=None)
-    bpm = _safe_read_bpm(pm, default_bpm=130.0, fold_halves=False)
-    assert bpm == pytest.approx(130.0)
+def test_safe_read_bpm_default_120():
+    pm, _ = make_pm(bpm=None)
+    bpm = _safe_read_bpm(pm, default_bpm=120.0, fold_halves=False)
+    assert bpm == pytest.approx(120.0)
     assert _safe_read_bpm.last_source == "default"
-    midi_path = tmp_path / "no_tempo.mid"
-    mid.save(midi_path)
-    model = train(tmp_path, skip_no_tempo=True, default_bpm=130.0)
-    assert model.files_skipped == 1
 
 
 def test_safe_read_bpm_first_tempo():
@@ -58,3 +54,17 @@ def test_fold_halves():
     pm, _ = make_pm(bpm=60)
     bpm = _safe_read_bpm(pm, default_bpm=120.0, fold_halves=True)
     assert bpm == pytest.approx(120.0)
+
+
+
+def test_train_inject_default_tempo(tmp_path: Path):
+    pm, _ = make_pm(bpm=None)
+    midi_path = tmp_path / "no_tempo.mid"
+    pm.write(str(midi_path))
+    model = train(tmp_path, inject_default_tempo=120.0)
+    assert model.files_scanned == 1
+    assert model.total_events > 0
+    pm2 = pretty_midi.PrettyMIDI(str(midi_path))
+    _t, tempi = pm2.get_tempo_changes()
+    assert len(tempi) == 0
+

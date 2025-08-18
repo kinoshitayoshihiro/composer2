@@ -11,11 +11,18 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import pickle
 import re
 import sys
 import time
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+from random import Random
+from typing import Any
 
+# Optional YAML (not strictly required by this module, but kept for compat)
 try:  # pragma: no cover - optional dependency
     import yaml  # type: ignore
 except Exception:  # pragma: no cover
@@ -26,32 +33,38 @@ except Exception:  # pragma: no cover
             return {}
 
     yaml = _DummyYAML()  # type: ignore
-from collections.abc import Iterable
-from dataclasses import dataclass
-from pathlib import Path
-from random import Random
-from typing import Any
 
-try:  # pragma: no cover - optional dependency
-    import numpy as np  # type: ignore
+# Numpy is effectively required
+import numpy as np
 
-    NDArray = np.ndarray
-except Exception:  # pragma: no cover
-    np = None  # type: ignore
-    NDArray = Any
+NDArray = np.ndarray
 
 import pretty_midi
+import tempfile
 
+# Optional mido — required for training path below
+try:  # pragma: no cover - optional dependency
+    import mido  # type: ignore
+except Exception:  # pragma: no cover
+    mido = None  # type: ignore
+
+# Optional joblib for parallel loading
 try:  # pragma: no cover - optional dependency
     from joblib import Parallel, delayed  # type: ignore
 except Exception:  # pragma: no cover
 
-    def Parallel(funcs, **k):  # type: ignore
-        return [f() for f in funcs]
+    class Parallel:  # type: ignore
+        def __init__(self, n_jobs: int = 1, **kwargs):
+            self.n_jobs = n_jobs
+
+        def __call__(self, tasks):
+            return [t() for t in tasks]
 
     def delayed(fn):  # type: ignore
-        return fn
+        def _wrap(*args, **kwargs):
+            return lambda: fn(*args, **kwargs)
 
+        return _wrap
 
 from .aux_vocab import AuxVocab
 
@@ -64,15 +77,64 @@ except Exception:  # pragma: no cover
 
 
 from utilities.loop_ingest import load_meta  # noqa: E402
+from utilities.pretty_midi_safe import pm_to_mido  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_tempo(
+    pm: pretty_midi.PrettyMIDI, default_bpm: float = 120.0
+) -> pretty_midi.PrettyMIDI:
+    """Ensure ``pm`` has an initial tempo.
+
+    PrettyMIDI's own tempo information is consulted first.  If no tempo is
+    present, the MIDI data is searched for a ``set_tempo`` meta message via
+    :mod:`mido`.  When still missing, a default tempo is injected by writing to
+    a temporary MIDI file and reloading it.  ``_ensure_tempo.injected`` records
+    whether a tempo was inserted.
+    """
+
+    injected = False
+    times, tempi = pm.get_tempo_changes()
+    if len(tempi):
+        _ensure_tempo.injected = False  # type: ignore[attr-defined]
+        return pm
+    if mido is None:  # pragma: no cover - dependency is required for injection
+        _ensure_tempo.injected = False  # type: ignore[attr-defined]
+        return pm
+    try:
+        midi = pm_to_mido(pm)
+    except Exception:  # pragma: no cover - failed conversion
+        _ensure_tempo.injected = False  # type: ignore[attr-defined]
+        return pm
+    for track in midi.tracks:
+        for msg in track:
+            if msg.type == "set_tempo":
+                _ensure_tempo.injected = False  # type: ignore[attr-defined]
+                return pm
+    msg = mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(default_bpm), time=0)
+    midi.tracks[0].insert(0, msg)
+    tmp = tempfile.NamedTemporaryFile(suffix=".mid", delete=False)
+    try:
+        tmp.close()
+        midi.save(tmp.name)
+        pm = pretty_midi.PrettyMIDI(tmp.name)
+        injected = True
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:  # pragma: no cover - best effort cleanup
+            pass
+    _ensure_tempo.injected = injected  # type: ignore[attr-defined]
+    return pm
+
 
 try:
     from .groove_sampler import _PITCH_TO_LABEL, infer_resolution
 except ImportError:  # fallback when executed as a script
-    import os
+    import os as _os
 
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    sys.path.insert(0, _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..")))
     from utilities.groove_sampler import _PITCH_TO_LABEL, infer_resolution
 
 State = tuple[int, int, str]
@@ -179,9 +241,6 @@ def _extract_aux(
 def _hash_ctx(ctx: Iterable[int]) -> int:
     arr = np.fromiter(ctx, dtype=np.uint32)
     return _murmurhash3(arr.tobytes(), seed=0xC0DE)
-
-
-logger = logging.getLogger(__name__)
 
 
 def convert_wav_to_midi(
@@ -316,8 +375,6 @@ def _safe_read_bpm(
     tempo and can be inspected by callers for logging.
     """
 
-    import math
-
     bpm: float | None = None
     source = "default"
 
@@ -325,13 +382,10 @@ def _safe_read_bpm(
     if len(tempi) and math.isfinite(tempi[0]) and tempi[0] > 0:
         bpm = float(tempi[0])
         source = "pretty_midi"
-    else:  # fall back to mido
-        try:  # pragma: no cover - optional dependency
-            import mido
-        except Exception:  # pragma: no cover
-            mido = None
-        if mido is not None:
-            for track in pm.midi_data.tracks:  # type: ignore[attr-defined]
+    elif mido is not None:  # pragma: no branch - optional dependency
+        try:
+            midi = pm_to_mido(pm)
+            for track in midi.tracks:
                 for msg in track:
                     if msg.type == "set_tempo":
                         bpm = mido.tempo2bpm(msg.tempo)
@@ -339,6 +393,8 @@ def _safe_read_bpm(
                         break
                 if bpm is not None:
                     break
+        except Exception:  # pragma: no cover - failed conversion
+            pass
 
     if bpm is None or not math.isfinite(bpm) or bpm <= 0:
         bpm = float(default_bpm)
@@ -391,21 +447,16 @@ def _resolve_tempo(
     (``pretty_midi`` or ``mido``).
     """
 
-    import math
-
     bpm: float | None = None
     source = "unknown"
     times, tempi = pm.get_tempo_changes()
     if len(tempi) and math.isfinite(tempi[0]):
         bpm = float(tempi[0])
         source = "pretty_midi"
-    else:
-        try:  # pragma: no cover - optional dependency
-            import mido
-        except Exception:  # pragma: no cover
-            mido = None
-        if mido is not None:
-            for track in pm.midi_data.tracks:  # type: ignore[attr-defined]
+    elif mido is not None:  # pragma: no branch - optional dependency
+        try:
+            midi = pm_to_mido(pm)
+            for track in midi.tracks:
                 for msg in track:
                     if msg.type == "set_tempo":
                         bpm = mido.tempo2bpm(msg.tempo)
@@ -413,6 +464,8 @@ def _resolve_tempo(
                         break
                 if bpm is not None:
                     break
+        except Exception:  # pragma: no cover - failed conversion
+            pass
 
     orig_bpm = bpm
     reason = "accept"
@@ -482,6 +535,10 @@ def train(
     inject_default_tempo: float = 0.0,
 ):
     """Build a hashed n‑gram model from drum loops located in *loop_dir*."""
+    if mido is None:  # pragma: no cover - dependency is missing
+        raise RuntimeError(
+            "mido is required for groove sampler training; install via 'pip install mido'"
+        )
 
     paths = collect_files(loop_dir, include_audio)
     total_events = 0
@@ -501,21 +558,15 @@ def train(
             else:
                 pm = pretty_midi.PrettyMIDI(str(p))
 
-            times, tempi = pm.get_tempo_changes()
-            if inject_default_tempo > 0 and len(tempi) == 0:
+            if inject_default_tempo > 0:
                 try:
-                    import mido
-
-                    msg = mido.MetaMessage(
-                        "set_tempo", tempo=mido.bpm2tempo(inject_default_tempo), time=0
-                    )
-                    pm.midi_data.tracks[0].insert(0, msg)  # type: ignore[attr-defined]
-                    pm.write(str(p))
-                    logger.warning(
-                        "Injected tempo %.2f BPM into %s", inject_default_tempo, p
-                    )
+                    pm = _ensure_tempo(pm, inject_default_tempo)
+                    if getattr(_ensure_tempo, "injected", False):
+                        logger.warning(
+                            "Injected tempo %.2f BPM for %s", inject_default_tempo, p
+                        )
                 except Exception as exc:
-                    logger.warning("Failed to inject tempo into %s: %s", p, exc)
+                    logger.warning("Failed to ensure tempo for %s: %s", p, exc)
 
             tempo, reason = _resolve_tempo(
                 pm,
@@ -545,25 +596,27 @@ def train(
             notes = midi_to_events(pm, tempo)
             offs = [off for off, _ in notes]
 
-            midi = pm.midi_data
-            ticks_per_beat = midi.ticks_per_beat  # type: ignore[attr-defined]
-            total_ticks = max(
-                sum(msg.time for msg in tr) for tr in midi.tracks  # type: ignore[attr-defined]
-            )
+            try:
+                midi = pm_to_mido(pm)
+            except Exception as exc:
+                logger.warning("Failed to convert %s to mido: %s", p, exc)
+                return None, "error"
+            ticks_per_beat = midi.ticks_per_beat
+            total_ticks = max(sum(msg.time for msg in tr) for tr in midi.tracks)
             ts_msg = None
-            for tr in midi.tracks:  # type: ignore[attr-defined]
+            for tr in midi.tracks:
                 for msg in tr:
                     if msg.type == "time_signature":
                         ts_msg = msg
                         break
                 if ts_msg:
                     break
-            beats_per_bar = (
+            beats_per_bar_local = (
                 ts_msg.numerator * (4 / ts_msg.denominator)
                 if ts_msg is not None
                 else 4.0
             )
-            bars = total_ticks / (ticks_per_beat * beats_per_bar)
+            bars = total_ticks / (ticks_per_beat * beats_per_bar_local)
 
             all_notes = [n for inst in pm.instruments for n in inst.notes]
             note_cnt = len(all_notes)
@@ -683,12 +736,13 @@ def train(
     freq: list[FreqTable] = [dict() for _ in range(n)]
     bucket_freq: dict[int, np.ndarray] = {}
 
+    # Keep auxiliary counts (by raw string) for potential analysis
     aux_counts: dict[int, dict[str, np.ndarray]] = {}
 
     for seq, aux_val in zip(seqs, aux_values):
         for i, cur in enumerate(seq):
-            # unigram
-            arr0 = freq[0].setdefault(0, np.zeros(n_states, dtype=np.uint32))
+            # unigram (aux-agnostic key (0, 0))
+            arr0 = freq[0].setdefault((0, 0), np.zeros(n_states, dtype=np.uint32))
             arr0[cur] += 1
             if aux_val is not None:
                 aux_map = aux_counts.setdefault(0, {})
@@ -698,16 +752,17 @@ def train(
                     aux_map[aux_val] = arr_aux
                 arr_aux[cur] += 1
 
-            # higher orders
+            # higher orders (hashed context, aux id 0 aggregate)
             for order in range(1, n):
                 if i - order < 0:
                     break
                 ctx = seq[i - order : i]
                 ctx_id = _hash_ctx(ctx)
-                arr = freq[order].get(ctx_id)
+                key_any = (ctx_id, 0)
+                arr = freq[order].get(key_any)
                 if arr is None:
                     arr = np.zeros(n_states, dtype=np.uint32)
-                    freq[order][ctx_id] = arr
+                    freq[order][key_any] = arr
                 arr[cur] += 1
                 if aux_val is not None:
                     aux_map = aux_counts.setdefault(ctx_id, {})
@@ -731,12 +786,13 @@ def train(
         memmap_dir.mkdir(parents=True, exist_ok=True)
 
     for order in range(n):
-        ctx_ids = list(freq[order].keys())
+        ctx_ids = list({cid for (cid, _aux) in freq[order].keys()})
         ctx_map = {cid: i for i, cid in enumerate(ctx_ids)}
         ctx_maps.append(ctx_map)
         arr = np.zeros((len(ctx_ids), n_states), dtype=np.float32)
-        for i, cid in enumerate(ctx_ids):
-            c = freq[order][cid]
+        for (cid, _aux), counts in freq[order].items():
+            i = ctx_map[cid]
+            c = counts
             s = c.sum()
             if s:
                 arr[i] = c / s
@@ -773,8 +829,8 @@ def train(
         ctx_maps=ctx_maps,
         prob_paths=prob_paths,
         prob=prob_arrays,
-        aux_key=aux_key,
-        aux_counts=aux_counts,
+        aux_vocab=None,
+        version=2,
         file_weights=file_weights,
         files_scanned=len(paths),
         files_skipped=files_skipped,
@@ -969,7 +1025,7 @@ def generate_events(
         if model.idx_to_state and idx < len(model.idx_to_state):
             _, bin_in_bar, lbl = model.idx_to_state[idx]
         else:
-            # フォールバック: デフォルト値を使用
+            # Fallback defaults
             _, bin_in_bar, lbl = 0, 0, "kick"
         if model.resolution_coarse != res:
             bin_in_bar *= 4
@@ -983,7 +1039,7 @@ def generate_events(
             velocity = max(velocity, 1.2)
         offset = abs_bin / step_per_beat
         if lbl == "ghost_snare":
-            offset += rng.normal(0.0, 0.003) / sec_per_beat
+            offset += rng.gauss(0.0, 0.003) / sec_per_beat  # jitter
         skip = False
         for ev in events:
             if abs(ev["offset"] - offset) <= 1e-6:
@@ -1372,6 +1428,6 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    import sys
+    import sys as _sys
 
-    main(sys.argv[1:])
+    main(_sys.argv[1:])

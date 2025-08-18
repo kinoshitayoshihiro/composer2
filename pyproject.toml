@@ -168,6 +168,20 @@ omit = [
   "realtime/ws_vocal_bridge.py",
 ]
 
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+include = '\.pyi?$'
+exclude = '''
+/(
+        \.git
+      | \.venv
+      | build
+      | dist
+      | docs
+    )/
+'''
+
 [tool.setuptools.packages.find]
 include = ["articulation_tagger", "modular_composer*"]
 

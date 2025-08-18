@@ -7,6 +7,7 @@ import sys
 import pytest
 
 pretty_midi = pytest.importorskip("pretty_midi")
+np = pytest.importorskip("numpy")
 
 _spec = importlib.util.spec_from_file_location(
     "utilities.groove_sampler_v2",
@@ -19,9 +20,7 @@ pkg = types.ModuleType("utilities")
 pkg.loop_ingest = types.SimpleNamespace(load_meta=lambda *a, **k: {})
 pkg.pretty_midi_safe = types.SimpleNamespace(pm_to_mido=lambda pm: pm)
 pkg.aux_vocab = types.SimpleNamespace(AuxVocab=object)
-pkg.groove_sampler = types.SimpleNamespace(
-    _PITCH_TO_LABEL={}, infer_resolution=lambda *a, **k: 480
-)
+pkg.groove_sampler = types.SimpleNamespace(_PITCH_TO_LABEL={}, infer_resolution=lambda *a, **k: 480)
 sys.modules["utilities"] = pkg
 sys.modules["utilities.loop_ingest"] = pkg.loop_ingest
 sys.modules["utilities.pretty_midi_safe"] = pkg.pretty_midi_safe
@@ -91,3 +90,52 @@ def test_shard_and_merge(tmp_path: Path) -> None:
     merged = module.merge_streaming_models([out0, out1], tmp_path / "merged.pkl")
     assert merged["kept"] == 2
     assert merged["counts"][36] == 32
+
+
+def test_train_modes_equivalent_and_aux_vocab(tmp_path: Path) -> None:
+    for i in range(3):
+        _make_loop(tmp_path / f"loop{i}.mid", 16)
+    aux_path = tmp_path / "aux.json"
+    model_stream = module.train(
+        tmp_path,
+        memmap_dir=tmp_path / "mm",
+        hash_buckets=256,
+        train_mode="stream",
+        aux_vocab_path=aux_path,
+    )
+    model_mem = module.train(tmp_path, hash_buckets=256, train_mode="inmemory")
+    hb = model_mem.hash_buckets
+    h = module._hash_ctx([0, 0]) % hb
+    arr1 = model_mem.freq[0][h]
+    arr2 = model_stream.freq[0][h]
+    p1 = arr1 / arr1.sum()
+    p2 = arr2 / arr2.sum()
+    assert np.allclose(p1, p2)
+    assert aux_path.exists()
+
+
+def test_streaming_resume_checkpoint(tmp_path: Path) -> None:
+    paths = []
+    for i in range(2):
+        p = tmp_path / f"loop{i}.mid"
+        _make_loop(p, 16)
+        paths.append(p)
+    out = tmp_path / "state.pkl"
+    ckpt = tmp_path / "ckpt"
+    res1 = module.train_streaming(
+        paths[:1],
+        output=out,
+        save_every=1,
+        checkpoint_dir=ckpt,
+        log_every=1,
+    )
+    assert res1["kept"] == 1
+    res2 = module.train_streaming(
+        paths,
+        output=out,
+        save_every=1,
+        checkpoint_dir=ckpt,
+        resume_from=out,
+        log_every=1,
+    )
+    assert res2["kept"] == 2

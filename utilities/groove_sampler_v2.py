@@ -8,6 +8,8 @@ positions into four buckets.
 
 from __future__ import annotations
 
+import gc
+import hashlib
 import json
 import logging
 import math
@@ -16,8 +18,6 @@ import pickle
 import re
 import sys
 import time
-import gc
-import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +68,7 @@ except Exception:  # pragma: no cover
 
         return _wrap
 
+
 try:  # pragma: no cover - optional during lightweight testing
     from .aux_vocab import AuxVocab
 except Exception:  # pragma: no cover
@@ -79,6 +80,7 @@ except Exception:  # pragma: no cover
         def encode(self, data):
             return 0
 
+
 try:  # pragma: no cover - optional dependency
     from tqdm import tqdm  # noqa: E402
 except Exception:  # pragma: no cover
@@ -86,15 +88,32 @@ except Exception:  # pragma: no cover
     def tqdm(x, **k):
         return x
 
+
 try:  # pragma: no cover - optional dependency
     import psutil  # type: ignore
 except Exception:  # pragma: no cover
     psutil = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    import cuckoopy  # type: ignore
+
+    _HAS_CUCKOO = True
+except Exception:  # pragma: no cover
+    _HAS_CUCKOO = False
+
+from .hash_utils import hash_ctx
+from .ngram_store import (
+    BaseNGramStore,
+    MemoryNGramStore,
+    SQLiteNGramStore,
+)
+
 from utilities.loop_ingest import load_meta  # noqa: E402
+
 try:  # pragma: no cover - optional dependency
     from utilities.pretty_midi_safe import pm_to_mido  # noqa: E402
 except Exception:  # pragma: no cover
+
     def pm_to_mido(pm):  # type: ignore
         class _Msg:
             def __init__(self, time: int):
@@ -109,12 +128,14 @@ except Exception:  # pragma: no cover
 
         return _Midi()
 
+
 logger = logging.getLogger(__name__)
 
+# Salt for deterministic hashing across runs
+HASH_SALT = b"composer2_groove_v2"
 
-def _ensure_tempo(
-    pm: pretty_midi.PrettyMIDI, default_bpm: float = 120.0
-) -> pretty_midi.PrettyMIDI:
+
+def _ensure_tempo(pm: pretty_midi.PrettyMIDI, default_bpm: float = 120.0) -> pretty_midi.PrettyMIDI:
     """Ensure ``pm`` has an initial tempo.
 
     PrettyMIDI's own tempo information is consulted first.  If no tempo is
@@ -224,9 +245,9 @@ def _extract_aux(
 
 
 def _hash64(data: bytes) -> int:
-    """Return a 64-bit hash of *data* using Blake2b."""
+    """Return a salted 64-bit hash of *data* using Blake2b."""
 
-    return int.from_bytes(hashlib.blake2b(data, digest_size=8).digest(), "little")
+    return int.from_bytes(hashlib.blake2b(data, digest_size=8, key=HASH_SALT).digest(), "little")
 
 
 def _hash_ctx(ctx: Iterable[int]) -> int:
@@ -254,12 +275,14 @@ class MemmapNGramStore:
         vocab_size: int,
         hash_buckets: int,
         dtype: str = "uint32",
+        mode: str = "w+",
     ) -> None:
         self.path = Path(path)
         self.path.mkdir(parents=True, exist_ok=True)
         self.n_orders = n_orders
         self.vocab_size = vocab_size
         self.hash_buckets = hash_buckets
+        # dtype may be promoted during training; keep as attribute for metadata
         self.dtype = np.dtype(dtype)
         self.shard_bits = 8
         self.n_shards = 1 << self.shard_bits
@@ -268,15 +291,40 @@ class MemmapNGramStore:
         for order in range(n_orders):
             order_maps = []
             for shard in range(self.n_shards):
-                fn = self.path / f"o{order}_{shard}.npy"
-                order_maps.append(
-                    np.memmap(
+                fn = self._shard_path(order, shard)
+                if fn.exists():
+                    mm = np.memmap(
                         fn,
-                        mode="w+",
+                        mode=mode,
                         dtype=self.dtype,
                         shape=(self.shard_size, vocab_size),
                     )
-                )
+                else:
+                    tmp = tempfile.NamedTemporaryFile(dir=self.path, delete=False)
+                    try:
+                        tmp.close()
+                        mm = np.memmap(
+                            tmp.name,
+                            mode="w+",
+                            dtype=self.dtype,
+                            shape=(self.shard_size, vocab_size),
+                        )
+                        mm.flush()
+                        del mm
+                        gc.collect()  # ensure Windows can rename
+                        os.replace(tmp.name, fn)
+                    finally:
+                        try:
+                            os.unlink(tmp.name)
+                        except OSError:
+                            pass
+                    mm = np.memmap(
+                        fn,
+                        mode=mode,
+                        dtype=self.dtype,
+                        shape=(self.shard_size, vocab_size),
+                    )
+                order_maps.append(mm)
             self.maps.append(order_maps)
 
     def flush(self, tables: list[FreqTable]) -> None:
@@ -286,7 +334,11 @@ class MemmapNGramStore:
                 shard = bucket & (self.n_shards - 1)
                 idx = bucket >> self.shard_bits
                 mm = self.maps[order][shard]
-                mm[idx] = (mm[idx] + arr).astype(self.dtype)
+                max_val = np.iinfo(mm.dtype).max
+                if np.any(mm[idx] > max_val - arr):
+                    self._promote(order, shard)
+                    mm = self.maps[order][shard]
+                mm[idx] = (mm[idx] + arr).astype(mm.dtype)
         for order_maps in self.maps:
             for mm in order_maps:
                 mm.flush()
@@ -297,11 +349,46 @@ class MemmapNGramStore:
             for shard in range(self.n_shards):
                 mm = self.maps[order][shard]
                 for idx in range(self.shard_size):
-                    arr = np.array(mm[idx], dtype=np.uint32)
+                    arr = np.array(mm[idx], dtype=mm.dtype)
                     if arr.any():
                         bucket = (idx << self.shard_bits) | shard
                         result[order][bucket] = arr
         return result
+
+    def _shard_path(self, order: int, shard: int) -> Path:
+        return self.path / f"o{order}_{shard}.npy"
+
+    def _promote(self, order: int, shard: int) -> None:
+        """Promote a shard to uint64 when uint32 would overflow."""
+        old_path = self._shard_path(order, shard)
+        old_mm = self.maps[order][shard]
+        shape = old_mm.shape
+        old_mm.flush()
+        del old_mm
+        gc.collect()
+        tmp = tempfile.NamedTemporaryFile(dir=self.path, delete=False)
+        try:
+            tmp.close()
+            new_mm = np.memmap(tmp.name, mode="w+", dtype=np.uint64, shape=shape)
+            data = np.memmap(old_path, mode="r", dtype=np.uint32, shape=shape)
+            new_mm[:] = data[:]
+            new_mm.flush()
+            del new_mm, data
+            gc.collect()
+            os.replace(tmp.name, old_path)
+            self.maps[order][shard] = np.memmap(old_path, mode="r+", dtype=np.uint64, shape=shape)
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+    def write_meta(self) -> None:
+        dtype = (
+            "u64" if any(mm.dtype == np.uint64 for order in self.maps for mm in order) else "u32"
+        )
+        meta = {"schema_version": 2, "dtype": dtype}
+        (self.path / "meta.json").write_text(json.dumps(meta))
 
 
 def convert_wav_to_midi(
@@ -402,9 +489,7 @@ def midi_to_events(pm: pretty_midi.PrettyMIDI, tempo: float) -> list[tuple[float
         is emitted and the default 120 BPM is used.
     """
     if not np.isfinite(tempo) or tempo <= 0:
-        logger.warning(
-            "Non-positive tempo %.2f detected; using default 120 BPM.", tempo
-        )
+        logger.warning("Non-positive tempo %.2f detected; using default 120 BPM.", tempo)
         tempo = 120.0
     sec_per_beat = 60.0 / tempo
 
@@ -536,13 +621,7 @@ def _resolve_tempo(
             bpm = folded
             reason = "fold"
 
-    invalid = (
-        bpm is None
-        or not math.isfinite(bpm)
-        or bpm <= 0
-        or bpm < min_bpm
-        or bpm > max_bpm
-    )
+    invalid = bpm is None or not math.isfinite(bpm) or bpm <= 0 or bpm < min_bpm or bpm > max_bpm
 
     if invalid:
         if tempo_policy == "skip":
@@ -573,7 +652,7 @@ def train(
     auto_res: bool = False,
     coarse: bool = False,
     beats_per_bar: int | None = None,
-    n_jobs: int = 1,
+    n_jobs: int | None = None,
     memmap_dir: Path | None = None,
     fixed_bpm: float | None = None,
     progress: bool = False,
@@ -596,7 +675,23 @@ def train(
     inject_default_tempo: float = 0.0,
     snapshot_interval: int = 0,
     counts_dtype: str = "uint32",
-    hash_buckets: int = 16_777_216,
+    hash_buckets: int = 1 << 20,
+    store_backend: str = "sqlite",
+    db_path: Path | None = None,
+    commit_every: int = 2000,
+    db_busy_timeout_ms: int = 60000,
+    db_synchronous: str = "NORMAL",
+    db_mmap_mb: int = 64,
+    dedup_filter: str = "cuckoo" if _HAS_CUCKOO else "sqlite",
+    max_ram_mb: int = 0,
+    min_count: int = 2,
+    prune_interval: int = 200000,
+    flush_interval: int = 50000,
+    train_mode: str = "stream",
+    max_rows_per_shard: int = 1_000_000,
+    resume: bool = False,
+    aux_vocab_path: Path | None = None,
+    cache_probs_memmap: bool = False,
 ):
     """Build a hashed n‑gram model from drum loops located in *loop_dir*."""
     if mido is None:  # pragma: no cover - dependency is missing
@@ -604,13 +699,39 @@ def train(
             "mido is required for groove sampler training; install via 'pip install mido'"
         )
 
+    if n_jobs is None:
+        n_jobs = min(4, os.cpu_count() or 1)
+
+    if memmap_dir is None:
+        memmap_dir = Path(tempfile.gettempdir()) / "composer2_groove_mm"
+
+    if counts_dtype in {"u32", "uint32"}:
+        counts_dtype = "uint32"
+    elif counts_dtype in {"u64", "uint64"}:
+        counts_dtype = "uint64"
+    else:
+        raise ValueError("counts_dtype must be 'u32' or 'u64'")
+
     paths = collect_files(loop_dir, include_audio)
+
+    processed_log = memmap_dir / "processed.txt"
+    processed_set: set[str] = set()
+    if resume and processed_log.exists():
+        processed_set = set(processed_log.read_text().splitlines())
+    paths = [p for p in paths if str(p) not in processed_set]
+    if aux_vocab_path and aux_vocab_path.exists():
+        aux_vocab_obj = AuxVocab.from_json(aux_vocab_path)
+    else:
+        aux_vocab_obj = AuxVocab()
     total_events = 0
     files_skipped = 0
     tempo_stats = {"accept": 0, "fold": 0, "fallback": 0, "skip": 0}
     skipped_paths: list[Path] = []
 
+    model_path = memmap_dir / "model.pkl"
     if not paths:
+        if resume and model_path.exists():
+            return load(model_path)
         raise SystemExit("No files found — training aborted")
 
     def _load(p: Path):
@@ -626,9 +747,7 @@ def train(
                 try:
                     pm = _ensure_tempo(pm, inject_default_tempo)
                     if getattr(_ensure_tempo, "injected", False):
-                        logger.warning(
-                            "Injected tempo %.2f BPM for %s", inject_default_tempo, p
-                        )
+                        logger.warning("Injected tempo %.2f BPM for %s", inject_default_tempo, p)
                 except Exception as exc:
                     logger.warning("Failed to ensure tempo for %s: %s", p, exc)
 
@@ -676,9 +795,7 @@ def train(
                 if ts_msg:
                     break
             beats_per_bar_local = (
-                ts_msg.numerator * (4 / ts_msg.denominator)
-                if ts_msg is not None
-                else 4.0
+                ts_msg.numerator * (4 / ts_msg.denominator) if ts_msg is not None else 4.0
             )
             bars = total_ticks / (ticks_per_beat * beats_per_bar_local)
 
@@ -686,9 +803,7 @@ def train(
             note_cnt = len(all_notes)
             uniq_pitches = len({n.pitch for n in all_notes})
             is_drum = any(inst.is_drum for inst in pm.instruments)
-            is_fill = bool(
-                tag_fill_from_filename and re.search(r"\bfill\b", p.name, re.IGNORECASE)
-            )
+            is_fill = bool(tag_fill_from_filename and re.search(r"\bfill\b", p.name, re.IGNORECASE))
 
             return (
                 notes,
@@ -760,9 +875,7 @@ def train(
     note_seqs = [r[0] for r in results]
     all_offsets = [off for r in results for off in r[1]]
 
-    resolution = int(
-        infer_resolution(all_offsets, beats_per_bar=beats_per_bar) if auto_res else 16
-    )
+    resolution = int(infer_resolution(all_offsets, beats_per_bar=beats_per_bar) if auto_res else 16)
     resolution_coarse = resolution // 4 if coarse else resolution
     step_per_beat = resolution / 4
     bar_len = resolution
@@ -799,34 +912,89 @@ def train(
     n_states = len(idx_to_state)
     bucket_freq: dict[int, np.ndarray] = {}
     hb = hash_buckets
-    buf_orders: list[FreqTable] = [dict() for _ in range(n)]
-    store = (
-        MemmapNGramStore(memmap_dir, n, n_states, hb, counts_dtype)
-        if memmap_dir is not None
-        else None
-    )
-    for file_idx, seq in enumerate(seqs, start=1):
-        for i, cur in enumerate(seq):
-            bucket = idx_to_state[cur][1]
-            b_arr = bucket_freq.get(bucket)
-            if b_arr is None:
-                b_arr = np.zeros(n_states, dtype=np.uint32)
-                bucket_freq[bucket] = b_arr
-            b_arr[cur] += 1
-            for order in range(0, n):
-                if order > i:
-                    break
-                ctx = seq[i - order : i]
-                ctx_hash = _hash_ctx(list(ctx) + [order, 0]) % hb
-                bump_count(buf_orders[order], ctx_hash, cur, n_states)
-        if store is not None and snapshot_interval and file_idx % snapshot_interval == 0:
-            store.flush(buf_orders)
-            buf_orders = [dict() for _ in range(n)]
-    if store is not None:
-        store.flush(buf_orders)
-        freq_orders = store.merge()
+
+    freq_orders: list[FreqTable] = []
+    if train_mode == "inmemory":
+        store_cls = MemoryNGramStore
+        stores = [store_cls() for _ in range(n)]
+        buffers: list[list[tuple[int, int, int, int]]] = [[] for _ in range(n)]
+        events_seen = 0
+        for seq in seqs:
+            for i, cur in enumerate(seq):
+                bucket = idx_to_state[cur][1]
+                b_arr = bucket_freq.get(bucket)
+                if b_arr is None:
+                    b_arr = np.zeros(n_states, dtype=np.uint32)
+                    bucket_freq[bucket] = b_arr
+                b_arr[cur] += 1
+                for order in range(n):
+                    if order > i:
+                        break
+                    ctx = seq[i - order : i]
+                    ctx_hash = hash_ctx(ctx, (0, 0, 0)) % hb
+                    buffers[order].append((ctx_hash, 0, cur, 1))
+                    if len(buffers[order]) >= flush_interval:
+                        stores[order].bulk_inc(buffers[order])
+                        buffers[order].clear()
+                events_seen += 1
+        for st, buf in zip(stores, buffers):
+            if buf:
+                st.bulk_inc(buf)
+            st.finalize()
+        for st in stores:
+            table: FreqTable = {}
+            for ctx_hash, _aux, next_evt, count in getattr(st, "iter_rows")():
+                arr = table.get(ctx_hash)
+                if arr is None:
+                    arr = np.zeros(n_states, dtype=np.uint32)
+                    table[ctx_hash] = arr
+                arr[next_evt] = count
+            freq_orders.append(table)
     else:
-        freq_orders = buf_orders
+        mem_store = MemmapNGramStore(
+            memmap_dir,
+            n_orders=n,
+            vocab_size=n_states,
+            hash_buckets=hb,
+            dtype=counts_dtype,
+            mode="r+" if resume else "w+",
+        )
+        tables: list[FreqTable] = [dict() for _ in range(n)]
+        events_seen = 0
+        try:
+            for seq in seqs:
+                for i, cur in enumerate(seq):
+                    bucket = idx_to_state[cur][1]
+                    b_arr = bucket_freq.get(bucket)
+                    if b_arr is None:
+                        b_arr = np.zeros(n_states, dtype=np.uint32)
+                        bucket_freq[bucket] = b_arr
+                    b_arr[cur] += 1
+                    for order in range(n):
+                        if order > i:
+                            break
+                        ctx = seq[i - order : i]
+                        ctx_hash = hash_ctx(ctx, (0, 0, 0))
+                        bump_count(tables[order], ctx_hash, cur, n_states)
+                    events_seen += 1
+                    if events_seen % flush_interval == 0:
+                        mem_store.flush(tables)
+                        tables = [dict() for _ in range(n)]
+            if any(tables[order] for order in range(n)):
+                mem_store.flush(tables)
+            freq_orders = mem_store.merge()
+            mem_store.write_meta()
+            for order, table in enumerate(freq_orders):
+                logger.info("shard order %d rows=%d", order, len(table))
+        finally:
+            for order_maps in mem_store.maps:
+                for mm in order_maps:
+                    mm.flush()
+                    del mm
+            gc.collect()
+    aux_hit = sum(1 for v in aux_values if v)
+    if aux_values:
+        logger.info("aux hit rate=%.2f", aux_hit / len(aux_values))
     logger.info(
         "Scanned %d files (skipped %d) \u2192 %d events \u2192 %d states",
         len(paths),
@@ -849,7 +1017,7 @@ def train(
         ctx_maps=[{} for _ in range(n)],
         prob_paths=None,
         prob=None,
-        aux_vocab=AuxVocab(),
+        aux_vocab=aux_vocab_obj,
         version=2,
         file_weights=file_weights,
         files_scanned=len(paths),
@@ -857,6 +1025,11 @@ def train(
         total_events=total_events,
         hash_buckets=hb,
     )
+    if aux_vocab_path:
+        aux_vocab_obj.to_json(aux_vocab_path)
+    if resume:
+        save(model, model_path)
+        processed_log.write_text("\n".join(processed_set | {str(p) for p in paths}) + "\n")
     return model
 
 
@@ -1006,6 +1179,7 @@ def merge_streaming_models(paths: Iterable[Path], output: Path) -> dict[str, Any
         pickle.dump(merged, fh)
     return merged
 
+
 def _choose(probs: np.ndarray, rng: Random) -> int:
     total = probs.sum()
     if total == 0:
@@ -1093,9 +1267,7 @@ def sample_next(
             probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
             total = probs.sum()
             if total == 0:
-                return rng.randrange(
-                    len(model.idx_to_state) if model.idx_to_state else 1
-                )
+                return rng.randrange(len(model.idx_to_state) if model.idx_to_state else 1)
             probs /= total
             return _choose(probs, rng)
 
@@ -1249,8 +1421,7 @@ def generate_events(
         if lbl == "ohh":
             choke_off = offset + (4 / model.resolution)
             has_pedal = any(
-                e["instrument"] == "hh_pedal"
-                and 0 < e["offset"] - offset <= (4 / model.resolution)
+                e["instrument"] == "hh_pedal" and 0 < e["offset"] - offset <= (4 / model.resolution)
                 for e in events
             )
             if not has_pedal and rng.random() < 0.3:
@@ -1339,6 +1510,11 @@ def load(path: Path) -> NGramModel:
             shape = (len(model.ctx_maps[order]), len(model.idx_to_state))
             prob_arrays.append(load_memmap(Path(p), shape=shape))
         model.prob = prob_arrays
+    if aux_vocab_path:
+        aux_vocab_obj.to_json(aux_vocab_path)
+    if resume:
+        save(model, model_path)
+        processed_log.write_text("\n".join(processed_set | {str(p) for p in paths}) + "\n")
     return model
 
 
@@ -1356,8 +1532,12 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
         type=int,
         help="override bar length when inferring resolution",
     )
-    parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument("--jobs", type=int)
     parser.add_argument("--memmap-dir", type=Path)
+    parser.add_argument("--train-mode", choices=["inmemory", "stream"], default="stream")
+    parser.add_argument("--max-rows-per-shard", type=int, default=1_000_000)
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--aux-vocab", type=Path)
     parser.add_argument("--fixed-bpm", type=float)
     parser.add_argument("--aux-key", type=str, default="style")
     parser.add_argument(
@@ -1418,11 +1598,42 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
         action=argparse.BooleanOptionalAction,
         default=False,
     )
-    parser.add_argument("--hash-buckets", type=int, default=16_777_216)
+    parser.add_argument("--hash-buckets", type=int, default=1 << 20)
     parser.add_argument("--snapshot-interval", type=int, default=0)
     parser.add_argument(
-        "--counts-dtype", choices=["uint32", "uint16"], default="uint32"
+        "--counts-dtype",
+        choices=["u32", "u64", "uint32", "uint64"],
+        default="u32",
     )
+    parser.add_argument(
+        "--store-backend",
+        "--ngram-store",
+        choices=["sqlite", "memory"],
+        default="sqlite",
+        dest="store_backend",
+        help="N-gram store backend. SQLite allows only one concurrent writer; use sharded DBs or a single-writer pattern when jobs > 1.",
+    )
+    parser.add_argument(
+        "--db-path",
+        "--ngram-db",
+        type=Path,
+        default=Path(".cache/groove_store.sqlite"),
+    )
+    parser.add_argument("--commit-every", type=int, default=2000)
+    parser.add_argument("--db-busy-timeout-ms", type=int, default=60000)
+    parser.add_argument(
+        "--db-synchronous",
+        choices=["OFF", "NORMAL", "FULL"],
+        default="NORMAL",
+    )
+    parser.add_argument("--db-mmap-mb", type=int, default=64)
+    parser.add_argument(
+        "--dedup-filter",
+        choices=["cuckoo", "sqlite", "none"],
+        default="cuckoo" if _HAS_CUCKOO else "sqlite",
+    )
+    parser.add_argument("--max-ram-mb", type=int, default=0)
+    parser.add_argument("--cache-probs-memmap", action="store_true")
     ns = parser.parse_args(args)
 
     if ns.from_filelist:
@@ -1481,17 +1692,26 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
             hash_buckets=ns.hash_buckets,
             snapshot_interval=ns.snapshot_interval,
             counts_dtype=ns.counts_dtype,
+            train_mode=ns.train_mode,
+            max_rows_per_shard=ns.max_rows_per_shard,
+            resume=ns.resume,
+            aux_vocab_path=ns.aux_vocab,
+            store_backend=ns.store_backend,
+            db_path=ns.db_path,
+            commit_every=ns.commit_every,
+            db_busy_timeout_ms=ns.db_busy_timeout_ms,
+            db_synchronous=ns.db_synchronous,
+            db_mmap_mb=ns.db_mmap_mb,
+            dedup_filter=ns.dedup_filter,
+            max_ram_mb=ns.max_ram_mb,
+            cache_probs_memmap=ns.cache_probs_memmap,
         )
         elapsed = time.perf_counter() - t0
         save(model, ns.output)
         print(f"model saved to {ns.output} ({elapsed:.2f}s)")
         if ns.print_model:
             try:
-                print(
-                    json.dumps(
-                        model, default=lambda o: getattr(o, "__dict__", str(o)), indent=2
-                    )
-                )
+                print(json.dumps(model, default=lambda o: getattr(o, "__dict__", str(o)), indent=2))
             except Exception:
                 print(model)
 
@@ -1507,9 +1727,7 @@ def _cmd_sample(args: list[str]) -> None:
     parser.add_argument("--top-p", type=float)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--cond-velocity", choices=["soft", "hard"], default=None)
-    parser.add_argument(
-        "--cond-kick", choices=["four_on_floor", "sparse"], default=None
-    )
+    parser.add_argument("--cond-kick", choices=["four_on_floor", "sparse"], default=None)
     parser.add_argument("--cond-style", type=str)
     parser.add_argument("--cond-feel", type=str)
     parser.add_argument("--temperature-end", type=float)
@@ -1526,9 +1744,7 @@ def _cmd_sample(args: list[str]) -> None:
         seed=ns.seed,
         cond_velocity=ns.cond_velocity,
         cond_kick=ns.cond_kick,
-        cond={
-            k: v for k, v in {"style": ns.cond_style, "feel": ns.cond_feel}.items() if v
-        },
+        cond={k: v for k, v in {"style": ns.cond_style, "feel": ns.cond_feel}.items() if v},
     )
     json.dump(events, fp=sys.stdout)
 
@@ -1637,9 +1853,7 @@ def main(argv: list[str] | None = None) -> None:
     ns, rest = parser.parse_known_args(argv)
     if ns.verbose and ns.quiet:
         parser.error("--verbose and --quiet cannot be used together")
-    level = (
-        logging.INFO if ns.verbose else logging.ERROR if ns.quiet else logging.WARNING
-    )
+    level = logging.INFO if ns.verbose else logging.ERROR if ns.quiet else logging.WARNING
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
 
     if not rest:

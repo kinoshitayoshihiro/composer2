@@ -323,7 +323,7 @@ try:
     from . import vocal_sync
 except Exception:
     vocal_sync = None  # type: ignore
-if importlib_util.find_spec("numpy") is not None:
+if importlib_util.find_spec("numpy") is not None and _HAS_MUSIC21:
     from .audio_render import render_part_audio
     from .convolver import convolve_ir, load_ir, render_wav
     from .effect_preset_loader import EffectPresetLoader

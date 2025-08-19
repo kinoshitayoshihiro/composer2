@@ -1,8 +1,10 @@
 import argparse
 import csv
 import logging
+import os
 import re
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import pretty_midi
 
@@ -15,12 +17,60 @@ if mido is None:  # pragma: no cover - dependency is required
 logger = logging.getLogger(__name__)
 
 
+def _ensure_tempo(pm: pretty_midi.PrettyMIDI, bpm: float, tempo_source: str) -> pretty_midi.PrettyMIDI:
+    """Return ``pm`` ensuring a tempo meta message exists.
+
+    The input ``pm`` is converted to :mod:`mido` to inspect tempo messages. If
+    none are present, a ``set_tempo`` is inserted at time ``0`` and the MIDI is
+    reloaded via a temporary file.  The original ``pm`` is never modified in
+    place. The returned object carries ``tempo_injected`` and ``tempo_source``
+    attributes.
+    """
+
+    midi = pm_to_mido(pm)
+    for track in midi.tracks:
+        for msg in track:
+            if msg.type == "set_tempo":
+                setattr(pm, "tempo_injected", False)
+                setattr(pm, "tempo_source", tempo_source)
+                return pm
+
+    # choose first track containing any meta messages; default to 0
+    target_idx = 0
+    for i, track in enumerate(midi.tracks):
+        if any(getattr(msg, "is_meta", False) for msg in track):
+            target_idx = i
+            break
+
+    tmp_path: str | None = None
+    try:
+        track = midi.tracks[target_idx]
+        tempo_msg = mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(bpm), time=0)
+        # ensure tempo precedes any existing time-zero meta messages
+        track.insert(0, tempo_msg)
+        with NamedTemporaryFile(suffix=".mid", delete=False) as fh:
+            tmp_path = fh.name
+        midi.save(tmp_path)
+        pm2 = pretty_midi.PrettyMIDI(tmp_path)
+        setattr(pm2, "tempo_injected", True)
+        setattr(pm2, "tempo_source", tempo_source)
+        return pm2
+    finally:
+        if tmp_path is not None:
+            try:
+                os.remove(tmp_path)
+            except OSError as exc:
+                logging.debug("Temporary file cleanup failed: %s (%s)", tmp_path, exc)
+
+
 def _analyze(path: Path):
     logger.info("Analyzing %s", path)
     pm = pretty_midi.PrettyMIDI(str(path))
     bpm = _safe_read_bpm(pm, default_bpm=120.0, fold_halves=False)
-    if getattr(_safe_read_bpm, "last_source", "") == "default":
+    source = getattr(_safe_read_bpm, "last_source", "file")
+    if source == "default":
         logger.warning("Tempo not found in %s; using default 120 BPM", path)
+    pm = _ensure_tempo(pm, bpm, source)
     midi = pm_to_mido(pm)
     ticks_per_beat = midi.ticks_per_beat
     total_ticks = max(sum(msg.time for msg in tr) for tr in midi.tracks)
@@ -52,6 +102,8 @@ def _analyze(path: Path):
         int(is_fill),
         int(keep_drum),
         int(keep_pitched),
+        int(getattr(pm, "tempo_injected", False)),
+        getattr(pm, "tempo_source", source),
     ]
 
 
@@ -67,6 +119,8 @@ def main():
             rows.append(_analyze(p))
         except Exception as exc:  # pragma: no cover
             logger.warning("Failed to analyze %s: %s", p, exc)
+    injected = sum(r[-2] for r in rows)
+    logger.info("tempo injected on %d/%d files", injected, len(rows))
     with ns.out.open("w", newline="") as fh:
         writer = csv.writer(fh)
         writer.writerow(
@@ -81,6 +135,8 @@ def main():
                 "is_fill",
                 "keep_drum",
                 "keep_pitched",
+                "tempo_injected",
+                "tempo_source",
             ]
         )
         writer.writerows(rows)

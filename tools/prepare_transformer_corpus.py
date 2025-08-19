@@ -1,4 +1,6 @@
-"""Prepare a small Transformer corpus from MIDI files.
+from __future__ import annotations
+
+__doc__ = """Prepare a small Transformer corpus from MIDI files.
 
 This script builds a dataset suitable for training sequence models on personal
 MIDI collections. It chops each MIDI file into fixed-size bar segments, applies
@@ -17,8 +19,6 @@ python -m tools.prepare_transformer_corpus \
   --tags sections.yaml mood.yaml \
   --split 0.9 0.05 0.05 --seed 42
 """
-
-from __future__ import annotations
 
 import argparse
 import json

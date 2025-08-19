@@ -1,0 +1,10 @@
+{
+  "vocab": {},
+  "tag_vocab": {},
+  "stats": {
+    "train": 0,
+    "valid": 0,
+    "test": 0
+  },
+  "duv_freq": {}
+}

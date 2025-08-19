@@ -847,6 +847,9 @@ python -m utilities.groove_sampler_v2 sample model.pkl -l 4 \
     --temperature 0.8 --cond-velocity hard --seed 42
 ```
 
+The sampler is quiet by default. Use `--print-json` to stream events to stdout
+or `--out-midi path.mid` to save a MIDI file.
+
 If `librosa` is installed, training will auto‑detect the tempo of WAV loops;
 otherwise it falls back to 120 BPM. Pass `--fixed-bpm` to override this
 behaviour.

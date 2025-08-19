@@ -22,7 +22,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from random import Random
-from typing import Any
+from typing import Any, Optional
+
+# Module-level logger for concise log control
+logger = logging.getLogger("modular_composer.groove_sampler_v2")
 
 # Optional YAML (not strictly required by this module, but kept for compat)
 try:  # pragma: no cover - optional dependency
@@ -731,7 +734,7 @@ def train(
     model_path = memmap_dir / "model.pkl"
     if not paths:
         if resume and model_path.exists():
-            return load(model_path)
+            return load(model_path, aux_vocab_path)
         raise SystemExit("No files found — training aborted")
 
     def _load(p: Path):
@@ -1444,6 +1447,12 @@ def generate_events(
 
 
 def save(model: NGramModel, path: Path) -> None:
+    """Serialize *model* to *path* using a pickle-based format.
+
+    The output remains backward compatible across minor revisions. The
+    auxiliary vocabulary is stored as a plain list and may be overridden on
+    load.
+    """
     data = {
         "n": model.n,
         "resolution": model.resolution,
@@ -1467,7 +1476,16 @@ def save(model: NGramModel, path: Path) -> None:
         pickle.dump(data, fh)
 
 
-def load(path: Path) -> NGramModel:
+def load(path: str | Path, aux_vocab_path: Optional[str | Path] = None) -> NGramModel:
+    """Load an :class:`NGramModel` from *path*.
+
+    If ``aux_vocab_path`` is provided, its JSON content overrides the embedded
+    auxiliary vocabulary. The JSON may either be a list of strings or a mapping
+    containing one of the keys ``id_to_str``, ``vocab``, or ``list`` pointing to
+    such a list. Invalid files are ignored with a warning and the embedded vocab
+    is used instead.
+    """
+    path = Path(path)
     with path.open("rb") as fh:
         data = pickle.load(fh)
     version = data.get("version", 1)
@@ -1483,6 +1501,43 @@ def load(path: Path) -> NGramModel:
             if vocab_list
             else AuxVocab()
         )
+
+    vocab_source = "embedded"
+    vocab_size = len(aux_vocab.id_to_str) if aux_vocab else 0
+    if aux_vocab_path is not None:
+        try:
+            raw = json.loads(Path(aux_vocab_path).read_text())
+            if isinstance(raw, list):
+                vocab_list = raw
+            elif isinstance(raw, dict):
+                vocab_list = None
+                for key in ("id_to_str", "vocab", "list"):
+                    val = raw.get(key)
+                    if isinstance(val, list):
+                        vocab_list = val
+                        break
+                if vocab_list is None:
+                    raise ValueError("no vocab list found")
+            else:
+                raise ValueError("expected list or dict")
+            if not all(isinstance(s, str) for s in vocab_list):
+                raise ValueError("vocab entries must be strings")
+            seen: set[str] = set()
+            normalized: list[str] = []
+            for tok in ["", "<UNK>"] + vocab_list:
+                if tok not in seen:
+                    seen.add(tok)
+                    normalized.append(tok)
+            vocab_list = normalized
+            aux_vocab = AuxVocab({s: i for i, s in enumerate(vocab_list)}, vocab_list)
+            vocab_source = str(aux_vocab_path)
+            vocab_size = len(vocab_list)
+        except Exception as exc:  # pragma: no cover - exercised via tests
+            logger.warning(
+                "failed to load aux vocab %s: %s; using embedded", aux_vocab_path, exc
+            )
+    logger.info("using aux vocab from %s (%d entries)", vocab_source, vocab_size)
+
     model = NGramModel(
         n=data.get("n"),
         resolution=data.get("resolution"),
@@ -1510,11 +1565,7 @@ def load(path: Path) -> NGramModel:
             shape = (len(model.ctx_maps[order]), len(model.idx_to_state))
             prob_arrays.append(load_memmap(Path(p), shape=shape))
         model.prob = prob_arrays
-    if aux_vocab_path:
-        aux_vocab_obj.to_json(aux_vocab_path)
-    if resume:
-        save(model, model_path)
-        processed_log.write_text("\n".join(processed_set | {str(p) for p in paths}) + "\n")
+
     return model
 
 
@@ -1731,9 +1782,10 @@ def _cmd_sample(args: list[str]) -> None:
     parser.add_argument("--cond-style", type=str)
     parser.add_argument("--cond-feel", type=str)
     parser.add_argument("--temperature-end", type=float)
+    parser.add_argument("--aux-vocab", type=Path)
     ns = parser.parse_args(args)
 
-    model = load(ns.model)
+    model = load(ns.model, aux_vocab_path=ns.aux_vocab)
     events = generate_events(
         model,
         bars=ns.length,

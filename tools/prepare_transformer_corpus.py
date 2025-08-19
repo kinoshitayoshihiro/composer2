@@ -39,6 +39,10 @@ from typing import (
 )
 
 import concurrent.futures
+try:
+    import numpy as np  # type: ignore
+except Exception:  # pragma: no cover
+    np = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -57,15 +61,25 @@ def build_beat_map(pm: "pretty_midi.PrettyMIDI") -> Tuple[Callable[[float], floa
     beat_times = pm.get_beats()
     if len(beat_times) >= 2:
         # numpy があるなら arange を使い、無いなら純 Python で代替
-            if np is not None:
-                beat_idx = np.arange(len(beat_times), dtype=float)
-            else:
-                beat_idx = [float(i) for i in range(len(beat_times))]
-                tempo_est = 60.0 / np.diff(beat_times).mean()
+        if np is not None:
+            beat_idx = np.arange(len(beat_times), dtype=float)
+            tempo_est = 60.0 / np.diff(beat_times).mean()
+        else:
+            beat_idx = [float(i) for i in range(len(beat_times))]
+            diffs = [beat_times[i + 1] - beat_times[i] for i in range(len(beat_times) - 1)]
+            tempo_est = 60.0 / (sum(diffs) / len(diffs))
 
         def sec_to_beats(t: float) -> float:
             if t <= beat_times[-1]:
-                return float(np.interp(t, beat_times, beat_idx))
+                if np is not None:
+                    return float(np.interp(t, beat_times, beat_idx))
+                for i in range(len(beat_times) - 1):
+                    if beat_times[i] <= t <= beat_times[i + 1]:
+                        frac = (t - beat_times[i]) / (beat_times[i + 1] - beat_times[i])
+                        return float(beat_idx[i] + frac * (beat_idx[i + 1] - beat_idx[i]))
+                i_last = len(beat_times) - 2
+                frac = (t - beat_times[i_last]) / (beat_times[i_last + 1] - beat_times[i_last])
+                return float(beat_idx[i_last] + frac * (beat_idx[i_last + 1] - beat_idx[i_last]))
             extra = (t - beat_times[-1]) * tempo_est / 60.0
             return float(beat_idx[-1] + extra)
 

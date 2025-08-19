@@ -56,8 +56,12 @@ def build_beat_map(pm: "pretty_midi.PrettyMIDI") -> Tuple[Callable[[float], floa
 
     beat_times = pm.get_beats()
     if len(beat_times) >= 2:
-        beat_idx = np.arange(len(beat_times), dtype=float)
-        tempo_est = 60.0 / np.diff(beat_times).mean()
+        # numpy があるなら arange を使い、無いなら純 Python で代替
+            if np is not None:
+                beat_idx = np.arange(len(beat_times), dtype=float)
+            else:
+                beat_idx = [float(i) for i in range(len(beat_times))]
+                tempo_est = 60.0 / np.diff(beat_times).mean()
 
         def sec_to_beats(t: float) -> float:
             if t <= beat_times[-1]:

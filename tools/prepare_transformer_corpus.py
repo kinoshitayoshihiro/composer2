@@ -1,3 +1,8 @@
+try:
+    import numpy as np  # type: ignore
+except Exception:  # pragma: no cover
+    np = None  # type: ignore
+
 """Prepare a small Transformer corpus from MIDI files.
 
 This script builds a dataset suitable for training sequence models on personal
@@ -56,7 +61,10 @@ def build_beat_map(pm: "pretty_midi.PrettyMIDI") -> Tuple[Callable[[float], floa
 
     beat_times = pm.get_beats()
     if len(beat_times) >= 2:
-        beat_idx = np.arange(len(beat_times), dtype=float)
+        if np is not None:
+            beat_idx = np.arange(len(beat_times), dtype=float)
+        else:
+            beat_idx = [float(i) for i in range(len(beat_times))]
         tempo_est = 60.0 / np.diff(beat_times).mean()
 
         def sec_to_beats(t: float) -> float:
@@ -239,29 +247,34 @@ def build_corpus(args: argparse.Namespace) -> Dict[str, List[Sample]]:
     except ImportError as exc:  # pragma: no cover - checked in tests
         if exc.name == "numpy":
             raise SystemExit("numpy is required; pip install numpy") from exc
-        raise SystemExit("Missing MIDI dependencies; pip install pretty_midi mido PyYAML") from exc
+        raise SystemExit(
+            "Missing MIDI dependencies; pip install pretty_midi mido PyYAML") from exc
 
     tag_map = load_tag_maps([Path(p) for p in args.tags]) if args.tags else {}
     lyric_json = getattr(args, "lyric_json", None)
     if lyric_json:
         base = Path(args.in_dir).resolve()
         raw_map = json.loads(Path(lyric_json).read_text())
-        lyric_map = {normalize_key(Path(k), base): v for k, v in raw_map.items()}
+        lyric_map = {normalize_key(Path(k), base)
+                                   : v for k, v in raw_map.items()}
     else:
         lyric_map = {}
     embed_map: Dict[str, List[float]] = {}
     if getattr(args, "embed_offline", None):
         embed_map = load_embed_map(Path(args.embed_offline))
         dim = len(next(iter(embed_map.values()))) if embed_map else 0
-        logger.info("loaded %d offline embeddings (dim=%d)", len(embed_map), dim)
+        logger.info("loaded %d offline embeddings (dim=%d)",
+                    len(embed_map), dim)
     embed_model = None
     if lyric_map and not embed_map:
         try:  # pragma: no cover - optional dependency
             from sentence_transformers import SentenceTransformer
 
-            embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+            embed_model = SentenceTransformer(
+                "sentence-transformers/all-MiniLM-L6-v2")
         except Exception:  # pragma: no cover - handled in tests
-            logger.warning("sentence-transformers unavailable; storing raw text")
+            logger.warning(
+                "sentence-transformers unavailable; storing raw text")
 
     base = Path(args.in_dir)
     files = gather_midi_files(base)
@@ -277,7 +290,8 @@ def build_corpus(args: argparse.Namespace) -> Dict[str, List[Sample]]:
         except Exception:  # pragma: no cover
             pass
 
-    lyric_matches = sum(1 for f in files if normalize_key(f, base) in lyric_map)
+    lyric_matches = sum(
+        1 for f in files if normalize_key(f, base) in lyric_map)
     logger.info("lyrics matched: %d/%d", lyric_matches, len(files))
 
     def process_path(midi_path: Path) -> List[Sample]:
@@ -287,7 +301,8 @@ def build_corpus(args: argparse.Namespace) -> Dict[str, List[Sample]]:
         sec_to_beats, tempo_est = build_beat_map(pm)
         rel = normalize_key(midi_path, base)
         segments: List[Sample] = []
-        include_programs = set(args.include_programs) if args.include_programs else None
+        include_programs = set(
+            args.include_programs) if args.include_programs else None
         for idx, seg in enumerate(
             split_samples(
                 pm,
@@ -340,7 +355,8 @@ def build_corpus(args: argparse.Namespace) -> Dict[str, List[Sample]]:
                 samples.extend(res)
     else:
         if args.num_workers > 1 and embed_model is not None:
-            logger.warning("lyric embeddings disable multiprocessing; using single worker")
+            logger.warning(
+                "lyric embeddings disable multiprocessing; using single worker")
         for p in iterator:
             samples.extend(process_path(p))
 
@@ -359,8 +375,8 @@ def build_corpus(args: argparse.Namespace) -> Dict[str, List[Sample]]:
     )
     splits = {
         "train": samples[:n_train],
-        "valid": samples[n_train : n_train + n_valid],
-        "test": samples[n_train + n_valid : n_train + n_valid + n_test],
+        "valid": samples[n_train: n_train + n_valid],
+        "test": samples[n_train + n_valid: n_train + n_valid + n_test],
     }
     return splits, lyric_matches, len(files)
 
@@ -404,8 +420,10 @@ def build_tag_vocab(samples: Iterable[Sample]) -> Dict[str, Dict[str, int]]:
 
 def main(argv: Sequence[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--in", dest="in_dir", type=str, required=True, help="input MIDI folder")
-    ap.add_argument("--out", dest="out_dir", type=str, required=True, help="output corpus root")
+    ap.add_argument("--in", dest="in_dir", type=str,
+                    required=True, help="input MIDI folder")
+    ap.add_argument("--out", dest="out_dir", type=str,
+                    required=True, help="output corpus root")
     ap.add_argument("--bars-per-sample", type=int, default=4)
     ap.add_argument(
         "--quant",
@@ -417,8 +435,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     ap.add_argument("--duv", type=str, choices=["on", "off"], default="off")
     ap.add_argument("--dur-bins", type=int, default=16)
     ap.add_argument("--vel-bins", type=int, default=8)
-    ap.add_argument("--tags", nargs="*", default=[], help="YAML metadata files")
-    ap.add_argument("--lyric-json", type=str, default=None, help="JSON file mapping paths to lyrics")
+    ap.add_argument("--tags", nargs="*", default=[],
+                    help="YAML metadata files")
+    ap.add_argument("--lyric-json", type=str, default=None,
+                    help="JSON file mapping paths to lyrics")
     ap.add_argument(
         "--embed-offline",
         type=str,
@@ -450,7 +470,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         default=None,
         help="max distinct DUV tokens; rare pairs collapse to DUV_OOV",
     )
-    ap.add_argument("--compress", choices=["none", "gz"], default="none", help="compress output JSONL")
+    ap.add_argument(
+        "--compress", choices=["none", "gz"], default="none", help="compress output JSONL")
     ns = ap.parse_args(argv)
 
     if ns.dur_bins not in {4, 8, 16} or ns.vel_bins not in {4, 8, 16}:
@@ -481,7 +502,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             for samp in splits.values():
                 for s in samp:
                     s.tokens = [
-                        t if not t.startswith("DUV_") or t in keep else "DUV_OOV"
+                        t if not t.startswith(
+                            "DUV_") or t in keep else "DUV_OOV"
                         for t in s.tokens
                     ]
             duv_freq = Counter()

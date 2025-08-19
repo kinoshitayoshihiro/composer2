@@ -15,16 +15,16 @@ import logging
 import math
 import os
 import pickle
+import random
 import re
 import sys
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from random import Random
 from typing import Any
-import random
-from functools import lru_cache
 
 # Module-level logger for concise log control
 logger = logging.getLogger(__name__)
@@ -45,6 +45,17 @@ except Exception:  # pragma: no cover
 import numpy as np
 
 NDArray = np.ndarray
+
+# Process-wide RNG for deterministic sampling
+_RNG: random.Random = random.Random()
+
+
+def set_random_state(seed: int | None) -> None:
+    """Seed the module-level RNG used for sampling."""
+
+    global _RNG
+    _RNG = random.Random(seed)
+
 
 try:  # pragma: no cover - optional dependency
     import pretty_midi  # type: ignore
@@ -109,22 +120,17 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover
     _HAS_CUCKOO = False
 
-from .hash_utils import hash_ctx
-from .ngram_store import (
-    BaseNGramStore,
-    MemoryNGramStore,
-    SQLiteNGramStore,
-)
-
 from utilities.loop_ingest import load_meta  # noqa: E402
 
 from .conditioning import (
-    apply_kick_pattern_bias,
-    apply_velocity_bias,
-    apply_style_bias,
     apply_feel_bias,
+    apply_kick_pattern_bias,
+    apply_style_bias,
+    apply_velocity_bias,
 )
-from .gm_perc_map import NAME_TO_NUM, normalize_label, label_to_number
+from .gm_perc_map import NAME_TO_NUM, label_to_number, normalize_label
+from .hash_utils import hash_ctx
+from .ngram_store import BaseNGramStore, MemoryNGramStore, SQLiteNGramStore
 
 try:  # pragma: no cover - optional dependency
     from utilities.pretty_midi_safe import pm_to_mido  # noqa: E402
@@ -1195,12 +1201,11 @@ def merge_streaming_models(paths: Iterable[Path], output: Path) -> dict[str, Any
 
 
 def _choose(probs: np.ndarray, rng: Random) -> int:
-    total = probs.sum()
-    if total <= 0:
-        probs = np.ones_like(probs)
-        total = probs.sum()
+    """Sample an index from a normalized probability vector."""
+
+    assert np.isclose(probs.sum(), 1.0, atol=1e-6), "probabilities must sum to 1"
     cdf = np.cumsum(probs)
-    r = rng.random() * total
+    r = rng.random()
     idx = int(np.searchsorted(cdf, r, side="right"))
     if idx >= len(probs):
         idx = len(probs) - 1
@@ -1257,74 +1262,46 @@ def next_prob_dist(
     top_k: int | None = None,
     top_p: float | None = None,
     cond: dict[str, str] | None = None,
-    strength: float = 1.0,
-    aux_fallback: str = "prefer",
 ) -> np.ndarray:
     """Return probability distribution for next state."""
 
     _MODEL_CACHE[id(model)] = model
     n = model.n if model.n is not None else 4
-    aux_id = 0
-    if cond and model.aux_vocab:
-        aux_id = model.aux_vocab.encode(cond)
+    aux_id = model.aux_vocab.encode(cond) if cond and model.aux_vocab else 0
     hb = model.hash_buckets
+
+    arr: np.ndarray | None = None
     for order in range(min(len(history), n - 1), 0, -1):
         ctx = history[-order:]
-        ctx_spec = _hash_ctx(list(ctx) + [order, aux_id]) % hb
-        ctx_any = _hash_ctx(list(ctx) + [order, 0]) % hb
-        arr_spec = _get_arr(id(model), order, ctx_spec)
-        arr_any = _get_arr(id(model), order, ctx_any)
-        if arr_spec is not None:
-            arr = arr_spec.astype(float)
-            if arr_any is not None:
-                arr = arr_any.astype(float) * (1 - strength) + arr * strength
-        elif aux_fallback in {"prefer", "loose"} and arr_any is not None:
-            arr = arr_any.astype(float)
-        else:
-            arr = None
+        ctx_hash = _hash_ctx(list(ctx) + [order, aux_id]) % hb
+        arr = _get_arr(id(model), order, ctx_hash)
         if arr is not None and arr.sum() > 0:
-            probs = arr.copy()
-            if temperature != 1.0:
-                probs = np.power(probs, 1.0 / temperature)
-            probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
-            s = probs.sum()
-            if s <= 0:
-                probs = np.ones_like(probs)
-                s = probs.sum()
-            probs /= s
-            return probs
-
-    ctx_spec = _hash_ctx([0, aux_id]) % hb
-    ctx_any = _hash_ctx([0, 0]) % hb
-    arr_spec = _get_arr(id(model), 0, ctx_spec)
-    arr_any = _get_arr(id(model), 0, ctx_any)
-    if arr_spec is not None:
-        arr = arr_spec.astype(float)
-        if arr_any is not None:
-            arr = arr_any.astype(float) * (1 - strength) + arr * strength
-    elif aux_fallback in {"prefer", "loose"} and arr_any is not None:
-        arr = arr_any.astype(float)
+            arr = arr.astype(float)
+            break
     else:
-        arr = None
-    if arr is not None and arr.sum() > 0:
-        probs = arr.copy()
-        if temperature != 1.0:
-            probs = np.power(probs, 1.0 / temperature)
-        probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
-        probs /= probs.sum()
-        return probs
+        ctx_hash = _hash_ctx([0, aux_id]) % hb
+        arr = _get_arr(id(model), 0, ctx_hash)
+        if arr is not None and arr.sum() == 0:
+            arr = None
 
-    b_arr = model.bucket_freq.get(bucket) if model.bucket_freq is not None else None
-    if b_arr is not None and b_arr.sum() > 0:
-        probs = b_arr.astype(float)
-        if temperature != 1.0:
-            probs = np.power(probs, 1.0 / temperature)
-        probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
-        probs /= probs.sum()
-        return probs
+    if arr is None or arr.sum() == 0:
+        b_arr = model.bucket_freq.get(bucket) if model.bucket_freq is not None else None
+        if b_arr is not None and b_arr.sum() > 0:
+            arr = b_arr.astype(float)
+        else:
+            num = len(model.idx_to_state) if model.idx_to_state else 1
+            arr = np.ones(num, dtype=float)
 
-    num = len(model.idx_to_state) if model.idx_to_state else 1
-    return np.ones(num) / num
+    probs = arr.astype(float)
+    if temperature != 1.0:
+        probs = np.power(probs, 1.0 / temperature)
+    probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
+    total = probs.sum()
+    if total <= 0:
+        probs = np.ones_like(probs)
+        total = probs.sum()
+    probs /= total
+    return probs
 
 
 def sample_next(
@@ -1338,8 +1315,6 @@ def sample_next(
     top_p: float | None = None,
     cond_kick: str | None = None,
     cond: dict[str, str] | None = None,
-    strength: float = 1.0,
-    aux_fallback: str = "prefer",
 ) -> int:
     """Sample next state index using hashed back-off."""
 
@@ -1351,8 +1326,6 @@ def sample_next(
         top_k=top_k,
         top_p=top_p,
         cond=cond,
-        strength=strength,
-        aux_fallback=aux_fallback,
     )
     if cond_kick and model.idx_to_state:
         labels = [s[2] for s in model.idx_to_state]
@@ -1368,7 +1341,6 @@ def generate_events(
     top_k: int | None = None,
     top_p: float | None = None,
     temperature_end: float | None = None,
-    seed: int | None = None,
     cond_velocity: str | None = None,
     cond_kick: str | None = None,
     cond: dict[str, str] | None = None,
@@ -1393,7 +1365,6 @@ def generate_events(
     cond:
         Dictionary of auxiliary conditions such as style or feel.
     """
-    rng = Random(seed)
     res = model.resolution
     step_per_beat = res / 4
     bar_len = res
@@ -1440,8 +1411,15 @@ def generate_events(
             probs = apply_feel_bias(probs, label_list, pos_quarter, cond.get("feel"))
         if cond_kick and label_list:
             probs = apply_kick_pattern_bias(probs, label_list, pos_quarter, cond_kick)
+        if pos_quarter == 0 and label_list and _RNG.random() < kick_beat_threshold:
+            try:
+                kick_idx = label_list.index("kick")
+                probs[kick_idx] += 1.0
+                probs /= probs.sum()
+            except ValueError:
+                pass
         probs = apply_velocity_bias(probs, cond_velocity)
-        idx = _choose(probs, rng)
+        idx = _choose(probs, _RNG)
         if model.idx_to_state and idx < len(model.idx_to_state):
             _, bin_in_bar, raw_lbl = model.idx_to_state[idx]
         else:
@@ -1459,7 +1437,7 @@ def generate_events(
         offset = abs_bin / step_per_beat
         lbl = normalize_label(raw_lbl)
         if lbl == "ghost_snare":
-            offset += rng.gauss(0.0, 0.003) / sec_per_beat  # jitter
+            offset += _RNG.gauss(0.0, 0.003) / sec_per_beat  # jitter
             lbl = "snare"
         if lbl not in NAME_TO_NUM and not re.match(r"unk_\d{2}", lbl):
             lbl = f"unk_{raw_lbl}" if str(raw_lbl).isdigit() else f"unk_{lbl}"
@@ -1509,12 +1487,17 @@ def generate_events(
             beat = int(offset)
             kicks_by_beat.setdefault(beat, []).append(ev_dict)
         if lbl == "hh_open":
+            events[:] = [
+                e
+                for e in events
+                if not (e["instrument"] == "hh_closed" and abs(e["offset"] - offset) <= 1e-6)
+            ]
             choke_off = offset + (4 / model.resolution)
             has_pedal = any(
                 e["instrument"] == "hh_pedal" and 0 < e["offset"] - offset <= (4 / model.resolution)
                 for e in events
             )
-            if not has_pedal and rng.random() < ohh_choke_prob:
+            if not has_pedal and _RNG.random() < ohh_choke_prob:
                 pedal = {
                     "instrument": "hh_pedal",
                     "offset": choke_off,
@@ -1533,9 +1516,7 @@ def generate_events(
         for b in range(beats):
             start = float(b)
             end = start + kick_beat_threshold
-            kicks = [
-                ev for ev in kicks_by_beat.get(b, []) if start <= ev["offset"] < end
-            ]
+            kicks = [ev for ev in kicks_by_beat.get(b, []) if start <= ev["offset"] < end]
             if not kicks:
                 vel = 1.0
                 if cond_velocity == "soft":
@@ -1595,7 +1576,12 @@ def save(model: NGramModel, path: Path) -> None:
         pickle.dump(data, fh)
 
 
-def load(path: Path, aux_vocab_path: Path | None = None) -> NGramModel:
+def load(
+    path: Path,
+    *,
+    aux_vocab_path: Path | None = None,
+    device: str | None = None,
+) -> NGramModel:
     """Load an :class:`NGramModel` from *path*.
 
     If ``aux_vocab_path`` is provided, its JSON content overrides the embedded
@@ -1652,9 +1638,7 @@ def load(path: Path, aux_vocab_path: Path | None = None) -> NGramModel:
             vocab_source = str(aux_vocab_path)
             vocab_size = len(vocab_list)
         except Exception as exc:  # pragma: no cover - exercised via tests
-            logger.warning(
-                "failed to load aux vocab %s: %s; using embedded", aux_vocab_path, exc
-            )
+            logger.warning("failed to load aux vocab %s: %s; using embedded", aux_vocab_path, exc)
     logger.info("using aux vocab from %s (%d entries)", vocab_source, vocab_size)
 
     model = NGramModel(
@@ -1920,12 +1904,18 @@ def _cmd_sample(args: list[str]) -> None:
     )
     parser.add_argument("--max-steps", type=int)
     parser.add_argument("--progress", action="store_true")
-    parser.add_argument("--ohh-choke-prob", type=float, default=0.3)
+    parser.add_argument("--ohh-choke", type=float, default=0.3)
     parser.add_argument("--kick-beat-threshold", type=float, default=1.0)
     ns = parser.parse_args(args)
 
-    random.seed(ns.seed)
-    np.random.seed(ns.seed)
+    if ns.temperature <= 0:
+        parser.error("temperature must be > 0")
+    if ns.top_p is not None and not (0 < ns.top_p <= 1):
+        parser.error("top-p must be in (0, 1]")
+    if ns.top_k is not None and ns.top_k < 1:
+        parser.error("top-k must be >= 1")
+
+    set_random_state(ns.seed)
     model = load(ns.model, aux_vocab_path=ns.aux_vocab)
     events = generate_events(
         model,
@@ -1934,7 +1924,6 @@ def _cmd_sample(args: list[str]) -> None:
         top_k=ns.top_k,
         top_p=ns.top_p,
         temperature_end=ns.temperature_end,
-        seed=ns.seed,
         cond_velocity=ns.cond_velocity,
         cond_kick=ns.cond_kick,
         cond={
@@ -1947,7 +1936,7 @@ def _cmd_sample(args: list[str]) -> None:
         },
         max_steps=ns.max_steps,
         progress=ns.progress,
-        ohh_choke_prob=ns.ohh_choke_prob,
+        ohh_choke_prob=ns.ohh_choke,
         kick_beat_threshold=ns.kick_beat_threshold,
     )
     if ns.out_midi:

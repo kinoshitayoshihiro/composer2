@@ -22,10 +22,12 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from random import Random
-from typing import Any, Optional
+from typing import Any
+import random
+from functools import lru_cache
 
 # Module-level logger for concise log control
-logger = logging.getLogger("modular_composer.groove_sampler_v2")
+logger = logging.getLogger(__name__)
 
 # Optional YAML (not strictly required by this module, but kept for compat)
 try:  # pragma: no cover - optional dependency
@@ -44,7 +46,10 @@ import numpy as np
 
 NDArray = np.ndarray
 
-import pretty_midi
+try:  # pragma: no cover - optional dependency
+    import pretty_midi  # type: ignore
+except Exception:  # pragma: no cover
+    pretty_midi = None  # type: ignore
 import tempfile
 
 # Optional mido — required for training path below
@@ -112,10 +117,33 @@ from .ngram_store import (
 )
 
 from utilities.loop_ingest import load_meta  # noqa: E402
-from utilities.pretty_midi_safe import pm_to_mido  # noqa: E402
 
+from .conditioning import (
+    apply_kick_pattern_bias,
+    apply_velocity_bias,
+    apply_style_bias,
+    apply_feel_bias,
+)
+from .gm_perc_map import NAME_TO_NUM, normalize_label, label_to_number
 
-logger = logging.getLogger(__name__)
+try:  # pragma: no cover - optional dependency
+    from utilities.pretty_midi_safe import pm_to_mido  # noqa: E402
+except Exception:  # pragma: no cover
+
+    def pm_to_mido(pm):  # type: ignore
+        class _Msg:
+            def __init__(self, time: int):
+                self.time = time
+                self.type = "note"
+                self.numerator = 4
+                self.denominator = 4
+
+        class _Midi:
+            ticks_per_beat = 480
+            tracks = [[_Msg(480 * 4)]]
+
+        return _Midi()
+
 
 # Salt for deterministic hashing across runs
 HASH_SALT = b"composer2_groove_v2"
@@ -1168,16 +1196,15 @@ def merge_streaming_models(paths: Iterable[Path], output: Path) -> dict[str, Any
 
 def _choose(probs: np.ndarray, rng: Random) -> int:
     total = probs.sum()
-    if total == 0:
+    if total <= 0:
         probs = np.ones_like(probs)
         total = probs.sum()
+    cdf = np.cumsum(probs)
     r = rng.random() * total
-    acc = 0.0
-    for i, p in enumerate(probs):
-        acc += p
-        if r <= acc:
-            return i
-    return len(probs) - 1
+    idx = int(np.searchsorted(cdf, r, side="right"))
+    if idx >= len(probs):
+        idx = len(probs) - 1
+    return idx
 
 
 def _filter_probs(
@@ -1205,6 +1232,101 @@ def _filter_probs(
     return probs
 
 
+_MODEL_CACHE: dict[int, "NGramModel"] = {}
+
+
+def _get_arr_internal(model_id: int, order: int, ctx_hash: int):
+    """Retrieve frequency array for ``ctx_hash`` at given ``order``."""
+    model = _MODEL_CACHE[model_id]
+    arr = model.freq[order].get(ctx_hash)
+    return None if arr is None else arr
+
+
+if os.getenv("GROOVE_CACHE", "1") != "0":
+    _get_arr = lru_cache(maxsize=8192)(_get_arr_internal)  # type: ignore
+else:  # pragma: no cover - environment toggle
+    _get_arr = _get_arr_internal
+
+
+def next_prob_dist(
+    model: "NGramModel",
+    history: list[int],
+    bucket: int,
+    *,
+    temperature: float = 1.0,
+    top_k: int | None = None,
+    top_p: float | None = None,
+    cond: dict[str, str] | None = None,
+    strength: float = 1.0,
+    aux_fallback: str = "prefer",
+) -> np.ndarray:
+    """Return probability distribution for next state."""
+
+    _MODEL_CACHE[id(model)] = model
+    n = model.n if model.n is not None else 4
+    aux_id = 0
+    if cond and model.aux_vocab:
+        aux_id = model.aux_vocab.encode(cond)
+    hb = model.hash_buckets
+    for order in range(min(len(history), n - 1), 0, -1):
+        ctx = history[-order:]
+        ctx_spec = _hash_ctx(list(ctx) + [order, aux_id]) % hb
+        ctx_any = _hash_ctx(list(ctx) + [order, 0]) % hb
+        arr_spec = _get_arr(id(model), order, ctx_spec)
+        arr_any = _get_arr(id(model), order, ctx_any)
+        if arr_spec is not None:
+            arr = arr_spec.astype(float)
+            if arr_any is not None:
+                arr = arr_any.astype(float) * (1 - strength) + arr * strength
+        elif aux_fallback in {"prefer", "loose"} and arr_any is not None:
+            arr = arr_any.astype(float)
+        else:
+            arr = None
+        if arr is not None and arr.sum() > 0:
+            probs = arr.copy()
+            if temperature != 1.0:
+                probs = np.power(probs, 1.0 / temperature)
+            probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
+            s = probs.sum()
+            if s <= 0:
+                probs = np.ones_like(probs)
+                s = probs.sum()
+            probs /= s
+            return probs
+
+    ctx_spec = _hash_ctx([0, aux_id]) % hb
+    ctx_any = _hash_ctx([0, 0]) % hb
+    arr_spec = _get_arr(id(model), 0, ctx_spec)
+    arr_any = _get_arr(id(model), 0, ctx_any)
+    if arr_spec is not None:
+        arr = arr_spec.astype(float)
+        if arr_any is not None:
+            arr = arr_any.astype(float) * (1 - strength) + arr * strength
+    elif aux_fallback in {"prefer", "loose"} and arr_any is not None:
+        arr = arr_any.astype(float)
+    else:
+        arr = None
+    if arr is not None and arr.sum() > 0:
+        probs = arr.copy()
+        if temperature != 1.0:
+            probs = np.power(probs, 1.0 / temperature)
+        probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
+        probs /= probs.sum()
+        return probs
+
+    b_arr = model.bucket_freq.get(bucket) if model.bucket_freq is not None else None
+    if b_arr is not None and b_arr.sum() > 0:
+        probs = b_arr.astype(float)
+        if temperature != 1.0:
+            probs = np.power(probs, 1.0 / temperature)
+        probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
+        probs /= probs.sum()
+        return probs
+
+    num = len(model.idx_to_state) if model.idx_to_state else 1
+    return np.ones(num) / num
+
+
 def sample_next(
     model: NGramModel,
     history: list[int],
@@ -1221,69 +1343,21 @@ def sample_next(
 ) -> int:
     """Sample next state index using hashed back-off."""
 
-    n = model.n if model.n is not None else 4
-    aux_id = 0
-    if cond and model.aux_vocab:
-        aux_id = model.aux_vocab.encode(cond)
-    hb = model.hash_buckets
-    for order in range(min(len(history), n - 1), 0, -1):
-        ctx = history[-order:]
-        ctx_spec = _hash_ctx(list(ctx) + [order, aux_id]) % hb
-        ctx_any = _hash_ctx(list(ctx) + [order, 0]) % hb
-        arr_spec = model.freq[order].get(ctx_spec)
-        arr_any = model.freq[order].get(ctx_any)
-        arr = None
-        if arr_spec is not None:
-            arr = arr_spec.astype(float)
-            if arr_any is not None:
-                arr = arr_any.astype(float) * (1 - strength) + arr * strength
-        elif aux_fallback in {"prefer", "loose"} and arr_any is not None:
-            arr = arr_any.astype(float)
-        if arr is not None and arr.sum() > 0:
-            probs = arr.astype(float)
-            if cond_kick in {"four_on_floor", "sparse"} and model.idx_to_state:
-                for i, st in enumerate(model.idx_to_state):
-                    if st[2] == "kick":
-                        if cond_kick == "four_on_floor" and bucket == 0:
-                            probs[i] *= 16
-                        elif cond_kick == "sparse":
-                            probs[i] *= 0.5
-            if temperature != 1.0:
-                probs = np.power(probs, 1.0 / temperature)
-            probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
-            total = probs.sum()
-            if total == 0:
-                return rng.randrange(len(model.idx_to_state) if model.idx_to_state else 1)
-            probs /= total
-            return _choose(probs, rng)
-
-    ctx_spec = _hash_ctx([0, aux_id]) % hb
-    ctx_any = _hash_ctx([0, 0]) % hb
-    arr_spec = model.freq[0].get(ctx_spec)
-    arr_any = model.freq[0].get(ctx_any)
-    if arr_spec is None:
-        arr = arr_any
-    else:
-        arr = arr_spec.astype(float)
-        if arr_any is not None:
-            arr = arr_any.astype(float) * (1 - strength) + arr * strength
-    if arr is not None and arr.sum() > 0:
-        probs = arr.astype(float)
-        if temperature != 1.0:
-            probs = np.power(probs, 1.0 / temperature)
-        probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
-        probs /= probs.sum()
-        return _choose(probs, rng)
-
-    b_arr = model.bucket_freq.get(bucket) if model.bucket_freq is not None else None
-    if b_arr is not None and b_arr.sum() > 0:
-        probs = b_arr.astype(float)
-        if temperature != 1.0:
-            probs = np.power(probs, 1.0 / temperature)
-        probs = _filter_probs(probs, top_k=top_k, top_p=top_p)
-        probs /= probs.sum()
-        return _choose(probs, rng)
-    return rng.randrange(len(model.idx_to_state) if model.idx_to_state else 1)
+    probs = next_prob_dist(
+        model,
+        history,
+        bucket,
+        temperature=temperature,
+        top_k=top_k,
+        top_p=top_p,
+        cond=cond,
+        strength=strength,
+        aux_fallback=aux_fallback,
+    )
+    if cond_kick and model.idx_to_state:
+        labels = [s[2] for s in model.idx_to_state]
+        probs = apply_kick_pattern_bias(probs, labels, bucket, cond_kick)
+    return _choose(probs, rng)
 
 
 def generate_events(
@@ -1298,6 +1372,10 @@ def generate_events(
     cond_velocity: str | None = None,
     cond_kick: str | None = None,
     cond: dict[str, str] | None = None,
+    max_steps: int | None = None,
+    progress: bool = False,
+    ohh_choke_prob: float = 0.3,
+    kick_beat_threshold: float = 1.0,
 ) -> list[dict[str, float | str]]:
     """Generate a sequence of drum events.
 
@@ -1326,11 +1404,17 @@ def generate_events(
     retry_beats = (1 / 1000) / sec_per_beat
     events: list[dict[str, float | str]] = []
     history: list[int] = []
+    label_list = [s[2] for s in model.idx_to_state] if model.idx_to_state else []
+    kicks_by_beat: dict[int, list[dict[str, float | str]]] = {}
 
     next_bin = 0
     end_bin = bars * bar_len
+    max_steps = max_steps or end_bin
 
-    while next_bin < end_bin:
+    iterator = tqdm(range(max_steps), disable=not progress)
+    for _ in iterator:
+        if next_bin >= end_bin:
+            break
         bucket = next_bin % bar_len
         if model.resolution_coarse != res:
             bucket //= 4
@@ -1341,22 +1425,27 @@ def generate_events(
         else:
             temp = temperature
 
-        idx = sample_next(
+        probs = next_prob_dist(
             model,
             history,
             bucket,
-            rng,
             temperature=temp,
             top_k=top_k,
             top_p=top_p,
-            cond_kick=cond_kick,
             cond=cond,
         )
+        pos_quarter = int((next_bin // step_per_beat) % 4)
+        if cond:
+            probs = apply_style_bias(probs, label_list, cond.get("style"))
+            probs = apply_feel_bias(probs, label_list, pos_quarter, cond.get("feel"))
+        if cond_kick and label_list:
+            probs = apply_kick_pattern_bias(probs, label_list, pos_quarter, cond_kick)
+        probs = apply_velocity_bias(probs, cond_velocity)
+        idx = _choose(probs, rng)
         if model.idx_to_state and idx < len(model.idx_to_state):
-            _, bin_in_bar, lbl = model.idx_to_state[idx]
+            _, bin_in_bar, raw_lbl = model.idx_to_state[idx]
         else:
-            # Fallback defaults
-            _, bin_in_bar, lbl = 0, 0, "kick"
+            _, bin_in_bar, raw_lbl = 0, 0, "kick"
         if model.resolution_coarse != res:
             bin_in_bar *= 4
         abs_bin = (next_bin // bar_len) * bar_len + bin_in_bar
@@ -1368,8 +1457,13 @@ def generate_events(
         elif cond_velocity == "hard":
             velocity = max(velocity, 1.2)
         offset = abs_bin / step_per_beat
+        lbl = normalize_label(raw_lbl)
         if lbl == "ghost_snare":
             offset += rng.gauss(0.0, 0.003) / sec_per_beat  # jitter
+            lbl = "snare"
+        if lbl not in NAME_TO_NUM and not re.match(r"unk_\d{2}", lbl):
+            lbl = f"unk_{raw_lbl}" if str(raw_lbl).isdigit() else f"unk_{lbl}"
+        assert lbl in NAME_TO_NUM or re.match(r"unk_\d{2}", lbl)
         skip = False
         for ev in events:
             if abs(ev["offset"] - offset) <= 1e-6:
@@ -1379,7 +1473,11 @@ def generate_events(
                 if lbl == "kick" and ev["instrument"] == "snare":
                     skip = True
                     break
-                if lbl.endswith("hh") and ev["instrument"] in {"kick", "snare"}:
+                if (
+                    lbl.startswith("hh_")
+                    and lbl != "hh_pedal"
+                    and ev["instrument"] in {"kick", "snare"}
+                ):
                     off = offset + shift_beats
                     for _ in range(3):
                         if not any(abs(e["offset"] - off) <= 1e-6 for e in events):
@@ -1387,7 +1485,11 @@ def generate_events(
                         off += retry_beats
                     offset = off
                     break
-                if lbl in {"kick", "snare"} and ev["instrument"].endswith("hh"):
+                if (
+                    lbl in {"kick", "snare"}
+                    and ev["instrument"].startswith("hh_")
+                    and ev["instrument"] != "hh_pedal"
+                ):
                     off = ev["offset"] + shift_beats
                     for _ in range(3):
                         if not any(abs(e["offset"] - off) <= 1e-6 for e in events):
@@ -1396,34 +1498,68 @@ def generate_events(
                     ev["offset"] = off
         if skip:
             continue
-        events.append(
-            {
-                "instrument": lbl,
-                "offset": offset,
-                "duration": 0.25 / step_per_beat,
-                "velocity_factor": velocity,
-            }
-        )
-        if lbl == "ohh":
+        ev_dict = {
+            "instrument": lbl,
+            "offset": offset,
+            "duration": 0.25 / step_per_beat,
+            "velocity_factor": velocity,
+        }
+        events.append(ev_dict)
+        if lbl == "kick":
+            beat = int(offset)
+            kicks_by_beat.setdefault(beat, []).append(ev_dict)
+        if lbl == "hh_open":
             choke_off = offset + (4 / model.resolution)
             has_pedal = any(
                 e["instrument"] == "hh_pedal" and 0 < e["offset"] - offset <= (4 / model.resolution)
                 for e in events
             )
-            if not has_pedal and rng.random() < 0.3:
-                events.append(
-                    {
-                        "instrument": "hh_pedal",
-                        "offset": choke_off,
-                        "duration": 0.25 / step_per_beat,
-                        "velocity_factor": velocity,
-                    }
-                )
+            if not has_pedal and rng.random() < ohh_choke_prob:
+                pedal = {
+                    "instrument": "hh_pedal",
+                    "offset": choke_off,
+                    "duration": 0.25 / step_per_beat,
+                    "velocity_factor": velocity,
+                }
+                events.append(pedal)
         history.append(idx)
         n = model.n if model.n is not None else 4
         if len(history) > n - 1:
             history.pop(0)
         next_bin = abs_bin + 1
+
+    if cond_kick == "four_on_floor":
+        beats = bars * 4
+        for b in range(beats):
+            start = float(b)
+            end = start + kick_beat_threshold
+            kicks = [
+                ev for ev in kicks_by_beat.get(b, []) if start <= ev["offset"] < end
+            ]
+            if not kicks:
+                vel = 1.0
+                if cond_velocity == "soft":
+                    vel = 0.8
+                elif cond_velocity == "hard":
+                    vel = 1.2
+                ev = {
+                    "instrument": "kick",
+                    "offset": start,
+                    "duration": 0.25 / step_per_beat,
+                    "velocity_factor": vel,
+                }
+                events.append(ev)
+                kicks_by_beat[b] = [ev]
+            else:
+                kicks.sort(key=lambda e: e["offset"])
+                keep = kicks[0]
+                for dup in kicks[1:]:
+                    events.remove(dup)
+                kicks_by_beat[b] = [keep]
+                if cond_velocity == "soft":
+                    keep["velocity_factor"] = min(keep["velocity_factor"], 0.8)
+                elif cond_velocity == "hard":
+                    keep["velocity_factor"] = max(keep["velocity_factor"], 1.2)
 
     events.sort(key=lambda e: e["offset"])
     return events
@@ -1459,7 +1595,7 @@ def save(model: NGramModel, path: Path) -> None:
         pickle.dump(data, fh)
 
 
-def load(path: str | Path, aux_vocab_path: Optional[str | Path] = None) -> NGramModel:
+def load(path: Path, aux_vocab_path: Path | None = None) -> NGramModel:
     """Load an :class:`NGramModel` from *path*.
 
     If ``aux_vocab_path`` is provided, its JSON content overrides the embedded
@@ -1762,12 +1898,34 @@ def _cmd_sample(args: list[str]) -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--cond-velocity", choices=["soft", "hard"], default=None)
     parser.add_argument("--cond-kick", choices=["four_on_floor", "sparse"], default=None)
-    parser.add_argument("--cond-style", type=str)
-    parser.add_argument("--cond-feel", type=str)
+    parser.add_argument(
+        "--cond-style",
+        choices=["none", "lofi", "funk"],
+        default="none",
+        help="style conditioning policy",
+    )
+    parser.add_argument(
+        "--cond-feel",
+        choices=["none", "straight", "swing", "laidback"],
+        default="none",
+        help="feel conditioning policy",
+    )
     parser.add_argument("--temperature-end", type=float)
     parser.add_argument("--aux-vocab", type=Path)
+    parser.add_argument("--out-midi", type=Path, default=None, help="write MIDI to this path")
+    parser.add_argument(
+        "--print-json",
+        action="store_true",
+        help="dump generated events as JSON to stdout",
+    )
+    parser.add_argument("--max-steps", type=int)
+    parser.add_argument("--progress", action="store_true")
+    parser.add_argument("--ohh-choke-prob", type=float, default=0.3)
+    parser.add_argument("--kick-beat-threshold", type=float, default=1.0)
     ns = parser.parse_args(args)
 
+    random.seed(ns.seed)
+    np.random.seed(ns.seed)
     model = load(ns.model, aux_vocab_path=ns.aux_vocab)
     events = generate_events(
         model,
@@ -1779,9 +1937,63 @@ def _cmd_sample(args: list[str]) -> None:
         seed=ns.seed,
         cond_velocity=ns.cond_velocity,
         cond_kick=ns.cond_kick,
-        cond={k: v for k, v in {"style": ns.cond_style, "feel": ns.cond_feel}.items() if v},
+        cond={
+            k: v
+            for k, v in {
+                "style": None if ns.cond_style == "none" else ns.cond_style,
+                "feel": None if ns.cond_feel == "none" else ns.cond_feel,
+            }.items()
+            if v
+        },
+        max_steps=ns.max_steps,
+        progress=ns.progress,
+        ohh_choke_prob=ns.ohh_choke_prob,
+        kick_beat_threshold=ns.kick_beat_threshold,
     )
-    json.dump(events, fp=sys.stdout)
+    if ns.out_midi:
+        midi_events: list[dict[str, Any]] = []
+        for ev in events:
+            lbl = normalize_label(ev.get("instrument"))
+            num = label_to_number(lbl)
+            if num is None and lbl in NAME_TO_NUM:
+                num = NAME_TO_NUM[lbl]
+            if num is None:
+                logger.warning("skipping unknown instrument %s", ev.get("instrument"))
+                continue
+            midi_events.append({**ev, "instrument": num})
+        try:  # pragma: no cover - optional dependency
+            from json2midi import convert_events  # type: ignore
+        except Exception:  # pragma: no cover
+            convert_events = None  # type: ignore
+        if convert_events is not None:
+            mapping = {**NAME_TO_NUM, **{str(i): i for i in range(128)}}
+            pm = convert_events(midi_events, bpm=120, mapping=mapping)
+            pm.write(str(ns.out_midi))
+        elif pretty_midi is not None:
+            pm = pretty_midi.PrettyMIDI(resolution=480, initial_tempo=120)
+            drum = pretty_midi.Instrument(program=0, is_drum=True)
+            for ev in midi_events:
+                start = ev["offset"] * 60 / 120
+                dur = ev.get("duration", 0) * 60 / 120
+                end = start + dur
+                vel = int(100 * ev.get("velocity_factor", 1.0))
+                vel = max(1, min(127, vel))
+                note = pretty_midi.Note(
+                    velocity=vel,
+                    pitch=ev["instrument"],
+                    start=start,
+                    end=end,
+                )
+                drum.notes.append(note)
+            pm.instruments.append(drum)
+            pm.write(str(ns.out_midi))
+        else:  # pragma: no cover - best effort
+            logger.warning("no MIDI backend available; skipping %s", ns.out_midi)
+    if ns.print_json:
+        json.dump(events, fp=sys.stdout)
+    if not ns.print_json and not ns.out_midi:
+        logging.getLogger().setLevel(logging.INFO)
+        logger.info("no output requested; use --print-json or --out-midi")
 
 
 def _cmd_stats(args: list[str]) -> None:

@@ -112,24 +112,7 @@ from .ngram_store import (
 )
 
 from utilities.loop_ingest import load_meta  # noqa: E402
-
-try:  # pragma: no cover - optional dependency
-    from utilities.pretty_midi_safe import pm_to_mido  # noqa: E402
-except Exception:  # pragma: no cover
-
-    def pm_to_mido(pm):  # type: ignore
-        class _Msg:
-            def __init__(self, time: int):
-                self.time = time
-                self.type = "note"
-                self.numerator = 4
-                self.denominator = 4
-
-        class _Midi:
-            ticks_per_beat = 480
-            tracks = [[_Msg(480 * 4)]]
-
-        return _Midi()
+from utilities.pretty_midi_safe import pm_to_mido  # noqa: E402
 
 
 logger = logging.getLogger(__name__)

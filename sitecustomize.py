@@ -1,29 +1,18 @@
-# Minimal NumPy dtype alias shim for NumPy>=1.24
-# This file is auto-imported by Python when present on sys.path.
-# It safely restores removed aliases only if they are missing.
+"""Optional NumPy alias shims."""
 
-from __future__ import annotations
+import os
 
-try:
-    import numpy as np  # type: ignore
-except Exception:  # pragma: no cover - numpy may be absent
-    np = None  # type: ignore
-
-if np is not None:  # pragma: no cover - trivial glue
-    _aliases = {
-        "int": int,
-        "bool": bool,
-        "float": float,
-        "complex": complex,
-        "object": object,
-        "str": str,
-    }
-    for _name, _typ in _aliases.items():
-        # Only patch if attribute is missing (NumPy>=1.24).
-        if not hasattr(np, _name):
-            try:
-                setattr(np, _name, _typ)
-            except Exception:
-                # Be conservative: never raise at import time
-                pass
+if os.getenv("COMPOSER2_ENABLE_NUMPY_SHIM") == "1":
+    try:
+        import numpy as np  # noqa: F401
+        # Only add when missing, avoid shadowing real dtypes.
+        if not hasattr(np, "int"):
+            np.int = int  # type: ignore[attr-defined]
+        if not hasattr(np, "bool"):
+            np.bool = bool  # type: ignore[attr-defined]
+        if not hasattr(np, "float"):
+            np.float = float  # type: ignore[attr-defined]
+    except Exception:
+        # Be silent: NumPy may not be installed in minimal environments.
+        pass
 

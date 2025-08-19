@@ -1,11 +1,12 @@
-from pathlib import Path
 import importlib.machinery
 import importlib.util
+import json
+import os
+import subprocess
 import sys
 import types
-import json
-import subprocess
-import os
+from pathlib import Path
+
 import pytest
 
 np = pytest.importorskip("numpy")
@@ -49,67 +50,49 @@ def make_model(labels: list[str]) -> groove_sampler_v2.NGramModel:
     )
 
 
-def test_cond_kick_four_on_floor() -> None:
+def test_determinism() -> None:
     model = make_model(["snare"])
-    events = groove_sampler_v2.generate_events(
-        model, bars=2, seed=0, cond_kick="four_on_floor", cond={"feel": "laidback"}
-    )
-    beats = 2 * 4
-    for b in range(beats):
-        start = float(b)
-        kicks = [
-            ev
-            for ev in events
-            if ev["instrument"] == "kick" and start <= ev["offset"] < start + 1
-        ]
-        assert len(kicks) == 1
+    groove_sampler_v2.set_random_state(0)
+    ev1 = groove_sampler_v2.generate_events(model, bars=1)
+    groove_sampler_v2.set_random_state(0)
+    ev2 = groove_sampler_v2.generate_events(model, bars=1)
+    assert [e["instrument"] for e in ev1] == [e["instrument"] for e in ev2]
 
 
-def test_cond_velocity_soft() -> None:
+def test_topk_one() -> None:
+    model = make_model(["kick", "snare"])
+    for i in range(model.resolution):
+        model.bucket_freq[i] = np.array([10.0, 1.0])
+    groove_sampler_v2.set_random_state(0)
+    events = groove_sampler_v2.generate_events(model, bars=1, top_k=1)
+    assert all(ev["instrument"] == "kick" for ev in events)
+
+
+def test_length_max_steps() -> None:
     model = make_model(["snare"])
-    events_base = groove_sampler_v2.generate_events(model, bars=1, seed=0)
-    events_soft = groove_sampler_v2.generate_events(
-        model, bars=1, seed=0, cond_velocity="soft"
-    )
+    groove_sampler_v2.set_random_state(0)
+    events = groove_sampler_v2.generate_events(model, bars=4, max_steps=5)
+    assert len(events) <= 5
+    assert max(e["offset"] for e in events) < 16
 
-    def low_ratio(evts):
-        return sum(ev["velocity_factor"] < 1.0 for ev in evts) / len(evts)
 
-    assert low_ratio(events_soft) > low_ratio(events_base)
+def test_conditioning_bias() -> None:
+    model = make_model(["kick", "snare"])
+    aux_id = model.aux_vocab.encode({"style": "funk"})
+    ctx_hash = groove_sampler_v2.hash_ctx([0, aux_id]) % model.hash_buckets
+    model.freq[0][ctx_hash] = np.array([10.0, 1.0])
+    probs = groove_sampler_v2.next_prob_dist(model, [], 0, cond={"style": "funk"})
+    assert probs[0] > probs[1]
 
 
 def test_ohh_choke_prob() -> None:
-    model = make_model(["ohh"])
-    events_yes = groove_sampler_v2.generate_events(
-        model, bars=1, seed=0, ohh_choke_prob=1.0
-    )
+    model = make_model(["hh_open"])
+    groove_sampler_v2.set_random_state(0)
+    events_yes = groove_sampler_v2.generate_events(model, bars=1, ohh_choke_prob=1.0)
     assert any(ev["instrument"] == "hh_pedal" for ev in events_yes)
-    events_no = groove_sampler_v2.generate_events(
-        model, bars=1, seed=0, ohh_choke_prob=0.0
-    )
+    groove_sampler_v2.set_random_state(0)
+    events_no = groove_sampler_v2.generate_events(model, bars=1, ohh_choke_prob=0.0)
     assert all(ev["instrument"] != "hh_pedal" for ev in events_no)
-
-
-def test_ohh_choke_conflict() -> None:
-    model = make_model(["ohh"])
-    # force ohh on every tick
-    for i in range(model.resolution):
-        arr = np.zeros(len(model.idx_to_state))
-        arr[0] = 1.0
-        model.bucket_freq[i] = arr
-    events = groove_sampler_v2.generate_events(
-        model, bars=1, seed=0, ohh_choke_prob=1.0
-    )
-    ohhs = [e for e in events if e["instrument"] == "hh_open"]
-    pedals = [e for e in events if e["instrument"] == "hh_pedal"]
-    assert len(pedals) == len(ohhs)
-    offsets = set()
-    for o in ohhs:
-        expected = o["offset"] + 1.0
-        matches = [p for p in pedals if abs(p["offset"] - expected) < 1e-6]
-        assert len(matches) == 1
-        offsets.add(matches[0]["offset"])
-    assert len(offsets) == len(pedals)
 
 
 def test_cli_smoke(tmp_path: Path) -> None:

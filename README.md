@@ -142,6 +142,15 @@ Without these packages `pytest` and the composer modules will fail to import.
 - **tomli** – TOML parser
 - **pytest** – test runner
 
+### Non-destructive MIDI I/O
+
+Some utilities (loop scan / training) may need to inject a default tempo for
+tempo-less files. We **never modify the original files in-place**. The tool
+writes a temporary `.mid` and reloads it, then removes the temp file.
+
+Set `COMPOSER2_ENABLE_NUMPY_SHIM=1` to re-enable deprecated NumPy aliases
+(`np.int`, `np.bool`, `np.float`) before running any scripts.
+
 For WAV file ingestion install the optional dependencies listed in
 `requirements-optional.txt`.
 

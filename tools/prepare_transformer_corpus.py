@@ -26,9 +26,12 @@ import logging
 import math
 import os
 import random
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable, Sequence
 from collections import Counter
+import concurrent.futures
 
 import pretty_midi
 import numpy as np
@@ -60,26 +63,30 @@ def _make_const_sec_to_beats(tempo_bpm: float):
     return lambda t: t / spb
 
 
-def build_beat_map(pm: "pretty_midi.PrettyMIDI") -> tuple[Callable[[float], float], float]:
-    # Robust tempo estimation with fallbacks:
-    # 1) estimate_tempo()  2) first get_tempo_changes()  3) 120 bpm
+def build_beat_map(
+    pm: "pretty_midi.PrettyMIDI", *, path: Path | None = None
+) -> tuple[Callable[[float], float], float, bool]:
+    """Return seconds->beats map, tempo estimate and fallback flag."""
+
     tempo_est: Optional[float] = None
     try:
         t = float(pm.estimate_tempo())
         if math.isfinite(t) and t > 0:
             tempo_est = t
-    except Exception:
-        pass
+    except Exception as e:  # pragma: no cover
+        logger.debug("estimate_tempo failed for %s: %s", path, e)
+    fallback = False
     if tempo_est is None:
         tempi, _times = pm.get_tempo_changes()
         if len(tempi) and math.isfinite(float(tempi[0])) and float(tempi[0]) > 0:
             tempo_est = float(tempi[0])
         else:
             tempo_est = 120.0
-        logger.info("Tempo fallback used: tempo=%.1f", tempo_est)
+        fallback = True
+        logger.debug("tempo fallback used for %s: %.1f", path, tempo_est)
 
     sec_to_beats = _make_const_sec_to_beats(tempo_est)
-    return sec_to_beats, tempo_est
+    return sec_to_beats, tempo_est, fallback
 
 
 def get_time_signature(mid: "mido.MidiFile") -> Tuple[float, str]:
@@ -228,12 +235,14 @@ def split_samples(
                     )
         if len(seg) >= min_notes:
             yield seg
+        else:
+            _inc_skip("too_few_notes")
         if max_segments is not None and i + 1 >= max_segments:
             break
 
 
-def build_corpus(args: argparse.Namespace) -> Dict[str, List[Sample]]:
-    """Process input tree and return split samples."""
+def build_corpus(args: argparse.Namespace, files: Sequence[Path]) -> Dict[str, List[Sample]]:
+    """Process *files* and return split samples."""
 
     tag_map = load_tag_maps([Path(p) for p in args.tags]) if args.tags else {}
     lyric_json = getattr(args, "lyric_json", None)
@@ -257,8 +266,15 @@ def build_corpus(args: argparse.Namespace) -> Dict[str, List[Sample]]:
         except Exception:  # pragma: no cover - handled in tests
             logger.warning("sentence-transformers unavailable; storing raw text")
 
+    global _ARGS, _BASE, _TAG_MAP, _LYRIC_MAP, _EMBED_MAP, _EMBED_MODEL
+    _ARGS = args
     base = Path(args.in_dir)
-    files = gather_midi_files(base)
+    _BASE = base
+    _TAG_MAP = tag_map
+    _LYRIC_MAP = lyric_map
+    _EMBED_MAP = embed_map
+    _EMBED_MODEL = embed_model
+
     if args.max_files:
         files = files[: args.max_files]
 
@@ -274,106 +290,34 @@ def build_corpus(args: argparse.Namespace) -> Dict[str, List[Sample]]:
     lyric_matches = sum(1 for f in files if normalize_key(f, base) in lyric_map)
     logger.info("lyrics matched: %d/%d", lyric_matches, len(files))
 
-    def process_path(midi_path: Path, ns=None) -> List[Sample]:
-        # Load file
-        pm = pretty_midi.PrettyMIDI(midi_path.as_posix())
-        mid = pm_to_mido(pm)
-        beats_per_bar, ts_str = get_time_signature(mid)
-
-        # ---------- cheap early filters (file level) ----------
-        # Note: apply drum-only filter here so we don't count non-drum notes when --drums-only
-        notes_total = 0
-        for inst in pm.instruments:
-            if ns and getattr(ns, "drums_only", False) and not inst.is_drum:
-                continue
-            notes_total += len(inst.notes)
-        dur_sec = float(pm.get_end_time() or 0.0)
-
-        if ns is not None:
-            if getattr(ns, "min_file_notes", 0) and notes_total < ns.min_file_notes:
-                return []
-            if (
-                getattr(ns, "min_file_seconds", 0.0)
-                and dur_sec > 0.0
-                and dur_sec < ns.min_file_seconds
-            ):
-                return []
-            if (
-                getattr(ns, "max_file_seconds", 0.0)
-                and ns.max_file_seconds > 0.0
-                and dur_sec > ns.max_file_seconds
-            ):
-                return []
-
-        sec_to_beats, tempo_est = build_beat_map(pm)
-        rel = normalize_key(midi_path, base)
-        segments: List[Sample] = []
-        include_programs = set(args.include_programs) if args.include_programs else None
-        for idx, seg in enumerate(
-            split_samples(
-                pm,
-                bars_per_sample=args.bars_per_sample,
-                min_notes=args.min_notes,
-                beats_per_bar=beats_per_bar,
-                sec_to_beats=sec_to_beats,
-                include_programs=include_programs,
-                drums_only=args.drums_only,
-                exclude_drums=args.exclude_drums,
-                max_segments=args.max_samples_per_file,
-            )
-        ):
-            tokens = tokenize_notes(
-                seg,
-                duv=args.duv == "on",
-                dur_bins=args.dur_bins,
-                vel_bins=args.vel_bins,
-                quant=args.quant,
-            )
-            tags = tag_map.get(rel, {})
-            if args.section_tokens and tags.get("section"):
-                tokens.insert(0, f"<SECTION={tags['section']}>")
-            if args.mood_tokens and tags.get("mood"):
-                tokens.insert(0, f"<MOOD={tags['mood']}>")
-            meta: Dict[str, object] = {
-                **tags,
-                "source_path": rel,
-                "segment_index": idx,
-                "tempo_est": tempo_est,
-                "beats_per_bar": beats_per_bar,
-                "time_signature": ts_str,
-            }
-            if rel in embed_map:
-                meta["text_emb"] = embed_map[rel]
-            # guard lyric lookup when skip-lyrics is requested
-            elif (not (ns and getattr(ns, "skip_lyrics", False))) and rel in lyric_map:
-                text = lyric_map[rel]
-                if embed_model is not None:
-                    meta["text_emb"] = embed_model.encode(text).tolist()
-                else:
-                    meta["text"] = text
-            segments.append(Sample(tokens=tokens, meta=meta))
-        return segments
-
     samples: List[Sample] = []
     use_mp = args.num_workers > 1 and embed_model is None
     paths = list(iterator)
+    cfg = FastCfg()
+    cfg.drums_only = args.drums_only
+    cfg.min_file_notes = args.min_file_notes
+    cfg.min_file_seconds = args.min_file_seconds
+    cfg.max_file_seconds = args.max_file_seconds
+    cfg.silence_threshold_db = args.silence_threshold_db
+    cfg.silent_fraction = args.silent_fraction
+    cfg.skip_lyrics = args.skip_lyrics
     if use_mp:
         try:
-            with concurrent.futures.ProcessPoolExecutor(max_workers=ns.num_workers) as ex:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=args.num_workers) as ex:
                 for res in ex.map(_worker, ((p, cfg) for p in paths)):
                     samples.extend(res)
         except Exception:
             logger.warning("ProcessPoolExecutor failed; falling back to ThreadPoolExecutor")
             from concurrent.futures import ThreadPoolExecutor
 
-            with ThreadPoolExecutor(max_workers=ns.num_workers) as ex:
+            with ThreadPoolExecutor(max_workers=args.num_workers) as ex:
                 for res in ex.map(_worker, ((p, cfg) for p in paths)):
                     samples.extend(res)
     else:
         if args.num_workers > 1 and embed_model is not None:
             logger.warning("lyric embeddings disable multiprocessing; using single worker")
         for p in iterator:
-            samples.extend(process_path(p))
+            samples.extend(process_path(p, cfg))
 
     if not samples:
         logger.warning("no samples found under %s", args.in_dir)
@@ -484,13 +428,6 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument(
         "--compress", choices=["none", "gz"], default="none", help="compress output JSONL"
     )
-    p.add_argument("--skip-lyrics", action="store_true", help="do not attempt lyrics matching")
-    p.add_argument(
-        "--min-file-notes", type=int, default=0, help="skip files with fewer notes than this"
-    )
-    p.add_argument(
-        "--min-file-seconds", type=float, default=0.0, help="skip files shorter than this (sec)"
-    )
     # ---- Silence / envelope early exit
     p.add_argument(
         "--silence-threshold-db",
@@ -558,6 +495,14 @@ class FastCfg:
 
 # --- skip metrics (already added previously) --------------------------
 _SKIP_COUNTS: Counter[str] = Counter()
+_TEMPO_FALLBACKS = 0
+
+_ARGS: argparse.Namespace | None = None
+_BASE: Path | None = None
+_TAG_MAP: Dict[str, Dict[str, str]] = {}
+_LYRIC_MAP: Dict[str, str] = {}
+_EMBED_MAP: Dict[str, List[float]] = {}
+_EMBED_MODEL = None
 
 
 def _inc_skip(reason: str) -> None:
@@ -574,13 +519,16 @@ def _worker(args: tuple[Path, FastCfg]) -> List[Sample]:
 
 
 def process_path(midi_path: Path, ns: FastCfg) -> List[Sample]:
+    global _TEMPO_FALLBACKS
     # Load file
-    pm = pretty_midi.PrettyMIDI(midi_path.as_posix())
+    try:
+        pm = pretty_midi.PrettyMIDI(midi_path.as_posix())
+    except Exception:
+        _inc_skip("invalid_midi")
+        return []
     mid = pm_to_mido(pm)
     beats_per_bar, ts_str = get_time_signature(mid)
 
-    # ---------- cheap early filters (file level) ----------
-    # Note: apply drum-only filter here so we don't count non-drum notes when --drums-only
     notes_total = 0
     for inst in pm.instruments:
         if ns and getattr(ns, "drums_only", False) and not inst.is_drum:
@@ -590,44 +538,49 @@ def process_path(midi_path: Path, ns: FastCfg) -> List[Sample]:
 
     if ns is not None:
         if getattr(ns, "min_file_notes", 0) and notes_total < ns.min_file_notes:
+            _inc_skip("too_few_notes")
             return []
         if getattr(ns, "min_file_seconds", 0.0) and dur_sec > 0.0 and dur_sec < ns.min_file_seconds:
+            _inc_skip("too_short")
             return []
         if (
             getattr(ns, "max_file_seconds", 0.0)
             and ns.max_file_seconds > 0.0
             and dur_sec > ns.max_file_seconds
         ):
+            _inc_skip("too_long")
             return []
 
-    sec_to_beats, tempo_est = build_beat_map(pm)
-    rel = normalize_key(midi_path, base)
+    sec_to_beats, tempo_est, fb = build_beat_map(pm, path=midi_path)
+    if fb:
+        _TEMPO_FALLBACKS += 1
+    rel = normalize_key(midi_path, _BASE or Path("."))
     segments: List[Sample] = []
-    include_programs = set(args.include_programs) if args.include_programs else None
+    include_programs = set(_ARGS.include_programs) if _ARGS.include_programs else None
     for idx, seg in enumerate(
         split_samples(
             pm,
-            bars_per_sample=args.bars_per_sample,
-            min_notes=args.min_notes,
+            bars_per_sample=_ARGS.bars_per_sample,
+            min_notes=_ARGS.min_notes,
             beats_per_bar=beats_per_bar,
             sec_to_beats=sec_to_beats,
             include_programs=include_programs,
-            drums_only=args.drums_only,
-            exclude_drums=args.exclude_drums,
-            max_segments=args.max_samples_per_file,
+            drums_only=_ARGS.drums_only,
+            exclude_drums=_ARGS.exclude_drums,
+            max_segments=_ARGS.max_samples_per_file,
         )
     ):
         tokens = tokenize_notes(
             seg,
-            duv=args.duv == "on",
-            dur_bins=args.dur_bins,
-            vel_bins=args.vel_bins,
-            quant=args.quant,
+            duv=_ARGS.duv == "on",
+            dur_bins=_ARGS.dur_bins,
+            vel_bins=_ARGS.vel_bins,
+            quant=_ARGS.quant,
         )
-        tags = tag_map.get(rel, {})
-        if args.section_tokens and tags.get("section"):
+        tags = _TAG_MAP.get(rel, {})
+        if _ARGS.section_tokens and tags.get("section"):
             tokens.insert(0, f"<SECTION={tags['section']}>")
-        if args.mood_tokens and tags.get("mood"):
+        if _ARGS.mood_tokens and tags.get("mood"):
             tokens.insert(0, f"<MOOD={tags['mood']}>")
         meta: Dict[str, object] = {
             **tags,
@@ -637,13 +590,12 @@ def process_path(midi_path: Path, ns: FastCfg) -> List[Sample]:
             "beats_per_bar": beats_per_bar,
             "time_signature": ts_str,
         }
-        if rel in embed_map:
-            meta["text_emb"] = embed_map[rel]
-        # guard lyric lookup when skip-lyrics is requested
-        elif (not (ns and getattr(ns, "skip_lyrics", False))) and rel in lyric_map:
-            text = lyric_map[rel]
-            if embed_model is not None:
-                meta["text_emb"] = embed_model.encode(text).tolist()
+        if rel in _EMBED_MAP:
+            meta["text_emb"] = _EMBED_MAP[rel]
+        elif (not (ns and getattr(ns, "skip_lyrics", False))) and rel in _LYRIC_MAP:
+            text = _LYRIC_MAP[rel]
+            if _EMBED_MODEL is not None:
+                meta["text_emb"] = _EMBED_MODEL.encode(text).tolist()
             else:
                 meta["text"] = text
         segments.append(Sample(tokens=tokens, meta=meta))
@@ -683,24 +635,28 @@ def main(argv: list[str] | None = None) -> None:
 
     # I/O バッチング：num-workers > 1 のときシャッフル（ホットスポット回避）
     try:
-        if getattr(ns, "num_workers", 0) and int(ns.num_workers) > 1:
-            rnd = random.Random(getattr(ns, "seed", None) or 0)
+        if getattr(args, "num_workers", 0) and int(args.num_workers) > 1:
+            rnd = random.Random(getattr(args, "seed", None) or 0)
             rnd.shuffle(files)
     except Exception:
         pass
 
     # dry-run の明示ログ
-    if _g(ns, "dry_run", False):
-        logger.info("dry_run is ON: no dataset files will be written (out=%s)", _g(ns, "out", None))
+    if _g(args, "dry_run", False):
+        logger.info(
+            "dry_run is ON: no dataset files will be written (out=%s)",
+            _g(args, "out_dir", None),
+        )
         # もし書き出し関数内で環境変数を見て分岐できるなら、フラグも立てておく
         os.environ["PREP_CORPUS_DRY_RUN"] = "1"
 
-    max_files = getattr(ns, "max_files", 0) or 0
+    max_files = getattr(args, "max_files", 0) or 0
     if max_files:
         files = files[:max_files]
 
     # コーパス構築
-    splits, lyric_matches, midi_file_count = build_corpus(args)
+    splits, lyric_matches, midi_file_count = build_corpus(args, files)
+    logger.info("tempo fallback used: %d", _TEMPO_FALLBACKS)
 
     # ボキャブラリ構築
     vocab = build_vocab(splits["train"])
@@ -721,6 +677,14 @@ def main(argv: list[str] | None = None) -> None:
         "vel_bins": args.vel_bins,
         "embed_offline": bool(args.embed_offline),
         "tags": args.tags,
+        "min_file_notes": args.min_file_notes,
+        "min_file_seconds": args.min_file_seconds,
+        "max_file_seconds": args.max_file_seconds,
+        "skipped_too_few_notes": _SKIP_COUNTS.get("too_few_notes", 0),
+        "skipped_too_short": _SKIP_COUNTS.get("too_short", 0),
+        "skipped_invalid_midi": _SKIP_COUNTS.get("invalid_midi", 0),
+        "skipped_too_long": _SKIP_COUNTS.get("too_long", 0),
+        "tempo_fallback_used": _TEMPO_FALLBACKS,
     }
     logger.info("meta: %s", json.dumps(meta, ensure_ascii=False, indent=2))
 

@@ -47,6 +47,11 @@ Useful flags:
 - `--progress` displays a `tqdm` progress bar and `--num-workers` enables
   multiprocessing (disabled when embedding text at runtime; use
   `--embed-offline` to re-enable).
+- `--dry-run` performs all processing but skips writing output files.
+
+The final `meta.json` summary records skip statistics such as
+`skipped_too_few_notes`, `skipped_too_short`, `skipped_too_long`, and
+`skipped_invalid_midi` alongside any tempo fallback usage.
 
 ### DUV tokens and offline embeddings
 

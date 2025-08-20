@@ -411,7 +411,7 @@ def test_normalized_units_clip():
     curve = ControlCurve([0, 1], [-1.5, 2.0], ensure_zero_at_edges=False)
     curve.to_pitch_bend(inst, units="normalized")
     vals = [b.pitch for b in inst.pitch_bends]
-    assert vals[0] == -8192
+    assert vals[0] == -8191
     assert vals[1] == 8191
 
 

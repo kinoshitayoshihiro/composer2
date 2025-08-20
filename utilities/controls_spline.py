@@ -428,9 +428,7 @@ class ControlCurve:
     def _beats_to_times(
         self,
         beats,  # array-like
-        tempo_map: (
-            float | Sequence[tuple[float, float]] | Callable[[float], float] | TempoMap
-        ),
+        tempo_map: float | Sequence[tuple[float, float]] | Callable[[float], float] | TempoMap,
         *,
         fold_halves: bool = False,
     ) -> list[float]:
@@ -441,7 +439,7 @@ class ControlCurve:
                 else (beats.tolist() if np is not None else list(beats))
             )
             return [tempo_map.sec_at(b) for b in beats_list]
-        if not callable(tempo_map) and not isinstance(tempo_map, (int, float)):
+        if not callable(tempo_map) and not isinstance(tempo_map, int | float):
             tm = TempoMap(tempo_map)
             beats_list = (
                 beats
@@ -484,9 +482,7 @@ class ControlCurve:
 
     def _prep(
         self,
-        tempo_map: (
-            float | Sequence[tuple[float, float]] | Callable[[float], float] | TempoMap
-        ),
+        tempo_map: float | Sequence[tuple[float, float]] | Callable[[float], float] | TempoMap,
         *,
         fold_halves: bool = False,
         value_eps: float | None = None,
@@ -504,14 +500,11 @@ class ControlCurve:
         self,
         query_times: Sequence[float],
         *,
-        tempo_map: (
-            float | Sequence[tuple[float, float]] | Callable[[float], float]
-        ) = 120.0,
+        tempo_map: float | Sequence[tuple[float, float]] | Callable[[float], float] = 120.0,
         fold_halves: bool = False,
     ) -> list[float]:
         """Return interpolated values at ``query_times``."""
 
-        orig_len = len(self.times) if np is None else int(len(self.times))
         t, v = self._prep(tempo_map, fold_halves=fold_halves)
         return catmull_rom_monotone(t, v, query_times)
 
@@ -522,9 +515,7 @@ class ControlCurve:
         cc_number: int,
         *,
         time_offset: float = 0.0,
-        tempo_map: (
-            float | Sequence[tuple[float, float]] | Callable[[float], float]
-        ) = 120.0,
+        tempo_map: float | Sequence[tuple[float, float]] | Callable[[float], float] = 120.0,
         sample_rate_hz: float | None = None,
         resolution_hz: float | None = None,
         max_events: int | None = None,
@@ -574,9 +565,7 @@ class ControlCurve:
         if sample_rate_hz and sample_rate_hz > 0:
             t, v = _resample(t, v, float(sample_rate_hz))
         t, v = dedupe_events(t, v, value_eps=value_eps, time_eps=time_eps)
-        t = enforce_strictly_increasing(
-            t.tolist() if hasattr(t, "tolist") else t, time_eps
-        )
+        t = enforce_strictly_increasing(t.tolist() if hasattr(t, "tolist") else t, time_eps)
         if value_eps > 0 and len(v) >= 2:
             if max(v) - min(v) <= value_eps:
                 if orig_len > 2:
@@ -590,9 +579,7 @@ class ControlCurve:
                     if abs(v[i] - fv[-1]) > value_eps:
                         ft.append(t[i])
                         fv.append(v[i])
-                if ft[-1] != t[-1] and (
-                    abs(v[-1] - fv[-1]) > value_eps or len(ft) == 1
-                ):
+                if ft[-1] != t[-1] and (abs(v[-1] - fv[-1]) > value_eps or len(ft) == 1):
                     ft.append(t[-1])
                     fv.append(v[-1])
                 t, v = ft, fv
@@ -658,9 +645,7 @@ class ControlCurve:
         inst,
         *,
         time_offset: float = 0.0,
-        tempo_map: (
-            float | Sequence[tuple[float, float]] | Callable[[float], float]
-        ) = 120.0,
+        tempo_map: float | Sequence[tuple[float, float]] | Callable[[float], float] = 120.0,
         bend_range_semitones: float = 2.0,
         sample_rate_hz: float | None = None,
         resolution_hz: float | None = None,
@@ -677,7 +662,7 @@ class ControlCurve:
 
         Values are interpreted in ``units``: either ``"semitones"`` (scaled by
         ``bend_range_semitones``) or ``"normalized"`` where ``-1``..``1`` maps
-        directly to the 14-bit bend range ``[-8192, 8191]``.  ``tempo_map`` has
+        directly to the 14-bit bend range ``[-8191, 8191]``.  ``tempo_map`` has
         the same semantics as in :meth:`to_midi_cc`.  ``resolution_hz`` is a
         deprecated alias for ``sample_rate_hz``.
         Endpoint events are preserved when ``max_events`` is specified.
@@ -709,9 +694,7 @@ class ControlCurve:
         if sample_rate_hz and sample_rate_hz > 0:
             t, v = _resample(t, v, float(sample_rate_hz))
         t, v = dedupe_events(t, v, value_eps=value_eps, time_eps=time_eps)
-        t = enforce_strictly_increasing(
-            t.tolist() if hasattr(t, "tolist") else t, time_eps
-        )
+        t = enforce_strictly_increasing(t.tolist() if hasattr(t, "tolist") else t, time_eps)
         if value_eps > 0 and len(v) >= 2:
             if max(v) - min(v) <= value_eps:
                 if orig_len > 2:
@@ -725,9 +708,7 @@ class ControlCurve:
                     if abs(v[i] - fv[-1]) > value_eps:
                         ft.append(t[i])
                         fv.append(v[i])
-                if ft[-1] != t[-1] and (
-                    abs(v[-1] - fv[-1]) > value_eps or len(ft) == 1
-                ):
+                if ft[-1] != t[-1] and (abs(v[-1] - fv[-1]) > value_eps or len(ft) == 1):
                     ft.append(t[-1])
                     fv.append(v[-1])
                 t, v = ft, fv
@@ -750,7 +731,7 @@ class ControlCurve:
                 v = [v[i] for i in idxs]
         # convert to 14-bit domain
         if units == "normalized":
-            vals = round_int(clip([x * 8192.0 for x in v], -8192, 8191))
+            vals = round_int(clip([x * 8191.0 for x in v], -8191, 8191))
         else:
             scale = 8192.0 / float(bend_range_semitones)
             vals = round_int(clip([x * scale for x in v], -8192, 8191))
@@ -787,9 +768,7 @@ class ControlCurve:
                     vals[-1] = 0
         for tt, vv in zip(t, vals):
             inst.pitch_bends.append(
-                pretty_midi.PitchBend(
-                    pitch=int(vv), time=float(tt + self.offset_sec + time_offset)
-                )
+                pretty_midi.PitchBend(pitch=int(vv), time=float(tt + self.offset_sec + time_offset))
             )
 
     # ---- utils ------------------------------------------------------
@@ -801,17 +780,24 @@ class ControlCurve:
     ) -> list[int]:
         """Convert ``values`` to 14-bit pitch-bend integers.
 
-        ``units`` can be ``"semitones"`` (default) or ``"normalized"``.
+        ``units`` can be ``"semitones"`` (default) or ``"normalized"`` where
+        ``-1``..``1`` maps to ``[-8191, 8191]``.
         """
 
         vals = ensure_scalar_floats(values)
         if units == "normalized":
-            arr = [v * 8192.0 for v in vals]
+            arr = [v * 8191.0 for v in vals]
+            arr = clip(arr, -8191, 8191)
         else:
             scale = 8192.0 / float(range_semitones)
-            arr = [v * scale for v in vals]
-        arr = clip(arr, -8191, 8191)
-        return round_int(arr)
+            arr = clip([v * scale for v in vals], -8191, 8191)
+        # ``round_int`` may return either a numpy array or a plain Python list
+        # depending on whether numpy is available.  ``convert_to_14bit`` should
+        # consistently return a ``list[int]`` so callers can perform ordinary
+        # equality comparisons without triggering numpy's array semantics.
+        # Converting the result explicitly avoids ambiguous truth-value errors
+        # when comparing against Python lists in tests and user code.
+        return list(round_int(arr))
 
     # ---- simplification --------------------------------------------
     @staticmethod

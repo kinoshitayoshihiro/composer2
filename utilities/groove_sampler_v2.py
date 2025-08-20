@@ -29,6 +29,8 @@ from typing import Any
 # Module-level logger for concise log control
 logger = logging.getLogger(__name__)
 
+OHH_CHOKE_DEFAULT = 0.3
+
 # Optional YAML (not strictly required by this module, but kept for compat)
 try:  # pragma: no cover - optional dependency
     import yaml  # type: ignore
@@ -128,7 +130,7 @@ from .conditioning import (
     apply_style_bias,
     apply_velocity_bias,
 )
-from .gm_perc_map import NAME_TO_NUM, label_to_number, normalize_label
+from .gm_perc_map import label_to_number, normalize_label
 from .hash_utils import hash_ctx
 from .ngram_store import BaseNGramStore, MemoryNGramStore, SQLiteNGramStore
 
@@ -175,7 +177,8 @@ def _ensure_tempo(pm: pretty_midi.PrettyMIDI, default_bpm: float = 120.0) -> pre
         return pm
     try:
         midi = pm_to_mido(pm)
-    except Exception:  # pragma: no cover - failed conversion
+    except Exception as e:  # pragma: no cover - failed conversion
+        logger.debug("pm_to_mido failed: %s", e)
         _ensure_tempo.injected = False  # type: ignore[attr-defined]
         return pm
     for track in midi.tracks:
@@ -191,6 +194,8 @@ def _ensure_tempo(pm: pretty_midi.PrettyMIDI, default_bpm: float = 120.0) -> pre
         midi.save(tmp.name)
         pm = pretty_midi.PrettyMIDI(tmp.name)
         injected = True
+    except Exception as e:  # pragma: no cover
+        logger.debug("PrettyMIDI tempo injection failed: %s", e)
     finally:
         try:
             os.unlink(tmp.name)
@@ -1346,7 +1351,7 @@ def generate_events(
     cond: dict[str, str] | None = None,
     max_steps: int | None = None,
     progress: bool = False,
-    ohh_choke_prob: float = 0.3,
+    ohh_choke_prob: float = OHH_CHOKE_DEFAULT,
     kick_beat_threshold: float = 1.0,
 ) -> list[dict[str, float | str]]:
     """Generate a sequence of drum events.
@@ -1439,9 +1444,15 @@ def generate_events(
         if lbl == "ghost_snare":
             offset += _RNG.gauss(0.0, 0.003) / sec_per_beat  # jitter
             lbl = "snare"
-        if lbl not in NAME_TO_NUM and not re.match(r"unk_\d{2}", lbl):
-            lbl = f"unk_{raw_lbl}" if str(raw_lbl).isdigit() else f"unk_{lbl}"
-        assert lbl in NAME_TO_NUM or re.match(r"unk_\d{2}", lbl)
+        if not re.match(r"unk_\d{2}", lbl):
+            try:
+                label_to_number(lbl)
+            except ValueError:
+                lbl = f"unk_{raw_lbl}" if str(raw_lbl).isdigit() else f"unk_{lbl}"
+        try:
+            label_to_number(lbl)
+        except ValueError:
+            assert re.match(r"unk_\d{2}", lbl)
         skip = False
         for ev in events:
             if abs(ev["offset"] - offset) <= 1e-6:
@@ -1607,39 +1618,26 @@ def load(
             else AuxVocab()
         )
 
-    vocab_source = "embedded"
-    vocab_size = len(aux_vocab.id_to_str) if aux_vocab else 0
     if aux_vocab_path is not None:
         try:
-            raw = json.loads(Path(aux_vocab_path).read_text())
-            if isinstance(raw, list):
-                vocab_list = raw
-            elif isinstance(raw, dict):
-                vocab_list = None
-                for key in ("id_to_str", "vocab", "list"):
-                    val = raw.get(key)
-                    if isinstance(val, list):
-                        vocab_list = val
-                        break
-                if vocab_list is None:
-                    raise ValueError("no vocab list found")
-            else:
-                raise ValueError("expected list or dict")
-            if not all(isinstance(s, str) for s in vocab_list):
-                raise ValueError("vocab entries must be strings")
-            seen: set[str] = set()
-            normalized: list[str] = []
-            for tok in ["", "<UNK>"] + vocab_list:
-                if tok not in seen:
-                    seen.add(tok)
-                    normalized.append(tok)
-            vocab_list = normalized
+            vocab_list = json.loads(Path(aux_vocab_path).read_text())
+            if not (
+                isinstance(vocab_list, list)
+                and all(isinstance(s, str) for s in vocab_list)
+            ):
+                raise ValueError("aux vocab must be a JSON list of strings")
             aux_vocab = AuxVocab({s: i for i, s in enumerate(vocab_list)}, vocab_list)
-            vocab_source = str(aux_vocab_path)
-            vocab_size = len(vocab_list)
+            logger.info(
+                "aux vocab: loaded override (%d items) from %s",
+                len(vocab_list),
+                aux_vocab_path,
+            )
         except Exception as exc:  # pragma: no cover - exercised via tests
-            logger.warning("failed to load aux vocab %s: %s; using embedded", aux_vocab_path, exc)
-    logger.info("using aux vocab from %s (%d entries)", vocab_source, vocab_size)
+            logger.warning(
+                "failed to load aux vocab from %s: %s; falling back to embedded",
+                aux_vocab_path,
+                exc,
+            )
 
     model = NGramModel(
         n=data.get("n"),
@@ -1691,7 +1689,11 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
     parser.add_argument("--train-mode", choices=["inmemory", "stream"], default="stream")
     parser.add_argument("--max-rows-per-shard", type=int, default=1_000_000)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--aux-vocab", type=Path)
+    parser.add_argument(
+        "--aux-vocab",
+        type=Path,
+        help="JSON list to override embedded aux vocab",
+    )
     parser.add_argument("--fixed-bpm", type=float)
     parser.add_argument("--aux-key", type=str, default="style")
     parser.add_argument(
@@ -1880,8 +1882,18 @@ def _cmd_sample(args: list[str]) -> None:
     parser.add_argument("--top-k", type=int)
     parser.add_argument("--top-p", type=float)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--cond-velocity", choices=["soft", "hard"], default=None)
-    parser.add_argument("--cond-kick", choices=["four_on_floor", "sparse"], default=None)
+    parser.add_argument(
+        "--cond-velocity",
+        choices=["soft", "normal", "hard"],
+        default="normal",
+        help="velocity conditioning policy",
+    )
+    parser.add_argument(
+        "--cond-kick",
+        choices=["off", "four_on_floor"],
+        default="off",
+        help="kick pattern conditioning",
+    )
     parser.add_argument(
         "--cond-style",
         choices=["none", "lofi", "funk"],
@@ -1895,8 +1907,10 @@ def _cmd_sample(args: list[str]) -> None:
         help="feel conditioning policy",
     )
     parser.add_argument("--temperature-end", type=float)
-    parser.add_argument("--aux-vocab", type=Path)
-    parser.add_argument("--out-midi", type=Path, default=None, help="write MIDI to this path")
+    parser.add_argument(
+        "--aux-vocab", type=Path, help="JSON list to override embedded aux vocab"
+    )
+    parser.add_argument("--out-midi", type=Path, help="write MIDI to this path")
     parser.add_argument(
         "--print-json",
         action="store_true",
@@ -1904,7 +1918,12 @@ def _cmd_sample(args: list[str]) -> None:
     )
     parser.add_argument("--max-steps", type=int)
     parser.add_argument("--progress", action="store_true")
-    parser.add_argument("--ohh-choke", type=float, default=0.3)
+    parser.add_argument(
+        "--ohh-choke-prob",
+        type=float,
+        default=OHH_CHOKE_DEFAULT,
+        help="probability that open hat is choked by a pedal hat",
+    )
     parser.add_argument("--kick-beat-threshold", type=float, default=1.0)
     ns = parser.parse_args(args)
 
@@ -1915,6 +1934,9 @@ def _cmd_sample(args: list[str]) -> None:
     if ns.top_k is not None and ns.top_k < 1:
         parser.error("top-k must be >= 1")
 
+    cond_velocity = None if ns.cond_velocity == "normal" else ns.cond_velocity
+    cond_kick = None if ns.cond_kick == "off" else ns.cond_kick
+
     set_random_state(ns.seed)
     model = load(ns.model, aux_vocab_path=ns.aux_vocab)
     events = generate_events(
@@ -1924,8 +1946,8 @@ def _cmd_sample(args: list[str]) -> None:
         top_k=ns.top_k,
         top_p=ns.top_p,
         temperature_end=ns.temperature_end,
-        cond_velocity=ns.cond_velocity,
-        cond_kick=ns.cond_kick,
+        cond_velocity=cond_velocity,
+        cond_kick=cond_kick,
         cond={
             k: v
             for k, v in {
@@ -1936,26 +1958,31 @@ def _cmd_sample(args: list[str]) -> None:
         },
         max_steps=ns.max_steps,
         progress=ns.progress,
-        ohh_choke_prob=ns.ohh_choke,
+        ohh_choke_prob=ns.ohh_choke_prob,
         kick_beat_threshold=ns.kick_beat_threshold,
     )
     if ns.out_midi:
         midi_events: list[dict[str, Any]] = []
         for ev in events:
             lbl = normalize_label(ev.get("instrument"))
-            num = label_to_number(lbl)
-            if num is None and lbl in NAME_TO_NUM:
-                num = NAME_TO_NUM[lbl]
-            if num is None:
-                logger.warning("skipping unknown instrument %s", ev.get("instrument"))
+            try:
+                num = label_to_number(lbl)
+            except ValueError:
+                logger.warning(
+                    "skipping unknown instrument %s", ev.get("instrument")
+                )
                 continue
             midi_events.append({**ev, "instrument": num})
         try:  # pragma: no cover - optional dependency
             from json2midi import convert_events  # type: ignore
-        except Exception:  # pragma: no cover
+        except Exception as e:  # pragma: no cover
+            logger.debug("json2midi import failed: %s", e)
             convert_events = None  # type: ignore
         if convert_events is not None:
-            mapping = {**NAME_TO_NUM, **{str(i): i for i in range(128)}}
+            mapping = {
+                **{normalize_label(str(i)): i for i in range(128)},
+                **{str(i): i for i in range(128)},
+            }
             pm = convert_events(midi_events, bpm=120, mapping=mapping)
             pm.write(str(ns.out_midi))
         elif pretty_midi is not None:
@@ -1980,9 +2007,6 @@ def _cmd_sample(args: list[str]) -> None:
             logger.warning("no MIDI backend available; skipping %s", ns.out_midi)
     if ns.print_json:
         json.dump(events, fp=sys.stdout)
-    if not ns.print_json and not ns.out_midi:
-        logging.getLogger().setLevel(logging.INFO)
-        logger.info("no output requested; use --print-json or --out-midi")
 
 
 def _cmd_stats(args: list[str]) -> None:

@@ -853,11 +853,15 @@ Build and sample using the optimized model:
 python -m utilities.groove_sampler_v2 train data/loops -o model.pkl \
     --auto-res --jobs 8 --memmap-dir mmaps
 python -m utilities.groove_sampler_v2 sample model.pkl -l 4 \
-    --temperature 0.8 --cond-velocity hard --seed 42
+    --temperature 0.8 --cond-velocity hard --cond-kick four_on_floor \
+    --print-json --out-midi groove.mid --seed 42
 ```
-
 The sampler is quiet by default. Use `--print-json` to stream events to stdout
-or `--out-midi path.mid` to save a MIDI file.
+or `--out-midi path.mid` to save a MIDI file. Additional conditioning options
+include `--cond-kick` and `--cond-velocity` (`soft`, `normal`, `hard`).
+`--ohh-choke-prob` controls the chance of open hats being choked by pedal hats
+and `--aux-vocab` overrides the embedded auxiliary vocabulary. Runs are
+deterministic when `--seed` is specified.
 
 If `librosa` is installed, training will auto‑detect the tempo of WAV loops;
 otherwise it falls back to 120 BPM. Pass `--fixed-bpm` to override this

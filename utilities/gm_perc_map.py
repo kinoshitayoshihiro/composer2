@@ -87,18 +87,20 @@ def normalize_label(lbl: str | int) -> str:
     return name
 
 
-def label_to_number(lbl: str | int) -> int | None:
-    """Resolve *lbl* to a GM percussion number if possible.
+def label_to_number(lbl: str | int) -> int:
+    """Resolve *lbl* to a GM percussion number.
 
     ``lbl`` may be a numeric string, an alias, a canonical GM name, or an
-    ``unk_XX`` placeholder.  Returns ``None`` when the label cannot be
-    interpreted.
+    ``unk_XX`` placeholder.  Raises :class:`ValueError` when the label cannot
+    be interpreted.
     """
-    if isinstance(lbl, int):
-        return lbl
+    if isinstance(lbl, int) or (isinstance(lbl, str) and lbl.isdigit()):
+        return int(lbl)
     lbl = ALIASES.get(str(lbl), str(lbl))
     if lbl in NAME_TO_NUM:
         return NAME_TO_NUM[lbl]
     m = re.match(r"unk_(\d{2})$", str(lbl))
-    return int(m.group(1)) if m else None
+    if m:
+        return int(m.group(1))
+    raise ValueError(f"unknown GM label: {lbl}")
 

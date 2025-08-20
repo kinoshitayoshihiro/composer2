@@ -19,9 +19,7 @@ from .controls_spline import ControlCurve
 logger = logging.getLogger(__name__)
 
 
-def ensure_instrument_for_channel(
-    pm: pretty_midi.PrettyMIDI, ch: int
-) -> pretty_midi.Instrument:
+def ensure_instrument_for_channel(pm: pretty_midi.PrettyMIDI, ch: int) -> pretty_midi.Instrument:
     """Return an instrument routed to MIDI channel ``ch``.
 
     Events in PrettyMIDI carry no channel attribute; instead we keep a
@@ -78,7 +76,10 @@ def write_bend_range_rpn(
             del inst.control_changes[i : i + 4]
             break
 
-    if getattr(inst, "_rpn_written", False) and getattr(inst, "_rpn_range", None) == range_semitones:
+    if (
+        getattr(inst, "_rpn_written", False)
+        and getattr(inst, "_rpn_range", None) == range_semitones
+    ):
         return
 
     t = float(at_time)
@@ -108,9 +109,7 @@ def apply_controls(
     max_events: Mapping[str, int] | None = None,
     value_eps: float = 1e-6,
     time_eps: float = 1e-9,
-    tempo_map: (
-        float | list[tuple[float, float]] | Callable[[float], float] | None
-    ) = None,
+    tempo_map: float | list[tuple[float, float]] | Callable[[float], float] | None = None,
     simplify_mode: str = "rdp",
     total_max_events: int | None = None,
 ) -> pretty_midi.PrettyMIDI:
@@ -127,6 +126,7 @@ def apply_controls(
         inst = ensure_instrument_for_channel(pm, ch)
         for name, curve in mapping.items():
             if name == "bend":
+                pre = len(inst.pitch_bends)
                 curve.to_pitch_bend(
                     inst,
                     bend_range_semitones=bend_range_semitones,
@@ -137,23 +137,56 @@ def apply_controls(
                     tempo_map=tempo_map,
                     simplify_mode=simplify_mode,
                 )
+                new_pb = inst.pitch_bends[pre:]
+                if new_pb:
+                    start = float(curve.times[0]) if len(curve.times) else 0.0
+                    end = float(curve.times[-1]) if len(curve.times) else 0.0
+                    if curve.domain == "beats":
+                        start, end = curve._beats_to_times([start, end], tempo_map or 120.0)
+                    start += curve.offset_sec
+                    end += curve.offset_sec
+                    new_pb[0].time = start
+                    new_pb[-1].time = end
                 if write_rpn and not getattr(inst, "_rpn_written", False):
-                    first_pb = min(pb.time for pb in inst.pitch_bends)
-                    t = min(rpn_at, first_pb - 1e-9)
+                    if not inst.pitch_bends:
+                        t = max(0.0, rpn_at)
+                    else:
+                        first_pb = min(pb.time for pb in inst.pitch_bends)
+                        t = max(0.0, min(rpn_at, first_pb - 1e-9))
                     write_bend_range_rpn(inst, bend_range_semitones, at_time=t)
+                    inst._rpn_written = True  # type: ignore[attr-defined]
             elif name in _CC_MAP:
                 cc_num = _CC_MAP[name]
                 sr = sr_map.get(name)
+                # ``max_events`` allows callers to specify a global cap for all
+                # CC curves via the "cc" key.  This fallback was previously
+                # missing, causing limits like {"cc": 6} to be ignored for
+                # specific controllers such as "cc11".  Respect the generic
+                # setting when a controller-specific entry is absent.
+                max_ev = max_map.get(name)
+                if max_ev is None:
+                    max_ev = max_map.get("cc")
+                pre = len(inst.control_changes)
                 curve.to_midi_cc(
                     inst,
                     cc_num,
                     sample_rate_hz=sr,
-                    max_events=max_map.get(name),
+                    max_events=max_ev,
                     value_eps=value_eps,
                     time_eps=time_eps,
                     tempo_map=tempo_map,
                     simplify_mode=simplify_mode,
                 )
+                new_cc = [c for c in inst.control_changes[pre:] if c.number == cc_num]
+                if new_cc:
+                    start = float(curve.times[0]) if len(curve.times) else 0.0
+                    end = float(curve.times[-1]) if len(curve.times) else 0.0
+                    if curve.domain == "beats":
+                        start, end = curve._beats_to_times([start, end], tempo_map or 120.0)
+                    start += curve.offset_sec
+                    end += curve.offset_sec
+                    new_cc[0].time = start
+                    new_cc[-1].time = end
         _sort_events(inst)
 
     if total_max_events:
@@ -200,9 +233,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
         entry = max(entries, key=lambda e: len(e["kept"]))
         if len(entry["kept"]) <= 2:
             break
-        entry["kept"] = _downsample_keep_endpoints(
-            entry["kept"], len(entry["kept"]) - 1
-        )
+        entry["kept"] = _downsample_keep_endpoints(entry["kept"], len(entry["kept"]) - 1)
         total_new = sum(len(e["kept"]) for e in entries)
     new_cc: dict[pretty_midi.Instrument, list[pretty_midi.ControlChange]] = {}
     new_pb: dict[pretty_midi.Instrument, list[pretty_midi.PitchBend]] = {}

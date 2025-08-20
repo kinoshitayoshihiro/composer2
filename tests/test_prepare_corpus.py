@@ -4,15 +4,17 @@ import logging
 from pathlib import Path
 
 import pytest
+yaml = pytest.importorskip("yaml")
+
 pytest.importorskip("numpy")
-import pretty_midi
-import yaml
-import mido
+pretty_midi = pytest.importorskip("pretty_midi")
+mido = pytest.importorskip("mido")
 
 from tools.prepare_transformer_corpus import (
     build_corpus,
     tokenize_notes,
     build_beat_map,
+    gather_midi_files,
 )
 from utilities.pretty_midi_safe import pm_to_mido
 
@@ -68,7 +70,8 @@ def test_tag_merge(tmp_path: Path) -> None:
         progress=False,
         num_workers=1,
     )
-    splits, _, _ = build_corpus(args)
+    files = gather_midi_files(Path(args.in_dir))
+    splits, _, _ = build_corpus(args, files)
     assert splits["train"][0].meta["mood"] == "happy"
 
 
@@ -99,11 +102,12 @@ def test_deterministic_split(tmp_path: Path) -> None:
         progress=False,
         num_workers=1,
     )
-    s1, _, _ = build_corpus(args)
-    s2, _, _ = build_corpus(args)
+    files = gather_midi_files(Path(args.in_dir))
+    s1, _, _ = build_corpus(args, files)
+    s2, _, _ = build_corpus(args, files)
     assert [s.tokens for s in s1["train"]] == [s.tokens for s in s2["train"]]
     args.seed = 321
-    s3, _, _ = build_corpus(args)
+    s3, _, _ = build_corpus(args, files)
     assert [s.tokens for s in s1["train"]] != [s.tokens for s in s3["train"]]
 
 
@@ -164,7 +168,8 @@ def test_non_four_four_timesig(tmp_path: Path) -> None:
         progress=False,
         num_workers=1,
     )
-    splits, _, _ = build_corpus(args)
+    files = gather_midi_files(Path(args.in_dir))
+    splits, _, _ = build_corpus(args, files)
     assert len(splits["train"]) == 1
     meta = splits["train"][0].meta
     assert meta["beats_per_bar"] == 3.0
@@ -221,16 +226,19 @@ def test_instrument_filters(tmp_path: Path) -> None:
         num_workers=1,
     )
     args = argparse.Namespace(include_programs=[0], drums_only=False, exclude_drums=False, **base)
-    splits, _, _ = build_corpus(args)
+    files = gather_midi_files(Path(args.in_dir))
+    splits, _, _ = build_corpus(args, files)
     toks = splits["train"][0].tokens
     assert any("NOTE_60" == t for t in toks)
     assert all("NOTE_64" != t for t in toks)
     args = argparse.Namespace(include_programs=None, drums_only=True, exclude_drums=False, **base)
-    splits, _, _ = build_corpus(args)
+    files = gather_midi_files(Path(args.in_dir))
+    splits, _, _ = build_corpus(args, files)
     toks = splits["train"][0].tokens
     assert any("NOTE_36" == t for t in toks)
     args = argparse.Namespace(include_programs=None, drums_only=False, exclude_drums=True, **base)
-    splits, _, _ = build_corpus(args)
+    files = gather_midi_files(Path(args.in_dir))
+    splits, _, _ = build_corpus(args, files)
     toks = splits["train"][0].tokens
     assert all("NOTE_36" != t for t in toks)
 
@@ -267,14 +275,16 @@ def test_offline_embed_and_duv_oov(tmp_path: Path, caplog) -> None:
         embed_offline=str(bad_path),
     )
     with pytest.raises(ValueError):
-        build_corpus(argparse.Namespace(**base_args))
+        files = gather_midi_files(Path(base_args["in_dir"]))
+        build_corpus(argparse.Namespace(**base_args), files)
     good_map = {"a.mid": [0.0, 0.1], "b.mid": [0.2, 0.3]}
     good_path = tmp_path / "good.json"
     good_path.write_text(json.dumps(good_map))
     base_args["embed_offline"] = str(good_path)
     base_args["duv_max"] = 0
     with caplog.at_level(logging.INFO):
-        splits, _, _ = build_corpus(argparse.Namespace(**base_args))
+        files = gather_midi_files(Path(base_args["in_dir"]))
+        splits, _, _ = build_corpus(argparse.Namespace(**base_args), files)
     sample = splits["train"][0]
     assert sample.meta["text_emb"] == [0.0, 0.1]
     assert "DUV_OOV" in sample.tokens

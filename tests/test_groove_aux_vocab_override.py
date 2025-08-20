@@ -5,14 +5,15 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
+# Optional heavy deps
+pytest.importorskip("numpy")
+pytest.importorskip("pretty_midi")
+pytest.importorskip("mido")
+
 # Load modules directly to avoid heavy package imports
 ROOT = Path(__file__).resolve().parents[1]
-
-# Provide minimal numpy stub for environments without numpy
-np_stub = types.SimpleNamespace(ndarray=list)
-sys.modules.setdefault("numpy", np_stub)
-# Stub pretty_midi which is optionally imported by groove_sampler_v2
-sys.modules.setdefault("pretty_midi", types.SimpleNamespace())
 
 aux_spec = importlib.util.spec_from_file_location(
     "utilities.aux_vocab", ROOT / "utilities" / "aux_vocab.py"
@@ -20,6 +21,13 @@ aux_spec = importlib.util.spec_from_file_location(
 aux_mod = importlib.util.module_from_spec(aux_spec)
 sys.modules["utilities.aux_vocab"] = aux_mod
 aux_spec.loader.exec_module(aux_mod)
+
+gm_spec = importlib.util.spec_from_file_location(
+    "utilities.gm_perc_map", ROOT / "utilities" / "gm_perc_map.py"
+)
+gm_mod = importlib.util.module_from_spec(gm_spec)
+sys.modules["utilities.gm_perc_map"] = gm_mod
+gm_spec.loader.exec_module(gm_mod)
 
 gs_spec = importlib.util.spec_from_file_location(
     "utilities.groove_sampler_v2", ROOT / "utilities" / "groove_sampler_v2.py"
@@ -33,7 +41,14 @@ pkg.groove_sampler = types.SimpleNamespace(
     _PITCH_TO_LABEL={}, _iter_drum_notes=lambda *a, **k: [], infer_resolution=lambda *a, **k: 480
 )
 pkg.aux_vocab = aux_mod
+pkg.conditioning = types.SimpleNamespace(
+    apply_feel_bias=lambda *a, **k: None,
+    apply_kick_pattern_bias=lambda *a, **k: None,
+    apply_style_bias=lambda *a, **k: None,
+    apply_velocity_bias=lambda *a, **k: None,
+)
 pkg.hash_utils = types.SimpleNamespace(hash_ctx=lambda *a, **k: 0)
+pkg.gm_perc_map = gm_mod
 pkg.ngram_store = types.SimpleNamespace(
     BaseNGramStore=object, MemoryNGramStore=object, SQLiteNGramStore=object
 )
@@ -41,7 +56,9 @@ sys.modules["utilities"] = pkg
 sys.modules["utilities.loop_ingest"] = pkg.loop_ingest
 sys.modules["utilities.groove_sampler"] = pkg.groove_sampler
 sys.modules["utilities.aux_vocab"] = aux_mod
+sys.modules["utilities.conditioning"] = pkg.conditioning
 sys.modules["utilities.hash_utils"] = pkg.hash_utils
+sys.modules["utilities.gm_perc_map"] = gm_mod
 sys.modules["utilities.ngram_store"] = pkg.ngram_store
 sys.modules["utilities.groove_sampler_v2"] = gs_mod
 # stub optional dependency used by pretty_midi

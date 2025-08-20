@@ -82,7 +82,7 @@ def dedupe_events(
     Returns numpy arrays when numpy is available, otherwise Python lists.
     """
 
-    if not times:
+    if len(times) == 0:
         if np is not None:
             return np.asarray([], dtype=float), np.asarray([], dtype=float)
         return [], []
@@ -124,7 +124,7 @@ def dedupe_times_values(
 def enforce_strictly_increasing(times: Sequence[float], eps: float) -> list[float]:
     """Ensure each successive time increases by at least ``eps``."""
 
-    if not times:
+    if len(times) == 0:
         return []
     out = [float(times[0])]
     for t in times[1:]:

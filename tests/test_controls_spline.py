@@ -23,10 +23,9 @@ except Exception:  # pragma: no cover - fallback stub
 apply_controls_mod = importlib.import_module("utilities.apply_controls")
 apply_controls = apply_controls_mod.apply_controls
 write_bend_range_rpn = apply_controls_mod.write_bend_range_rpn
-ControlCurve = importlib.import_module("utilities.controls_spline").ControlCurve
-catmull_rom_monotone = importlib.import_module(
-    "utilities.controls_spline"
-).catmull_rom_monotone
+module_cs = importlib.import_module("utilities.controls_spline")
+ControlCurve = module_cs.ControlCurve
+catmull_rom_monotone = module_cs.catmull_rom_monotone
 
 # -------------------------------------------------------------------------
 # Helpers

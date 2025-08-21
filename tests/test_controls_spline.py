@@ -13,6 +13,8 @@ except Exception:  # pragma: no cover
     np = None  # type: ignore
 requires_numpy = pytest.mark.skipif(np is None, reason="numpy required")
 
+from utilities import pb_math
+
 # pretty_midi is optional for CI; provide a tiny stub if it's missing so most
 # tests can still run. (Tests that genuinely need the real lib will skip.)
 try:  # pragma: no cover
@@ -42,9 +44,7 @@ def test_resolution_hz_deprecation():
         ControlCurve([0.0], [0.0], resolution_hz=10.0)
         ControlCurve([0.0], [0.0], resolution_hz=20.0)
         ControlCurve([0.0], [0.0], sample_rate_hz=30.0, resolution_hz=40.0)
-        msgs = [
-            str(wr.message) for wr in w if issubclass(wr.category, DeprecationWarning)
-        ]
+        msgs = [str(wr.message) for wr in w if issubclass(wr.category, DeprecationWarning)]
     assert any("use sample_rate_hz" in m for m in msgs)
     assert any("ignored" in m for m in msgs)
     assert len([m for m in msgs if "use sample_rate_hz" in m]) == 1
@@ -112,9 +112,7 @@ def test_event_ordering_same_time():
     apply_controls(pm, {0: {"cc11": cc_curve, "bend": bend_curve}}, write_rpn=True)
     inst = pm.instruments[0]
     rpn_times = [c.time for c in inst.control_changes if c.number in {101, 100, 6, 38}]
-    cc_times = [
-        c.time for c in inst.control_changes if c.number not in {101, 100, 6, 38}
-    ]
+    cc_times = [c.time for c in inst.control_changes if c.number not in {101, 100, 6, 38}]
     first_bend = min(b.time for b in inst.pitch_bends)
     assert max(rpn_times) <= min(cc_times)
     assert min(cc_times) <= first_bend
@@ -138,9 +136,7 @@ def test_ensure_zero_at_edges():
     assert vals[0] == 0
     assert vals[-1] == 0
     inst2 = pretty_midi.Instrument(program=0)
-    curve2 = ControlCurve(
-        [0.0, 0.5, 1.0], [0.0003, 0.1, 0.0003], ensure_zero_at_edges=False
-    )
+    curve2 = ControlCurve([0.0, 0.5, 1.0], [0.0003, 0.1, 0.0003], ensure_zero_at_edges=False)
     curve2.to_pitch_bend(inst2)
     vals2 = [b.pitch for b in inst2.pitch_bends]
     assert vals2[0] != 0 or vals2[-1] != 0
@@ -188,9 +184,7 @@ def test_beats_domain_piecewise_tempo():
     pm = pretty_midi.PrettyMIDI()
     events = [(0, 120), (1, 60), (2, 60)]
     curve = ControlCurve([0, 1, 2], [0, 64, 127], domain="beats")
-    apply_controls(
-        pm, {0: {"cc11": curve}}, tempo_map=events, sample_rate_hz={"cc11": 0}
-    )
+    apply_controls(pm, {0: {"cc11": curve}}, tempo_map=events, sample_rate_hz={"cc11": 0})
     inst = pm.instruments[0]
     times = [c.time for c in _collect_cc(inst, 11)]
     assert times[1] - times[0] == pytest.approx(0.5)
@@ -277,7 +271,7 @@ def test_max_events_caps_pitch_bend():
         return evts[-1].pitch
 
     mid_pitch = _interp(bends, 0.5)
-    mid_semi = mid_pitch * 2.0 / 8192.0
+    mid_semi = mid_pitch * 2.0 / pb_math.PB_FS
     assert abs(mid_semi - 0.5) < 0.05
 
 
@@ -299,9 +293,7 @@ def test_min_delta_thins_cc():
     curve.to_midi_cc(inst2, 11, min_delta=70)
     assert len(_collect_cc(inst2, 11)) < len(_collect_cc(inst1, 11))
     kept = _collect_cc(inst2, 11)
-    interp = (kept[-1].value - kept[0].value) * 0.5 / (
-        kept[-1].time - kept[0].time
-    ) + kept[0].value
+    interp = (kept[-1].value - kept[0].value) * 0.5 / (kept[-1].time - kept[0].time) + kept[0].value
     assert abs(interp - 64.0) < 1.0
 
 
@@ -332,7 +324,10 @@ def test_resample_and_thin_preserve_endpoints_cc():
 
 def test_convert_to_14bit_endpoints():
     vals = ControlCurve.convert_to_14bit([-2.0, 0.0, 2.0], 2.0, units="semitones")
-    assert vals == [-8191, 0, 8191]
+    # In NumPy environments, convert_to_14bit returns np.ndarray
+    if np is not None:
+        vals = vals.tolist()
+    assert vals == [pb_math.PB_MIN, 0, pb_math.PB_MAX]
 
 
 def test_resample_and_thin_preserve_endpoints_bend():
@@ -345,8 +340,8 @@ def test_resample_and_thin_preserve_endpoints_bend():
     assert times[-1] == pytest.approx(1.0)
     assert all(t0 <= t1 for t0, t1 in zip(times, times[1:]))
     assert len(times) <= 8
-    assert min(vals) >= -8192
-    assert max(vals) <= 8191
+    assert min(vals) >= pb_math.PB_MIN
+    assert max(vals) <= pb_math.PB_MAX
 
 
 def test_bend_returns_to_zero():
@@ -411,8 +406,8 @@ def test_normalized_units_clip():
     curve = ControlCurve([0, 1], [-1.5, 2.0], ensure_zero_at_edges=False)
     curve.to_pitch_bend(inst, units="normalized")
     vals = [b.pitch for b in inst.pitch_bends]
-    assert vals[0] == -8191
-    assert vals[1] == 8191
+    assert vals[0] == pb_math.PB_MIN
+    assert vals[1] == pb_math.PB_MAX
 
 
 @pytest.mark.parametrize(
@@ -460,7 +455,7 @@ def test_bend_encoding_roundtrip():
     inst = pretty_midi.Instrument(program=0)
     curve.to_pitch_bend(inst, bend_range_semitones=2.0)
     peak = max(abs(b.pitch) for b in inst.pitch_bends)
-    assert 0.9 * 8191 <= peak <= 1.1 * 8191
+    assert 0.9 * pb_math.PB_MAX <= peak <= 1.1 * pb_math.PB_MAX
 
 
 def test_dedupe():
@@ -494,9 +489,7 @@ def test_from_dense_simplifies():
     values = [t * 127.0 for t in times]
     curve = ControlCurve.from_dense(times, values, tol=0.5, max_knots=256)
     # The simplified curve should have far fewer sample points ("knots")
-    n_knots = (
-        len(curve.times) if hasattr(curve, "times") else len(curve.knots)
-    )  # compat
+    n_knots = len(curve.times) if hasattr(curve, "times") else len(curve.knots)  # compat
     assert n_knots < 32
     # Reconstruct via the same monotone interpolant used by ControlCurve
     recon = catmull_rom_monotone(
@@ -515,13 +508,11 @@ def test_bend_units_and_roundtrip():
     inst_a = pretty_midi.Instrument(program=0)
     inst_b = pretty_midi.Instrument(program=0)
     ControlCurve(times, semis).to_pitch_bend(inst_a, bend_range_semitones=2.0)
-    ControlCurve(times, norms).to_pitch_bend(
-        inst_b, bend_range_semitones=2.0, units="normalized"
-    )
+    ControlCurve(times, norms).to_pitch_bend(inst_b, bend_range_semitones=2.0, units="normalized")
     peak_a = max(abs(b.pitch) for b in inst_a.pitch_bends)
     peak_b = max(abs(b.pitch) for b in inst_b.pitch_bends)
-    assert 0.9 * 8191 <= peak_a <= 1.1 * 8191
-    assert 0.9 * 8191 <= peak_b <= 1.1 * 8191
+    assert 0.9 * pb_math.PB_MAX <= peak_a <= 1.1 * pb_math.PB_MAX
+    assert 0.9 * pb_math.PB_MAX <= peak_b <= 1.1 * pb_math.PB_MAX
 
 
 @pytest.mark.parametrize("bpm", [0.0, -1.0, float("nan")])
@@ -545,9 +536,7 @@ def test_rpn_emitted_once():
     assert sum(1 for cc in nums if cc.number == 6) == 1
     assert sum(1 for cc in nums if cc.number == 38) == 1
     first_pb = inst.pitch_bends[0].time
-    rpn_time = max(
-        cc.time for cc in inst.control_changes if cc.number in {101, 100, 6, 38}
-    )
+    rpn_time = max(cc.time for cc in inst.control_changes if cc.number in {101, 100, 6, 38})
     assert rpn_time <= first_pb
 
 
@@ -560,9 +549,7 @@ def test_dedupe_epsilon():
     curve.to_midi_cc(inst, 11, value_eps=0.5)
     events = inst.control_changes
     assert len(events) == 2
-    recon = catmull_rom_monotone(
-        [e.time for e in events], [float(e.value) for e in events], times
-    )
+    recon = catmull_rom_monotone([e.time for e in events], [float(e.value) for e in events], times)
     err = max(abs(a - b) for a, b in zip(recon, values))
     assert err <= 0.5
 
@@ -575,9 +562,7 @@ def test_max_events_cap():
     curve.to_midi_cc(inst, 11, max_events=10)
     events = inst.control_changes
     assert len(events) <= 10
-    recon = catmull_rom_monotone(
-        [e.time for e in events], [float(e.value) for e in events], times
-    )
+    recon = catmull_rom_monotone([e.time for e in events], [float(e.value) for e in events], times)
     err = max(abs(a - b) for a, b in zip(recon, values))
     assert err < 1.0
 
@@ -599,13 +584,13 @@ def test_convert_to_14bit_units():
     vals_norm = ControlCurve.convert_to_14bit([-1.0, 1.0], 2.0, units="normalized")
     if np is not None:
         vals_norm = vals_norm.tolist()
-    assert vals_norm[0] == -8191
-    assert vals_norm[1] == 8191
+    assert vals_norm[0] == pb_math.PB_MIN
+    assert vals_norm[1] == pb_math.PB_MAX
     vals_semi = ControlCurve.convert_to_14bit([-2.0, 2.0], 2.0, units="semitones")
     if np is not None:
         vals_semi = vals_semi.tolist()
-    assert vals_semi[0] == -8191
-    assert vals_semi[1] == 8191
+    assert vals_semi[0] == pb_math.PB_MIN
+    assert vals_semi[1] == pb_math.PB_MAX
 
 
 def test_convert_to_14bit_numpy_return():
@@ -645,7 +630,7 @@ def test_fractional_bend_range():
     )
     inst = pm.instruments[0]
     peak = max(abs(pb.pitch) for pb in inst.pitch_bends)
-    assert 0.9 * 8191 <= peak <= 1.1 * 8191
+    assert 0.9 * pb_math.PB_MAX <= peak <= 1.1 * pb_math.PB_MAX
     msb = [cc.value for cc in inst.control_changes if cc.number == 6][0]
     lsb = [cc.value for cc in inst.control_changes if cc.number == 38][0]
     assert msb == 2
@@ -657,14 +642,14 @@ def test_pitch_bend_clipping():
     curve = ControlCurve([0.0, 1.0], [-3.0, 3.0])
     curve.to_pitch_bend(inst, bend_range_semitones=2.0, sample_rate_hz=1.0)
     pitches = [b.pitch for b in inst.pitch_bends]
-    assert min(pitches) == -8192
-    assert max(pitches) == 8191
+    assert min(pitches) == pb_math.PB_MIN
+    assert max(pitches) == pb_math.PB_MAX
 
 
 def test_min_clamp_negative():
     # static method expected on ControlCurve in new API
     vals = ControlCurve.convert_to_14bit([-10.0], 2.0)
-    assert vals[0] == -8191
+    assert vals[0] == pb_math.PB_MIN
 
 
 def test_to_midi_cc_without_numpy(monkeypatch):
@@ -676,9 +661,7 @@ def test_to_midi_cc_without_numpy(monkeypatch):
             "clip",
             lambda xs, lo, hi: [max(lo, min(hi, float(x))) for x in xs],
         )
-        monkeypatch.setattr(
-            module_cs, "round_int", lambda xs: [int(round(float(x))) for x in xs]
-        )
+        monkeypatch.setattr(module_cs, "round_int", lambda xs: [int(round(float(x))) for x in xs])
     curve = ControlCurve([0.0, 1.0], [0.0, 127.0])
     inst = pretty_midi.Instrument(program=0)
     curve.to_midi_cc(inst, 11)
@@ -719,3 +702,21 @@ def test_cc_and_bend_same_instrument(tmp_path):
     out = tmp_path / "out.mid"
     pm.write(str(out))
     assert out.exists()
+
+
+def test_pb_symmetry_endpoints():
+    r = 2.0
+    assert pb_math.semi_to_pb(+r, r) == pb_math.PB_MAX
+    assert pb_math.semi_to_pb(-r, r) == pb_math.PB_MIN
+    assert pb_math.norm_to_pb(+1.0) == pb_math.PB_MAX
+    assert pb_math.norm_to_pb(-1.0) == pb_math.PB_MIN
+
+
+@requires_numpy
+def test_pb_roundtrip_semitones():
+    r = 2.0
+    vals = np.linspace(-r, r, 21)
+    pb = pb_math.semi_to_pb(vals, r)
+    back = pb_math.pb_to_semi(pb, r)
+    tol = r / pb_math.PB_FS + 1e-9  # quantization error ≈ range/PB_FS
+    assert np.all(np.abs(vals - back) <= tol)

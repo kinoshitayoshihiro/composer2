@@ -78,6 +78,7 @@ except Exception:  # pragma: no cover - handled by fallback
 from .apply_controls import apply_controls
 from .controls_spline import ControlCurve  # noqa: E402
 from .controls_spline import tempo_map_from_prettymidi
+from . import pb_math
 
 
 @dataclass(frozen=True)
@@ -266,7 +267,7 @@ def build_control_curves_for_stem(
 
     if inst.pitch_bends:
         times = [float(pb.time) for pb in inst.pitch_bends]
-        vals = [float(pb.pitch) / 8192.0 for pb in inst.pitch_bends]
+        vals = pb_math.pb_to_norm([pb.pitch for pb in inst.pitch_bends])
         curves["bend"] = ControlCurve(
             times,
             vals,
@@ -683,9 +684,7 @@ def _transcribe_stem(
             if dev is None:
                 bend = 0
             else:
-                bend = int(
-                    round(max(-1.0, min(1.0, ema / bend_range_semitones)) * 8191)
-                )
+                bend = pb_math.semi_to_pb(ema, bend_range_semitones)
             if bend != prev_bend:
                 inst.pitch_bends.append(
                     pretty_midi.PitchBend(pitch=int(bend), time=float(t))

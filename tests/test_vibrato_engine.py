@@ -1,5 +1,6 @@
 import random
 from utilities.vibrato_engine import generate_vibrato, generate_gliss, generate_trill
+from utilities import pb_math
 
 
 def test_generate_vibrato_alternating() -> None:
@@ -8,7 +9,7 @@ def test_generate_vibrato_alternating() -> None:
     types = [e[0] for e in events]
     assert types == ["pitch_wheel", "aftertouch", "pitch_wheel", "aftertouch", "pitch_wheel"]
     values = [e[2] for e in events]
-    assert all(-8192 <= v <= 8192 for v in values)
+    assert all(pb_math.PB_MIN <= v <= pb_math.PB_MAX for v in values)
 
 
 def test_generate_gliss_linear() -> None:

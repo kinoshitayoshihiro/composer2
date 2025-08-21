@@ -52,6 +52,14 @@ def _clip_round_vec(x):
     return np.rint(x).astype(int)
 
 
+def _clip_scalar(x: float) -> float:
+    if x < PB_MIN:
+        return float(PB_MIN)
+    if x > PB_MAX:
+        return float(PB_MAX)
+    return float(x)
+
+
 # Overloads help type checkers distinguish between scalar, list, and ndarray paths
 @overload
 def norm_to_pb(x: NDArray[np.floating]) -> NDArray[np.int_]:
@@ -66,7 +74,7 @@ def norm_to_pb(x: float) -> int:
     ...
 
 def norm_to_pb(x: Union[float, Iterable[float]]):
-    """Convert normalized values ``[-1..1]`` → pitch-bend integers ``[-8191..8191]``.
+    """Convert normalized values ``[-1..1]`` to pitch-bend integers ``[-8191..8191]``.
 
     Array inputs use ``numpy.rint`` while scalars use ``round``. Returns
     ``np.ndarray`` if NumPy is available; otherwise returns ``list[int]`` or
@@ -129,15 +137,21 @@ def pb_to_norm(pb: int) -> float:
     ...
 
 def pb_to_norm(pb: Union[int, Iterable[int]]):
-    """Convert pitch-bend integers to normalized floats [-1..1]."""
+    """Convert pitch-bend integers to normalized floats ``[-1..1]``.
+
+    Values outside ``[PB_MIN, PB_MAX]`` are clipped. Returns ``np.ndarray`` if
+    NumPy is available; otherwise returns ``list[float]`` or ``float`` for
+    scalar input.
+    """
     if np is None:
         if isinstance(pb, ABCIterable) and not isinstance(pb, (str, bytes)):
-            return [float(v) / PB_FS for v in pb]
-        return float(pb) / PB_FS
+            return [_clip_scalar(v) / PB_FS for v in pb]
+        return _clip_scalar(pb) / PB_FS
     else:
         if np.isscalar(pb):
-            return float(pb) / PB_FS
+            return _clip_scalar(pb) / PB_FS
         arr = _as_array(pb)
+        arr = np.clip(arr, PB_MIN, PB_MAX)
         return arr / PB_FS
 
 
@@ -154,17 +168,21 @@ def pb_to_semi(pb: int, semi_range: float) -> float:
     ...
 
 def pb_to_semi(pb: Union[int, Iterable[int]], semi_range: float):
-    """Convert pitch-bend integers to semitone values."""
+    """Convert pitch-bend integers to semitone values.
+
+    Values outside ``[PB_MIN, PB_MAX]`` are clipped.
+    """
     if semi_range == 0:
         if isinstance(pb, ABCIterable) and not isinstance(pb, (str, bytes)):
             return [0 for _ in pb]
         return 0
     if np is None:
         if isinstance(pb, ABCIterable) and not isinstance(pb, (str, bytes)):
-            return [float(v) / PB_FS * semi_range for v in pb]
-        return float(pb) / PB_FS * semi_range
+            return [_clip_scalar(v) / PB_FS * semi_range for v in pb]
+        return _clip_scalar(pb) / PB_FS * semi_range
     else:
         if np.isscalar(pb):
-            return float(pb) / PB_FS * semi_range
+            return _clip_scalar(pb) / PB_FS * semi_range
         arr = _as_array(pb)
+        arr = np.clip(arr, PB_MIN, PB_MAX)
         return arr / PB_FS * semi_range

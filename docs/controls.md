@@ -90,7 +90,12 @@ The renderer automatically appends a final zero‑bend event so synths return to
 pitch centre.
 
 Values are quantized to the MIDI 14‑bit pitch‑bend range and clipped to
-`-8192..+8191` (due to rounding the minimum representable value is `-8191`).
+`-8191..+8191` (the minimum representable value is `-8191` due to rounding).
+
+Internal mapping: normalized ``[-1..1]`` ⇄ PB ``[-8191..+8191]``. MIDI raw:
+``0..16383`` (center ``8192``); the signed convention is often shown as
+``-8192..+8191``. We scale by ``PB_MAX`` (=8191) so that ±range maps exactly to
+±8191.
 
 ## Domains and tempo
 

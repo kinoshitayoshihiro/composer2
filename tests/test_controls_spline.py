@@ -720,3 +720,14 @@ def test_pb_roundtrip_semitones():
     back = pb_math.pb_to_semi(pb, r)
     tol = r / pb_math.PB_FS + 1e-9  # quantization error ≈ range/PB_FS
     assert np.all(np.abs(vals - back) <= tol)
+
+
+def test_pb_to_norm_clips():
+    assert pb_math.pb_to_norm(pb_math.PB_MIN - 100) == -1.0
+    assert pb_math.pb_to_norm(pb_math.PB_MAX + 100) == 1.0
+
+
+def test_pb_to_semi_clips():
+    r = 2.0
+    assert pb_math.pb_to_semi(pb_math.PB_MIN - 100, r) == pytest.approx(-r)
+    assert pb_math.pb_to_semi(pb_math.PB_MAX + 100, r) == pytest.approx(r)

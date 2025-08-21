@@ -75,7 +75,7 @@ try:  # Optional heavy deps
 except Exception:  # pragma: no cover - handled by fallback
     librosa = None  # type: ignore
 
-from .apply_controls import apply_controls
+from .apply_controls import apply_controls, write_bend_range_rpn
 from .controls_spline import ControlCurve  # noqa: E402
 from .controls_spline import tempo_map_from_prettymidi
 from . import pb_math
@@ -165,14 +165,12 @@ def _emit_pitch_bend_range(
     integer_only: bool = False,
 ) -> None:
     """Insert RPN 0,0 events to set pitch-bend range."""
-    msb = int(max(0, min(127, math.floor(bend_range_semitones))))
-    frac = bend_range_semitones - msb
-    lsb = 0 if integer_only else int(max(0, min(127, round(frac * 127))))
-    cc = inst.control_changes
-    cc.append(pretty_midi.ControlChange(number=101, value=0, time=float(t)))
-    cc.append(pretty_midi.ControlChange(number=100, value=0, time=float(t)))
-    cc.append(pretty_midi.ControlChange(number=6, value=msb, time=float(t)))
-    cc.append(pretty_midi.ControlChange(number=38, value=lsb, time=float(t)))
+    if integer_only:
+        bend_range_semitones = math.floor(bend_range_semitones)
+    t = max(0.0, float(t))  # clamp to non-negative
+    write_bend_range_rpn(
+        inst, bend_range_semitones, at_time=t
+    )  # centralize RPN emission
 
 
 def _is_piano_like(name: str, program: int | None = None) -> bool:

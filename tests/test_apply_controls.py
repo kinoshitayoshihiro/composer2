@@ -78,6 +78,13 @@ def test_skip_preexisting_rpn():
     assert pairs.count((101, 0)) == 1
 
 
+def test_rpn_time_clamped_non_negative():
+    inst = pretty_midi.Instrument(program=0)
+    write_bend_range_rpn(inst, 2.0, at_time=-1.0)
+    t = min(c.time for c in inst.control_changes if c.number == 101)
+    assert t == pytest.approx(0.0)
+
+
 def test_rpn_sort_priority_same_timestamp():
     inst = pretty_midi.Instrument(program=0)
     t = 0.0

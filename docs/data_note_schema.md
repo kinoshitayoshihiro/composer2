@@ -25,11 +25,16 @@ Each row corresponds to a single note with the following columns:
 | `cc64_ratio`* | float | Fraction of note duration with sustain pedal active |
 | `cc11_at_onset`* | int | CC11 value at note onset |
 | `cc11_mean`* | float | Mean CC11 value over the note duration |
-| `bend`*      | int   | Pitch-bend value at onset (−8192…8191) |
+| `bend`*      | int   | Pitch-bend value at onset (−8191…8191) |
 | `bend_range`* | int   | Pitch-bend range in semitones (default ±2) |
 | `bend_max_semi`* | float | Maximum absolute bend depth in semitones within the note |
 | `bend_rms_semi`* | float | RMS bend depth in semitones |
 | `vib_rate_hz`* | float | Estimated vibrato rate in Hz |
+
+Internal mapping: normalized ``[-1..1]`` ⇄ PB ``[-8191..+8191]``. MIDI raw:
+``0..16383`` (center ``8192``); the signed convention is often shown as
+``-8192..+8191``. We scale by ``PB_MAX`` (=8191) so that ±range maps exactly
+to ±8191.
 
 Columns marked with * are optional and can be omitted with `--no-cc` or
 `--no-bend` when high-resolution controller or pitch-bend data is not needed.

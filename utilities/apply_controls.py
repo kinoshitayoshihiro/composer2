@@ -54,36 +54,33 @@ def write_bend_range_rpn(
 ) -> None:
     """Emit bend-range RPN (101,100→6,38) onto ``inst`` at ``at_time``.
 
-    The sequence is written at most once per instrument.
-    The LSB encodes the fractional semitone portion in 1/128th steps.
+    ``at_time`` is clamped to ``>=0``. If an existing RPN 0,0 block is present,
+    its values are updated in place rather than adding a duplicate. The LSB
+    encodes the fractional semitone portion in 1/128th steps.
     """
 
+    t = max(0.0, float(at_time))
     msb = int(range_semitones)
     lsb = int(round((range_semitones - msb) * 128))
     lsb = max(0, min(127, lsb))
 
-    for i in range(len(inst.control_changes) - 3):
-        a, b, c, d = inst.control_changes[i : i + 4]
+    ccs = inst.control_changes
+    for i in range(len(ccs) - 2):
+        a, b, c = ccs[i : i + 3]
         if (a.number, a.value) == (101, 0) and (b.number, b.value) == (100, 0) and c.number == 6:
-            old_msb = c.value
-            old_lsb = 0
-            if d.number == 38:
-                old_lsb = d.value
+            d = ccs[i + 3] if i + 3 < len(ccs) and ccs[i + 3].number == 38 else None
+            cur = c.value + (d.value if d else 0) / 128
             inst._rpn_written = True  # type: ignore[attr-defined]
-            inst._rpn_range = old_msb + old_lsb / 128.0  # type: ignore[attr-defined]
-            if old_msb == msb and old_lsb == lsb:
+            if abs(cur - range_semitones) <= 1 / 128:
+                inst._rpn_range = cur  # type: ignore[attr-defined]
                 return
-            del inst.control_changes[i : i + 4]
-            break
+            c.value = msb
+            if d is not None:
+                d.value = lsb
+            inst._rpn_range = range_semitones  # type: ignore[attr-defined]
+            return
 
-    if (
-        getattr(inst, "_rpn_written", False)
-        and getattr(inst, "_rpn_range", None) == range_semitones
-    ):
-        return
-
-    t = float(at_time)
-    inst.control_changes.extend(
+    ccs.extend(
         [
             pretty_midi.ControlChange(number=101, value=0, time=t),
             pretty_midi.ControlChange(number=100, value=0, time=t),
@@ -154,7 +151,6 @@ def apply_controls(
                         first_pb = min(pb.time for pb in inst.pitch_bends)
                         t = max(0.0, min(rpn_at, first_pb - 1e-9))  # before first PB
                     write_bend_range_rpn(inst, bend_range_semitones, at_time=t)
-                    inst._rpn_written = True  # type: ignore[attr-defined]
             elif name in _CC_MAP:
                 cc_num = _CC_MAP[name]
                 sr = sr_map.get(name)

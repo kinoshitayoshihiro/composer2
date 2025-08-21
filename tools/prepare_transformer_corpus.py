@@ -5,8 +5,9 @@ __doc__ = """Prepare a small Transformer corpus from MIDI files.
 This script builds a dataset suitable for training sequence models on personal
 MIDI collections. It chops each MIDI file into fixed-size bar segments, applies
 simple tokenisation and optionally merges metadata such as tags or lyric text.
-The resulting dataset is written as JSONL files with deterministic train/valid/
-test splits.
+Tag keys in YAML files should be paths relative to the input root and preferably
+lowercase. The resulting dataset is written as JSONL files with deterministic
+train/valid/test splits.
 
 Example
 -------
@@ -27,6 +28,7 @@ import math
 import os
 import random
 import warnings
+import gzip
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable, Sequence
@@ -35,6 +37,10 @@ import concurrent.futures
 
 import pretty_midi
 import numpy as np
+try:
+    import yaml
+except Exception:  # pragma: no cover - optional dependency
+    yaml = None
 
 from utilities.pretty_midi_safe import pm_to_mido
 
@@ -148,8 +154,14 @@ def tokenize_notes(
 
 
 def load_tag_maps(tag_files: Sequence[Path]) -> Dict[str, Dict[str, str]]:
-    """Load per-file metadata from YAML files."""
+    """Load per-file metadata from YAML files.
 
+    Keys should be relative to the input root and lowercase to match
+    :func:`normalize_key`.
+    """
+    if yaml is None:
+        logger.warning("PyYAML not installed; skipping tags")
+        return {}
     tag_map: Dict[str, Dict[str, str]] = {}
     for path in tag_files:
         if not path.is_file():
@@ -392,7 +404,12 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--duv", type=str, choices=["on", "off"], default="off")
     p.add_argument("--dur-bins", type=int, default=16)
     p.add_argument("--vel-bins", type=int, default=8)
-    p.add_argument("--tags", nargs="*", default=[], help="YAML metadata files")
+    p.add_argument(
+        "--tags",
+        nargs="*",
+        default=[],
+        help="YAML metadata files; keys relative to input root (prefer lowercase)",
+    )
     p.add_argument("--lyric-json", type=str, default=None, help="JSON file mapping paths to lyrics")
     p.add_argument(
         "--embed-offline",
@@ -624,8 +641,9 @@ def main(argv: list[str] | None = None) -> None:
 
     # 簡易ヘルプ
     if args.tags and not all(Path(p).is_file() for p in args.tags):
-        logger.error("一部のタグファイルが見つかりません: %s", args.tags)
-        return
+        missing = [p for p in args.tags if not Path(p).is_file()]
+        logger.warning("一部のタグファイルが見つかりません: %s", missing)
+        args.tags = [p for p in args.tags if Path(p).is_file()]
     if args.lyric_json and not Path(args.lyric_json).is_file():
         logger.error("歌詞 JSON ファイルが見つかりません: %s", args.lyric_json)
         return
@@ -658,9 +676,45 @@ def main(argv: list[str] | None = None) -> None:
     splits, lyric_matches, midi_file_count = build_corpus(args, files)
     logger.info("tempo fallback used: %d", _TEMPO_FALLBACKS)
 
+    # DUV 統計と必要ならクラスタリング
+    duv_freq: Counter[str] = Counter()
+    for samp in splits["train"] + splits.get("valid", []) + splits.get("test", []):
+        for tok in samp.tokens:
+            if tok.startswith("DUV_"):
+                duv_freq[tok] += 1
+    if args.duv_max is not None and duv_freq:
+        keep = {t for t, _ in duv_freq.most_common(args.duv_max)}
+        collapsed = len(duv_freq) - len(keep)
+        if collapsed:
+            for samp_list in splits.values():
+                for s in samp_list:
+                    s.tokens = [
+                        t if not t.startswith("DUV_") or t in keep else "DUV_OOV"
+                        for t in s.tokens
+                    ]
+            duv_freq = Counter()
+            for samp in splits["train"] + splits.get("valid", []) + splits.get("test", []):
+                for tok in samp.tokens:
+                    if tok.startswith("DUV_"):
+                        duv_freq[tok] += 1
+        logger.info("DUV kept: %d collapsed: %d", len(keep), collapsed)
+
     # ボキャブラリ構築
     vocab = build_vocab(splits["train"])
     tag_vocab = build_tag_vocab(splits["train"])
+
+    total_samples = sum(len(v) for v in splits.values())
+    tag_hits = sum(
+        1 for f in files if normalize_key(f, Path(args.in_dir)) in _TAG_MAP
+    )
+    duv_vocab_size = sum(1 for t in vocab if t.startswith("DUV_"))
+    logger.info(
+        "samples: %d tag hits: %d/%d duv vocab: %d",
+        total_samples,
+        tag_hits,
+        midi_file_count,
+        duv_vocab_size,
+    )
 
     # メタデータ収集
     meta = {

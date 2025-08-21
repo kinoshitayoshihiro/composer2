@@ -15,6 +15,8 @@ from tools.prepare_transformer_corpus import (
     tokenize_notes,
     build_beat_map,
     gather_midi_files,
+    bin_duration,
+    load_tag_maps,
 )
 from utilities.pretty_midi_safe import pm_to_mido
 
@@ -26,6 +28,28 @@ def make_midi(path: Path, *, pitch: int = 60, velocity: int = 80) -> None:
     inst.notes.append(pretty_midi.Note(velocity=velocity, pitch=pitch, start=0, end=2))
     pm.instruments.append(inst)
     pm.write(path.as_posix())
+
+
+def test_bin_duration_numpy_import() -> None:
+    assert bin_duration(0.5, 4) == 2
+
+
+def test_missing_tag_file_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    good = tmp_path / "tags.yaml"
+    good.write_text(yaml.safe_dump({"song.mid": {"mood": "sad"}}))
+    missing = tmp_path / "missing.yaml"
+    with caplog.at_level(logging.WARNING):
+        tag_map = load_tag_maps([good, missing])
+    assert tag_map["song.mid"]["mood"] == "sad"
+    assert "tag file" in caplog.text
+
+
+def test_load_tags_without_yaml(monkeypatch, caplog):
+    monkeypatch.setattr("tools.prepare_transformer_corpus.yaml", None)
+    with caplog.at_level(logging.WARNING):
+        tag_map = load_tag_maps([Path("dummy.yaml")])
+    assert tag_map == {}
+    assert "PyYAML" in caplog.text
 
 
 def test_tokenize_duv_and_standard() -> None:

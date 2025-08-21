@@ -2,6 +2,7 @@ import pytest
 from music21 import instrument, articulations, spanner
 
 from generator.sax_generator import SaxGenerator, BREATH_CC, MOD_CC
+from utilities import pb_math
 
 
 def test_cc_events_for_articulations():
@@ -116,4 +117,4 @@ def test_vibrato_parameter_clamp():
 
     part = gen.compose(section_data=section)
     pitch_vals = [e["val"] for e in getattr(part, "extra_cc", []) if e["cc"] == -1]
-    assert pitch_vals and all(0 <= v <= 16383 for v in pitch_vals)
+    assert pitch_vals and all(0 <= v <= pb_math.PITCHWHEEL_RAW_MAX for v in pitch_vals)

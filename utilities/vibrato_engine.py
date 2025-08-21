@@ -6,6 +6,8 @@ import math
 import random
 from typing import List, Tuple, Literal
 
+from . import pb_math
+
 
 Event = Tuple[Literal["pitch_wheel", "aftertouch"], float, int]
 
@@ -36,15 +38,14 @@ def generate_vibrato(
     if duration_qL <= 0 or step_qL <= 0:
         return events
     semitone_range = 2.0
-    amplitude = depth / semitone_range * 8192
-    amplitude = max(0.0, min(8191, amplitude))
+    amplitude = abs(int(pb_math.semi_to_pb(depth, semitone_range)))
     cc_val = max(0, min(127, int(round(64 + depth * 63))))
     t = 0.0
     index = 0
     while t <= duration_qL + 1e-9:
         if index % 2 == 0:
-            bend = int(round(amplitude * math.sin(2 * math.pi * rate * t)))
-            bend = max(-8192, min(8191, bend))
+            bend = int(round(float(amplitude) * math.sin(2 * math.pi * rate * t)))
+            bend = max(pb_math.PB_MIN, min(pb_math.PB_MAX, bend))
             events.append(("pitch_wheel", round(t, 6), bend))
         else:
             events.append(("aftertouch", round(t, 6), cc_val))
@@ -53,9 +54,7 @@ def generate_vibrato(
     return events
 
 
-def generate_gliss(
-    start_pitch: int, end_pitch: int, duration_qL: float
-) -> List[Tuple[int, float]]:
+def generate_gliss(start_pitch: int, end_pitch: int, duration_qL: float) -> List[Tuple[int, float]]:
     """Return pitch values for a glissando.
 
     Values are linearly interpolated from ``start_pitch`` to ``end_pitch`` at

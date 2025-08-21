@@ -10,6 +10,7 @@ pretty_midi = pytest.importorskip("pretty_midi")
 import wave
 import multiprocessing
 import logging
+from utilities import pb_math
 
 np = pytest.importorskip("numpy")
 
@@ -43,9 +44,7 @@ def _stub_transcribe(
     **kwargs,
 ) -> StemResult:
     inst = pretty_midi.Instrument(program=0, name=path.stem)
-    inst.notes.append(
-        pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=min_dur)
-    )
+    inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=min_dur))
     return types.SimpleNamespace(instrument=inst, tempo=120.0)
 
 
@@ -175,9 +174,7 @@ def test_rpn_emitted(tmp_path, monkeypatch):
 
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _stub_transcribe)
 
-    audio_to_midi_batch.main(
-        [str(song_dir), str(out_dir), "--bend-range-semitones", "12.34"]
-    )
+    audio_to_midi_batch.main([str(song_dir), str(out_dir), "--bend-range-semitones", "12.34"])
     midi_path = out_dir / song_dir.name / "a.mid"
     pm = pretty_midi.PrettyMIDI(str(midi_path))
     ccs = pm.instruments[0].control_changes
@@ -211,9 +208,7 @@ def test_tempo_written(tmp_path, monkeypatch):
         **kwargs,
     ) -> StemResult:
         inst = pretty_midi.Instrument(program=0, name=path.stem)
-        inst.notes.append(
-            pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=min_dur)
-        )
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=min_dur))
         return types.SimpleNamespace(instrument=inst, tempo=100.0)
 
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", tempo_stub)
@@ -282,9 +277,7 @@ def test_pitch_bend_generation(tmp_path, monkeypatch):
         return wave, sr
 
     monkeypatch.setattr(audio_to_midi_batch, "crepe", FakeCrepe)
-    monkeypatch.setattr(
-        audio_to_midi_batch, "librosa", types.SimpleNamespace(load=fake_load)
-    )
+    monkeypatch.setattr(audio_to_midi_batch, "librosa", types.SimpleNamespace(load=fake_load))
 
     res = audio_to_midi_batch._transcribe_stem(
         path,
@@ -308,7 +301,7 @@ def test_pitch_bend_generation(tmp_path, monkeypatch):
     for d in devs:
         ema = alpha * d + (1 - alpha) * ema
         emas.append(ema)
-    expected = int(round(np.max(np.abs(emas)) / 2.0 * 8191))
+    expected = int(round(np.max(np.abs(emas)) / 2.0 * pb_math.PB_MAX))
     assert max_b == pytest.approx(expected, rel=0.1)
     assert min_b == pytest.approx(-expected, rel=0.1)
 
@@ -333,9 +326,7 @@ def test_pitch_bend_disabled(tmp_path, monkeypatch):
         return wave, sr
 
     monkeypatch.setattr(audio_to_midi_batch, "crepe", FakeCrepe)
-    monkeypatch.setattr(
-        audio_to_midi_batch, "librosa", types.SimpleNamespace(load=fake_load)
-    )
+    monkeypatch.setattr(audio_to_midi_batch, "librosa", types.SimpleNamespace(load=fake_load))
 
     res = audio_to_midi_batch._transcribe_stem(
         path,
@@ -362,9 +353,7 @@ def test_pitch_bend_fallback_no_crepe(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(audio_to_midi_batch, "_fallback_transcribe_stem", fb)
 
     with caplog.at_level(logging.INFO):
-        res = audio_to_midi_batch._transcribe_stem(
-            path, enable_bend=True, auto_tempo=False
-        )
+        res = audio_to_midi_batch._transcribe_stem(path, enable_bend=True, auto_tempo=False)
     assert res.instrument.pitch_bends == []
     assert any("Pitch-bend disabled" in r.message for r in caplog.records)
 
@@ -399,9 +388,7 @@ def test_tempo_strategy(tmp_path, monkeypatch, strategy, expected):
         **kwargs,
     ) -> StemResult:
         inst = pretty_midi.Instrument(program=0, name=path.stem)
-        inst.notes.append(
-            pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=min_dur)
-        )
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=min_dur))
         tempo = tempos.pop(0)
         return types.SimpleNamespace(instrument=inst, tempo=tempo)
 
@@ -434,19 +421,22 @@ def test_cc11_energy(tmp_path, monkeypatch):
         inst = pretty_midi.Instrument(program=0, name=path.stem)
         inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=2.0))
         events = audio_to_midi_batch.cc_utils.energy_to_cc11(
-            audio, sr, smooth_ms=kwargs.get("cc11_smoothing_ms", 80), strategy=kwargs.get("cc_strategy", "none"),
+            audio,
+            sr,
+            smooth_ms=kwargs.get("cc11_smoothing_ms", 80),
+            strategy=kwargs.get("cc_strategy", "none"),
         )
         prev = -1
         for t, v in events:
             if v != prev:
-                inst.control_changes.append(pretty_midi.ControlChange(number=11, value=v, time=float(t)))
+                inst.control_changes.append(
+                    pretty_midi.ControlChange(number=11, value=v, time=float(t))
+                )
                 prev = v
         return types.SimpleNamespace(instrument=inst, tempo=120.0)
 
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", stub)
-    audio_to_midi_batch.main(
-        [str(in_dir), str(out_dir), "--cc-strategy", "energy"]
-    )
+    audio_to_midi_batch.main([str(in_dir), str(out_dir), "--cc-strategy", "energy"])
     pm = pretty_midi.PrettyMIDI(str(out_dir / in_dir.name / "voice.mid"))
     vals = [cc.value for cc in pm.instruments[0].control_changes if cc.number == 11]
     assert sum(vals[-5:]) < sum(vals[:5])
@@ -474,21 +464,27 @@ def test_sustain_threshold(tmp_path, monkeypatch):
             prev = -1
             for t, v in events:
                 if v != prev:
-                    inst.control_changes.append(pretty_midi.ControlChange(number=11, value=v, time=float(t)))
+                    inst.control_changes.append(
+                        pretty_midi.ControlChange(number=11, value=v, time=float(t))
+                    )
                     prev = v
         for t, v in audio_to_midi_batch.cc_utils.infer_cc64_from_overlaps(
             inst.notes, kwargs.get("sustain_threshold", 0.5)
         ):
-            inst.control_changes.append(pretty_midi.ControlChange(number=64, value=v, time=float(t)))
+            inst.control_changes.append(
+                pretty_midi.ControlChange(number=64, value=v, time=float(t))
+            )
         return types.SimpleNamespace(instrument=inst, tempo=None)
 
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", stub)
-    audio_to_midi_batch.main([
-        str(in_dir),
-        str(out_dir),
-        "--sustain-threshold",
-        "0.5",
-    ])
+    audio_to_midi_batch.main(
+        [
+            str(in_dir),
+            str(out_dir),
+            "--sustain-threshold",
+            "0.5",
+        ]
+    )
     pm = pretty_midi.PrettyMIDI(str(out_dir / in_dir.name / "piano.mid"))
     vals = [cc.value for cc in pm.instruments[0].control_changes if cc.number == 64]
     assert 127 in vals and 0 in vals
@@ -499,16 +495,17 @@ def test_cc11_sparsify(tmp_path):
     audio = np.ones(sr * 2)
     inst = pretty_midi.Instrument(program=0)
     inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=2.0))
-    events = audio_to_midi_batch.cc_utils.energy_to_cc11(
-        audio, sr, smooth_ms=0, strategy="energy"
-    )
+    events = audio_to_midi_batch.cc_utils.energy_to_cc11(audio, sr, smooth_ms=0, strategy="energy")
     prev = -1
     for t, v in events:
         if v != prev:
-            inst.control_changes.append(pretty_midi.ControlChange(number=11, value=v, time=float(t)))
+            inst.control_changes.append(
+                pretty_midi.ControlChange(number=11, value=v, time=float(t))
+            )
             prev = v
     events = [cc for cc in inst.control_changes if cc.number == 11]
     assert len(events) <= 70
+
 
 def test_tempo_lock_anchor_fold_halves(tmp_path, monkeypatch):
     song_dir = tmp_path / "song"
@@ -683,4 +680,3 @@ def test_tempo_lock_merge_anchor(tmp_path, monkeypatch):
     midi_path = out_dir / f"{song_dir.name}.mid"
     _, tempi = pretty_midi.PrettyMIDI(str(midi_path)).get_tempo_changes()
     assert round(float(tempi[0]), 1) == round(110.3, 1)
-

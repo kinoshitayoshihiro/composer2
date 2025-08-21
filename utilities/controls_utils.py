@@ -11,6 +11,7 @@ except Exception:  # pragma: no cover
     np = None  # type: ignore
 
 from utilities.audio_to_midi_batch import _coerce_controller_times
+from utilities import pb_math
 
 
 def _tri(phase: float) -> float:
@@ -25,13 +26,18 @@ def synthesize_vibrato(
     *,
     shape: Literal["sine", "triangle"] = "sine",
 ) -> list[pretty_midi.PitchBend]:
-    """Return pitch-bend vibrato events for ``inst``."""
+    """Return pitch-bend vibrato events for ``inst``.
+
+    ``depth_semitones`` is peak-to-peak; the waveform swings by half this
+    amount against a ±1 semitone reference before conversion via
+    :func:`pb_math.semi_to_pb`.
+    """
     if rate_hz is None or depth_semitones <= 0 or not inst.notes:
         return []
     start = min(n.start for n in inst.notes)
     end = max(n.end for n in inst.notes)
     step = 0.02  # 20 ms resolution
-    scale = 8191 * depth_semitones / 2.0
+    scale = depth_semitones / 2.0
     t = start
     prev = None
     bends: list[pretty_midi.PitchBend] = []
@@ -41,7 +47,7 @@ def synthesize_vibrato(
             val = _tri(phase)
         else:
             val = math.sin(phase)
-        bend = int(max(-8191, min(8191, val * scale)))
+        bend = int(pb_math.semi_to_pb(val * scale, 1.0))
         if prev is None or bend != prev:
             bends.append(pretty_midi.PitchBend(pitch=bend, time=float(t)))
             prev = bend
@@ -61,13 +67,12 @@ def synthesize_portamento(
     if len(notes) < 2:
         return []
     max_gap = portamento_ms / 1000.0
-    scale = 8191 / 2.0
     bends: list[pretty_midi.PitchBend] = []
     for a, b in zip(notes, notes[1:]):
         gap = b.start - a.end
         if 0 < gap <= max_gap:
             semis = b.pitch - a.pitch
-            bend = int(max(-8191, min(8191, semis * scale)))
+            bend = int(pb_math.semi_to_pb(semis, 2.0))
             bends.append(pretty_midi.PitchBend(pitch=bend, time=float(a.end)))
             bends.append(pretty_midi.PitchBend(pitch=0, time=float(b.start)))
     return bends
@@ -92,7 +97,7 @@ def apply_post_bend_policy(
         for b in new_bends:
             t = round(b.time, 6)
             merged[t] = int(
-                max(-8191, min(8191, merged.get(t, 0) + int(b.pitch)))
+                max(pb_math.PB_MIN, min(pb_math.PB_MAX, merged.get(t, 0) + int(b.pitch)))
             )
         inst.pitch_bends = [
             pretty_midi.PitchBend(pitch=p, time=float(t))

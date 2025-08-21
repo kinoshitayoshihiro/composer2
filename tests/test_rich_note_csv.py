@@ -6,13 +6,17 @@ import importlib.util
 import sys
 
 pretty_midi = pytest.importorskip("pretty_midi")
+if not hasattr(pretty_midi.PrettyMIDI, "time_signature_changes"):
+    pytest.skip("pretty_midi stub lacks time_signature_changes", allow_module_level=True)
+from utilities import pb_math
 
 SPEC = importlib.util.spec_from_file_location(
-    "rich_note_csv", Path(__file__).resolve().parents[1] / "utilities" / "rich_note_csv.py"
+    "utilities.rich_note_csv",
+    Path(__file__).resolve().parents[1] / "utilities" / "rich_note_csv.py",
 )
 rich_note_csv = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
-sys.modules["rich_note_csv"] = rich_note_csv
+sys.modules["utilities.rich_note_csv"] = rich_note_csv
 SPEC.loader.exec_module(rich_note_csv)
 build_note_csv = rich_note_csv.build_note_csv
 
@@ -37,7 +41,7 @@ def make_midi(
     if cc11:
         inst.control_changes.append(pretty_midi.ControlChange(number=11, value=100, time=0))
     if bend:
-        inst.pitch_bends.append(pretty_midi.PitchBend(pitch=8191, time=0))
+        inst.pitch_bends.append(pretty_midi.PitchBend(pitch=pb_math.PB_MAX, time=0))
     pm.instruments.append(inst)
     pm.write(str(path))
 
@@ -78,5 +82,3 @@ def test_cc_bend_flags(tmp_path):
     with out2.open() as f:
         header2 = next(csv.reader(f))
     assert "CC64" in header2 and "bend" in header2
-
-

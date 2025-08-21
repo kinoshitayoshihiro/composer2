@@ -20,6 +20,7 @@ try:  # optional dependency
 except Exception:  # pragma: no cover
     np = None  # type: ignore
 import pretty_midi
+from . import pb_math
 
 __all__ = [
     "ControlCurve",
@@ -731,10 +732,9 @@ class ControlCurve:
                 v = [v[i] for i in idxs]
         # convert to 14-bit domain
         if units == "normalized":
-            vals = round_int(clip([x * 8191.0 for x in v], -8191, 8191))
+            vals = pb_math.norm_to_pb(v)
         else:
-            scale = 8192.0 / float(bend_range_semitones)
-            vals = round_int(clip([x * scale for x in v], -8192, 8191))
+            vals = pb_math.semi_to_pb(v, bend_range_semitones)
         t, vals = _dedupe_int(t, vals, time_eps=time_eps, keep_last=True)
         if value_eps > 0 and len(vals) > 1:
             ft: list[float] = [t[0]]
@@ -777,27 +777,19 @@ class ControlCurve:
         values: Sequence[float],
         range_semitones: float,
         units: str = "semitones",
-    ) -> list[int]:
+    ) -> Sequence[int]:
         """Convert ``values`` to 14-bit pitch-bend integers.
 
         ``units`` can be ``"semitones"`` (default) or ``"normalized"`` where
-        ``-1``..``1`` maps to ``[-8191, 8191]``.
+        ``-1``..``1`` maps to ``[-8191, 8191]``. Returns ``np.ndarray[int]`` when
+        NumPy is available; otherwise ``list[int]``.
         """
 
         vals = ensure_scalar_floats(values)
         if units == "normalized":
-            arr = [v * 8191.0 for v in vals]
-            arr = clip(arr, -8191, 8191)
+            return pb_math.norm_to_pb(vals)
         else:
-            scale = 8192.0 / float(range_semitones)
-            arr = clip([v * scale for v in vals], -8191, 8191)
-        # ``round_int`` may return either a numpy array or a plain Python list
-        # depending on whether numpy is available.  ``convert_to_14bit`` should
-        # consistently return a ``list[int]`` so callers can perform ordinary
-        # equality comparisons without triggering numpy's array semantics.
-        # Converting the result explicitly avoids ambiguous truth-value errors
-        # when comparing against Python lists in tests and user code.
-        return list(round_int(arr))
+            return pb_math.semi_to_pb(vals, range_semitones)
 
     # ---- simplification --------------------------------------------
     @staticmethod

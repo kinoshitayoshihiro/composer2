@@ -12,6 +12,7 @@ from music21 import articulations, instrument, note, spanner, stream
 
 from utilities.cc_tools import add_cc_events
 from utilities.scale_registry import ScaleRegistry
+from utilities import pb_math
 
 from .melody_generator import MelodyGenerator
 
@@ -143,9 +144,7 @@ class SaxGenerator(MelodyGenerator):
         for n in notes:
             off = float(n.offset)
 
-            is_stacc = any(
-                isinstance(a, articulations.Staccato) for a in n.articulations
-            )
+            is_stacc = any(isinstance(a, articulations.Staccato) for a in n.articulations)
             in_slur = id(n) in slur_notes or any(
                 isinstance(a, articulations.Tenuto) for a in n.articulations
             )
@@ -191,13 +190,15 @@ class SaxGenerator(MelodyGenerator):
 
         events: list[tuple[float, int, int]] = []
         bpm = float(self.global_tempo or 120.0)
+        center = pb_math.PITCHWHEEL_CENTER
+        max_val = pb_math.PITCHWHEEL_RAW_MAX
         for n in part.recurse().notes:
             dur_ql = float(n.quarterLength)
             t = 0.0
             while t <= dur_ql + 1e-6:
                 sec = t * 60.0 / bpm
-                raw = 8192 + depth * math.sin(2 * math.pi * rate_hz * sec)
-                val = max(0, min(16383, int(raw)))
+                raw = center + depth * math.sin(2 * math.pi * rate_hz * sec)
+                val = max(0, min(max_val, int(raw)))
                 events.append((float(n.offset) + t, PITCHWHEEL, val))
                 t += step_ql
 
@@ -257,15 +258,11 @@ class SaxGenerator(MelodyGenerator):
             .get("melody", {})
             .get("rhythm_key", "sax_basic_swing")
         )
-        pat = DEFAULT_PHRASE_PATTERNS.get(
-            pattern_key, DEFAULT_PHRASE_PATTERNS["sax_basic_swing"]
-        )
+        pat = DEFAULT_PHRASE_PATTERNS.get(pattern_key, DEFAULT_PHRASE_PATTERNS["sax_basic_swing"])
 
         tonic = section_data.get("tonic_of_section", self.global_key_signature_tonic)
         mode = section_data.get("mode", self.global_key_signature_mode)
-        scale_pitches = ScaleRegistry.get(tonic or "C", mode or "major").getPitches(
-            "C3", "C5"
-        )
+        scale_pitches = ScaleRegistry.get(tonic or "C", mode or "major").getPitches("C3", "C5")
 
         part = stream.Part(id=self.part_name or "sax")
         part.insert(0, self.default_instrument)
@@ -296,9 +293,7 @@ class SaxGenerator(MelodyGenerator):
 
         if section_data:
             mi = section_data.get("musical_intent", {})
-            pat_key = self._choose_pattern_key(
-                mi.get("emotion"), mi.get("intensity"), mi
-            )
+            pat_key = self._choose_pattern_key(mi.get("emotion"), mi.get("intensity"), mi)
             section_data.setdefault("part_params", {}).setdefault("melody", {})[
                 "rhythm_key"
             ] = pat_key
@@ -308,14 +303,10 @@ class SaxGenerator(MelodyGenerator):
             if section_data
             else self.global_key_signature_tonic
         )
-        mode = (
-            section_data.get("mode") if section_data else self.global_key_signature_mode
-        )
+        mode = section_data.get("mode") if section_data else self.global_key_signature_mode
         pcs = {
             p.pitchClass
-            for p in ScaleRegistry.get(tonic or "C", mode or "major").getPitches(
-                "C3", "C5"
-            )
+            for p in ScaleRegistry.get(tonic or "C", mode or "major").getPitches("C3", "C5")
         }
         for n in list(part.recurse().notes):
             if n.pitch.pitchClass not in pcs:

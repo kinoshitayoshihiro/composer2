@@ -149,10 +149,10 @@ def apply_controls(
                     new_pb[-1].time = end
                 if write_rpn and not getattr(inst, "_rpn_written", False):
                     if not inst.pitch_bends:
-                        t = max(0.0, rpn_at)
+                        t = max(0.0, rpn_at)  # clamp to ≥0 for DAW compatibility
                     else:
                         first_pb = min(pb.time for pb in inst.pitch_bends)
-                        t = max(0.0, min(rpn_at, first_pb - 1e-9))
+                        t = max(0.0, min(rpn_at, first_pb - 1e-9))  # before first PB
                     write_bend_range_rpn(inst, bend_range_semitones, at_time=t)
                     inst._rpn_written = True  # type: ignore[attr-defined]
             elif name in _CC_MAP:

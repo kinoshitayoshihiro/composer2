@@ -11,6 +11,7 @@ try:
     import pretty_midi
 except Exception:  # pragma: no cover - optional dependency
     pretty_midi = None  # type: ignore
+from . import pb_math  # package-relative; adjust sys.path if run as script
 
 
 @dataclass
@@ -166,7 +167,7 @@ def _vibrato_rate(
 ) -> Optional[float]:
     if not samples or duration <= 0 or bend_range <= 0:
         return None
-    semis = [s * bend_range / 8192.0 for s in samples]
+    semis = pb_math.pb_to_semi(samples, bend_range)
     signs = [1 if s > 0 else -1 if s < 0 else 0 for s in semis]
     crossings = 0
     for a, b in zip(signs, signs[1:]):
@@ -240,7 +241,7 @@ def scan_midi_files(
                         for b in inst.pitch_bends:
                             t = float(b.time)
                             br = _last_value(range_times, range_vals, t)
-                            semi = b.pitch * br / 8192.0
+                            semi = pb_math.pb_to_semi(b.pitch, br)
                             event_writer.writerow([t, b.pitch, semi, track_idx])
 
                 for note in inst.notes:
@@ -282,7 +283,7 @@ def scan_midi_files(
                         bend_range = _last_value(range_times, range_vals, start)
                         samples = _sample_bend(bend_times, bend_vals, start, end)
                         if samples:
-                            semis = [s * bend_range / 8192.0 for s in samples]
+                            semis = pb_math.pb_to_semi(samples, bend_range)
                             bend_max_semi = max(abs(s) for s in semis)
                             bend_rms_semi = math.sqrt(
                                 sum(s * s for s in semis) / len(semis)

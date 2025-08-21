@@ -10,6 +10,7 @@ except Exception:  # pragma: no cover
 apply_controls = importlib.import_module("utilities.apply_controls")
 write_bend_range_rpn = apply_controls.write_bend_range_rpn
 ControlCurve = importlib.import_module("utilities.controls_spline").ControlCurve
+from utilities import pb_math
 
 
 def test_rpn_once_and_lsb_rounding():
@@ -258,7 +259,7 @@ def test_total_cap_proportional():
 
 @pytest.mark.parametrize(
     "val,expected",
-    [(-1.0, -8191), (-0.5, -4096), (0.0, 0), (0.5, 4096), (1.0, 8191)],
+    [(-1.0, pb_math.PB_MIN), (-0.5, -4096), (0.0, 0), (0.5, 4096), (1.0, pb_math.PB_MAX)],
 )
 def test_to_pitch_bend_normalized_scaling(val, expected):
     curve = ControlCurve([0.0, 1.0], [0.0, val], units="normalized", ensure_zero_at_edges=False)
@@ -269,7 +270,7 @@ def test_to_pitch_bend_normalized_scaling(val, expected):
 
 @pytest.mark.parametrize(
     "val,expected",
-    [(-1.0, -8191), (-0.5, -4096), (0.0, 0), (0.5, 4096), (1.0, 8191)],
+    [(-1.0, pb_math.PB_MIN), (-0.5, -4096), (0.0, 0), (0.5, 4096), (1.0, pb_math.PB_MAX)],
 )
 def test_convert_to_14bit_normalized_scaling(val, expected):
     res = ControlCurve.convert_to_14bit([val], 2.0, units="normalized")

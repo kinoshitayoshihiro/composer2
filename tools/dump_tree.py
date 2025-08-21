@@ -359,8 +359,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         all_nodes.extend(nodes)
 
     out_path = Path(ns.out) if ns.out else None
+    base_path = Path(ns.root).resolve()
     write_output(all_nodes, fmt=ns.format, show_sizes=ns.sizes, show_mtime=ns.mtime,
-                 base=Path("."), summary=ns.summary, top_n_large=ns.top_n_large, out=out_path)
+                 base=base_path, summary=ns.summary, top_n_large=ns.top_n_large, out=out_path)
     return 0
 
 if __name__ == "__main__":

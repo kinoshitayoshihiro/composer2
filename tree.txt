@@ -136,7 +136,10 @@
     │   └── humanize.pyx
     ├── data
     │   ├── __pycache__
+    │   ├── bass_only
+    │   ├── corpus
     │   ├── csv
+    │   ├── drums_only
     │   ├── golden
     │   ├── ir
     │   ├── loops
@@ -201,7 +204,10 @@
     │   ├── aux_features.md
     │   ├── bass_advanced.md
     │   ├── changelog.md
+    │   ├── cli_audio_to_midi_batch.md
     │   ├── config_reference.md
+    │   ├── controls.md
+    │   ├── corpus.md
     │   ├── data_articulation.md
     │   ├── data_note_schema.md
     │   ├── diversity.md
@@ -212,6 +218,7 @@
     │   ├── generator_usage.md
     │   ├── groove.md
     │   ├── groove_sampler.md
+    │   ├── groove_sampler_v2.md
     │   ├── gui.md
     │   ├── gui_v2_walkthrough.md
     │   ├── guitar_generator.md
@@ -256,6 +263,8 @@
     │   ├── groove_sampler.ipynb
     │   ├── lofi_ws_client.py
     │   └── tempo_curve.json
+    ├── generated_grooves
+    │   └── groove_seed123.mid
     ├── generator
     │   ├── __pycache__
     │   ├── __init__.py
@@ -419,6 +428,7 @@
     │   ├── DL. 契りきぬ 達郎 Stems.mid
     │   ├── Rocky.mid
     │   ├── Stems.mid
+    │   ├── conversion_log.json
     │   ├── hanamokatanamo.mid
     │   ├── hanamokatanamoMelancholicFolk.mid
     │   ├── katyan_ruriko.mid
@@ -458,7 +468,53 @@
     │   ├── 扇野　ロング (Remix) Stems.mid
     │   └── 扇野　瑠璃子 Stems.mid
     ├── midi_output
-    │   └── DL. 人情裏長屋　達郎 Stems
+    │   ├── DL. おもかげ抄 Stems
+    │   ├── DL. おもかげ抄 deepemotion  Stems
+    │   ├── DL. 人情裏長屋　達郎 Stems
+    │   ├── DL. 契りきぬ 達郎 Stems
+    │   ├── DLおもかげ抄 Stems
+    │   ├── Rocky
+    │   ├── Stems
+    │   ├── hanamokatanamo
+    │   ├── hanamokatanamoMelancholicFolk
+    │   ├── katyan_ruriko
+    │   ├── katyan_soul
+    │   ├── katyan_taturo
+    │   ├── koumouJapaneseFolk
+    │   ├── koumou_heartfullpop_ruriko
+    │   ├── koumoururiko
+    │   ├── ninjyou
+    │   ├── ninjyouupbeat+
+    │   ├── ninjyouuranagaya
+    │   ├── nostalgic_ninjyou
+    │   ├── omokage
+    │   ├── omokage_emotionalfolk
+    │   ├── omokage_stem
+    │   ├── omokagedeepemotionruriko
+    │   ├── omokagewarmfolk
+    │   ├── omokagewarmruriko
+    │   ├── rocky_japanesefolk
+    │   ├── ruriko_tyusingura_warm_pop
+    │   ├── sinjyufujin_warm_ruriko_Stems
+    │   ├── sinpen_melancholic
+    │   ├── sumimaru
+    │   ├── sumimaru_ruriko
+    │   ├── synjyu_upbeat_poprock
+    │   ├── tigiri_englishedition
+    │   ├── umon_EnglishEdition
+    │   ├── umon_kokounohito_ruriko
+    │   ├── umon_taturo_upbeat
+    │   ├── umontaturo_upbeat
+    │   ├── watasino
+    │   ├── watasino Stems
+    │   ├── yuumoyanonaka
+    │   ├── zenigata_nostalgic
+    │   ├── ☆銭形平次捕物控　 瑠璃子　Japanese Folk Pop, Acoustic, Folk Stems
+    │   ├── ☆銭形平次捕物控　DL Japanese Folk Pop, Acoustic, Folk Stems
+    │   ├── ☆銭形平次捕物控　瑠璃子　Heartfelt folk-pop-rock Stems
+    │   ├── 扇野　ロング (Remix) Stems
+    │   ├── 扇野　ロング (Remix) Stems (1)
+    │   └── 扇野　瑠璃子 Stems
     ├── midi_percussion
     ├── midi_tempo_fixed
     ├── mixing_assistant
@@ -466,6 +522,9 @@
     │   ├── __init__.py
     │   ├── download_ref_masters.py
     │   └── feature_extractor.py
+    ├── ml
+    │   ├── __pycache__
+    │   └── controls_spline.py
     ├── ml_models
     │   ├── __pycache__
     │   ├── __init__.py
@@ -478,6 +537,7 @@
     │   └── groove_ngram_wav.pkl
     ├── models
     │   ├── __pycache__
+    │   ├── controls_spline.py
     │   ├── lyrics_alignment.py
     │   └── phrase_transformer.py
     ├── modular_composer
@@ -555,14 +615,17 @@
     │   ├── export_onnx.py
     │   ├── extract_piano_voicings.py
     │   ├── extract_timbre_dataset.py
+    │   ├── infer_controls.py
     │   ├── infer_duration.py
     │   ├── modcompose_batch_render.py
     │   ├── randomize_stem_cli.py
     │   ├── render_audio.py
+    │   ├── scan_loops.py
     │   ├── segment_phrase.py
     │   ├── setup_project.sh
     │   ├── synthesize_vocal.py
     │   ├── train_articulation.py
+    │   ├── train_controls.py
     │   ├── train_duration.py
     │   ├── train_lyrics_align.py
     │   ├── train_mixing_assistant.py
@@ -576,6 +639,9 @@
     │   ├── phrase_gui.py
     │   └── visualise_groove.py
     ├── temp_test_midi
+    ├── tempo_midi
+    │   ├── check_midi_tempo.py
+    │   └── fix_midi_tempo.py
     ├── tests
     │   ├── __pycache__
     │   ├── audio_to_midi
@@ -585,6 +651,7 @@
     │   ├── __init__.py
     │   ├── __init__.py  # マークダウン記法を削除
     │   ├── _asyncio_plugin.py
+    │   ├── _stubs.py
     │   ├── conftest.py
     │   ├── drum_lut_test.py
     │   ├── mini.jsonl
@@ -594,6 +661,8 @@
     │   ├── test_amp_presets.py
     │   ├── test_api_endpoints.py
     │   ├── test_api_vocal_endpoints.py
+    │   ├── test_apply_controls.py
+    │   ├── test_apply_controls_cli_subprocess.py
     │   ├── test_arrangement_builder.py
     │   ├── test_arranger_basic.py
     │   ├── test_artic_model.py
@@ -604,6 +673,9 @@
     │   ├── test_audio_render.py
     │   ├── test_audio_spectrum.py
     │   ├── test_audio_to_midi_batch.py
+    │   ├── test_audio_to_midi_batch_apply_controls.py
+    │   ├── test_audio_to_midi_batch_cc.py
+    │   ├── test_audio_to_midi_ops_flags.py
     │   ├── test_audio_to_velocity_csv.py
     │   ├── test_augment.py
     │   ├── test_auto_tag.py
@@ -624,6 +696,7 @@
     │   ├── test_bench_ws.py
     │   ├── test_benchmark_compose.py
     │   ├── test_breath_edit.py
+    │   ├── test_cc_auto.py
     │   ├── test_cc_field_consistency.py
     │   ├── test_cc_finalization.py
     │   ├── test_cc_tools.py
@@ -655,6 +728,9 @@
     │   ├── test_consonant_note_sync.py
     │   ├── test_consonant_sync.py
     │   ├── test_consonant_sync_settings.py
+    │   ├── test_controls_cli_integration.py
+    │   ├── test_controls_spline.py
+    │   ├── test_controls_utils.py
     │   ├── test_convolver.py
     │   ├── test_convolver_import.py
     │   ├── test_convolver_sf_fallback.py
@@ -728,17 +804,31 @@
     │   ├── test_generator_params.py
     │   ├── test_gliss_cc.py
     │   ├── test_gm_cli.py
+    │   ├── test_gm_label_normalization.py
+    │   ├── test_gm_perc_map.py
     │   ├── test_golden_midi.py
+    │   ├── test_groove_aux_backoff.py
+    │   ├── test_groove_aux_extract.py
+    │   ├── test_groove_aux_strength.py
+    │   ├── test_groove_aux_vocab_override.py
+    │   ├── test_groove_conditioning.py
     │   ├── test_groove_info_cli.py
+    │   ├── test_groove_loader_filters.py
+    │   ├── test_groove_model_compat.py
     │   ├── test_groove_sampler.py
     │   ├── test_groove_sampler_audio.py
     │   ├── test_groove_sampler_guard.py
     │   ├── test_groove_sampler_humanize.py
+    │   ├── test_groove_sampler_memory.py
     │   ├── test_groove_sampler_ngram.py
     │   ├── test_groove_sampler_ngram_integration.py
     │   ├── test_groove_sampler_smoothed.py
+    │   ├── test_groove_sampler_store.py
+    │   ├── test_groove_sampler_tempo.py
+    │   ├── test_groove_sampler_tempo_flags.py
     │   ├── test_groove_sampler_v2.py
     │   ├── test_groove_sampler_v2_core.py
+    │   ├── test_groove_sampler_v2_sharding.py
     │   ├── test_groove_sync.py
     │   ├── test_gui_import.py
     │   ├── test_gui_interactive.py
@@ -853,8 +943,10 @@
     │   ├── test_portamento_mapping.py
     │   ├── test_predict_api.py
     │   ├── test_predict_pair.py
+    │   ├── test_prepare_corpus.py
     │   ├── test_preset_library.py
     │   ├── test_preset_manager.py
+    │   ├── test_pretty_midi_safe.py
     │   ├── test_preview_fallback.py
     │   ├── test_progression_templates.py
     │   ├── test_push_pull_blend.py
@@ -866,6 +958,8 @@
     │   ├── test_resolution_auto.py
     │   ├── test_resolution_multistage.py
     │   ├── test_rich_note_csv.py
+    │   ├── test_rich_note_csv_bend.py
+    │   ├── test_rich_note_csv_cc.py
     │   ├── test_rnn_lazy_import.py
     │   ├── test_rnn_offsets.py
     │   ├── test_rnn_quality.py
@@ -887,6 +981,7 @@
     │   ├── test_sax_plugin_api.py
     │   ├── test_sax_tokenizer.py
     │   ├── test_sax_transformer.py
+    │   ├── test_scan_loops.py
     │   ├── test_schema_consistency.py
     │   ├── test_schema_roundtrip.py
     │   ├── test_section_validator.py
@@ -919,6 +1014,7 @@
     │   ├── test_temperature_schedule.py
     │   ├── test_tempo_changes.py
     │   ├── test_tempo_curve.py
+    │   ├── test_tempo_lock.py
     │   ├── test_tempo_map_e2e.py
     │   ├── test_tempo_utils.py
     │   ├── test_tempo_velocity_curve.py
@@ -971,6 +1067,9 @@
     │   ├── golden.py
     │   ├── midi_feature_extractor.py
     │   ├── peak_synchroniser.py
+    │   ├── prepare_transformer_corpus.py
+    │   ├── prepare_transformer_corpus.py.backup
+    │   ├── prepare_transformer_corpus.py.bak
     │   ├── streamlit_gui.py
     │   ├── test_timesig.py
     │   └── train_transformer.py
@@ -986,6 +1085,8 @@
     │   ├── __init__.py
     │   ├── accent_mapper.py
     │   ├── ai_sampler.py
+    │   ├── apply_controls.py
+    │   ├── apply_controls_cli.py
     │   ├── arrangement_builder.py
     │   ├── articulation_csv.py
     │   ├── articulation_mapper.py
@@ -993,6 +1094,7 @@
     │   ├── audio_env.py
     │   ├── audio_render.py
     │   ├── audio_to_midi_batch.py
+    │   ├── aux_vocab.py
     │   ├── bass_timbre_dataset.py
     │   ├── bass_transformer.py
     │   ├── bass_utils.py
@@ -1000,9 +1102,13 @@
     │   ├── breath_mask.py
     │   ├── cc_map.py
     │   ├── cc_tools.py
+    │   ├── cc_utils.py
     │   ├── cli_playback.py
+    │   ├── conditioning.py
     │   ├── config_loader.py
     │   ├── consonant_extract.py
+    │   ├── controls_spline.py
+    │   ├── controls_utils.py
     │   ├── convolver.py
     │   ├── core_music_utils.py
     │   ├── custom_types.py
@@ -1025,6 +1131,7 @@
     │   ├── fx_envelope.py
     │   ├── generator_factory.py
     │   ├── ghost_jitter.py
+    │   ├── gm_perc_map.py
     │   ├── golden.py
     │   ├── groove_rnn_v2.py
     │   ├── groove_sampler.py
@@ -1033,6 +1140,7 @@
     │   ├── groove_sampler_v2.py
     │   ├── groove_transformer.py
     │   ├── harmonic_utils.py
+    │   ├── hash_utils.py
     │   ├── humanizer.py
     │   ├── install_utils.py
     │   ├── interactive_engine.py
@@ -1055,8 +1163,10 @@
     │   ├── ml_duration.py
     │   ├── ml_pedal.py
     │   ├── ml_velocity.py
+    │   ├── ngram_store.py
     │   ├── onset_heatmap.py
     │   ├── override_loader.py
+    │   ├── pb_math.py
     │   ├── pd_stub.py
     │   ├── peak_extractor.py
     │   ├── peak_synchroniser.py
@@ -1207,11 +1317,12 @@
     ├── conftest.py
     ├── demo.mid
     ├── docker-compose.yml
+    ├── duration_data.csv
     ├── emotion_humanizer.py
     ├── filelist.txt
     ├── generated_events.json
     ├── generated_events_wav.json
-    ├── groove.mid
+    ├── gm.pkl
     ├── groove_model.pkl
     ├── groove_profile.py
     ├── gs_train.log
@@ -1221,6 +1332,7 @@
     ├── mkdocs.yml
     ├── model.pkl
     ├── modular_composer.py
+    ├── mood.yaml
     ├── mypy.ini
     ├── notes.csv
     ├── ocr_process.py
@@ -1239,6 +1351,7 @@
     ├── requirements-test.txt
     ├── requirements.txt
     ├── run_generate_demo.sh
+    ├── sections.yaml
     ├── setup.cfg
     ├── setup.py
     ├── setup.sh
@@ -1252,4 +1365,6 @@
     ├── train_sax_lora.py
     ├── train_velocity.py
     ├── tree.txt
+    ├── アーカイブ 2.zip
+    ├── アーカイブ.zip
     └── プロンプトで以下を入力して引用符を閉じる

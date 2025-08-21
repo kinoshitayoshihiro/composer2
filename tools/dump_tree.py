@@ -181,18 +181,30 @@ def write_output(nodes: list[Node], *, fmt: str, show_sizes: bool, show_mtime: b
 
     # summaries (shared)
     all_files: list[tuple[Path,int]] = []
-    for n in nodes:
-        def _collect(nn: Node):
-            if nn.is_dir:
-                for ch in (nn.children or []):
-                    _collect(ch)
-            else:
-                all_files.append((nn.path, nn.size))
-        _collect(n)
+    def _collect(nn: Node):
+        if nn.is_dir:
+            for ch in (nn.children or []):
+                _collect(ch)
+        else:
+            all_files.append((nn.path, nn.size))
+    for n in nodes: _collect(n)
 
     if fmt in {"txt", "md"}:
         for i, n in enumerate(nodes):
-            title = f"TREE @ {n.path.relative_to(base) if n.path != base else n.path.name} ({fmt})"
+            try:
+                rel = n.path.relative_to(base)
+            except Exception:
+                try:
+                    rel = n.path.relative_to(Path(base).resolve())
+                except Exception:
+                    rel = n.path
+            if rel == base:
+                title_path = rel.name if hasattr(rel, 'name') else rel
+            else:
+                title_path = rel
+            fmt_safe = locals().get('fmt', globals().get('fmt', 'md'))
+            title = f"TREE @ {title_path} ({fmt_safe})"
+
             if fmt == "md":
                 emit(f"# {title}")
             else:

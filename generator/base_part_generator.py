@@ -27,6 +27,7 @@ except ImportError:  # fallback if add_cc_events is absent
 from utilities.tone_shaper import ToneShaper
 from utilities.velocity_utils import scale_velocity
 from data.export_pretty import stream_to_pretty_midi
+from utilities import pb_math
 
 try:
     from utilities.humanizer import apply as humanize_apply
@@ -112,9 +113,7 @@ def apply_controls(inst, cfg: ControlConfig) -> None:
     if cfg.enable_bend and cfg.vibrato_rate_hz and inst.notes:
         base = float(inst.notes[0].start)
         end = float(inst.notes[-1].end)
-        depth = int(
-            round(8191 * (cfg.vibrato_depth_semitones / max(cfg.bend_depth_semitones, 1e-5)))
-        )
+        depth = int(pb_math.semi_to_pb(cfg.vibrato_depth_semitones, cfg.bend_depth_semitones))
         t = base
         step = 1.0 / (cfg.vibrato_rate_hz * 8)
         while t <= end:

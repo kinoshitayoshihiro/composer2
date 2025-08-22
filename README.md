@@ -1381,6 +1381,16 @@ Specify a custom phoneme mapping when sampling vocals:
 modcompose sample --backend vocal --phoneme-dict custom_dict.json
 ```
 
+## Loop Auto Tagging
+Automatically infer section and mood labels for MIDI loops:
+
+```bash
+python -m tools.auto_tag_loops --in data/loops --out-combined tags.yaml \
+  --report tags.csv --limit 100 --glob "*.mid,*.midi"
+```
+
+Use `--dry-run` to skip file writes or `--split-output` to also emit legacy `sections.yaml` and `mood.yaml`.
+
 
 ## License
 This project is licensed under the [MIT License](LICENSE).

@@ -25,7 +25,14 @@ class PositionalEncoding(nn.Module):  # type: ignore[misc]
 class PhraseTransformer(nn.Module):  # type: ignore[misc]
     """Simple transformer encoder for phrase segmentation."""
 
-    def __init__(self, d_model: int = 512, max_len: int = 128) -> None:
+    def __init__(
+        self,
+        d_model: int = 512,
+        max_len: int = 128,
+        *,
+        section_vocab_size: int = 0,
+        mood_vocab_size: int = 0,
+    ) -> None:
         super().__init__()
         self.d_model = d_model
         self.max_len = max_len
@@ -33,6 +40,18 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         self.pos_emb = nn.Embedding(max_len, d_model // 4)
         self.dur_proj = nn.Linear(1, d_model // 4)
         self.vel_proj = nn.Linear(1, d_model // 4)
+        extra_dim = 0
+        if section_vocab_size:
+            self.section_emb = nn.Embedding(section_vocab_size, 16)
+            extra_dim += 16
+        else:
+            self.section_emb = None
+        if mood_vocab_size:
+            self.mood_emb = nn.Embedding(mood_vocab_size, 16)
+            extra_dim += 16
+        else:
+            self.mood_emb = None
+        self.feat_proj = nn.Linear(d_model + extra_dim, d_model)
         self.cls = nn.Parameter(torch.zeros(1, 1, d_model))
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=8, batch_first=True
@@ -49,7 +68,13 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         vel = self.vel_proj(feats["velocity"].unsqueeze(-1))
         pc = self.pitch_emb(feats["pitch_class"] % 12)
         pos = self.pos_emb(pos_ids)
-        x = torch.cat([dur, vel, pc, pos], dim=-1)
+        parts = [dur, vel, pc, pos]
+        if self.section_emb is not None and "section" in feats:
+            parts.append(self.section_emb(feats["section"]))
+        if self.mood_emb is not None and "mood" in feats:
+            parts.append(self.mood_emb(feats["mood"]))
+        x = torch.cat(parts, dim=-1)
+        x = self.feat_proj(x)
         cls = self.cls.expand(x.size(0), 1, -1)
         x = torch.cat([cls, x], dim=1)
         x = x * math.sqrt(self.d_model)

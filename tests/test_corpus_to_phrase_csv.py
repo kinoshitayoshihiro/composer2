@@ -2,7 +2,9 @@ import csv
 import subprocess
 from pathlib import Path
 
-import pretty_midi
+import pytest
+
+pretty_midi = pytest.importorskip("pretty_midi")
 import yaml
 
 

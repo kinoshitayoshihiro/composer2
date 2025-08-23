@@ -4,8 +4,11 @@ import json
 import csv
 from pathlib import Path
 
-import pretty_midi as pm
-import yaml
+import pytest
+
+pretty_midi = pytest.importorskip("pretty_midi")
+pm = pretty_midi
+yaml = pytest.importorskip("yaml")
 
 from tools.auto_tag_loops import _load_thresholds, DEFAULT_THRESHOLDS
 

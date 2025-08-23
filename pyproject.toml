@@ -9,8 +9,8 @@ description = "OtoKotoba Modular Composer"
 authors = ["Harusan <haru@example.com>"]
 readme = "README.md"
 license = "MIT"
-homepage = "https://github.com/OpenAI/modular_composer"
-repository = "https://github.com/OpenAI/modular_composer"
+homepage = "https://github.com/kinoshitayoshihiro/composer2"
+repository = "https://github.com/kinoshitayoshihiro/composer2"
 keywords = ["music", "midi", "generation", "plugin"]
 classifiers = [
   "Programming Language :: Python :: 3",

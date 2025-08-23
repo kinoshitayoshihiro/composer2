@@ -56,6 +56,9 @@ pip install -r requirements/extra-audio.txt
 pip install -e .[gui]                 # optional GUI
 ```
 
+`basic_pitch` only installs on Python versions below 3.12. If you are on Python 3.12,
+use `miditoolkit` or `pretty_midi` based workflows for audio→MIDI conversion.
+
 See [v3 upgrade guide](docs/v3_upgrade.md) for migrating from the previous version.
 
 ### Quick Start
@@ -87,6 +90,59 @@ python -m utilities.audio_to_midi_batch input/ output/ \
 
 Use `--cc64-mode heuristic` on piano-like stems to glue short gaps with sustain.
 
+
+### Phrase Training Quickstart
+
+Install dependencies (including test extras) with:
+
+```bash
+pip install -r requirements.txt -r requirements-test.txt
+```
+
+Prepare phrase CSVs from a MIDI directory:
+
+```bash
+python -m tools.corpus_to_phrase_csv --in data/midi --out-train train.csv --out-valid valid.csv
+```
+
+Train the boundary model for a couple of epochs and record logs:
+
+```bash
+python scripts/train_phrase.py train.csv valid.csv --epochs 2 --out checkpoints/bass_duv_v1.ckpt --logdir logs/phrase
+```
+
+Use `--resume path.ckpt` to continue, `--save-every 1` for periodic checkpoints or `--early-stopping 2` for patience‑based stopping.
+
+The checkpoint directory will include `bass_duv_v1.ckpt`, `bass_duv_v1.best.ckpt`,
+`metrics.json`, `metrics_epoch.csv`, `preds_preview.json`, `bass_duv_v1.run.json`
+and `hparams.json`.
+
+CSV columns:
+
+| column    | description              |
+|-----------|--------------------------|
+| pitch     | MIDI pitch (0-127)       |
+| velocity  | MIDI velocity            |
+| duration  | note length in beats     |
+| pos       | position within the bar  |
+| boundary  | 1 at phrase boundary     |
+| bar       | bar number               |
+| instrument| instrument label         |
+
+
+### Auto-tag CLI
+
+Tag loop libraries and produce combined YAML metadata:
+
+```bash
+python -m tools.auto_tag_loops --in loops/ --out-combined tags.yaml \
+    --report report.csv --errors errors.yaml --summary summary.json \
+    --shard-size 100 --num-workers 4
+```
+
+Pass `--update existing.yaml` to merge with an existing file; new entries are added and
+conflicting keys are overwritten. A `manifest.json` listing shard paths and counts is
+always written alongside the outputs.
 
 ### Install from PyPI
 

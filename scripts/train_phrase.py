@@ -579,6 +579,14 @@ def train_model(
         len(val_rows),
         val_removed,
     )
+    if not train_rows:
+        raise ValueError(
+            f"training CSV produced no usable rows (kept {len(train_rows)} removed {tr_removed})"
+        )
+    if not val_rows:
+        raise ValueError(
+            f"validation CSV produced no usable rows (kept {len(val_rows)} removed {val_removed})"
+        )
     section_vals = {r["section"] for r in train_rows + val_rows if r.get("section")}
     mood_vals = {r["mood"] for r in train_rows + val_rows if r.get("mood")}
     instrument_vals = {r["instrument"] for r in train_rows + val_rows if r.get("instrument")}
@@ -1268,57 +1276,61 @@ def main(argv: list[str] | None = None) -> int:
     run_cfg["viz_enabled"] = bool(args.viz and plt is not None)
     run_cfg["viz_backend"] = plt.get_backend() if run_cfg["viz_enabled"] else None
 
-    f1, device_type, stats = train_model(
-        args.train_csv,
-        args.val_csv,
-        args.epochs,
-        args.arch,
-        args.out,
-        seed=args.seed,
-        batch_size=args.batch_size,
-        d_model=args.d_model,
-        max_len=args.max_len,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-        grad_clip=args.grad_clip,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        scheduler=args.scheduler,
-        warmup_steps=args.warmup_steps,
-        pos_weight=args.pos_weight,
-        auto_pos_weight=args.auto_pos_weight,
-        resume=args.resume,
-        save_every=args.save_every,
-        early_stopping=args.early_stopping,
-        f1_scan_range=args.f1_scan_range,
-        logdir=args.logdir,
-        precision=args.precision,
-        deterministic=args.deterministic,
-        reweight=args.reweight,
-        lr_patience=args.lr_patience,
-        lr_factor=args.lr_factor,
-        use_duv_embed=args.use_duv_embed,
-        duv_mode=args.duv_mode,
-        vel_bins=args.vel_bins,
-        dur_bins=args.dur_bins,
-        w_boundary=args.w_boundary,
-        w_vel_reg=args.w_vel_reg,
-        w_dur_reg=args.w_dur_reg,
-        w_vel_cls=args.w_vel_cls,
-        w_dur_cls=args.w_dur_cls,
-        instrument=args.instrument,
-        include_tags=include,
-        exclude_tags=exclude,
-        viz=args.viz,
-        strict_tags=args.strict_tags,
-        nhead=args.nhead,
-        layers=args.layers,
-        dropout=args.dropout,
-        compile=args.compile,
-        grad_accum=args.grad_accum,
-        save_best=args.save_best,
-        save_last=args.save_last,
-    )
+    try:
+        f1, device_type, stats = train_model(
+            args.train_csv,
+            args.val_csv,
+            args.epochs,
+            args.arch,
+            args.out,
+            seed=args.seed,
+            batch_size=args.batch_size,
+            d_model=args.d_model,
+            max_len=args.max_len,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_memory,
+            grad_clip=args.grad_clip,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            scheduler=args.scheduler,
+            warmup_steps=args.warmup_steps,
+            pos_weight=args.pos_weight,
+            auto_pos_weight=args.auto_pos_weight,
+            resume=args.resume,
+            save_every=args.save_every,
+            early_stopping=args.early_stopping,
+            f1_scan_range=args.f1_scan_range,
+            logdir=args.logdir,
+            precision=args.precision,
+            deterministic=args.deterministic,
+            reweight=args.reweight,
+            lr_patience=args.lr_patience,
+            lr_factor=args.lr_factor,
+            use_duv_embed=args.use_duv_embed,
+            duv_mode=args.duv_mode,
+            vel_bins=args.vel_bins,
+            dur_bins=args.dur_bins,
+            w_boundary=args.w_boundary,
+            w_vel_reg=args.w_vel_reg,
+            w_dur_reg=args.w_dur_reg,
+            w_vel_cls=args.w_vel_cls,
+            w_dur_cls=args.w_dur_cls,
+            instrument=args.instrument,
+            include_tags=include,
+            exclude_tags=exclude,
+            viz=args.viz,
+            strict_tags=args.strict_tags,
+            nhead=args.nhead,
+            layers=args.layers,
+            dropout=args.dropout,
+            compile=args.compile,
+            grad_accum=args.grad_accum,
+            save_best=args.save_best,
+            save_last=args.save_last,
+        )
+    except ValueError as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        return 2
 
     run_cfg["sampler_weights_summary"] = stats
     run_cfg["tag_coverage"] = stats.get("tag_coverage", {})
@@ -1334,4 +1346,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
     raise SystemExit(main())
-

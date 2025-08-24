@@ -4,8 +4,20 @@
 ### Added
 - Lightweight module stubs for tests in `tests/_stubs.py`
 - Instrument filtering for duration CSV via `--instrument` flag
+- Phrase training visualizations (PR curve & confusion matrix), tag-wise metrics,
+  deterministic and scheduler flags, weighted sampling, and optional DUV embeddings
+- Headless-safe `--viz` plots, robust tag-aware evaluation, CSV tag filters and run
+  metadata (git commit, env, sampler stats)
+- `--strict-tags` option, transformer hyper-parameters/seed flags, CSV bucket
+  emission, and sampler weight logging
+- Standardize `duration_bucket`/`velocity_bucket` columns (legacy names warn),
+  track CSV filtering stats, and record visualization usage in run metadata
+### Fixed
+- Harmonize DUV bucket column names and apply transformer nhead/layer/dropout
+  flags while avoiding invalid LSTM kwargs
 ### Changed
 - ⚠️ Breaking change note removed – parameters are now optional
+- Unified to **numba>=0.60.0** across requirements
 
 ## [0.6.1] - 2025-07-25
 ### Fixed

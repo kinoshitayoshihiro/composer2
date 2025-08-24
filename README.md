@@ -165,6 +165,18 @@ CSV columns:
 - Transformer hyper-parameters such as `--nhead`, `--layers`, `--dropout` and the
   RNG `--seed` are exposed as CLI flags.
 
+After training a regression model it can be rendered to MIDI:
+
+```bash
+python scripts/train_phrase.py train.csv valid.csv --epochs 1 \
+    --duv-mode reg --out ckpt.ckpt
+python scripts/sample_phrase.py --ckpt ckpt.ckpt --in valid.csv \
+    --arch lstm --max-len 4 --duv-mode reg --out-midi demo.mid
+```
+
+For classification or mixed modes the CSV must include `velocity_bucket` and
+`duration_bucket` columns; accuracy metrics are reported alongside F1/MAE.
+
 
 ### Auto-tag CLI
 

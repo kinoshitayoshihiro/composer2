@@ -7,9 +7,10 @@ import csv
 import json
 import random
 import logging
+import re
 from collections import Counter
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, Pattern
 
 import pretty_midi
 import yaml
@@ -53,6 +54,8 @@ def midi_to_rows(
     gap: float,
     sections: list[tuple[float, str]] | None,
     instrument_filter: str | None,
+    instrument_regex: Pattern[str] | None,
+    pitch_range: tuple[int, int] | None,
     *,
     emit_buckets: bool = False,
     dur_bins: int = 16,
@@ -72,8 +75,12 @@ def midi_to_rows(
         name = inst.name or pretty_midi.program_to_instrument_name(inst.program)
         if instrument_filter and instrument_filter not in name.lower():
             continue
+        if instrument_regex and not instrument_regex.search(name):
+            continue
         inst_match = True
         for n in inst.notes:
+            if pitch_range and not (pitch_range[0] <= n.pitch <= pitch_range[1]):
+                continue
             start_tick = pm.time_to_tick(n.start)
             end_tick = pm.time_to_tick(n.end)
             start_beats = start_tick / ticks_per_beat
@@ -145,6 +152,8 @@ def corpus_mode(
     emit_buckets: bool = False,
     dur_bins: int = 16,
     vel_bins: int = 8,
+    instrument_regex: Pattern[str] | None = None,
+    pitch_range: tuple[int, int] | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     def load_split(split: str) -> list[dict[str, object]]:
         base = root / split
@@ -156,14 +165,20 @@ def corpus_mode(
         rows: list[dict[str, object]] = []
         for p in files:
             for obj in read_samples_jsonl(p):
+                name = obj.get("instrument", "")
+                if instrument_regex and not instrument_regex.search(name):
+                    continue
+                pitch = int(obj["pitch"])
+                if pitch_range and not (pitch_range[0] <= pitch <= pitch_range[1]):
+                    continue
                 row = {
-                    "pitch": obj["pitch"],
+                    "pitch": pitch,
                     "velocity": obj.get("velocity", 0),
                     "duration": obj.get("duration", 0),
                     "pos": obj.get("pos", 0),
                     "boundary": obj.get("boundary", 0),
                     "bar": obj.get("bar", 0),
-                    "instrument": obj.get("instrument", ""),
+                    "instrument": name,
                 }
                 if emit_buckets:
                     row["velocity_bucket"] = bin_velocity(
@@ -184,11 +199,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-train", type=Path, required=True)
     parser.add_argument("--out-valid", type=Path, required=True)
     parser.add_argument("--instrument")
+    parser.add_argument("--instrument-regex")
     parser.add_argument("--boundary-gap-beats", type=float, default=0.5)
     parser.add_argument("--boundary-on-section-change", action="store_true")
     parser.add_argument("--valid-ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--min-notes", type=int, default=0)
+    parser.add_argument("--pitch-range", nargs=2, type=int, metavar=("LOW", "HIGH"))
     parser.add_argument("--max-bars", type=int, default=10**9)
     parser.add_argument("--from-corpus", dest="from_corpus", type=Path)
     parser.add_argument(
@@ -199,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dur-bins", type=int, default=16)
     parser.add_argument("--vel-bins", type=int, default=8)
     args = parser.parse_args(argv)
+    inst_re = re.compile(args.instrument_regex, re.I) if args.instrument_regex else None
+    pitch_range = tuple(args.pitch_range) if args.pitch_range else None
 
     if args.from_corpus:
         train_rows, valid_rows = corpus_mode(
@@ -206,6 +225,8 @@ def main(argv: list[str] | None = None) -> int:
             emit_buckets=args.emit_buckets,
             dur_bins=args.dur_bins,
             vel_bins=args.vel_bins,
+            instrument_regex=inst_re,
+            pitch_range=pitch_range,
         )
         fields = (
             FIELDS + ["velocity_bucket", "duration_bucket"]
@@ -244,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
             args.boundary_gap_beats,
             sec,
             args.instrument.lower() if args.instrument else None,
+            inst_re,
+            pitch_range,
             emit_buckets=args.emit_buckets,
             dur_bins=args.dur_bins,
             vel_bins=args.vel_bins,
@@ -272,6 +295,8 @@ def main(argv: list[str] | None = None) -> int:
             args.boundary_gap_beats,
             sec,
             args.instrument.lower() if args.instrument else None,
+            inst_re,
+            pitch_range,
             emit_buckets=args.emit_buckets,
             dur_bins=args.dur_bins,
             vel_bins=args.vel_bins,

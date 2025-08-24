@@ -221,6 +221,14 @@ def train_model(
     lr_patience: int = 2,
     lr_factor: float = 0.5,
     use_duv_embed: bool = False,
+    duv_mode: str = "reg",
+    vel_bins: int = 0,
+    dur_bins: int = 0,
+    w_boundary: float = 1.0,
+    w_vel_reg: float = 0.5,
+    w_dur_reg: float = 0.5,
+    w_vel_cls: float = 0.0,
+    w_dur_cls: float = 0.0,
     instrument: str | None = None,
     include_tags: dict[str, str] | None = None,
     exclude_tags: dict[str, str] | None = None,
@@ -229,6 +237,10 @@ def train_model(
     nhead: int = 8,
     layers: int = 4,
     dropout: float = 0.1,
+    compile: bool = False,
+    grad_accum: int = 1,
+    save_best: bool = False,
+    save_last: bool = False,
 ) -> tuple[float, str, dict[str, object]]:
     """Train the phrase boundary model and return the best F1, device, and stats."""
 
@@ -293,6 +305,9 @@ def train_model(
             mood_vocab_size: int = 0,
             vel_bucket_size: int = 0,
             dur_bucket_size: int = 0,
+            duv_mode: str = "reg",
+            vel_bins: int = 0,
+            dur_bins: int = 0,
         ) -> None:
             super().__init__()
             self.d_model = d_model
@@ -326,11 +341,23 @@ def train_model(
             self.lstm = nn.LSTM(
                 d_model, d_model // 2, num_layers=2, batch_first=True, bidirectional=True
             )
-            self.fc = nn.Linear(d_model, 1)
+            self.head_boundary = nn.Linear(d_model, 1)
+            self.head_vel_reg = (
+                nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
+            )
+            self.head_dur_reg = (
+                nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
+            )
+            self.head_vel_cls = (
+                nn.Linear(d_model, vel_bins) if duv_mode in {"cls", "both"} else None
+            )
+            self.head_dur_cls = (
+                nn.Linear(d_model, dur_bins) if duv_mode in {"cls", "both"} else None
+            )
 
         def forward(
             self, feats: dict[str, torch.Tensor], mask: torch.Tensor
-        ) -> torch.Tensor:
+        ) -> dict[str, torch.Tensor]:
             pos_ids = feats["position"].clamp(max=self.max_len - 1)
             dur = self.dur_proj(feats["duration"].unsqueeze(-1))
             vel = self.vel_proj(feats["velocity"].unsqueeze(-1))
@@ -354,8 +381,17 @@ def train_model(
             out, _ = nn.utils.rnn.pad_packed_sequence(
                 out, batch_first=True, total_length=self.max_len
             )
-            out = self.fc(out).squeeze(-1)
-            return out
+            outputs: dict[str, torch.Tensor] = {}
+            outputs["boundary"] = self.head_boundary(out).squeeze(-1)
+            if self.head_vel_reg is not None:
+                outputs["vel_reg"] = self.head_vel_reg(out).squeeze(-1)
+            if self.head_dur_reg is not None:
+                outputs["dur_reg"] = self.head_dur_reg(out).squeeze(-1)
+            if self.head_vel_cls is not None:
+                outputs["vel_cls"] = self.head_vel_cls(out)
+            if self.head_dur_cls is not None:
+                outputs["dur_cls"] = self.head_dur_cls(out)
+            return outputs
 
     class PhraseDataset(Dataset):  # type: ignore[misc]
         def __init__(
@@ -383,13 +419,14 @@ def train_model(
             self.section_vocab = section_vocab
             self.mood_vocab = mood_vocab
             self.instrument_vocab = instrument_vocab
-            self.use_duv_embed = use_duv_embed
-            self.has_vel_bucket = use_duv_embed and any(
+            self.has_vel_bucket = any(
                 ("velocity_bucket" in r) or ("vel_bucket" in r) for r in rows
             )
-            self.has_dur_bucket = use_duv_embed and any(
+            self.has_dur_bucket = any(
                 ("duration_bucket" in r) or ("dur_bucket" in r) for r in rows
             )
+            self.use_vel_bucket_feat = use_duv_embed and self.has_vel_bucket
+            self.use_dur_bucket_feat = use_duv_embed and self.has_dur_bucket
             if use_duv_embed:
                 if any("vel_bucket" in r for r in rows):
                     warnings.warn(
@@ -411,7 +448,7 @@ def train_model(
             self, idx: int
         ) -> tuple[
             dict[str, torch.Tensor],
-            torch.Tensor,
+            dict[str, torch.Tensor],
             torch.Tensor,
             dict[str, torch.Tensor],
         ]:
@@ -426,9 +463,6 @@ def train_model(
                 [float(r["duration"]) for r in g] + [0] * pad, dtype=torch.float32
             )
             pos = torch.tensor([int(r["pos"]) for r in g] + [0] * pad, dtype=torch.long)
-            y = torch.tensor(
-                [float(r["boundary"]) for r in g] + [0] * pad, dtype=torch.float32
-            )
             feats = {
                 "pitch_class": pc,
                 "velocity": vel,
@@ -445,18 +479,35 @@ def train_model(
                     0
                 ] * pad
                 feats["mood"] = torch.tensor(md, dtype=torch.long)
-            if self.has_vel_bucket:
+            if self.use_vel_bucket_feat:
                 vb = [
                     int(r.get("velocity_bucket", r.get("vel_bucket", 0))) for r in g
                 ] + [0] * pad
                 feats["vel_bucket"] = torch.tensor(vb, dtype=torch.long)
-            if self.has_dur_bucket:
+            if self.use_dur_bucket_feat:
                 db = [
                     int(r.get("duration_bucket", r.get("dur_bucket", 0))) for r in g
                 ] + [0] * pad
                 feats["dur_bucket"] = torch.tensor(db, dtype=torch.long)
             mask = torch.zeros(self.max_len, dtype=torch.bool)
             mask[:L] = 1
+            targets = {
+                "boundary": torch.tensor(
+                    [float(r["boundary"]) for r in g] + [0] * pad, dtype=torch.float32
+                ),
+                "vel_reg": vel / 127.0,
+                "dur_reg": torch.log1p(dur),
+            }
+            if self.has_vel_bucket:
+                vb = [
+                    int(r.get("velocity_bucket", r.get("vel_bucket", 0))) for r in g
+                ] + [0] * pad
+                targets["vel_cls"] = torch.tensor(vb, dtype=torch.long)
+            if self.has_dur_bucket:
+                db = [
+                    int(r.get("duration_bucket", r.get("dur_bucket", 0))) for r in g
+                ] + [0] * pad
+                targets["dur_cls"] = torch.tensor(db, dtype=torch.long)
             tags = {
                 "instrument": [
                     self.instrument_vocab.get(r.get("instrument", ""), 0)
@@ -481,17 +532,28 @@ def train_model(
                 + [0] * pad,
             }
             tags_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in tags.items()}
-            return feats, y, mask, tags_tensor
+            return feats, targets, mask, tags_tensor
 
     def collate_fn(
         batch: list[
-            tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]
+            tuple[
+                dict[str, torch.Tensor],
+                dict[str, torch.Tensor],
+                torch.Tensor,
+                dict[str, torch.Tensor],
+            ]
         ],
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
-        feats, y, mask, tags = zip(*batch)
+    ) -> tuple[
+        dict[str, torch.Tensor],
+        dict[str, torch.Tensor],
+        torch.Tensor,
+        dict[str, torch.Tensor],
+    ]:
+        feats, targets, mask, tags = zip(*batch)
         out_feats = {k: torch.stack([f[k] for f in feats]) for k in feats[0]}
+        out_targets = {k: torch.stack([t[k] for t in targets]) for k in targets[0]}
         out_tags = {k: torch.stack([t[k] for t in tags]) for k in tags[0]}
-        return out_feats, torch.stack(y), torch.stack(mask), out_tags
+        return out_feats, out_targets, torch.stack(mask), out_tags
 
     device, use_amp = setup_env(seed)
     logging.info(
@@ -589,6 +651,12 @@ def train_model(
         use_duv_embed=use_duv_embed,
     )
 
+    if duv_mode in {"cls", "both"}:
+        if not ds_train.has_vel_bucket or not ds_train.has_dur_bucket:
+            raise SystemExit("classification mode requires velocity_bucket and duration_bucket")
+        if vel_bins <= 0 or dur_bins <= 0:
+            raise SystemExit("--vel-bins and --dur-bins must be >0 for classification mode")
+
     pin_mem = device.type == "cuda" or pin_memory
     persist = device.type == "cuda" and num_workers > 0
 
@@ -650,6 +718,9 @@ def train_model(
             mood_vocab_size=len(mood_vocab) + 1 if mood_vocab else 0,
             vel_bucket_size=vel_bucket_size,
             dur_bucket_size=dur_bucket_size,
+            duv_mode=duv_mode,
+            vel_bins=vel_bins,
+            dur_bins=dur_bins,
         )
     else:
         model = PhraseTransformer(
@@ -659,11 +730,19 @@ def train_model(
             mood_vocab_size=len(mood_vocab) + 1 if mood_vocab else 0,
             vel_bucket_size=vel_bucket_size,
             dur_bucket_size=dur_bucket_size,
+            duv_mode=duv_mode,
+            vel_bins=vel_bins,
+            dur_bins=dur_bins,
             nhead=nhead,
             num_layers=layers,
             dropout=dropout,
         )
     model = model.to(device)
+    if compile:
+        try:  # pragma: no cover - runtime optional
+            model = torch.compile(model)
+        except Exception:  # pragma: no cover
+            logging.warning("torch.compile failed; continuing without")
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     total_steps = epochs * max(1, len(dl_train))
     if scheduler == "cosine":
@@ -675,7 +754,11 @@ def train_model(
     else:
         sched = None
     pw = torch.tensor([pos_weight], device=device) if pos_weight else None
-    crit = nn.BCEWithLogitsLoss(pos_weight=pw)
+    crit_boundary = nn.BCEWithLogitsLoss(pos_weight=pw)
+    crit_vel_reg = nn.SmoothL1Loss()
+    crit_dur_reg = nn.SmoothL1Loss()
+    crit_vel_cls = nn.CrossEntropyLoss()
+    crit_dur_cls = nn.CrossEntropyLoss()
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     writer = SummaryWriter(logdir) if logdir and SummaryWriter else None
 
@@ -692,20 +775,56 @@ def train_model(
         global_step = int(state.get("global_step", 0))
         best_f1 = float(state.get("best_f1", -1.0))
 
-    def evaluate() -> tuple[float, float, list[float], list[int], dict[str, list[int]]]:
+    def evaluate() -> tuple[
+        float, float, list[float], list[int], dict[str, list[int]], dict[str, float]
+    ]:
         model.eval()
         probs: list[float] = []
         trues: list[int] = []
         tag_buf = {"instrument": [], "section": [], "mood": []}
+        vel_err = 0.0
+        dur_err = 0.0
+        vel_n = 0
+        dur_n = 0
+        vel_ok = 0
+        vel_tot = 0
+        dur_ok = 0
+        dur_tot = 0
         with torch.no_grad():
-            for feats, y, mask, tags in dl_val:
+            for feats, targets, mask, tags in dl_val:
                 feats = {k: v.to(device) for k, v in feats.items()}
-                y = y.to(device)
+                targets = {k: v.to(device) for k, v in targets.items()}
                 mask = mask.to(device)
-                logits = model(feats, mask)
+                out = model(feats, mask)
                 m = mask.bool()
-                probs.extend(torch.sigmoid(logits[m]).cpu().tolist())
-                trues.extend(y[m].int().cpu().tolist())
+                probs.extend(torch.sigmoid(out["boundary"][m]).cpu().tolist())
+                trues.extend(targets["boundary"][m].int().cpu().tolist())
+                if "vel_reg" in out:
+                    vel_err += (
+                        torch.abs(out["vel_reg"][m] - targets["vel_reg"][m])
+                        .mul(127.0)
+                        .sum()
+                        .item()
+                    )
+                    vel_n += int(m.sum())
+                if "dur_reg" in out:
+                    dur_err += (
+                        torch.abs(
+                            torch.expm1(out["dur_reg"][m])
+                            - torch.expm1(targets["dur_reg"][m])
+                        )
+                        .sum()
+                        .item()
+                    )
+                    dur_n += int(m.sum())
+                if "vel_cls" in out:
+                    preds = out["vel_cls"][m].argmax(dim=-1)
+                    vel_ok += int((preds == targets["vel_cls"][m]).sum())
+                    vel_tot += int(m.sum())
+                if "dur_cls" in out:
+                    preds = out["dur_cls"][m].argmax(dim=-1)
+                    dur_ok += int((preds == targets["dur_cls"][m]).sum())
+                    dur_tot += int(m.sum())
                 for k in tag_buf:
                     tag_buf[k].extend(tags[k][m].cpu().tolist())
         best_f1, best_th = -1.0, 0.5
@@ -717,7 +836,13 @@ def train_model(
             f1 = f1_score(trues, preds)
             if f1 > best_f1:
                 best_f1, best_th = f1, float(th)
-        return best_f1, best_th, probs, trues, tag_buf
+        metrics = {
+            "vel_mae": vel_err / vel_n if vel_n else 0.0,
+            "dur_mae": dur_err / dur_n if dur_n else 0.0,
+            "vel_acc": vel_ok / vel_tot if vel_tot else 0.0,
+            "dur_acc": dur_ok / dur_tot if dur_tot else 0.0,
+        }
+        return best_f1, best_th, probs, trues, tag_buf, metrics
 
     best_state = None
     best_threshold = 0.5
@@ -727,49 +852,73 @@ def train_model(
         t0 = time.time()
         model.train()
         loss_sum = 0.0
-        for feats, y, mask, _ in dl_train:
+        opt.zero_grad()
+        for step, (feats, targets, mask, _) in enumerate(dl_train):
             feats = {k: v.to(device) for k, v in feats.items()}
-            y = y.to(device)
+            targets = {k: v.to(device) for k, v in targets.items()}
             mask = mask.to(device)
-            opt.zero_grad()
             ctx = (
                 torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp)
                 if use_amp
                 else nullcontext()
             )
             with ctx:
-                logits = model(feats, mask)
-                loss = crit(logits[mask], y[mask])
+                out = model(feats, mask)
+                m = mask.bool()
+                loss = 0.0
+                if "boundary" in out:
+                    lb = crit_boundary(out["boundary"][m], targets["boundary"][m])
+                    loss = loss + w_boundary * lb
+                if "vel_reg" in out:
+                    lv = crit_vel_reg(out["vel_reg"][m], targets["vel_reg"][m])
+                    loss = loss + w_vel_reg * lv
+                if "dur_reg" in out:
+                    ld = crit_dur_reg(out["dur_reg"][m], targets["dur_reg"][m])
+                    loss = loss + w_dur_reg * ld
+                if "vel_cls" in out:
+                    lvb = crit_vel_cls(out["vel_cls"][m], targets["vel_cls"][m])
+                    loss = loss + w_vel_cls * lvb
+                if "dur_cls" in out:
+                    ldb = crit_dur_cls(out["dur_cls"][m], targets["dur_cls"][m])
+                    loss = loss + w_dur_cls * ldb
             loss_sum += float(loss)
             if scaler.is_enabled():
-                scaler.scale(loss).backward()
-                if grad_clip > 0:
-                    scaler.unscale_(opt)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                scaler.step(opt)
-                scaler.update()
+                scaler.scale(loss / grad_accum).backward()
             else:
-                loss.backward()
-                if grad_clip > 0:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                opt.step()
-            if sched and scheduler != "plateau":
-                if global_step < warmup_steps:
-                    lr_scale = float(global_step + 1) / warmup_steps
-                    for pg in opt.param_groups:
-                        pg["lr"] = lr * lr_scale
+                (loss / grad_accum).backward()
+            if (step + 1) % grad_accum == 0:
+                if scaler.is_enabled():
+                    if grad_clip > 0:
+                        scaler.unscale_(opt)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    scaler.step(opt)
+                    scaler.update()
                 else:
-                    sched.step()
-            global_step += 1
-        f1, th, probs, trues, _ = evaluate()
+                    if grad_clip > 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    opt.step()
+                opt.zero_grad()
+                if sched and scheduler != "plateau":
+                    if global_step < warmup_steps:
+                        lr_scale = float(global_step + 1) / warmup_steps
+                        for pg in opt.param_groups:
+                            pg["lr"] = lr * lr_scale
+                    else:
+                        sched.step()
+                global_step += 1
+        f1, th, probs, trues, _, metrics = evaluate()
         avg_loss = loss_sum / max(1, len(dl_train))
         lr_cur = opt.param_groups[0]["lr"]
         elapsed = time.time() - t0
         logging.info(
-            "epoch %d train_loss %.4f val_f1 %.3f lr %.2e th %.2f time %.1fs",
+            "epoch %d train_loss %.4f val_f1 %.3f vel_mae %.3f dur_mae %.3f vel_acc %.3f dur_acc %.3f lr %.2e th %.2f time %.1fs",
             ep + 1,
             avg_loss,
             f1,
+            metrics["vel_mae"],
+            metrics["dur_mae"],
+            metrics["vel_acc"],
+            metrics["dur_acc"],
             lr_cur,
             th,
             elapsed,
@@ -805,6 +954,10 @@ def train_model(
         if writer:
             writer.add_scalar("val/f1", f1, ep)
             writer.add_scalar("train/loss", avg_loss, ep)
+            writer.add_scalar("val/vel_mae", metrics["vel_mae"], ep)
+            writer.add_scalar("val/dur_mae", metrics["dur_mae"], ep)
+            writer.add_scalar("val/vel_acc", metrics["vel_acc"], ep)
+            writer.add_scalar("val/dur_acc", metrics["dur_acc"], ep)
         if f1 > best_f1:
             best_f1 = f1
             best_threshold = th
@@ -833,17 +986,31 @@ def train_model(
         "epoch": ep + 1,
         "global_step": global_step,
         "best_f1": best_f1,
+        "d_model": d_model,
+        "max_len": max_len,
+        "duv_cfg": {"mode": duv_mode, "vel_bins": vel_bins, "dur_bins": dur_bins},
     }
     torch.save(final_state, out)
+    if save_last:
+        last_link = out.with_name("last.ckpt")
+        if last_link.exists() or last_link.is_symlink():
+            last_link.unlink()
+        last_link.symlink_to(out.name)
     if best_state is not None:
         best_ckpt = final_state.copy()
         best_ckpt["model"] = best_state
-        torch.save(best_ckpt, out.with_suffix(".best.ckpt"))
+        best_path = out.with_suffix(".best.ckpt")
+        torch.save(best_ckpt, best_path)
+        if save_best:
+            best_link = out.with_name("best.ckpt")
+            if best_link.exists() or best_link.is_symlink():
+                best_link.unlink()
+            best_link.symlink_to(best_path.name)
     if writer:
         writer.close()
     if best_state is not None:
         model.load_state_dict(best_state)
-    best_f1, best_threshold, probs, trues, tag_buf = evaluate()
+    best_f1, best_threshold, probs, trues, tag_buf, _ = evaluate()
     inv_section = {i: s for s, i in section_vocab.items()} if section_vocab else {}
     inv_mood = {i: s for s, i in mood_vocab.items()} if mood_vocab else {}
     inv_inst = {i: s for s, i in instrument_vocab.items()} if instrument_vocab else {}
@@ -880,13 +1047,14 @@ def train_model(
     preview_path = out.parent / "preds_preview.json"
     try:
         with torch.no_grad():
-            feats, y, mask, _tags = next(iter(dl_val))
+            feats, targets, mask, _tags = next(iter(dl_val))
             feats = {k: v.to(device) for k, v in feats.items()}
             mask0 = mask[0].bool()
-            logits = model(feats, mask.to(device))[0, mask0.to(device)]
+            out = model(feats, mask.to(device))
+            logits = out["boundary"][0, mask0.to(device)]
             probs = torch.sigmoid(logits).cpu().tolist()
             preds = [1 if p > best_threshold else 0 for p in probs]
-            trues = y[0][mask0].int().cpu().tolist()
+            trues = targets["boundary"][0][mask0].int().cpu().tolist()
         preview_path.write_text(
             json.dumps({"probs": probs, "preds": preds, "trues": trues}, ensure_ascii=False)
         )
@@ -927,9 +1095,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nhead", type=int, default=8)
     parser.add_argument("--layers", type=int, default=4)
     parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--compile", action="store_true")
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--pin-memory", action="store_true")
     parser.add_argument("--grad-clip", type=float, default=1.0)
+    parser.add_argument("--grad-accum", type=int, default=1)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=0.0)
     parser.add_argument("--scheduler", choices=["cosine", "plateau"], default=None)
@@ -963,9 +1133,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--exclude-tags", type=str, default=None)
     parser.add_argument("--reweight", type=str, default=None)
     parser.add_argument("--use-duv-embed", action="store_true")
+    parser.add_argument(
+        "--duv-mode", choices=["none", "reg", "cls", "both"], default="reg"
+    )
+    parser.add_argument("--vel-bins", type=int, default=0)
+    parser.add_argument("--dur-bins", type=int, default=0)
+    parser.add_argument("--w-boundary", type=float, default=1.0)
+    parser.add_argument("--w-vel-reg", type=float, default=0.5)
+    parser.add_argument("--w-dur-reg", type=float, default=0.5)
+    parser.add_argument("--w-vel-cls", type=float, default=0.0)
+    parser.add_argument("--w-dur-cls", type=float, default=0.0)
     parser.add_argument("--sample", type=int, default=0)
     parser.add_argument("--viz", action="store_true", help="save PR/CM plots")
     parser.add_argument("--strict-tags", action="store_true", help="drop rows missing requested tags")
+    parser.add_argument("--save-best", action="store_true")
+    parser.add_argument("--save-last", action="store_true")
     return parser
 
 
@@ -1125,6 +1307,14 @@ def main(argv: list[str] | None = None) -> int:
             lr_patience=args.lr_patience,
             lr_factor=args.lr_factor,
             use_duv_embed=args.use_duv_embed,
+            duv_mode=args.duv_mode,
+            vel_bins=args.vel_bins,
+            dur_bins=args.dur_bins,
+            w_boundary=args.w_boundary,
+            w_vel_reg=args.w_vel_reg,
+            w_dur_reg=args.w_dur_reg,
+            w_vel_cls=args.w_vel_cls,
+            w_dur_cls=args.w_dur_cls,
             instrument=args.instrument,
             include_tags=include,
             exclude_tags=exclude,
@@ -1133,6 +1323,10 @@ def main(argv: list[str] | None = None) -> int:
             nhead=args.nhead,
             layers=args.layers,
             dropout=args.dropout,
+            compile=args.compile,
+            grad_accum=args.grad_accum,
+            save_best=args.save_best,
+            save_last=args.save_last,
         )
     except ValueError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
@@ -1152,4 +1346,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
     raise SystemExit(main())
-

@@ -4,58 +4,7 @@ import sys
 from types import ModuleType
 from pathlib import Path
 
-
-def _stub_torch() -> None:
-    if importlib.util.find_spec("torch") is not None:
-        return
-
-    import numpy as np
-
-    torch = ModuleType("torch")
-
-    class Tensor(np.ndarray):  # type: ignore[misc]
-        def __new__(cls, data):
-            return np.asarray(data).view(cls)
-
-        def unsqueeze(self, dim: int = 0) -> "Tensor":
-            return Tensor(np.expand_dims(self, dim))
-
-        def clamp(self, max: int | None = None) -> "Tensor":
-            out = np.minimum(self, max) if max is not None else self
-            return Tensor(out)
-
-    torch.Tensor = Tensor
-    torch.tensor = lambda data, dtype=None: Tensor(data)
-    torch.arange = lambda n, dtype=None: Tensor(np.arange(n))
-    torch.ones = lambda *shape, dtype=None: Tensor(np.ones(shape, dtype=float))
-    torch.float32 = np.float32
-    torch.long = np.int64
-    torch.bool = np.bool_
-
-    class NoGrad:
-        def __enter__(self) -> None:  # pragma: no cover - stub
-            pass
-
-        def __exit__(self, *exc: object) -> None:  # pragma: no cover - stub
-            pass
-
-    torch.no_grad = NoGrad
-    torch.sigmoid = lambda x: Tensor(1 / (1 + np.exp(-x)))
-
-    nn = ModuleType("torch.nn")
-    nn.Module = object
-    torch.nn = nn
-    utils = ModuleType("torch.utils")
-    data = ModuleType("torch.utils.data")
-    data.DataLoader = object
-    data.Dataset = object
-    utils.data = data
-    torch.utils = utils
-    sys.modules["torch"] = torch
-    sys.modules["torch.nn"] = nn
-    sys.modules["torch.utils"] = utils
-    sys.modules["torch.utils.data"] = data
-
+from .torch_stub import _stub_torch
 
 _stub_torch()
 
@@ -74,6 +23,48 @@ sk_mod = ModuleType("sklearn.metrics")
 sk_mod.f1_score = lambda *_a, **_k: 1.0  # type: ignore[assignment]
 sys.modules.setdefault("sklearn", ModuleType("sklearn"))
 sys.modules["sklearn.metrics"] = sk_mod
+
+
+def _stub_numpy() -> None:
+    if importlib.util.find_spec("numpy") is not None:
+        return
+
+    np = ModuleType("numpy")
+
+    class ndarray(list):
+        @property
+        def size(self) -> int:  # pragma: no cover - simple
+            if self and isinstance(self[0], list):
+                return len(self) * len(self[0])
+            return len(self)
+
+        def sum(self, axis=None):  # pragma: no cover - simple
+            if axis == 0 and self and isinstance(self[0], list):
+                return [sum(col) for col in zip(*self)]
+            return sum(self)
+
+    def ones(shape, dtype=None):
+        if isinstance(shape, int):
+            return ndarray([1] * shape)
+        return ndarray([[1] * shape[1] for _ in range(shape[0])])
+
+    np.ones = ones
+    np.ndarray = ndarray
+    np.bool_ = bool
+    np.float32 = float
+    sys.modules["numpy"] = np
+
+
+_stub_numpy()
+
+tp_mod = ModuleType("scripts.train_phrase")
+tp_mod.PhraseLSTM = object
+sys.modules["scripts.train_phrase"] = tp_mod
+
+pt_mod = ModuleType("models.phrase_transformer")
+pt_mod.PhraseTransformer = object
+sys.modules.setdefault("models", ModuleType("models"))
+sys.modules["models.phrase_transformer"] = pt_mod
 
 from scripts.segment_phrase import segment_bytes  # noqa: E402
 

@@ -10,9 +10,19 @@ import subprocess
 import sys
 import tempfile
 import time
+import warnings
+from collections import Counter
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Iterable
+
+# headless-safe matplotlib setup
+try:  # pragma: no cover - optional viz
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt  # type: ignore
+except Exception:  # pragma: no cover - no matplotlib
+    plt = None  # type: ignore
 
 
 # local import guard so the script works without an editable install
@@ -50,6 +60,8 @@ FIELDS = [
     "instrument",
     "section",
     "mood",
+    "velocity_bucket",
+    "duration_bucket",
 ]
 
 
@@ -61,6 +73,47 @@ def load_csv_rows(path: Path, required: set[str]) -> list[dict[str, str]]:
         if reader.fieldnames is None or not required.issubset(reader.fieldnames):
             raise SystemExit(f"CSV missing required columns {required}")
         return [row for row in reader]
+
+
+def apply_filters(
+    rows: list[dict[str, str]],
+    instrument: str | None = None,
+    include: dict[str, str] | None = None,
+    exclude: dict[str, str] | None = None,
+    *,
+    strict: bool = False,
+) -> tuple[list[dict[str, str]], int]:
+    """Filter *rows* by instrument/include/exclude tag values."""
+
+    include = include or {}
+    exclude = exclude or {}
+    inst = instrument.lower() if instrument else None
+    kept: list[dict[str, str]] = []
+    missing = 0
+    req_keys = set(include) | set(exclude)
+    for r in rows:
+        if inst and "instrument" in r and inst not in r.get("instrument", "").lower():
+            continue
+        if strict and any(k not in r or not r[k] for k in req_keys):
+            missing += 1
+            continue
+        ok = True
+        for k, v in include.items():
+            if k in r and r[k] != v:
+                ok = False
+                break
+        if not ok:
+            continue
+        for k, v in exclude.items():
+            if k in r and r[k] == v:
+                ok = False
+                break
+        if not ok:
+            continue
+        kept.append(r)
+    if strict and missing:
+        logging.info("strict tag filter dropped %d rows", missing)
+    return kept, len(rows) - len(kept)
 
 
 def f1_score(trues: list[int], preds: list[int]) -> float:
@@ -84,10 +137,14 @@ def write_csv(rows: Iterable[dict[str, object]], path: Path) -> None:
 def load_corpus(
     root: Path,
     *,
-    filter_section: str | None = None,
-    filter_mood: str | None = None,
+    include_tags: dict[str, str] | None = None,
+    exclude_tags: dict[str, str] | None = None,
+    strict: bool = False,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    """Load JSONL corpus with train/valid splits and optional tag filtering."""
+    """Load JSONL corpus with train/valid splits and tag filters."""
+
+    include_tags = include_tags or {}
+    exclude_tags = exclude_tags or {}
 
     def load_split(split: str) -> list[dict[str, object]]:
         base = root / split
@@ -105,9 +162,15 @@ def load_corpus(
                         continue
                     obj = json.loads(line)
                     tags = obj.get("tags", {})
-                    if filter_section and tags.get("section") != filter_section:
+                    if include_tags and any(
+                        (k not in tags if strict else False) or tags.get(k) != v
+                        for k, v in include_tags.items()
+                    ):
                         continue
-                    if filter_mood and tags.get("mood") != filter_mood:
+                    if exclude_tags and any(
+                        (k not in tags if strict else False) or tags.get(k) == v
+                        for k, v in exclude_tags.items()
+                    ):
                         continue
                     rows.append(
                         {
@@ -134,6 +197,7 @@ def train_model(
     arch: str,
     out: Path,
     *,
+    seed: int = 42,
     batch_size: int = 8,
     d_model: int = 512,
     max_len: int = 128,
@@ -152,15 +216,32 @@ def train_model(
     f1_scan_range: tuple[float, float, float] = (0.2, 0.8, 0.1),
     logdir: Path | None = None,
     precision: str | None = None,
-) -> tuple[float, str]:
-    """Train the phrase boundary model and return the best F1 and device."""
+    deterministic: bool = False,
+    reweight: str | None = None,
+    lr_patience: int = 2,
+    lr_factor: float = 0.5,
+    use_duv_embed: bool = False,
+    instrument: str | None = None,
+    include_tags: dict[str, str] | None = None,
+    exclude_tags: dict[str, str] | None = None,
+    viz: bool = False,
+    strict_tags: bool = False,
+    nhead: int = 8,
+    layers: int = 4,
+    dropout: float = 0.1,
+) -> tuple[float, str, dict[str, object]]:
+    """Train the phrase boundary model and return the best F1, device, and stats."""
 
     import importlib
 
-    try:  # optional dependency
-        import numpy as np  # type: ignore
-    except Exception:  # pragma: no cover - numpy missing
-        np = None  # type: ignore
+    try:  # optional deps for viz
+        from sklearn.metrics import precision_recall_curve, ConfusionMatrixDisplay
+    except Exception:  # pragma: no cover - optional
+        precision_recall_curve = None  # type: ignore
+        ConfusionMatrixDisplay = None  # type: ignore
+
+    if viz and plt is None:
+        logging.warning("matplotlib not installed; skipping --viz")
 
     torch = importlib.import_module("torch")
     from torch import nn
@@ -170,10 +251,14 @@ def train_model(
     except Exception:  # pragma: no cover
         SummaryWriter = None
 
-    def setup_env(seed: int = 42) -> tuple[torch.device, bool]:
+    def setup_env(seed: int) -> tuple[torch.device, bool]:
         random.seed(seed)
-        if np is not None:
-            np.random.seed(seed)
+        try:  # optional numpy seeding
+            import numpy as _np  # type: ignore
+
+            _np.random.seed(seed)
+        except Exception:  # pragma: no cover - numpy missing
+            pass
         torch.manual_seed(seed)
         device = torch.device(
             "cuda"
@@ -188,11 +273,14 @@ def train_model(
             torch.set_float32_matmul_precision(precision or "medium")
         elif precision:
             torch.set_float32_matmul_precision(precision)
-        if device.type == "cuda":
+        if deterministic:
             try:
                 torch.use_deterministic_algorithms(True)
             except Exception as exc:  # pragma: no cover
                 logging.warning("deterministic algos unavailable: %s", exc)
+            if device.type == "cuda":
+                torch.backends.cudnn.deterministic = True
+                torch.backends.cudnn.benchmark = False
         return device, amp
 
     class PhraseLSTM(nn.Module):  # type: ignore[misc]
@@ -203,6 +291,8 @@ def train_model(
             *,
             section_vocab_size: int = 0,
             mood_vocab_size: int = 0,
+            vel_bucket_size: int = 0,
+            dur_bucket_size: int = 0,
         ) -> None:
             super().__init__()
             self.d_model = d_model
@@ -222,6 +312,16 @@ def train_model(
                 extra_dim += 16
             else:
                 self.mood_emb = None
+            if vel_bucket_size:
+                self.vel_bucket_emb = nn.Embedding(vel_bucket_size, 8)
+                extra_dim += 8
+            else:
+                self.vel_bucket_emb = None
+            if dur_bucket_size:
+                self.dur_bucket_emb = nn.Embedding(dur_bucket_size, 8)
+                extra_dim += 8
+            else:
+                self.dur_bucket_emb = None
             self.feat_proj = nn.Linear(d_model + extra_dim, d_model)
             self.lstm = nn.LSTM(
                 d_model, d_model // 2, num_layers=2, batch_first=True, bidirectional=True
@@ -241,6 +341,10 @@ def train_model(
                 parts.append(self.section_emb(feats["section"]))
             if self.mood_emb is not None and "mood" in feats:
                 parts.append(self.mood_emb(feats["mood"]))
+            if self.vel_bucket_emb is not None and "vel_bucket" in feats:
+                parts.append(self.vel_bucket_emb(feats["vel_bucket"]))
+            if self.dur_bucket_emb is not None and "dur_bucket" in feats:
+                parts.append(self.dur_bucket_emb(feats["dur_bucket"]))
             x = torch.cat(parts, dim=-1)
             x = self.feat_proj(x)
             packed = nn.utils.rnn.pack_padded_sequence(
@@ -260,6 +364,8 @@ def train_model(
             max_len: int = 32,
             section_vocab: dict[str, int] | None = None,
             mood_vocab: dict[str, int] | None = None,
+            instrument_vocab: dict[str, int] | None = None,
+            use_duv_embed: bool = False,
         ) -> None:
             by_bar: dict[int, list[dict[str, str]]] = {}
             for r in rows:
@@ -268,16 +374,47 @@ def train_model(
             self.groups = [
                 sorted(g, key=lambda r: int(r["pos"])) for bar, g in sorted(by_bar.items())
             ]
+            self.group_tags = {
+                "section": [g[0].get("section", "") for g in self.groups],
+                "mood": [g[0].get("mood", "") for g in self.groups],
+                "instrument": [g[0].get("instrument", "") for g in self.groups],
+            }
             self.max_len = max_len
             self.section_vocab = section_vocab
             self.mood_vocab = mood_vocab
+            self.instrument_vocab = instrument_vocab
+            self.use_duv_embed = use_duv_embed
+            self.has_vel_bucket = use_duv_embed and any(
+                ("velocity_bucket" in r) or ("vel_bucket" in r) for r in rows
+            )
+            self.has_dur_bucket = use_duv_embed and any(
+                ("duration_bucket" in r) or ("dur_bucket" in r) for r in rows
+            )
+            if use_duv_embed:
+                if any("vel_bucket" in r for r in rows):
+                    warnings.warn(
+                        "vel_bucket column is deprecated; use velocity_bucket",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
+                if any("dur_bucket" in r for r in rows):
+                    warnings.warn(
+                        "dur_bucket column is deprecated; use duration_bucket",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
 
         def __len__(self) -> int:  # pragma: no cover - trivial
             return len(self.groups)
 
         def __getitem__(
             self, idx: int
-        ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+        ) -> tuple[
+            dict[str, torch.Tensor],
+            torch.Tensor,
+            torch.Tensor,
+            dict[str, torch.Tensor],
+        ]:
             g = self.groups[idx]
             L = len(g)
             pad = self.max_len - L
@@ -308,18 +445,55 @@ def train_model(
                     0
                 ] * pad
                 feats["mood"] = torch.tensor(md, dtype=torch.long)
+            if self.has_vel_bucket:
+                vb = [
+                    int(r.get("velocity_bucket", r.get("vel_bucket", 0))) for r in g
+                ] + [0] * pad
+                feats["vel_bucket"] = torch.tensor(vb, dtype=torch.long)
+            if self.has_dur_bucket:
+                db = [
+                    int(r.get("duration_bucket", r.get("dur_bucket", 0))) for r in g
+                ] + [0] * pad
+                feats["dur_bucket"] = torch.tensor(db, dtype=torch.long)
             mask = torch.zeros(self.max_len, dtype=torch.bool)
             mask[:L] = 1
-            return feats, y, mask
+            tags = {
+                "instrument": [
+                    self.instrument_vocab.get(r.get("instrument", ""), 0)
+                    if self.instrument_vocab
+                    else 0
+                    for r in g
+                ]
+                + [0] * pad,
+                "section": [
+                    self.section_vocab.get(r.get("section", ""), 0)
+                    if self.section_vocab
+                    else 0
+                    for r in g
+                ]
+                + [0] * pad,
+                "mood": [
+                    self.mood_vocab.get(r.get("mood", ""), 0)
+                    if self.mood_vocab
+                    else 0
+                    for r in g
+                ]
+                + [0] * pad,
+            }
+            tags_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in tags.items()}
+            return feats, y, mask, tags_tensor
 
     def collate_fn(
-        batch: list[tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]],
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
-        feats, y, mask = zip(*batch)
+        batch: list[
+            tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]
+        ],
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+        feats, y, mask, tags = zip(*batch)
         out_feats = {k: torch.stack([f[k] for f in feats]) for k in feats[0]}
-        return out_feats, torch.stack(y), torch.stack(mask)
+        out_tags = {k: torch.stack([t[k] for t in tags]) for k in tags[0]}
+        return out_feats, torch.stack(y), torch.stack(mask), out_tags
 
-    device, use_amp = setup_env()
+    device, use_amp = setup_env(seed)
     logging.info(
         "device %s amp=%s precision=%s",
         device,
@@ -330,10 +504,40 @@ def train_model(
     required = {"pitch", "velocity", "duration", "pos", "boundary", "bar"}
     train_rows = load_csv_rows(train_csv, required)
     val_rows = load_csv_rows(val_csv, required)
-    section_vals = {r["section"] for r in train_rows + val_rows if "section" in r}
-    mood_vals = {r["mood"] for r in train_rows + val_rows if "mood" in r}
+    train_rows, tr_removed = apply_filters(
+        train_rows, instrument, include_tags, exclude_tags, strict=strict_tags
+    )
+    val_rows, val_removed = apply_filters(
+        val_rows, instrument, include_tags, exclude_tags, strict=strict_tags
+    )
+    logging.info(
+        "train rows kept %d removed %d | val kept %d removed %d",
+        len(train_rows),
+        tr_removed,
+        len(val_rows),
+        val_removed,
+    )
+    section_vals = {r["section"] for r in train_rows + val_rows if r.get("section")}
+    mood_vals = {r["mood"] for r in train_rows + val_rows if r.get("mood")}
+    instrument_vals = {r["instrument"] for r in train_rows + val_rows if r.get("instrument")}
+    vel_bucket_size = 0
+    dur_bucket_size = 0
+    if use_duv_embed:
+        vbs = [
+            int(r.get("velocity_bucket", r.get("vel_bucket", 0)))
+            for r in train_rows + val_rows
+            if ("velocity_bucket" in r) or ("vel_bucket" in r)
+        ]
+        dbs = [
+            int(r.get("duration_bucket", r.get("dur_bucket", 0)))
+            for r in train_rows + val_rows
+            if ("duration_bucket" in r) or ("dur_bucket" in r)
+        ]
+        vel_bucket_size = (max(vbs) + 1) if vbs else 0
+        dur_bucket_size = (max(dbs) + 1) if dbs else 0
+        logging.info("duv embed v=%s d=%s", vel_bucket_size, dur_bucket_size)
+    positive_count = sum(int(r["boundary"]) for r in train_rows)
     if auto_pos_weight and pos_weight is None:
-        positive_count = sum(int(r["boundary"]) for r in train_rows)
         total_count = len(train_rows)
         p = max(1e-6, min(1 - 1e-6, positive_count / max(1, total_count)))
         pos_weight = (1 - p) / p
@@ -344,8 +548,38 @@ def train_model(
     mood_vocab = (
         {s: i + 1 for i, s in enumerate(sorted(mood_vals))} if mood_vals else None
     )
-    ds_train = PhraseDataset(train_rows, max_len, section_vocab, mood_vocab)
-    ds_val = PhraseDataset(val_rows, max_len, section_vocab, mood_vocab)
+    instrument_vocab = (
+        {s: i + 1 for i, s in enumerate(sorted(instrument_vals))} if instrument_vals else None
+    )
+    class_counts = {"pos": positive_count, "neg": len(train_rows) - positive_count}
+    tag_counts: dict[str, dict[str, int]] = {}
+    for tag in ("instrument", "section", "mood"):
+        counts = Counter(r.get(tag, "") for r in train_rows if r.get(tag))
+        if counts:
+            tag_counts[tag] = dict(counts)
+    logging.info("class balance %s", class_counts)
+    for t, c in tag_counts.items():
+        logging.info("tag %s counts %s", t, c)
+    tag_coverage = {
+        t: sum(c.values()) / len(train_rows) if train_rows else 0.0
+        for t, c in tag_counts.items()
+    }
+    ds_train = PhraseDataset(
+        train_rows,
+        max_len,
+        section_vocab,
+        mood_vocab,
+        instrument_vocab,
+        use_duv_embed=use_duv_embed,
+    )
+    ds_val = PhraseDataset(
+        val_rows,
+        max_len,
+        section_vocab,
+        mood_vocab,
+        instrument_vocab,
+        use_duv_embed=use_duv_embed,
+    )
 
     pin_mem = device.type == "cuda" or pin_memory
     persist = device.type == "cuda" and num_workers > 0
@@ -354,13 +588,36 @@ def train_model(
         seed = torch.initial_seed() % 2**32
         torch.manual_seed(seed + worker_id)
         random.seed(seed + worker_id)
-        if np is not None:
-            np.random.seed(seed + worker_id)
+        try:  # optional numpy seeding
+            import numpy as _np  # type: ignore
+
+            _np.random.seed(seed + worker_id)
+        except Exception:  # pragma: no cover - numpy missing
+            pass
+    reweight_cfg = None
+    sampler = None
+    weight_stats: dict[str, float] | None = None
+    if reweight:
+        parts = dict(p.split("=") for p in reweight.split(",") if "=" in p)
+        reweight_cfg = parts
+        tag = parts.get("tag")
+        scheme = parts.get("scheme")
+        if tag and scheme == "inv_freq" and tag in ds_train.group_tags:
+            vals = ds_train.group_tags[tag]
+            freq = Counter(vals)
+            weights = [1.0 / freq[v] for v in vals]
+            sampler = torch.utils.data.WeightedRandomSampler(
+                weights, len(weights), replacement=True
+            )
+            weight_map = {v: 1.0 / freq[v] for v in freq}
+            weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
+            logging.info("top tag weights %s", weight_stats)
 
     dl_train = DataLoader(
         ds_train,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=sampler is None,
+        sampler=sampler,
         collate_fn=collate_fn,
         num_workers=num_workers,
         pin_memory=pin_mem,
@@ -383,6 +640,8 @@ def train_model(
             max_len=max_len,
             section_vocab_size=len(section_vocab) + 1 if section_vocab else 0,
             mood_vocab_size=len(mood_vocab) + 1 if mood_vocab else 0,
+            vel_bucket_size=vel_bucket_size,
+            dur_bucket_size=dur_bucket_size,
         )
     else:
         model = PhraseTransformer(
@@ -390,15 +649,23 @@ def train_model(
             max_len=max_len,
             section_vocab_size=len(section_vocab) + 1 if section_vocab else 0,
             mood_vocab_size=len(mood_vocab) + 1 if mood_vocab else 0,
+            vel_bucket_size=vel_bucket_size,
+            dur_bucket_size=dur_bucket_size,
+            nhead=nhead,
+            num_layers=layers,
+            dropout=dropout,
         )
     model = model.to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     total_steps = epochs * max(1, len(dl_train))
-    sched = (
-        torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=total_steps)
-        if scheduler == "cosine"
-        else None
-    )
+    if scheduler == "cosine":
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=total_steps)
+    elif scheduler == "plateau":
+        sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            opt, factor=lr_factor, patience=lr_patience
+        )
+    else:
+        sched = None
     pw = torch.tensor([pos_weight], device=device) if pos_weight else None
     crit = nn.BCEWithLogitsLoss(pos_weight=pw)
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
@@ -417,34 +684,32 @@ def train_model(
         global_step = int(state.get("global_step", 0))
         best_f1 = float(state.get("best_f1", -1.0))
 
-    def evaluate() -> tuple[float, float]:
+    def evaluate() -> tuple[float, float, list[float], list[int], dict[str, list[int]]]:
         model.eval()
         probs: list[float] = []
         trues: list[int] = []
+        tag_buf = {"instrument": [], "section": [], "mood": []}
         with torch.no_grad():
-            for feats, y, mask in dl_val:
+            for feats, y, mask, tags in dl_val:
                 feats = {k: v.to(device) for k, v in feats.items()}
                 y = y.to(device)
                 mask = mask.to(device)
                 logits = model(feats, mask)
-                probs.extend(torch.sigmoid(logits[mask]).cpu().tolist())
-                trues.extend(y[mask].int().cpu().tolist())
+                m = mask.bool()
+                probs.extend(torch.sigmoid(logits[m]).cpu().tolist())
+                trues.extend(y[m].int().cpu().tolist())
+                for k in tag_buf:
+                    tag_buf[k].extend(tags[k][m].cpu().tolist())
         best_f1, best_th = -1.0, 0.5
         start, end, step = f1_scan_range
-        if np is not None:
-            ths = np.arange(start, end + 1e-9, step)
-        else:
-            ths = []
-            t = start
-            while t <= end + 1e-9:
-                ths.append(t)
-                t += step
+        n = int(round((end - start) / step)) + 1
+        ths = [round(start + i * step, 10) for i in range(n)]
         for th in ths:
             preds = [1 if p > th else 0 for p in probs]
             f1 = f1_score(trues, preds)
             if f1 > best_f1:
                 best_f1, best_th = f1, float(th)
-        return best_f1, best_th
+        return best_f1, best_th, probs, trues, tag_buf
 
     best_state = None
     best_threshold = 0.5
@@ -454,7 +719,7 @@ def train_model(
         t0 = time.time()
         model.train()
         loss_sum = 0.0
-        for feats, y, mask in dl_train:
+        for feats, y, mask, _ in dl_train:
             feats = {k: v.to(device) for k, v in feats.items()}
             y = y.to(device)
             mask = mask.to(device)
@@ -480,7 +745,7 @@ def train_model(
                 if grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                 opt.step()
-            if sched:
+            if sched and scheduler != "plateau":
                 if global_step < warmup_steps:
                     lr_scale = float(global_step + 1) / warmup_steps
                     for pg in opt.param_groups:
@@ -488,7 +753,7 @@ def train_model(
                 else:
                     sched.step()
             global_step += 1
-        f1, th = evaluate()
+        f1, th, probs, trues, _ = evaluate()
         avg_loss = loss_sum / max(1, len(dl_train))
         lr_cur = opt.param_groups[0]["lr"]
         elapsed = time.time() - t0
@@ -510,6 +775,25 @@ def train_model(
                 "time": elapsed,
             }
         )
+        if scheduler == "plateau" and sched:
+            sched.step(f1)
+        if viz and precision_recall_curve and plt:
+            try:
+                prec, rec, _ = precision_recall_curve(trues, probs)
+                plt.figure()
+                plt.plot(rec, prec)
+                plt.xlabel("Recall")
+                plt.ylabel("Precision")
+                plt.tight_layout()
+                plt.savefig(out.parent / f"pr_curve_ep{ep + 1}.png")
+                plt.close()
+                preds_ep = [1 if p > th else 0 for p in probs]
+                ConfusionMatrixDisplay.from_predictions(trues, preds_ep)
+                plt.tight_layout()
+                plt.savefig(out.parent / f"confusion_matrix_ep{ep + 1}.png")
+                plt.close()
+            except Exception:  # pragma: no cover - visualization failures
+                pass
         if writer:
             writer.add_scalar("val/f1", f1, ep)
             writer.add_scalar("train/loss", avg_loss, ep)
@@ -549,10 +833,37 @@ def train_model(
         torch.save(best_ckpt, out.with_suffix(".best.ckpt"))
     if writer:
         writer.close()
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    best_f1, best_threshold, probs, trues, tag_buf = evaluate()
+    inv_section = {i: s for s, i in section_vocab.items()} if section_vocab else {}
+    inv_mood = {i: s for s, i in mood_vocab.items()} if mood_vocab else {}
+    inv_inst = {i: s for s, i in instrument_vocab.items()} if instrument_vocab else {}
+    metrics_by_tag: dict[str, dict[str, float]] = {}
+
+    def group_f1(ids: list[int], inv_map: dict[int, str]) -> dict[str, float]:
+        groups: dict[int, list[tuple[int, int]]] = {}
+        for t, p, gid in zip(trues, probs, ids):
+            if gid <= 0:
+                continue
+            pred = 1 if p > best_threshold else 0
+            groups.setdefault(gid, []).append((t, pred))
+        return {inv_map[k]: f1_score([t for t, _ in v], [p for _, p in v]) for k, v in groups.items()}
+
+    if instrument_vocab:
+        metrics_by_tag["instrument"] = group_f1(tag_buf["instrument"], inv_inst)
+    if section_vocab:
+        metrics_by_tag["section"] = group_f1(tag_buf["section"], inv_section)
+    if mood_vocab:
+        metrics_by_tag["mood"] = group_f1(tag_buf["mood"], inv_mood)
     metrics_path = out.parent / "metrics.json"
-    metrics_path.write_text(
-        json.dumps({"f1": best_f1, "best_threshold": best_threshold}, ensure_ascii=False)
-    )
+    metrics_data = {"f1": best_f1, "best_threshold": best_threshold}
+    if metrics_by_tag:
+        metrics_data["by_tag"] = metrics_by_tag
+        (out.parent / "metrics_by_tag.json").write_text(
+            json.dumps(metrics_by_tag, ensure_ascii=False, indent=2)
+        )
+    metrics_path.write_text(json.dumps(metrics_data, ensure_ascii=False))
     metrics_csv = out.parent / "metrics_epoch.csv"
     with metrics_csv.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["epoch", "loss", "f1", "best_th", "time"])
@@ -561,7 +872,7 @@ def train_model(
     preview_path = out.parent / "preds_preview.json"
     try:
         with torch.no_grad():
-            feats, y, mask = next(iter(dl_val))
+            feats, y, mask, _tags = next(iter(dl_val))
             feats = {k: v.to(device) for k, v in feats.items()}
             mask0 = mask[0].bool()
             logits = model(feats, mask.to(device))[0, mask0.to(device)]
@@ -574,7 +885,14 @@ def train_model(
     except StopIteration:  # pragma: no cover - empty validation set
         pass
     print(json.dumps({"f1": best_f1}))
-    return best_f1, device.type
+    stats = {
+        "class_counts": class_counts,
+        "tag_counts": tag_counts,
+        "tag_coverage": tag_coverage,
+    }
+    if weight_stats:
+        stats["tag_weights_top10"] = weight_stats
+    return best_f1, device.type, stats
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -594,15 +912,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--out", type=Path, default=Path("phrase.ckpt"))
     parser.add_argument("--arch", choices=["transformer", "lstm"], default="transformer")
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--d_model", type=int, default=512)
     parser.add_argument("--max-len", type=int, default=128)
+    parser.add_argument("--nhead", type=int, default=8)
+    parser.add_argument("--layers", type=int, default=4)
+    parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--pin-memory", action="store_true")
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=0.0)
-    parser.add_argument("--scheduler", choices=["cosine"], default=None)
+    parser.add_argument("--scheduler", choices=["cosine", "plateau"], default=None)
     parser.add_argument("--warmup-steps", type=int, default=0)
     parser.add_argument("--pos-weight", type=float)
     parser.add_argument("--auto-pos-weight", action="store_true")
@@ -620,15 +942,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-every", type=int, default=0)
     parser.add_argument("--early-stopping", type=int, default=0)
     parser.add_argument("--precision", choices=["high", "medium", "low"], default=None)
+    parser.add_argument("--deterministic", action="store_true")
+    parser.add_argument("--lr-patience", type=int, default=2)
+    parser.add_argument("--lr-factor", type=float, default=0.5)
     parser.add_argument(
         "--data",
         type=Path,
         help="corpus directory with train/valid splits; overrides positional CSVs",
     )
     parser.add_argument("--instrument")
-    parser.add_argument("--filter-section", type=str, default=None)
-    parser.add_argument("--filter-mood", type=str, default=None)
+    parser.add_argument("--include-tags", type=str, default=None)
+    parser.add_argument("--exclude-tags", type=str, default=None)
+    parser.add_argument("--reweight", type=str, default=None)
+    parser.add_argument("--use-duv-embed", action="store_true")
     parser.add_argument("--sample", type=int, default=0)
+    parser.add_argument("--viz", action="store_true", help="save PR/CM plots")
+    parser.add_argument("--strict-tags", action="store_true", help="drop rows missing requested tags")
     return parser
 
 
@@ -643,21 +972,48 @@ def main(argv: list[str] | None = None) -> int:
         handlers.append(logging.FileHandler(args.logdir / "train.log"))
     logging.basicConfig(level=logging.INFO, handlers=handlers)
 
+    include = {}
+    if args.include_tags:
+        for part in args.include_tags.split(","):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                include[k] = v
+    exclude = {}
+    if args.exclude_tags:
+        for part in args.exclude_tags.split(","):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                exclude[k] = v
+
     if args.data:
         try:
             train_rows, val_rows = load_corpus(
                 args.data,
-                filter_section=args.filter_section,
-                filter_mood=args.filter_mood,
+                include_tags=include,
+                exclude_tags=exclude,
+                strict=args.strict_tags,
             )
-            if args.instrument:
-                inst = args.instrument.lower()
-                train_rows = [
-                    r for r in train_rows if inst in str(r.get("instrument", "")).lower()
-                ]
-                val_rows = [
-                    r for r in val_rows if inst in str(r.get("instrument", "")).lower()
-                ]
+            train_rows, tr_removed = apply_filters(
+                train_rows,
+                args.instrument,
+                include,
+                exclude,
+                strict=args.strict_tags,
+            )
+            val_rows, val_removed = apply_filters(
+                val_rows,
+                args.instrument,
+                include,
+                exclude,
+                strict=args.strict_tags,
+            )
+            logging.info(
+                "corpus rows kept %d/%d train %d/%d val",
+                len(train_rows),
+                len(train_rows) + tr_removed,
+                len(val_rows),
+                len(val_rows) + val_removed,
+            )
             if args.sample:
                 rng = random.Random(0)
                 train_rows = rng.sample(train_rows, min(args.sample, len(train_rows)))
@@ -700,14 +1056,43 @@ def main(argv: list[str] | None = None) -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     run_path = args.out.with_suffix(".run.json")
     run_cfg = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
-    run_path.write_text(json.dumps(run_cfg, ensure_ascii=False, indent=2))
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    dirty = bool(
+        subprocess.run(
+            ["git", "status", "--porcelain"], capture_output=True, text=True
+        ).stdout.strip()
+    )
+    run_cfg["git_commit"] = commit
+    run_cfg["git_dirty"] = dirty
+    try:
+        import torch
+        torch_ver = torch.__version__
+    except Exception:  # pragma: no cover
+        torch_ver = None
+    try:
+        import numpy as _np
 
-    f1, device_type = train_model(
+        np_ver = _np.__version__
+    except Exception:  # pragma: no cover
+        np_ver = None
+    run_cfg["env"] = {
+        "platform": sys.platform,
+        "torch_version": torch_ver,
+        "numpy_version": np_ver,
+    }
+    run_cfg["seed"] = args.seed
+    run_cfg["viz_enabled"] = bool(args.viz and plt is not None)
+    run_cfg["viz_backend"] = plt.get_backend() if run_cfg["viz_enabled"] else None
+
+    f1, device_type, stats = train_model(
         args.train_csv,
         args.val_csv,
         args.epochs,
         args.arch,
         args.out,
+        seed=args.seed,
         batch_size=args.batch_size,
         d_model=args.d_model,
         max_len=args.max_len,
@@ -726,7 +1111,24 @@ def main(argv: list[str] | None = None) -> int:
         f1_scan_range=args.f1_scan_range,
         logdir=args.logdir,
         precision=args.precision,
+        deterministic=args.deterministic,
+        reweight=args.reweight,
+        lr_patience=args.lr_patience,
+        lr_factor=args.lr_factor,
+        use_duv_embed=args.use_duv_embed,
+        instrument=args.instrument,
+        include_tags=include,
+        exclude_tags=exclude,
+        viz=args.viz,
+        strict_tags=args.strict_tags,
+        nhead=args.nhead,
+        layers=args.layers,
+        dropout=args.dropout,
     )
+
+    run_cfg["sampler_weights_summary"] = stats
+    run_cfg["tag_coverage"] = stats.get("tag_coverage", {})
+    run_path.write_text(json.dumps(run_cfg, ensure_ascii=False, indent=2))
 
     hparams = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
     hparams["device"] = device_type

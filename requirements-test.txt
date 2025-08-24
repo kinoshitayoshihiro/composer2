@@ -11,6 +11,8 @@ music21>=9.1,<9.2
 websockets>=12.0  # test_ws_echo 用
 PyYAML>=6.0
 
+matplotlib>=3.7
+
 fastapi>=0.85
 httpx>=0.23
 pytest-asyncio>=0.20
@@ -21,4 +23,4 @@ python-rtmidi>=1.5
 pydub>=0.25
 pyloudnorm>=0.1
 colorama>=0.4
-numba==0.59.1
+numba>=0.60.0

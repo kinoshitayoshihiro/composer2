@@ -99,23 +99,41 @@ Install dependencies (including test extras) with:
 pip install -r requirements.txt -r requirements-test.txt
 ```
 
-Prepare phrase CSVs from a MIDI directory:
+Generate CSVs ("CSV route"):
 
 ```bash
-python -m tools.corpus_to_phrase_csv --in data/midi --out-train train.csv --out-valid valid.csv
+python -m tools.corpus_to_phrase_csv --in data/midi \
+    --out-train train.csv --out-valid valid.csv --emit-buckets
 ```
 
-Train the boundary model for a couple of epochs and record logs:
+Train from CSVs:
 
 ```bash
-python scripts/train_phrase.py train.csv valid.csv --epochs 2 --out checkpoints/bass_duv_v1.ckpt --logdir logs/phrase
+python scripts/train_phrase.py train.csv valid.csv --epochs 2 \
+    --out checkpoints/bass_duv_v1.ckpt --logdir logs/phrase
 ```
+
+Or train directly from a corpus directory ("corpus route"):
+
+```bash
+python scripts/train_phrase.py --data corpus_dir \
+    --include-tags "section=chorus,mood=energetic" --viz \
+    --reweight "tag=section,scheme=inv_freq" --epochs 2 \
+    --out checkpoints/corpus.ckpt
+```
+
+Missing tag columns are ignored unless `--strict-tags` is supplied, in which case
+rows lacking requested keys are dropped.
 
 Use `--resume path.ckpt` to continue, `--save-every 1` for periodic checkpoints or `--early-stopping 2` for patience‑based stopping.
 
 The checkpoint directory will include `bass_duv_v1.ckpt`, `bass_duv_v1.best.ckpt`,
 `metrics.json`, `metrics_epoch.csv`, `preds_preview.json`, `bass_duv_v1.run.json`
-and `hparams.json`.
+and `hparams.json`. When `--viz` is passed and matplotlib is available (headless
+backends fall back to `Agg`), each epoch also saves `pr_curve_ep*.png` and
+`confusion_matrix_ep*.png`; per-tag F1 scores live in `metrics_by_tag.json` and are
+embedded under `by_tag` in `metrics.json`.
+If matplotlib is missing, a one-line warning is emitted and plots are skipped.
 
 CSV columns:
 
@@ -128,6 +146,24 @@ CSV columns:
 | boundary  | 1 at phrase boundary     |
 | bar       | bar number               |
 | instrument| instrument label         |
+| velocity_bucket | velocity bin (optional) |
+| duration_bucket | duration bin (optional) |
+
+- If `duration_bucket`/`velocity_bucket` columns exist they are embedded directly;
+  otherwise continuous duration/velocity values are projected, and optional
+  bucketing can be toggled via `--duv-bucketize`. Legacy short names
+  (`dur_bucket`/`vel_bucket`) are still accepted but emit a `DeprecationWarning`.
+
+- `tools.corpus_to_phrase_csv` gains `--emit-buckets` to populate
+  `velocity_bucket`/`duration_bucket` columns; pass `--use-duv-embed` during training
+  to consume them.
+- `--instrument`, `--include-tags key=value` and `--exclude-tags key=value` work in
+  both corpus and CSV modes; unmatched columns are ignored silently unless
+  `--strict-tags` is set.
+- `--viz` controls whether PR curves and confusion matrices are rendered.
+  Matplotlib is optional; without it, a warning is printed.
+- Transformer hyper-parameters such as `--nhead`, `--layers`, `--dropout` and the
+  RNG `--seed` are exposed as CLI flags.
 
 
 ### Auto-tag CLI
@@ -222,7 +258,13 @@ importing `pretty_midi`, install `setuptools` as well:
 pip install setuptools
 ```
 
+Some environments bundle a newer `setuptools` that triggers warnings in
+`pretty_midi`; installing `setuptools<81` or using the `miditoolkit` fallback
+avoids the issue.
+
 ### Dev-Dependencies
+
+We pin **numba>=0.60.0** across `requirements*.txt` for consistency.
 
 The optional **Musyng Kite** SoundFont (LGPL) is recommended for audio previews.
 Place the `.sf2` file somewhere and set the environment variable `SF2_PATH`

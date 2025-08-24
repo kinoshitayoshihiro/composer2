@@ -797,6 +797,7 @@ def train_model(
                 mask = mask.to(device)
                 out = model(feats, mask)
                 m = mask.bool()
+                mask_cpu = m.cpu()
                 probs.extend(torch.sigmoid(out["boundary"][m]).cpu().tolist())
                 trues.extend(targets["boundary"][m].int().cpu().tolist())
                 if "vel_reg" in out:
@@ -826,7 +827,7 @@ def train_model(
                     dur_ok += int((preds == targets["dur_cls"][m]).sum())
                     dur_tot += int(m.sum())
                 for k in tag_buf:
-                    tag_buf[k].extend(tags[k][m].cpu().tolist())
+                    tag_buf[k].extend(tags[k][mask_cpu].tolist())
         best_f1, best_th = -1.0, 0.5
         start, end, step = f1_scan_range
         n = int(round((end - start) / step)) + 1

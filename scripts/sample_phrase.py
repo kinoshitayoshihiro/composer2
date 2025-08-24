@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import pretty_midi
+import numpy as np
 import torch
 
 from models.phrase_transformer import PhraseTransformer
@@ -54,11 +55,15 @@ def _build_feats(rows: List[Dict[str, Any]], max_len: int) -> tuple[Dict[str, to
 def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ckpt", type=Path, required=True)
-    parser.add_argument("--in", dest="inp", type=Path, required=True)
+    parser.add_argument("--in", "--infile", dest="inp", type=Path, required=True)
     parser.add_argument("--arch", choices=["transformer", "lstm"], default="transformer")
     parser.add_argument("--max-len", type=int, default=128)
     parser.add_argument("--duv-mode", choices=["none", "reg", "cls", "both"], default="reg")
     parser.add_argument("--out-midi", type=Path, required=True)
+    parser.add_argument("--tempo", type=float, default=None, help="MIDI tempo in BPM; defaults to estimated tempo")
+    parser.add_argument("--ppq", type=int, default=480, help="ticks per quarter note")
+    parser.add_argument("--ts", type=str, default="4/4", help="time signature, e.g. 3/4")
+    parser.add_argument("--program", type=int, default=0, help="MIDI program number for instrument")
     args = parser.parse_args(argv)
 
     state = torch.load(args.ckpt, map_location="cpu")
@@ -97,8 +102,8 @@ def main(argv: List[str] | None = None) -> int:
         raise SystemExit("velocity/duration regression required for MIDI output")
     vel, dur = denorm_duv(vel_reg[0], dur_reg[0])
 
-    pm = pretty_midi.PrettyMIDI()
-    inst = pretty_midi.Instrument(program=0)
+    pm = pretty_midi.PrettyMIDI(resolution=args.ppq, initial_tempo=args.tempo or 120.0)
+    inst = pretty_midi.Instrument(program=args.program)
     t = 0.0
     for i, row in enumerate(rows[: len(vel)]):
         pitch = int(row.get("pitch", 60))
@@ -107,6 +112,13 @@ def main(argv: List[str] | None = None) -> int:
         inst.notes.append(pretty_midi.Note(pitch=pitch, velocity=v, start=t, end=t + d))
         t += d
     pm.instruments.append(inst)
+    num, denom = map(int, args.ts.split("/"))
+    pm.time_signature_changes.append(pretty_midi.TimeSignature(num, denom, 0))
+    if args.tempo is None:
+        tempo = float(pm.estimate_tempo())
+        pm._tempo_changes = (np.array([0.0]), np.array([tempo]))
+        if hasattr(pm, "_update_tick_to_time"):
+            pm._update_tick_to_time()
     pm.write(str(args.out_midi))
     return 0
 

@@ -34,6 +34,9 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         mood_vocab_size: int = 0,
         vel_bucket_size: int = 0,
         dur_bucket_size: int = 0,
+        duv_mode: str = "reg",
+        vel_bins: int = 0,
+        dur_bins: int = 0,
         nhead: int = 8,
         num_layers: int = 4,
         dropout: float = 0.1,
@@ -73,11 +76,23 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         )
         self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
         self.pos_enc = PositionalEncoding(d_model, max_len + 1)
-        self.fc = nn.Linear(d_model, 1)
+        self.head_boundary = nn.Linear(d_model, 1)
+        self.head_vel_reg = (
+            nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
+        )
+        self.head_dur_reg = (
+            nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
+        )
+        self.head_vel_cls = (
+            nn.Linear(d_model, vel_bins) if duv_mode in {"cls", "both"} else None
+        )
+        self.head_dur_cls = (
+            nn.Linear(d_model, dur_bins) if duv_mode in {"cls", "both"} else None
+        )
 
     def forward(
         self, feats: dict[str, torch.Tensor], mask: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> dict[str, torch.Tensor]:
         pos_ids = feats["position"].clamp(max=self.max_len - 1)
         dur = self.dur_proj(feats["duration"].unsqueeze(-1))
         vel = self.vel_proj(feats["velocity"].unsqueeze(-1))
@@ -103,8 +118,18 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
             dim=1,
         )
         h = self.encoder(x, src_key_padding_mask=~pad_mask)
-        out = self.fc(h[:, 1:]).squeeze(-1)
-        return out
+        h = h[:, 1:]
+        outputs: dict[str, torch.Tensor] = {}
+        outputs["boundary"] = self.head_boundary(h).squeeze(-1)
+        if self.head_vel_reg is not None:
+            outputs["vel_reg"] = self.head_vel_reg(h).squeeze(-1)
+        if self.head_dur_reg is not None:
+            outputs["dur_reg"] = self.head_dur_reg(h).squeeze(-1)
+        if self.head_vel_cls is not None:
+            outputs["vel_cls"] = self.head_vel_cls(h)
+        if self.head_dur_cls is not None:
+            outputs["dur_cls"] = self.head_dur_cls(h)
+        return outputs
 
 
 __all__ = ["PhraseTransformer"]

@@ -32,6 +32,11 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         *,
         section_vocab_size: int = 0,
         mood_vocab_size: int = 0,
+        vel_bucket_size: int = 0,
+        dur_bucket_size: int = 0,
+        nhead: int = 8,
+        num_layers: int = 4,
+        dropout: float = 0.1,
     ) -> None:
         super().__init__()
         self.d_model = d_model
@@ -51,12 +56,22 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
             extra_dim += 16
         else:
             self.mood_emb = None
+        if vel_bucket_size:
+            self.vel_bucket_emb = nn.Embedding(vel_bucket_size, 8)
+            extra_dim += 8
+        else:
+            self.vel_bucket_emb = None
+        if dur_bucket_size:
+            self.dur_bucket_emb = nn.Embedding(dur_bucket_size, 8)
+            extra_dim += 8
+        else:
+            self.dur_bucket_emb = None
         self.feat_proj = nn.Linear(d_model + extra_dim, d_model)
         self.cls = nn.Parameter(torch.zeros(1, 1, d_model))
         enc_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=8, batch_first=True
+            d_model=d_model, nhead=nhead, batch_first=True, dropout=dropout
         )
-        self.encoder = nn.TransformerEncoder(enc_layer, num_layers=4)
+        self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
         self.pos_enc = PositionalEncoding(d_model, max_len + 1)
         self.fc = nn.Linear(d_model, 1)
 
@@ -73,6 +88,10 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
             parts.append(self.section_emb(feats["section"]))
         if self.mood_emb is not None and "mood" in feats:
             parts.append(self.mood_emb(feats["mood"]))
+        if self.vel_bucket_emb is not None and "vel_bucket" in feats:
+            parts.append(self.vel_bucket_emb(feats["vel_bucket"]))
+        if self.dur_bucket_emb is not None and "dur_bucket" in feats:
+            parts.append(self.dur_bucket_emb(feats["dur_bucket"]))
         x = torch.cat(parts, dim=-1)
         x = self.feat_proj(x)
         cls = self.cls.expand(x.size(0), 1, -1)

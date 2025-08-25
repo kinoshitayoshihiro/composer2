@@ -152,9 +152,12 @@ def corpus_mode(
     emit_buckets: bool = False,
     dur_bins: int = 16,
     vel_bins: int = 8,
+    instrument: str | None = None,
     instrument_regex: Pattern[str] | None = None,
     pitch_range: tuple[int, int] | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    instrument = instrument.lower() if instrument else None
+
     def load_split(split: str) -> list[dict[str, object]]:
         base = root / split
         files: list[Path] = []
@@ -163,13 +166,38 @@ def corpus_mode(
         else:
             files = sorted((base / "samples").glob("*.jsonl"))
         rows: list[dict[str, object]] = []
+        stats = Counter()
         for p in files:
             for obj in read_samples_jsonl(p):
-                name = obj.get("instrument", "")
-                if instrument_regex and not instrument_regex.search(name):
-                    continue
+                name = str(obj.get("instrument", ""))
                 pitch = int(obj["pitch"])
+                if instrument or instrument_regex:
+                    matched = False
+                    name_l = name.lower()
+                    if instrument and instrument in name_l:
+                        matched = True
+                    elif instrument_regex and instrument_regex.search(name):
+                        matched = True
+                    elif name_l in {"", "unknown"}:
+                        fname = str(
+                            obj.get("path")
+                            or obj.get("source_path")
+                            or obj.get("filename")
+                            or obj.get("file")
+                            or ""
+                        )
+                        stem = Path(fname).stem.lower()
+                        if instrument and instrument in stem:
+                            matched = True
+                        elif instrument_regex and instrument_regex.search(stem):
+                            matched = True
+                        elif pitch_range and pitch_range[0] <= pitch <= pitch_range[1]:
+                            matched = True
+                    if not matched:
+                        stats["removed_by_name"] += 1
+                        continue
                 if pitch_range and not (pitch_range[0] <= pitch <= pitch_range[1]):
+                    stats["removed_by_pitch"] += 1
                     continue
                 row = {
                     "pitch": pitch,
@@ -188,9 +216,17 @@ def corpus_mode(
                         float(row["duration"]), dur_bins
                     )
                 rows.append(row)
+                stats["kept"] += 1
+        logging.info("%s stats %s", split, dict(stats))
         return rows
 
-    return load_split("train"), load_split("valid")
+    train_rows = load_split("train")
+    valid_rows = load_split("valid")
+    if not train_rows or not valid_rows:
+        raise SystemExit(
+            "No rows matched filters. Try removing --instrument filters or use --pitch-range."
+        )
+    return train_rows, valid_rows
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -198,14 +234,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--in", dest="src", type=Path)
     parser.add_argument("--out-train", type=Path, required=True)
     parser.add_argument("--out-valid", type=Path, required=True)
-    parser.add_argument("--instrument")
-    parser.add_argument("--instrument-regex")
+    parser.add_argument(
+        "--instrument",
+        help="case-insensitive substring filter (OR with --pitch-range in corpus mode)",
+    )
+    parser.add_argument(
+        "--instrument-regex",
+        help="regex instrument filter (OR with --pitch-range in corpus mode)",
+    )
     parser.add_argument("--boundary-gap-beats", type=float, default=0.5)
     parser.add_argument("--boundary-on-section-change", action="store_true")
     parser.add_argument("--valid-ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--min-notes", type=int, default=0)
-    parser.add_argument("--pitch-range", nargs=2, type=int, metavar=("LOW", "HIGH"))
+    parser.add_argument(
+        "--pitch-range",
+        nargs=2,
+        type=int,
+        metavar=("LOW", "HIGH"),
+        help="inclusive pitch filter; typical bass range 28-60",
+    )
     parser.add_argument("--max-bars", type=int, default=10**9)
     parser.add_argument("--from-corpus", dest="from_corpus", type=Path)
     parser.add_argument(
@@ -225,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
             emit_buckets=args.emit_buckets,
             dur_bins=args.dur_bins,
             vel_bins=args.vel_bins,
+            instrument=args.instrument,
             instrument_regex=inst_re,
             pitch_range=pitch_range,
         )

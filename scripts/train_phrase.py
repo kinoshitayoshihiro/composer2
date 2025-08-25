@@ -16,13 +16,8 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Iterable
 
-# headless-safe matplotlib setup
-try:  # pragma: no cover - optional viz
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt  # type: ignore
-except Exception:  # pragma: no cover - no matplotlib
-    plt = None  # type: ignore
+# matplotlib imported lazily when --viz is enabled
+plt = None  # type: ignore
 
 
 # local import guard so the script works without an editable install
@@ -36,18 +31,10 @@ except ModuleNotFoundError:
             logging.warning("ALLOW_LOCAL_IMPORT=1, inserted repo root into sys.path")
         try:
             from models.phrase_transformer import PhraseTransformer
-        except ModuleNotFoundError as exc:  # pragma: no cover - still failing
-            print(
-                "Could not import project modules. Run 'pip install -e .' or set PYTHONPATH",
-                file=sys.stderr,
-            )
-            raise SystemExit(1) from exc
+        except ModuleNotFoundError:  # pragma: no cover - still failing
+            PhraseTransformer = None  # type: ignore
     else:  # pragma: no cover - guidance when fallback disabled
-        print(
-            "Could not import project modules. Run 'pip install -e .' or set PYTHONPATH",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
+        PhraseTransformer = None  # type: ignore
 
 
 FIELDS = [
@@ -217,6 +204,8 @@ def train_model(
     logdir: Path | None = None,
     precision: str | None = None,
     deterministic: bool = False,
+    device: str = "auto",
+    best_metric: str = "macro_f1",
     reweight: str | None = None,
     lr_patience: int = 2,
     lr_factor: float = 0.5,
@@ -229,6 +218,8 @@ def train_model(
     w_dur_reg: float = 0.5,
     w_vel_cls: float = 0.0,
     w_dur_cls: float = 0.0,
+    w_pitch: float = 0.4,
+    pitch_smoothing: float = 0.0,
     instrument: str | None = None,
     include_tags: dict[str, str] | None = None,
     exclude_tags: dict[str, str] | None = None,
@@ -252,8 +243,16 @@ def train_model(
         precision_recall_curve = None  # type: ignore
         ConfusionMatrixDisplay = None  # type: ignore
 
+    global plt  # type: ignore
     if viz and plt is None:
-        logging.warning("matplotlib not installed; skipping --viz")
+        try:  # pragma: no cover - optional
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as _plt  # type: ignore
+
+            plt = _plt
+        except Exception:
+            logging.warning("matplotlib not installed; skipping --viz")
 
     torch = importlib.import_module("torch")
     from torch import nn
@@ -263,7 +262,7 @@ def train_model(
     except Exception:  # pragma: no cover
         SummaryWriter = None
 
-    def setup_env(seed: int) -> tuple[torch.device, bool]:
+    def setup_env(seed: int, device_str: str) -> tuple[torch.device, bool]:
         random.seed(seed)
         try:  # optional numpy seeding
             import numpy as _np  # type: ignore
@@ -272,13 +271,16 @@ def train_model(
         except Exception:  # pragma: no cover - numpy missing
             pass
         torch.manual_seed(seed)
-        device = torch.device(
-            "cuda"
-            if torch.cuda.is_available()
-            else "mps"
-            if torch.backends.mps.is_available()
-            else "cpu"
-        )
+        if device_str == "auto":
+            if torch.cuda.is_available():
+                device_type = "cuda"
+            elif torch.backends.mps.is_available():
+                device_type = "mps"
+            else:
+                device_type = "cpu"
+        else:
+            device_type = device_str
+        device = torch.device(device_type)
         amp = device.type == "cuda"
         if device.type == "mps":
             amp = False
@@ -455,7 +457,9 @@ def train_model(
             g = self.groups[idx]
             L = len(g)
             pad = self.max_len - L
-            pc = torch.tensor([int(r["pitch"]) for r in g] + [0] * pad, dtype=torch.long)
+            pitches = [int(r["pitch"]) for r in g]
+            pitch_cls = [p % 12 for p in pitches]
+            pc = torch.tensor(pitch_cls + [0] * pad, dtype=torch.long)
             vel = torch.tensor(
                 [float(r["velocity"]) for r in g] + [0] * pad, dtype=torch.float32
             )
@@ -497,6 +501,7 @@ def train_model(
                 ),
                 "vel_reg": vel / 127.0,
                 "dur_reg": torch.log1p(dur),
+                "pitch": torch.tensor(pitches + [-100] * pad, dtype=torch.long),
             }
             if self.has_vel_bucket:
                 vb = [
@@ -555,7 +560,7 @@ def train_model(
         out_tags = {k: torch.stack([t[k] for t in tags]) for k in tags[0]}
         return out_feats, out_targets, torch.stack(mask), out_tags
 
-    device, use_amp = setup_env(seed)
+    device, use_amp = setup_env(seed, device)
     logging.info(
         "device %s amp=%s precision=%s",
         device,
@@ -634,6 +639,7 @@ def train_model(
         t: sum(c.values()) / len(train_rows) if train_rows else 0.0
         for t, c in tag_counts.items()
     }
+    corpus_name = train_csv.parent.name
     ds_train = PhraseDataset(
         train_rows,
         max_len,
@@ -759,6 +765,9 @@ def train_model(
     crit_dur_reg = nn.SmoothL1Loss()
     crit_vel_cls = nn.CrossEntropyLoss()
     crit_dur_cls = nn.CrossEntropyLoss()
+    crit_pitch = nn.CrossEntropyLoss(
+        ignore_index=-100, label_smoothing=pitch_smoothing
+    )
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     writer = SummaryWriter(logdir) if logdir and SummaryWriter else None
 
@@ -845,14 +854,18 @@ def train_model(
         }
         return best_f1, best_th, probs, trues, tag_buf, metrics
 
+    ts = int(time.time())
     best_state = None
     best_threshold = 0.5
     bad_epochs = 0
+    best_metric_val = -1.0
+    viz_files: list[str] = []
     metrics_rows: list[dict[str, float]] = []
     for ep in range(start_epoch, epochs):
         t0 = time.time()
         model.train()
         loss_sum = 0.0
+        lb_sum = lv_sum = ld_sum = lvb_sum = ldb_sum = lp_sum = 0.0
         opt.zero_grad()
         for step, (feats, targets, mask, _) in enumerate(dl_train):
             feats = {k: v.to(device) for k, v in feats.items()}
@@ -867,6 +880,7 @@ def train_model(
                 out = model(feats, mask)
                 m = mask.bool()
                 loss = 0.0
+                lb = lv = ld = lvb = ldb = lp = 0.0
                 if "boundary" in out:
                     lb = crit_boundary(out["boundary"][m], targets["boundary"][m])
                     loss = loss + w_boundary * lb
@@ -882,6 +896,15 @@ def train_model(
                 if "dur_cls" in out:
                     ldb = crit_dur_cls(out["dur_cls"][m], targets["dur_cls"][m])
                     loss = loss + w_dur_cls * ldb
+                if "pitch_logits" in out:
+                    lp = crit_pitch(out["pitch_logits"][m], targets["pitch"][m])
+                    loss = loss + w_pitch * lp
+                lb_sum += float(lb)
+                lv_sum += float(lv)
+                ld_sum += float(ld)
+                lvb_sum += float(lvb)
+                ldb_sum += float(ldb)
+                lp_sum += float(lp)
             loss_sum += float(loss)
             if scaler.is_enabled():
                 scaler.scale(loss / grad_accum).backward()
@@ -907,8 +930,15 @@ def train_model(
                     else:
                         sched.step()
                 global_step += 1
-        f1, th, probs, trues, _, metrics = evaluate()
-        avg_loss = loss_sum / max(1, len(dl_train))
+        f1, th, probs, trues, tag_buf, metrics = evaluate()
+        n_batches = max(1, len(dl_train))
+        avg_loss = loss_sum / n_batches
+        lb_avg = lb_sum / n_batches
+        lv_avg = lv_sum / n_batches
+        ld_avg = ld_sum / n_batches
+        lvb_avg = lvb_sum / n_batches
+        ldb_avg = ldb_sum / n_batches
+        lp_avg = lp_sum / n_batches
         lr_cur = opt.param_groups[0]["lr"]
         elapsed = time.time() - t0
         logging.info(
@@ -928,11 +958,18 @@ def train_model(
             {
                 "epoch": ep + 1,
                 "loss": avg_loss,
+                "loss_boundary": lb_avg,
+                "loss_vel_reg": lv_avg,
+                "loss_dur_reg": ld_avg,
+                "loss_vel_cls": lvb_avg,
+                "loss_dur_cls": ldb_avg,
+                "loss_pitch": lp_avg,
                 "f1": f1,
                 "best_th": th,
                 "time": elapsed,
             }
         )
+        preds_epoch = [1 if p > th else 0 for p in probs]
         if scheduler == "plateau" and sched:
             sched.step(f1)
         if viz and precision_recall_curve and plt:
@@ -943,13 +980,15 @@ def train_model(
                 plt.xlabel("Recall")
                 plt.ylabel("Precision")
                 plt.tight_layout()
-                plt.savefig(out.parent / f"pr_curve_ep{ep + 1}.png")
+                fname_pr = out.parent / f"run-{ts}-epoch-{ep + 1}-pr.png"
+                plt.savefig(fname_pr)
                 plt.close()
-                preds_ep = [1 if p > th else 0 for p in probs]
-                ConfusionMatrixDisplay.from_predictions(trues, preds_ep)
+                ConfusionMatrixDisplay.from_predictions(trues, preds_epoch)
                 plt.tight_layout()
-                plt.savefig(out.parent / f"confusion_matrix_ep{ep + 1}.png")
+                fname_cm = out.parent / f"run-{ts}-epoch-{ep + 1}-cm.png"
+                plt.savefig(fname_cm)
                 plt.close()
+                viz_files.extend([str(fname_pr), str(fname_cm)])
             except Exception:  # pragma: no cover - visualization failures
                 pass
         if writer:
@@ -959,7 +998,42 @@ def train_model(
             writer.add_scalar("val/dur_mae", metrics["dur_mae"], ep)
             writer.add_scalar("val/vel_acc", metrics["vel_acc"], ep)
             writer.add_scalar("val/dur_acc", metrics["dur_acc"], ep)
-        if f1 > best_f1:
+
+        metric_val = f1
+        if best_metric.startswith("inst_f1:") and instrument_vocab:
+            target = best_metric.split(":", 1)[1]
+            inv_inst = {i: s for s, i in instrument_vocab.items()}
+            groups: dict[int, list[tuple[int, int]]] = {}
+            if tag_buf.get("instrument"):
+                for t, p, gid in zip(trues, preds_epoch, tag_buf["instrument"]):
+                    if gid <= 0:
+                        continue
+                    groups.setdefault(gid, []).append((t, p))
+            inst_metrics = {
+                inv_inst[g]: f1_score([t for t, _ in v], [p for _, p in v])
+                for g, v in groups.items()
+                if g in inv_inst
+            }
+            metric_val = inst_metrics.get(target, 0.0)
+        elif best_metric.startswith("by_tag_f1:"):
+            key = best_metric.split(":", 1)[1]
+            vocab_map = {"section": section_vocab, "mood": mood_vocab}.get(key)
+            if vocab_map and tag_buf.get(key):
+                inv_map = {i: s for s, i in vocab_map.items()}
+                groups: dict[int, list[tuple[int, int]]] = {}
+                for t, p, gid in zip(trues, preds_epoch, tag_buf[key]):
+                    if gid <= 0:
+                        continue
+                    groups.setdefault(gid, []).append((t, p))
+                vals = [
+                    f1_score([t for t, _ in v], [p for _, p in v])
+                    for g, v in groups.items()
+                    if g in inv_map
+                ]
+                metric_val = sum(vals) / len(vals) if vals else 0.0
+
+        if metric_val > best_metric_val:
+            best_metric_val = metric_val
             best_f1 = f1
             best_threshold = th
             best_state = {k: v.cpu() for k, v in model.state_dict().items()}
@@ -977,9 +1051,37 @@ def train_model(
                     "epoch": ep + 1,
                     "global_step": global_step,
                     "best_f1": best_f1,
+                    "meta": {
+                        "arch": arch,
+                        "d_model": d_model,
+                        "n_layers": layers,
+                        "n_heads": nhead,
+                    "max_len": max_len,
+                    "duv_mode": duv_mode,
+                    "vel_bins": vel_bins,
+                    "dur_bins": dur_bins,
+                    "vocab_pitch": 128,
+                    "vocab": {},
+                    "corpus_name": corpus_name,
+                    "tag_coverage": tag_coverage,
+                    },
                 },
                 out.with_suffix(f".epoch{ep + 1}.ckpt"),
             )
+    meta = {
+        "arch": arch,
+        "d_model": d_model,
+        "n_layers": layers,
+        "n_heads": nhead,
+        "max_len": max_len,
+        "duv_mode": duv_mode,
+        "vel_bins": vel_bins,
+        "dur_bins": dur_bins,
+        "vocab_pitch": 128,
+        "vocab": {},
+        "corpus_name": corpus_name,
+        "tag_coverage": tag_coverage,
+    }
     final_state = {
         "model": {k: v.cpu() for k, v in model.state_dict().items()},
         "optimizer": opt.state_dict(),
@@ -987,9 +1089,7 @@ def train_model(
         "epoch": ep + 1,
         "global_step": global_step,
         "best_f1": best_f1,
-        "d_model": d_model,
-        "max_len": max_len,
-        "duv_cfg": {"mode": duv_mode, "vel_bins": vel_bins, "dur_bins": dur_bins},
+        "meta": meta,
     }
     torch.save(final_state, out)
     if save_last:
@@ -1042,7 +1142,22 @@ def train_model(
     metrics_path.write_text(json.dumps(metrics_data, ensure_ascii=False))
     metrics_csv = out.parent / "metrics_epoch.csv"
     with metrics_csv.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["epoch", "loss", "f1", "best_th", "time"])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "epoch",
+                "loss",
+                "loss_boundary",
+                "loss_vel_reg",
+                "loss_dur_reg",
+                "loss_vel_cls",
+                "loss_dur_cls",
+                "loss_pitch",
+                "f1",
+                "best_th",
+                "time",
+            ],
+        )
         writer.writeheader()
         writer.writerows(metrics_rows)
     preview_path = out.parent / "preds_preview.json"
@@ -1066,6 +1181,7 @@ def train_model(
         "class_counts": class_counts,
         "tag_counts": tag_counts,
         "tag_coverage": tag_coverage,
+        "viz_paths": viz_files,
     }
     if weight_stats:
         stats["tag_weights_top10"] = weight_stats
@@ -1090,6 +1206,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, default=Path("phrase.ckpt"))
     parser.add_argument("--arch", choices=["transformer", "lstm"], default="transformer")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--d_model", type=int, default=512)
     parser.add_argument("--max-len", type=int, default=128)
@@ -1144,9 +1261,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--w-dur-reg", type=float, default=0.5)
     parser.add_argument("--w-vel-cls", type=float, default=0.0)
     parser.add_argument("--w-dur-cls", type=float, default=0.0)
+    parser.add_argument(
+        "--w-pitch",
+        type=float,
+        default=1.0,
+        help="weight for pitch loss (use --pitch-smoothing for label smoothing)",
+    )
+    parser.add_argument(
+        "--pitch-smoothing",
+        type=float,
+        default=0.0,
+        help="CrossEntropy label smoothing for pitch head",
+    )
     parser.add_argument("--sample", type=int, default=0)
     parser.add_argument("--viz", action="store_true", help="save PR/CM plots")
     parser.add_argument("--strict-tags", action="store_true", help="drop rows missing requested tags")
+    parser.add_argument(
+        "--best-metric",
+        default="macro_f1",
+        help="metric for best model: macro_f1 or inst_f1:<name> or by_tag_f1:<tag>",
+    )
     parser.add_argument("--save-best", action="store_true")
     parser.add_argument("--save-last", action="store_true")
     return parser
@@ -1244,6 +1378,28 @@ def main(argv: list[str] | None = None) -> int:
     if not args.val_csv or not args.val_csv.is_file():
         raise SystemExit(f"missing val_csv {args.val_csv}")
 
+    if args.strict_tags:
+        vocab_path = args.train_csv.parent / "tag_vocab.json"
+        if not vocab_path.is_file():
+            raise SystemExit(
+                f"--strict-tags requires tag_vocab.json beside train_csv (missing {vocab_path})"
+            )
+        try:
+            tag_vocab = json.loads(vocab_path.read_text())
+            if not isinstance(tag_vocab, dict):
+                raise ValueError("tag_vocab.json must be an object of allowed values")
+        except Exception as e:
+            raise SystemExit(f"failed to load tag vocab {vocab_path}: {e}")
+        required = set(tag_vocab.keys())
+        for path in [args.train_csv, args.val_csv]:
+            rows = load_csv_rows(path, required)
+            for i, row in enumerate(rows, 1):
+                for k, allowed in tag_vocab.items():
+                    if row.get(k, "") not in allowed:
+                        raise SystemExit(
+                            f"{path} line {i}: unknown {k}={row.get(k, '')}; allowed={sorted(allowed)}"
+                        )
+
     args.out.parent.mkdir(parents=True, exist_ok=True)
     run_path = args.out.with_suffix(".run.json")
     run_cfg = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
@@ -1274,8 +1430,6 @@ def main(argv: list[str] | None = None) -> int:
         "numpy_version": np_ver,
     }
     run_cfg["seed"] = args.seed
-    run_cfg["viz_enabled"] = bool(args.viz and plt is not None)
-    run_cfg["viz_backend"] = plt.get_backend() if run_cfg["viz_enabled"] else None
 
     try:
         f1, device_type, stats = train_model(
@@ -1304,6 +1458,8 @@ def main(argv: list[str] | None = None) -> int:
             logdir=args.logdir,
             precision=args.precision,
             deterministic=args.deterministic,
+            device=args.device,
+            best_metric=args.best_metric,
             reweight=args.reweight,
             lr_patience=args.lr_patience,
             lr_factor=args.lr_factor,
@@ -1316,6 +1472,8 @@ def main(argv: list[str] | None = None) -> int:
             w_dur_reg=args.w_dur_reg,
             w_vel_cls=args.w_vel_cls,
             w_dur_cls=args.w_dur_cls,
+            w_pitch=args.w_pitch,
+            pitch_smoothing=args.pitch_smoothing,
             instrument=args.instrument,
             include_tags=include,
             exclude_tags=exclude,
@@ -1333,8 +1491,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 2
 
+    run_cfg["viz_enabled"] = bool(args.viz and stats.get("viz_paths"))
+    run_cfg["viz_backend"] = plt.get_backend() if run_cfg["viz_enabled"] and plt else None
     run_cfg["sampler_weights_summary"] = stats
     run_cfg["tag_coverage"] = stats.get("tag_coverage", {})
+    run_cfg["viz_paths"] = stats.get("viz_paths", [])
     run_path.write_text(json.dumps(run_cfg, ensure_ascii=False, indent=2))
 
     hparams = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}

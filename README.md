@@ -224,8 +224,13 @@ After training a regression model it can be rendered to MIDI:
 python scripts/train_phrase.py train.csv valid.csv --epochs 1 \
     --duv-mode reg --out ckpt.ckpt
 python scripts/sample_phrase.py --ckpt ckpt.ckpt --in valid.csv \
-    --arch lstm --max-len 4 --duv-mode reg --out-midi demo.mid
+    --arch lstm --max-len 4 --duv-mode reg --ppq 480 --tempo 90 \
+    --ts 3/4 --program 1 --out-midi demo.mid
 ```
+
+Optional flags `--tempo`, `--ppq`, `--ts`, and `--program` control the MIDI
+tempo, ticks-per-quarter-note resolution, time signature, and instrument
+program respectively.
 
 For classification or mixed modes the CSV must include `velocity_bucket` and
 `duration_bucket` columns; accuracy metrics are reported alongside F1/MAE.

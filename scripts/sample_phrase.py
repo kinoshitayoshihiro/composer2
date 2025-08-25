@@ -19,58 +19,63 @@ Usage:
 
 from __future__ import annotations
 
-import os
-import sys
-import json
-import math
 import argparse
-import logging
-import random
 import csv
+import json
+import logging
+import os
+import random
+import sys
 from pathlib import Path
+from typing import Any
 
-try:
-    import numpy as np
-except Exception:  # pragma: no cover - optional
+# Optional deps --------------------------------------------------------------
+try:  # pragma: no cover - optional
+    import numpy as np  # type: ignore
+except Exception:  # pragma: no cover
     np = None  # type: ignore
-try:
-    import torch
-    import torch.nn.functional as F
-except Exception:  # pragma: no cover - optional
+
+try:  # pragma: no cover - optional
+    import torch  # type: ignore
+    import torch.nn.functional as F  # type: ignore
+except Exception:  # pragma: no cover
     torch = None  # type: ignore
     F = None  # type: ignore
 
-# ---------- project import (same pattern as train_phrase.py) ----------
-try:
-    from models.phrase_transformer import PhraseTransformer
-except ModuleNotFoundError:
+try:  # pragma: no cover - optional
+    import pretty_midi  # type: ignore
+except Exception:  # pragma: no cover
+    pretty_midi = None  # type: ignore
+
+# Project import guard (same pattern as train_phrase.py) ---------------------
+try:  # pragma: no cover - regular import
+    from models.phrase_transformer import PhraseTransformer  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - local fallback
     repo_root = Path(__file__).resolve().parent.parent
     if os.environ.get("ALLOW_LOCAL_IMPORT") == "1":
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
             logging.warning("ALLOW_LOCAL_IMPORT=1, inserted repo root into sys.path")
-        try:  # pragma: no cover - import fallback
-            from models.phrase_transformer import PhraseTransformer
-        except ModuleNotFoundError:
+        try:
+            from models.phrase_transformer import PhraseTransformer  # type: ignore
+        except ModuleNotFoundError:  # still failing
             PhraseTransformer = None  # type: ignore
     else:
         PhraseTransformer = None  # type: ignore
 
-try:
-    import pretty_midi
-except Exception:  # pragma: no cover - pretty_midi optional
-    pretty_midi = None
-
-try:
-    from utilities.phrase_data import denorm_duv
+# Optional utility for de-normalizing velocity/duration ----------------------
+try:  # pragma: no cover
+    from utilities.phrase_data import denorm_duv  # type: ignore
 except Exception:  # pragma: no cover - simple fallback
-    def denorm_duv(vel_reg: torch.Tensor, dur_reg: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        vel = vel_reg.mul(127.0).round().clamp(0, 127)
-        dur = torch.expm1(dur_reg)
+    def denorm_duv(vel_reg, dur_reg):  # type: ignore[override]
+        """Fallback: map vel in [0,1] -> [0,127]; dur is expm1-regressed beats."""
+        import torch as _torch  # local import to avoid global hard dep
+        vel = _torch.clamp((_torch.tensor(vel_reg) * 127.0).round(), 0, 127)
+        dur = _torch.expm1(_torch.tensor(dur_reg))
         return vel, dur
 
 
-# instrument pitch range presets
+# Instrument pitch range presets --------------------------------------------
 PITCH_PRESETS = {
     "bass": (28, 52),
     "piano": (21, 108),
@@ -78,8 +83,29 @@ PITCH_PRESETS = {
 }
 
 
-# ----------------------- helpers -----------------------
-def load_checkpoint(path: Path) -> dict:
+# ----------------------- helpers -------------------------------------------
+
+def _load_json(path: Path) -> dict[str, Any] | None:
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def load_hparams_sidecar(ckpt_path: Path) -> dict[str, Any] | None:
+    """Try to load training hparams from a sidecar JSON next to the ckpt.
+
+    The training script writes ``hparams.json`` in the checkpoint directory.
+    We use it here to reconstruct model hyperparameters that are not stored
+    in the checkpoint itself.
+    """
+    cand = ckpt_path.parent / "hparams.json"
+    return _load_json(cand) if cand.is_file() else None
+
+
+def load_checkpoint(path: Path) -> dict[str, Any]:
+    if torch is None:
+        raise SystemExit("torch is required for sampling")
     obj = torch.load(path, map_location="cpu")
     if isinstance(obj, dict) and "model" in obj:
         return obj
@@ -88,52 +114,75 @@ def load_checkpoint(path: Path) -> dict:
     )
 
 
-def build_model_from_meta(meta: dict) -> PhraseTransformer:
-    d_model = int(meta.get("d_model", 384))
-    n_layers = int(meta.get("n_layers", 6))
-    n_heads = int(meta.get("n_heads", 8))
-    max_len = int(meta.get("max_len", 512))
-    duv_mode = meta.get("duv_mode", "reg")
-    dur_bins = int(meta.get("dur_bins", 16))
-    vel_bins = int(meta.get("vel_bins", 8))
-    vocab_pitch = int(meta.get("vocab_pitch", 128))
+def build_model_from_meta(state: dict[str, Any], hparams: dict[str, Any] | None) -> Any:
+    """Rebuild the model using checkpoint state and (optional) sidecar hparams.
 
+    The training script stores at least ``d_model`` and ``max_len`` in the ckpt
+    and writes all CLI args to ``hparams.json``. We prefer the sidecar when
+    available; otherwise we fall back to ckpt fields and library defaults.
+    """
+    if PhraseTransformer is None:
+        raise SystemExit(
+            "Could not import project modules. Run 'pip install -e .' or set ALLOW_LOCAL_IMPORT=1"
+        )
+
+    # Gather basics
+    d_model = int((hparams or {}).get("d_model", state.get("d_model", 512)))
+    max_len = int((hparams or {}).get("max_len", state.get("max_len", 128)))
+    n_layers = int((hparams or {}).get("layers", 4))
+    n_heads = int((hparams or {}).get("nhead", 8))
+    dropout = float((hparams or {}).get("dropout", 0.1))
+
+    # DUV config
+    duv_cfg = state.get("duv_cfg", {}) or {}
+    duv_mode = (hparams or {}).get("duv_mode", duv_cfg.get("mode", "reg"))
+    vel_bins = int((hparams or {}).get("vel_bins", duv_cfg.get("vel_bins", 0)))
+    dur_bins = int((hparams or {}).get("dur_bins", duv_cfg.get("dur_bins", 0)))
+
+    # Some repos expose extra kwargs; keep defaults conservative
     model = PhraseTransformer(
         d_model=d_model,
         max_len=max_len,
         duv_mode=duv_mode,
-        dur_bins=dur_bins,
         vel_bins=vel_bins,
+        dur_bins=dur_bins,
         nhead=n_heads,
         num_layers=n_layers,
-        pitch_vocab_size=vocab_pitch,
+        dropout=dropout,
     )
     return model
 
 
 def decode_duv(
-    out_dict: dict, vel_mode: str, dur_mode: str, meta: dict, dur_max_beats: float
+    out_dict: dict[str, Any],
+    vel_mode: str,
+    dur_mode: str,
+    meta: dict[str, Any],
+    dur_max_beats: float,
 ) -> tuple[float, float]:
-    """Return real velocity and duration from model outputs."""
+    """Return real velocity and duration from model outputs.
+
+    Supports mixed regression/bucket decoding. If neither head exists, falls
+    back to sensible defaults.
+    """
+    if torch is None or F is None:
+        return 64.0, 0.25
+
     if vel_mode == "reg" and "vel_reg" in out_dict:
-        vel = float(
-            denorm_duv(out_dict["vel_reg"], torch.zeros_like(out_dict["vel_reg"]))[0].item()
-        )
+        vel = float(denorm_duv(out_dict["vel_reg"], 0.0)[0])
     elif "vel_cls" in out_dict:
         vel_idx = int(F.softmax(out_dict["vel_cls"], dim=-1).multinomial(1).item())
         vel_bins = int(meta.get("vel_bins", 8))
-        vel = (vel_idx + 0.5) * (127.0 / vel_bins)
+        vel = (vel_idx + 0.5) * (127.0 / max(1, vel_bins))
     else:
         vel = 64.0
 
     if dur_mode == "reg" and "dur_reg" in out_dict:
-        dur = float(
-            denorm_duv(torch.zeros_like(out_dict["dur_reg"]), out_dict["dur_reg"])[1].item()
-        )
+        dur = float(denorm_duv(0.0, out_dict["dur_reg"])[1])
     elif "dur_cls" in out_dict:
         dur_idx = int(F.softmax(out_dict["dur_cls"], dim=-1).multinomial(1).item())
         dur_bins = int(meta.get("dur_bins", 16))
-        dur = 4.0 * (dur_idx + 1) / dur_bins
+        dur = 4.0 * (dur_idx + 1) / max(1, dur_bins)
     else:
         dur = 0.25
 
@@ -142,36 +191,33 @@ def decode_duv(
     return vel, dur
 
 
-def sample_logits(logits: torch.Tensor, temperature: float, topk: int, topp: float) -> int:
-    """Sample an index from *logits*.
+def sample_logits(logits, temperature: float, topk: int, topp: float) -> int:
+    """Sample an index from *logits* with temperature/top-k/top-p filtering."""
+    if torch is None or F is None:
+        return 60
 
-    ``temperature`` scales logits by ``1/T``. If both ``topk`` and ``topp``
-    are specified, top-k filtering is applied first, then nucleus (top-p)
-    filtering. Probabilities are always renormalized after filtering.
-    """
-
-    if temperature <= 0:
+    if temperature is None or temperature <= 0:
         return int(torch.argmax(logits).item())
 
     logits = logits / float(temperature)
     probs = F.softmax(logits, dim=-1)
 
-    if (not topk or topk <= 0) and (not topp or topp <= 0):
-        topk = 1
-
+    # top-k
     if topk and topk > 0:
-        k = min(topk, probs.size(-1))
+        k = min(topk, probs.numel())
         topk_probs, topk_idx = torch.topk(probs, k)
         keep = torch.zeros_like(probs)
         keep.scatter_(0, topk_idx, topk_probs)
         probs = keep
         probs = probs / probs.sum()
 
+    # top-p (nucleus)
     if topp and topp > 0:
         sorted_probs, sorted_idx = torch.sort(probs, descending=True)
         cdf = torch.cumsum(sorted_probs, dim=-1)
         mask = cdf <= topp
-        mask[0] = True
+        if sorted_probs.numel() > 0:
+            mask[0] = True
         filtered = sorted_probs * mask
         filtered = filtered / filtered.sum()
         idx = sorted_idx[torch.multinomial(filtered, 1)]
@@ -182,14 +228,15 @@ def sample_logits(logits: torch.Tensor, temperature: float, topk: int, topp: flo
 
 
 def events_to_prettymidi(
-    events: list[dict],
+    events: list[dict[str, float | int]],
     bpm: float,
     *,
     gm_program: int = 33,
     is_drum: bool = False,
     humanize_timing: float = 0.0,
     humanize_vel: float = 0.0,
-) -> "pretty_midi.PrettyMIDI|None":
+):
+    """Convert simple event dicts to a PrettyMIDI object (or None if unavailable)."""
     if pretty_midi is None:
         return None
     try:
@@ -197,13 +244,13 @@ def events_to_prettymidi(
     except Exception:  # pragma: no cover - fallback path
         pm = pretty_midi.PrettyMIDI()
         if np is not None:
-            pm._tempo_changes = np.array([0.0])
-            pm._tempos = np.array([float(bpm)])
+            pm._tempo_changes = np.array([0.0])  # type: ignore[attr-defined]
+            pm._tempos = np.array([float(bpm)])  # type: ignore[attr-defined]
     inst = pretty_midi.Instrument(program=int(gm_program), name="phrase", is_drum=is_drum)
     t = 0.0
     sec_per_beat = 60.0 / float(bpm)
     for ev in events:
-        pitch = int(ev["pitch"])
+        pitch = int(ev["pitch"]) if "pitch" in ev else 60
         vel = float(ev.get("velocity", 64.0))
         dur_beats = float(ev.get("duration_beats", 0.25))
         dur_beats = max(dur_beats, 1e-3)
@@ -221,10 +268,13 @@ def events_to_prettymidi(
     return pm
 
 
-# ----------------------- main inference -----------------------
-def main() -> None:
+# ----------------------- main inference ------------------------------------
+
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(
-        epilog="If project modules fail to import, run 'pip install -e .' or set ALLOW_LOCAL_IMPORT=1"
+        epilog=(
+            "If project modules fail to import, run 'pip install -e .' or set ALLOW_LOCAL_IMPORT=1"
+        )
     )
     ap.add_argument(
         "--ckpt",
@@ -233,8 +283,12 @@ def main() -> None:
         help="checkpoint from train_phrase.py (install package or set ALLOW_LOCAL_IMPORT=1)",
     )
     ap.add_argument("--length", type=int, default=64, help="number of steps to generate")
-    ap.add_argument("--temperature", type=float, default=None,
-                    help="deprecated; use --temperature-start/--temperature-end")
+    ap.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help="deprecated; use --temperature-start/--temperature-end",
+    )
     ap.add_argument("--temperature-start", type=float, default=1.0)
     ap.add_argument("--temperature-end", type=float, default=1.0)
     ap.add_argument(
@@ -266,7 +320,9 @@ def main() -> None:
     ap.add_argument("--duv-decode", choices=["auto", "reg", "bucket"], default="auto")
     ap.add_argument("--dur-decode", choices=["reg", "bucket"], default=None)
     ap.add_argument("--vel-decode", choices=["reg", "bucket"], default=None)
-    ap.add_argument("--bars", type=int, default=None, help="stop after N bars (approx 4 beats each)")
+    ap.add_argument(
+        "--bars", type=int, default=None, help="stop after N bars (approx 4 beats each)"
+    )
     ap.add_argument(
         "--instrument-name",
         choices=sorted(PITCH_PRESETS),
@@ -292,14 +348,10 @@ def main() -> None:
     )
     ap.add_argument("--out-midi", type=Path, default=None)
     ap.add_argument("--out-csv", type=Path, default=None)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
-    temp_start = (
-        args.temperature if args.temperature is not None else args.temperature_start
-    )
-    temp_end = (
-        args.temperature if args.temperature is not None else args.temperature_end
-    )
+    temp_start = args.temperature if args.temperature is not None else args.temperature_start
+    temp_end = args.temperature if args.temperature is not None else args.temperature_end
 
     if args.instrument_program < 0 or args.instrument_program > 127:
         raise SystemExit("--instrument-program must be in [0,127]")
@@ -309,31 +361,35 @@ def main() -> None:
 
     if args.pitch_min > args.pitch_max:
         raise SystemExit("--pitch-min must be <= --pitch-max")
+
     if args.seed is not None:
         random.seed(args.seed)
-        torch.manual_seed(args.seed)
+        if torch is not None:
+            torch.manual_seed(args.seed)
         if np is not None:
             np.random.seed(args.seed)
 
-    if torch is None or F is None:
-        raise SystemExit("torch is required for sampling")
-    if PhraseTransformer is None:
-        raise SystemExit(
-            "Could not import project modules. Run 'pip install -e .' or set ALLOW_LOCAL_IMPORT=1"
-        )
-
+    # Load checkpoint and hparams
     state = load_checkpoint(args.ckpt)
-    meta = state.get("meta", {})
-    duv_mode = meta.get("duv_mode", "reg")
-    eff_duv = args.duv_decode if args.duv_decode != "auto" else duv_mode
+    hparams = load_hparams_sidecar(args.ckpt)
+
+    # Reconstruct model and heads
+    model = build_model_from_meta(state, hparams)
+    model.load_state_dict(state["model"])  # type: ignore[arg-type]
+    device = torch.device(args.device) if torch is not None else None
+    if device is not None and hasattr(model, "to"):
+        model = model.to(device)  # type: ignore[assignment]
+    if hasattr(model, "eval"):
+        model.eval()
+
+    # Decide decoding modes
+    duv_mode_tr = (hparams or {}).get("duv_mode", state.get("duv_cfg", {}).get("mode", "reg"))
+    eff_duv = args.duv_decode if args.duv_decode != "auto" else duv_mode_tr
     vel_mode = args.vel_decode or ("reg" if eff_duv == "reg" else "bucket")
     dur_mode = args.dur_decode or ("reg" if eff_duv == "reg" else "bucket")
 
-    model = build_model_from_meta(meta)
-    model.load_state_dict(state["model"])
-    model.eval().to(args.device)
-
-    seq: list[dict] = []
+    # Seed events (optional)
+    seq: list[dict[str, float | int]] = []
     if args.seed_json:
         try:
             seq = json.loads(args.seed_json)
@@ -355,43 +411,73 @@ def main() -> None:
                         "duration_beats": float(row["duration_beats"]),
                     }
                 )
-    if seq and len(seq) > model.max_len:
+    # Truncate to model context if needed
+    max_len = getattr(model, "max_len", 128)
+    if seq and len(seq) > int(max_len):
         raise SystemExit("seed longer than model max_len")
     if args.seed_csv and not seq:
         raise SystemExit("seed CSV had no rows")
 
-    if not hasattr(model, "encode_seed") or not hasattr(model, "step"):
+    # Encode seed if the model supports it; otherwise, we'll keep a local buffer
+    if hasattr(model, "encode_seed"):
+        state_enc = model.encode_seed(seq)  # type: ignore[attr-defined]
+    else:
+        state_enc = None
         print("NOTE: Adapt 'encode_seed' and 'step' calls to your model API.", file=sys.stderr)
 
-    state_enc = model.encode_seed(seq) if hasattr(model, "encode_seed") else None
-
-    out_events: list[dict] = []
+    # Sampling loop ----------------------------------------------------------
+    out_events: list[dict[str, float | int]] = []
     total_beats = 0.0
-    with torch.no_grad():
-        for step in range(args.length):
-            out = model.step(state_enc) if hasattr(model, "step") else {}
-            alpha = step / max(args.length - 1, 1)
-            temp = temp_start + (temp_end - temp_start) * alpha
-            if "pitch_logits" in out:
-                pitch = sample_logits(
-                    out["pitch_logits"].squeeze(0), temp, args.topk, args.topp
-                )
-            else:
-                pitch = random.randint(36, 51)
-            pitch = int(max(args.pitch_min, min(args.pitch_max, pitch)))
+    meta = {
+        "vel_bins": (hparams or {}).get("vel_bins", state.get("duv_cfg", {}).get("vel_bins", 8)),
+        "dur_bins": (hparams or {}).get("dur_bins", state.get("duv_cfg", {}).get("dur_bins", 16)),
+    }
 
-            vel, dur = decode_duv(out, vel_mode, dur_mode, meta, args.dur_max_beats)
+    if torch is None:
+        # Fallback: generate a constant-length, random-velocity sequence
+        for _ in range(args.length):
+            pitch = random.randint(args.pitch_min, args.pitch_max)
+            out_events.append({"pitch": pitch, "velocity": 64, "duration_beats": 0.25})
+        logging.warning("Torch not available; generated fallback events without model")
+    else:
+        with torch.no_grad():
+            for step in range(args.length):
+                # Query model step API if available; otherwise synthesize empty outputs
+                if hasattr(model, "step"):
+                    out_dict = model.step(state_enc)  # type: ignore[attr-defined]
+                else:
+                    out_dict = {}
 
-            ev = {"pitch": pitch, "velocity": vel, "duration_beats": dur}
-            out_events.append(ev)
-            total_beats += dur
+                # Temperature schedule (linear)
+                alpha = step / max(args.length - 1, 1)
+                temp = temp_start + (temp_end - temp_start) * alpha
 
-            if hasattr(model, "update_state"):
-                state_enc = model.update_state(state_enc, ev)
+                # Pitch sampling
+                if "pitch_logits" in out_dict:
+                    logits = out_dict["pitch_logits"].squeeze(0)
+                    if device is not None:
+                        logits = logits.to(device)
+                    pitch = sample_logits(logits, temp, args.topk, args.topp)
+                else:
+                    pitch = random.randint(36, 51)
+                pitch = int(max(args.pitch_min, min(args.pitch_max, pitch)))
 
-            if args.bars is not None and total_beats >= 4 * args.bars:
-                break
+                # Velocity/Duration decoding
+                vel, dur = decode_duv(out_dict, vel_mode, dur_mode, meta, args.dur_max_beats)
 
+                ev = {"pitch": pitch, "velocity": vel, "duration_beats": dur}
+                out_events.append(ev)
+                total_beats += float(dur)
+
+                # Advance model state if supported
+                if hasattr(model, "update_state"):
+                    state_enc = model.update_state(state_enc, ev)  # type: ignore[attr-defined]
+
+                # Optional early stop by bars
+                if args.bars is not None and total_beats >= 4 * args.bars:
+                    break
+
+    # Outputs ---------------------------------------------------------------
     if args.out_csv:
         args.out_csv.parent.mkdir(parents=True, exist_ok=True)
         with args.out_csv.open("w", newline="") as f:
@@ -420,6 +506,7 @@ def main() -> None:
         print(f"CSV  -> {args.out_csv}")
     if args.out_midi:
         print(f"MIDI -> {args.out_midi}")
+
     info = {
         "n_events": len(out_events),
         "duv_mode": eff_duv,
@@ -445,4 +532,3 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-

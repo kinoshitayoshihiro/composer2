@@ -106,11 +106,23 @@ python -m tools.corpus_to_phrase_csv --in data/midi \
     --out-train train.csv --out-valid valid.csv --emit-buckets
 ```
 
+Preset pitch ranges are available via `--instrument-name` (e.g. `guitar_low`,
+`guitar_lead`). To obtain a deterministic split independent of file order, add
+`--hash-split`.
+
 Train from CSVs:
 
 ```bash
 python scripts/train_phrase.py train.csv valid.csv --epochs 2 \
     --out checkpoints/bass_duv_v1.ckpt --logdir logs/phrase
+```
+
+Select the metric used for `--save-best` with `--best-metric`. Examples:
+
+```bash
+python scripts/train_phrase.py train.csv valid.csv --best-metric macro_f1
+python scripts/train_phrase.py train.csv valid.csv --best-metric inst_f1:bass
+python scripts/train_phrase.py train.csv valid.csv --best-metric by_tag_f1:section
 ```
 
 Or train directly from a corpus directory ("corpus route"):
@@ -124,6 +136,47 @@ python scripts/train_phrase.py --data corpus_dir \
 
 Missing tag columns are ignored unless `--strict-tags` is supplied, in which case
 rows lacking requested keys are dropped.
+
+### Strict tag workflow
+
+1. `prepare_transformer_corpus` writes `tag_vocab.json` under each corpus directory
+   (e.g. `data/corpus/NAME/tag_vocab.json`).
+2. Convert the corpus with:
+   ```bash
+   python -m tools.corpus_to_phrase_csv --from-corpus data/corpus/NAME \
+       --tag-vocab-in data/corpus/NAME/tag_vocab.json \
+       --tag-vocab-out data/phrase_csv/tag_vocab.json \
+       --out-train data/phrase_csv/train.csv --out-valid data/phrase_csv/valid.csv
+   ```
+3. `scripts/train_phrase.py --strict-tags` expects `tag_vocab.json` beside the
+   train/valid CSVs and will error on any unknown tag values.
+
+#### Minimal DUV → CSV → Train → Sample
+
+```bash
+# 1) Convert a corpus with strict tags
+python -m tools.corpus_to_phrase_csv --from-corpus data/corpus/bass \
+    --emit-buckets --tag-vocab-in data/corpus/bass/tag_vocab.json \
+    --tag-vocab-out data/phrase_csv/tag_vocab.json \
+    --out-train data/phrase_csv/bass_train.csv --out-valid data/phrase_csv/bass_valid.csv
+
+# 2) Train a small bass model
+python scripts/train_phrase.py data/phrase_csv/bass_train.csv data/phrase_csv/bass_valid.csv \
+    --epochs 2 --strict-tags --out checkpoints/bass_duv_smoke.ckpt
+
+# 3) Sample from the checkpoint
+python -m scripts.sample_phrase --ckpt checkpoints/bass_duv_smoke.ckpt \
+    --out-midi out/bass.mid --out-csv out/bass.csv --length 16 --seed 0
+```
+
+`scripts.sample_phrase` supports a linear temperature schedule via
+`--temperature-start`/`--temperature-end` and clamps event duration with
+`--dur-max-beats` (default 16). For example:
+
+```bash
+python -m scripts.sample_phrase --ckpt ckpt.ckpt --length 16 \
+    --temperature-start 1.0 --temperature-end 0.8 --dur-max-beats 4
+```
 
 Use `--resume path.ckpt` to continue, `--save-every 1` for periodic checkpoints or `--early-stopping 2` for patience‑based stopping.
 
@@ -655,6 +708,24 @@ Install the core and optional audio dependencies, then run the tests:
 ```bash
 pip install -e '.[audio,test]'
 pytest -q
+```
+
+For CPU-only environments, install the PyTorch CPU wheel:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+On macOS with Apple Silicon (MPS):
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/mps
+```
+
+Run a minimal smoke test without external data:
+
+```bash
+pytest -q tests/test_sample_phrase.py
 ```
 Run coverage with:
 

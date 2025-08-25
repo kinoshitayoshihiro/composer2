@@ -12,9 +12,23 @@ from collections import Counter
 from pathlib import Path
 from typing import Iterable, Iterator, Pattern
 
-import pretty_midi
-import yaml
+try:  # pragma: no cover - pretty_midi optional
+    import pretty_midi
+except Exception:  # pragma: no cover - no pretty_midi
+    pretty_midi = None  # type: ignore
+try:  # pragma: no cover - PyYAML optional for --help
+    import yaml
+except Exception:  # pragma: no cover - no yaml
+    yaml = None  # type: ignore
 
+
+INSTRUMENT_RANGES = {
+    "bass": (28, 52),
+    "piano": (21, 108),
+    "strings": (40, 84),
+    "guitar_low": (40, 64),
+    "guitar_lead": (52, 88),
+}
 
 FIELDS = [
     "pitch",
@@ -24,7 +38,22 @@ FIELDS = [
     "boundary",
     "bar",
     "instrument",
+    "velocity_bucket",
+    "duration_bucket",
 ]
+
+
+def summarize_tags(rows: Iterable[dict[str, object]], vocab: dict[str, list[str]]) -> None:
+    counts: dict[str, Counter[str]] = {k: Counter() for k in vocab}
+    for row in rows:
+        for key in vocab:
+            if key in row:
+                counts[key][str(row[key])] += 1
+    for key, allowed in vocab.items():
+        seen = counts[key]
+        unknown = {v: c for v, c in seen.items() if v not in allowed}
+        missing = [v for v in allowed if v not in seen]
+        print(f"{key}: unknown={unknown} missing={missing}")
 
 
 def bin_duration(duration_beats: float, bins: int) -> int:
@@ -49,6 +78,21 @@ def deterministic_split(
     return files[:split], files[split:]
 
 
+def hash_split(files: list[Path], valid_ratio: float) -> tuple[list[Path], list[Path]]:
+    import hashlib
+
+    train: list[Path] = []
+    valid: list[Path] = []
+    for p in files:
+        h = hashlib.md5(p.stem.encode()).hexdigest()
+        frac = int(h, 16) / 16**32
+        if frac < (1 - valid_ratio):
+            train.append(p)
+        else:
+            valid.append(p)
+    return train, valid
+
+
 def midi_to_rows(
     path: Path,
     gap: float,
@@ -66,7 +110,8 @@ def midi_to_rows(
 
     Returns the parsed rows and whether any instrument matched *instrument_filter*.
     """
-
+    if pretty_midi is None:
+        raise RuntimeError("pretty_midi is required to parse MIDI files (pip install pretty_midi)")
     pm = pretty_midi.PrettyMIDI(str(path))
     ticks_per_beat = pm.resolution
     notes: list[tuple[float, float, int, int, str]] = []
@@ -117,6 +162,8 @@ def midi_to_rows(
             "boundary": boundary,
             "bar": bar,
             "instrument": name,
+            "velocity_bucket": -1,
+            "duration_bucket": -1,
         }
         if emit_buckets:
             row["velocity_bucket"] = bin_velocity(vel, vel_bins)
@@ -179,6 +226,8 @@ def corpus_mode(
                     "boundary": obj.get("boundary", 0),
                     "bar": obj.get("bar", 0),
                     "instrument": name,
+                    "velocity_bucket": -1,
+                    "duration_bucket": -1,
                 }
                 if emit_buckets:
                     row["velocity_bucket"] = bin_velocity(
@@ -206,18 +255,39 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--min-notes", type=int, default=0)
     parser.add_argument("--pitch-range", nargs=2, type=int, metavar=("LOW", "HIGH"))
+    parser.add_argument("--instrument-name", choices=sorted(INSTRUMENT_RANGES))
     parser.add_argument("--max-bars", type=int, default=10**9)
+    parser.add_argument(
+        "--hash-split",
+        action="store_true",
+        help="deterministic split by file hash instead of RNG shuffle",
+    )
     parser.add_argument("--from-corpus", dest="from_corpus", type=Path)
     parser.add_argument(
         "--emit-buckets",
         action="store_true",
-        help="emit velocity_bucket/duration_bucket columns",
+        help="compute velocity/duration buckets (columns always present, -1 when disabled)",
     )
     parser.add_argument("--dur-bins", type=int, default=16)
     parser.add_argument("--vel-bins", type=int, default=8)
+    parser.add_argument("--tag-vocab-in", type=Path)
+    parser.add_argument("--tag-vocab-out", type=Path)
+    parser.add_argument("--dry-run", action="store_true", help="validate without writing CSV")
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="like --dry-run plus tag vocab check",
+    )
     args = parser.parse_args(argv)
     inst_re = re.compile(args.instrument_regex, re.I) if args.instrument_regex else None
-    pitch_range = tuple(args.pitch_range) if args.pitch_range else None
+    pitch_range = None
+    if args.instrument_name:
+        pitch_range = INSTRUMENT_RANGES[args.instrument_name]
+    if args.pitch_range:
+        pitch_range = tuple(args.pitch_range)
+
+    if args.validate_only:
+        args.dry_run = True
 
     if args.from_corpus:
         train_rows, valid_rows = corpus_mode(
@@ -228,13 +298,19 @@ def main(argv: list[str] | None = None) -> int:
             instrument_regex=inst_re,
             pitch_range=pitch_range,
         )
-        fields = (
-            FIELDS + ["velocity_bucket", "duration_bucket"]
-            if args.emit_buckets
-            else FIELDS
-        )
-        write_csv(train_rows, args.out_train, fields)
-        write_csv(valid_rows, args.out_valid, fields)
+        if args.validate_only and args.tag_vocab_in:
+            vocab = json.loads(args.tag_vocab_in.read_text())
+            summarize_tags(train_rows + valid_rows, vocab)
+        if args.dry_run or args.validate_only:
+            logging.info("train rows %d valid rows %d", len(train_rows), len(valid_rows))
+        else:
+            write_csv(train_rows, args.out_train)
+            write_csv(valid_rows, args.out_valid)
+            if args.tag_vocab_in and args.tag_vocab_out:
+                if not args.tag_vocab_in.is_file():
+                    raise SystemExit(f"tag vocab not found: {args.tag_vocab_in}")
+                args.tag_vocab_out.parent.mkdir(parents=True, exist_ok=True)
+                args.tag_vocab_out.write_text(args.tag_vocab_in.read_text())
         return 0
 
     if args.src is None:
@@ -249,13 +325,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.boundary_on_section_change:
         tag_path = args.src / "tags.yaml"
         if tag_path.is_file():
+            if yaml is None:
+                raise RuntimeError("PyYAML required to read tags.yaml (pip install PyYAML)")
             raw = yaml.safe_load(tag_path.read_text()) or {}
             for fname, info in raw.items():
                 sections = info.get("section") or []
                 tags[fname] = [(float(t), str(s)) for t, s in sections]
-    train_files, valid_files = deterministic_split(
-        files, args.valid_ratio, args.seed
-    )
+    if args.hash_split:
+        train_files, valid_files = hash_split(files, args.valid_ratio)
+    else:
+        train_files, valid_files = deterministic_split(files, args.valid_ratio, args.seed)
     train_rows: list[dict[str, object]] = []
     train_stats = Counter()
     for p in train_files:
@@ -325,13 +404,19 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(
             f"no rows after filtering: train={dict(train_stats)} valid={dict(valid_stats)}"
         )
-    fields = (
-        FIELDS + ["velocity_bucket", "duration_bucket"]
-        if args.emit_buckets
-        else FIELDS
-    )
-    write_csv(train_rows, args.out_train, fields)
-    write_csv(valid_rows, args.out_valid, fields)
+    if args.validate_only and args.tag_vocab_in:
+        vocab = json.loads(args.tag_vocab_in.read_text())
+        summarize_tags(train_rows + valid_rows, vocab)
+    if args.dry_run or args.validate_only:
+        logging.info("train rows %d valid rows %d", len(train_rows), len(valid_rows))
+    else:
+        write_csv(train_rows, args.out_train)
+        write_csv(valid_rows, args.out_valid)
+        if args.tag_vocab_in and args.tag_vocab_out:
+            if not args.tag_vocab_in.is_file():
+                raise SystemExit(f"tag vocab not found: {args.tag_vocab_in}")
+            args.tag_vocab_out.parent.mkdir(parents=True, exist_ok=True)
+            args.tag_vocab_out.write_text(args.tag_vocab_in.read_text())
     return 0
 
 

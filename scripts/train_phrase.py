@@ -569,6 +569,8 @@ def train_model(
     )
 
     required = {"pitch", "velocity", "duration", "pos", "boundary", "bar"}
+    if duv_mode in {"cls", "both"}:
+        required.update({"velocity_bucket", "duration_bucket"})
     train_rows = load_csv_rows(train_csv, required)
     val_rows = load_csv_rows(val_csv, required)
     train_rows, tr_removed = apply_filters(
@@ -584,13 +586,18 @@ def train_model(
         len(val_rows),
         val_removed,
     )
+    hint = (
+        "\nHints:\n"
+        "* Check CSV is not header-only.\n"
+        "* If you used --instrument/--instrument-regex in corpus extraction, try removing it and using --pitch-range 28 60."
+    )
     if not train_rows:
         raise ValueError(
-            f"training CSV produced no usable rows (kept {len(train_rows)} removed {tr_removed})"
+            f"training CSV produced no usable rows (kept {len(train_rows)} removed {tr_removed})" + hint
         )
     if not val_rows:
         raise ValueError(
-            f"validation CSV produced no usable rows (kept {len(val_rows)} removed {val_removed})"
+            f"validation CSV produced no usable rows (kept {len(val_rows)} removed {val_removed})" + hint
         )
     section_vals = {r["section"] for r in train_rows + val_rows if r.get("section")}
     mood_vals = {r["mood"] for r in train_rows + val_rows if r.get("mood")}

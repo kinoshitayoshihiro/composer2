@@ -104,7 +104,6 @@ def midi_to_rows(
     emit_buckets: bool = False,
     dur_bins: int = 16,
     vel_bins: int = 8,
-
 ) -> tuple[list[dict[str, object]], bool]:
     """Parse *path* into phrase rows using simple boundary heuristics.
 
@@ -114,6 +113,18 @@ def midi_to_rows(
         raise RuntimeError("pretty_midi is required to parse MIDI files (pip install pretty_midi)")
     pm = pretty_midi.PrettyMIDI(str(path))
     ticks_per_beat = pm.resolution
+
+    # Convert provided section-change times (seconds) into beats for consistent comparisons
+    sections_beats: list[tuple[float, str]] | None = None
+    if sections:
+        try:
+            sections_beats = [
+                (pm.time_to_tick(float(t)) / float(ticks_per_beat), str(s)) for (t, s) in sections
+            ]
+        except Exception:
+            # Fallback: if conversion fails, keep as-is (best-effort)
+            sections_beats = [(float(t), str(s)) for (t, s) in sections]
+
     notes: list[tuple[float, float, int, int, str]] = []
     inst_match = False
     for inst in pm.instruments:
@@ -132,17 +143,19 @@ def midi_to_rows(
             dur_beats = (end_tick - start_tick) / ticks_per_beat
             notes.append((start_beats, dur_beats, n.pitch, n.velocity, name))
     notes.sort()
+
     rows: list[dict[str, object]] = []
     prev_start = None
     prev_bar = None
     prev_section = None
+
     for start, dur, pitch, vel, name in notes:
         bar = int(start // 4)
         pos = int((start % 4) * ticks_per_beat)
         boundary = 0
         cur_section = None
-        if sections:
-            for t, s in sections:
+        if sections_beats:
+            for t, s in sections_beats:
                 if start >= t:
                     cur_section = s
                 else:
@@ -199,9 +212,12 @@ def corpus_mode(
     emit_buckets: bool = False,
     dur_bins: int = 16,
     vel_bins: int = 8,
+    instrument: str | None = None,
     instrument_regex: Pattern[str] | None = None,
     pitch_range: tuple[int, int] | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    instrument = instrument.lower() if instrument else None
+
     def load_split(split: str) -> list[dict[str, object]]:
         base = root / split
         files: list[Path] = []
@@ -210,13 +226,38 @@ def corpus_mode(
         else:
             files = sorted((base / "samples").glob("*.jsonl"))
         rows: list[dict[str, object]] = []
+        stats = Counter()
         for p in files:
             for obj in read_samples_jsonl(p):
-                name = obj.get("instrument", "")
-                if instrument_regex and not instrument_regex.search(name):
-                    continue
+                name = str(obj.get("instrument", ""))
                 pitch = int(obj["pitch"])
+                if instrument or instrument_regex:
+                    matched = False
+                    name_l = name.lower()
+                    if instrument and instrument in name_l:
+                        matched = True
+                    elif instrument_regex and instrument_regex.search(name):
+                        matched = True
+                    elif name_l in {"", "unknown"}:
+                        fname = str(
+                            obj.get("path")
+                            or obj.get("source_path")
+                            or obj.get("filename")
+                            or obj.get("file")
+                            or ""
+                        )
+                        stem = Path(fname).stem.lower()
+                        if instrument and instrument in stem:
+                            matched = True
+                        elif instrument_regex and instrument_regex.search(stem):
+                            matched = True
+                        elif pitch_range and pitch_range[0] <= pitch <= pitch_range[1]:
+                            matched = True
+                    if not matched:
+                        stats["removed_by_name"] += 1
+                        continue
                 if pitch_range and not (pitch_range[0] <= pitch <= pitch_range[1]):
+                    stats["removed_by_pitch"] += 1
                     continue
                 row = {
                     "pitch": pitch,
@@ -237,9 +278,17 @@ def corpus_mode(
                         float(row["duration"]), dur_bins
                     )
                 rows.append(row)
+                stats["kept"] += 1
+        logging.info("%s stats %s", split, dict(stats))
         return rows
 
-    return load_split("train"), load_split("valid")
+    train_rows = load_split("train")
+    valid_rows = load_split("valid")
+    if not train_rows or not valid_rows:
+        raise SystemExit(
+            "No rows matched filters. Try removing --instrument filters or use --pitch-range."
+        )
+    return train_rows, valid_rows
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -247,14 +296,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--in", dest="src", type=Path)
     parser.add_argument("--out-train", type=Path, required=True)
     parser.add_argument("--out-valid", type=Path, required=True)
-    parser.add_argument("--instrument")
-    parser.add_argument("--instrument-regex")
+    parser.add_argument(
+        "--instrument",
+        help="case-insensitive substring filter (OR with --pitch-range in corpus mode)",
+    )
+    parser.add_argument(
+        "--instrument-regex",
+        help="regex instrument filter (OR with --pitch-range in corpus mode)",
+    )
     parser.add_argument("--boundary-gap-beats", type=float, default=0.5)
     parser.add_argument("--boundary-on-section-change", action="store_true")
     parser.add_argument("--valid-ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--min-notes", type=int, default=0)
-    parser.add_argument("--pitch-range", nargs=2, type=int, metavar=("LOW", "HIGH"))
+    parser.add_argument(
+        "--pitch-range",
+        nargs=2,
+        type=int,
+        metavar=("LOW", "HIGH"),
+        help="inclusive pitch filter; typical bass range 28-60",
+    )
     parser.add_argument("--instrument-name", choices=sorted(INSTRUMENT_RANGES))
     parser.add_argument("--max-bars", type=int, default=10**9)
     parser.add_argument(
@@ -279,8 +340,10 @@ def main(argv: list[str] | None = None) -> int:
         help="like --dry-run plus tag vocab check",
     )
     args = parser.parse_args(argv)
+
     inst_re = re.compile(args.instrument_regex, re.I) if args.instrument_regex else None
-    pitch_range = None
+
+    pitch_range: tuple[int, int] | None = None
     if args.instrument_name:
         pitch_range = INSTRUMENT_RANGES[args.instrument_name]
     if args.pitch_range:
@@ -295,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
             emit_buckets=args.emit_buckets,
             dur_bins=args.dur_bins,
             vel_bins=args.vel_bins,
+            instrument=args.instrument,
             instrument_regex=inst_re,
             pitch_range=pitch_range,
         )
@@ -321,6 +385,7 @@ def main(argv: list[str] | None = None) -> int:
         for p in args.src.rglob("*")
         if p.suffix.lower() in {".mid", ".midi"}
     ]
+
     tags: dict[str, list[tuple[float, str]]] = {}
     if args.boundary_on_section_change:
         tag_path = args.src / "tags.yaml"
@@ -331,10 +396,12 @@ def main(argv: list[str] | None = None) -> int:
             for fname, info in raw.items():
                 sections = info.get("section") or []
                 tags[fname] = [(float(t), str(s)) for t, s in sections]
+
     if args.hash_split:
         train_files, valid_files = hash_split(files, args.valid_ratio)
     else:
         train_files, valid_files = deterministic_split(files, args.valid_ratio, args.seed)
+
     train_rows: list[dict[str, object]] = []
     train_stats = Counter()
     for p in train_files:
@@ -400,13 +467,16 @@ def main(argv: list[str] | None = None) -> int:
         dict(train_stats),
         dict(valid_stats),
     )
+
     if not train_rows or not valid_rows:
         raise SystemExit(
             f"no rows after filtering: train={dict(train_stats)} valid={dict(valid_stats)}"
         )
+
     if args.validate_only and args.tag_vocab_in:
         vocab = json.loads(args.tag_vocab_in.read_text())
         summarize_tags(train_rows + valid_rows, vocab)
+
     if args.dry_run or args.validate_only:
         logging.info("train rows %d valid rows %d", len(train_rows), len(valid_rows))
     else:

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 pretty_midi = pytest.importorskip("pretty_midi")
-import yaml
+yaml = pytest.importorskip("yaml")
 
 
 def make_midi(path: Path, pitches: list[int], starts: list[float] | None = None) -> None:
@@ -97,3 +97,40 @@ def test_from_corpus(tmp_path: Path) -> None:
         with csv_path.open() as f:
             rows = list(csv.DictReader(f))
         assert rows
+
+
+def test_dry_run(tmp_path: Path) -> None:
+    train_dir = tmp_path / "train"
+    valid_dir = tmp_path / "valid"
+    train_dir.mkdir()
+    valid_dir.mkdir()
+    import json
+
+    sample = {
+        "pitch": 60,
+        "velocity": 100,
+        "duration": 1,
+        "pos": 0,
+        "boundary": 1,
+        "bar": 0,
+        "instrument": "",
+    }
+    (train_dir / "samples.jsonl").write_text(json.dumps(sample) + "\n")
+    (valid_dir / "samples.jsonl").write_text(json.dumps(sample) + "\n")
+    out_train = tmp_path / "train.csv"
+    subprocess.run(
+        [
+            "python",
+            "-m",
+            "tools.corpus_to_phrase_csv",
+            "--from-corpus",
+            str(tmp_path),
+            "--out-train",
+            str(out_train),
+            "--out-valid",
+            str(tmp_path / "valid.csv"),
+            "--dry-run",
+        ],
+        check=True,
+    )
+    assert not out_train.exists()

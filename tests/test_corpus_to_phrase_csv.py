@@ -97,3 +97,48 @@ def test_from_corpus(tmp_path: Path) -> None:
         with csv_path.open() as f:
             rows = list(csv.DictReader(f))
         assert rows
+
+
+def test_unknown_instrument_fallback(tmp_path: Path) -> None:
+    import json
+
+    train_dir = tmp_path / "train"
+    valid_dir = tmp_path / "valid"
+    train_dir.mkdir()
+    valid_dir.mkdir()
+    sample = {
+        "pitch": 40,
+        "velocity": 80,
+        "duration": 1,
+        "pos": 0,
+        "boundary": 0,
+        "bar": 0,
+        "instrument": "unknown",
+        "path": "My_Remix_Bass.mid",
+    }
+    (train_dir / "samples.jsonl").write_text(json.dumps(sample) + "\n")
+    (valid_dir / "samples.jsonl").write_text(json.dumps(sample) + "\n")
+    out_train = tmp_path / "train.csv"
+    out_valid = tmp_path / "valid.csv"
+    subprocess.run(
+        [
+            "python",
+            "-m",
+            "tools.corpus_to_phrase_csv",
+            "--from-corpus",
+            str(tmp_path),
+            "--instrument",
+            "bass",
+            "--pitch-range",
+            "28",
+            "60",
+            "--out-train",
+            str(out_train),
+            "--out-valid",
+            str(out_valid),
+        ],
+        check=True,
+    )
+    with out_train.open() as f:
+        rows = list(csv.DictReader(f))
+    assert rows

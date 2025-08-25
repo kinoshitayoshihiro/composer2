@@ -40,6 +40,7 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         nhead: int = 8,
         num_layers: int = 4,
         dropout: float = 0.1,
+        pitch_vocab_size: int = 128,
     ) -> None:
         super().__init__()
         self.d_model = d_model
@@ -89,6 +90,7 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         self.head_dur_cls = (
             nn.Linear(d_model, dur_bins) if duv_mode in {"cls", "both"} else None
         )
+        self.head_pitch = nn.Linear(d_model, pitch_vocab_size)
 
     def forward(
         self, feats: dict[str, torch.Tensor], mask: torch.Tensor
@@ -129,7 +131,54 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
             outputs["vel_cls"] = self.head_vel_cls(h)
         if self.head_dur_cls is not None:
             outputs["dur_cls"] = self.head_dur_cls(h)
+        outputs["pitch_logits"] = self.head_pitch(h)
         return outputs
+
+    # --- simple generation stubs -------------------------------------------------
+    def encode_seed(self, seq: list[dict] | None = None):  # type: ignore[override]
+        """Encode seed events into generation state.
+
+        Parameters
+        ----------
+        seq:
+            Optional list of events with ``pitch``, ``velocity`` and
+            ``duration_beats`` keys.
+
+        Returns
+        -------
+        dict
+            Mutable state used by :meth:`step` and :meth:`update_state`.
+        """
+        return {"seq": list(seq or [])}
+
+    def _event_to_feats(self, ev: dict, pos: int) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        device = self.cls.device
+        feats = {
+            "pitch_class": torch.tensor(
+                [[int(ev.get("pitch", 0)) % 12]], device=device
+            ),
+            "velocity": torch.tensor([[float(ev.get("velocity", 0.0))]], device=device),
+            "duration": torch.tensor([[float(ev.get("duration_beats", 0.0))]], device=device),
+            "position": torch.tensor([[pos]], device=device),
+        }
+        mask = torch.ones(1, 1, dtype=torch.bool, device=device)
+        return feats, mask
+
+    def step(self, state=None) -> dict[str, torch.Tensor]:  # type: ignore[override]
+        """Generate logits for the next event given *state*."""
+        if state is None:
+            state = self.encode_seed([])
+        pos = len(state["seq"]) % self.max_len
+        prev = state["seq"][-1] if state["seq"] else {}
+        feats, mask = self._event_to_feats(prev, pos)
+        out = self.forward(feats, mask)
+        return {k: v[0, 0] if v.ndim == 3 else v[0] for k, v in out.items()}
+
+    def update_state(self, state, ev: dict | None = None):  # type: ignore[override]
+        """Append *ev* to state and return it."""
+        if ev is not None:
+            state["seq"].append(ev)
+        return state
 
 
 __all__ = ["PhraseTransformer"]

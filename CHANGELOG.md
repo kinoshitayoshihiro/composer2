@@ -12,9 +12,27 @@
   emission, and sampler weight logging
 - Standardize `duration_bucket`/`velocity_bucket` columns (legacy names warn),
   track CSV filtering stats, and record visualization usage in run metadata
+- Reproducibility flags for device selection, deterministic execution, and
+  strict tag validation against `tag_vocab.json`
+- Split `--dur-decode`/`--vel-decode` options, separate velocity/duration modes
+  for sampling
+- `--best-metric` to select best checkpoint by macro F1 or tag/instrument F1
+- Visualization filenames `run-<timestamp>-epoch-<n>-*.png` and paths recorded
+  in run metadata
+- Fixed CSV column order with always-present `velocity_bucket` and
+  `duration_bucket` (missing filled with -1)
+- Temperature schedule for sampling via `--temperature-start/--temperature-end`
+- Duration clamping via `--dur-max-beats` and recorded temperature schedule metadata
+- Optional pitch-loss label smoothing (`--pitch-smoothing`) and per-loss CSV metrics
+- `tools.corpus_to_phrase_csv --hash-split` for order-independent splits and new
+  `guitar_low`/`guitar_lead` pitch presets
+- `tools.corpus_to_phrase_csv --dry-run` smoke testing
+- Strict tag workflow documentation
 ### Fixed
 - Harmonize DUV bucket column names and apply transformer nhead/layer/dropout
   flags while avoiding invalid LSTM kwargs
+- Pitch targets now use raw MIDI values, avoiding head size mismatch
+- PrettyMIDI tempo initialization fallback for older versions
 ### Changed
 - ⚠️ Breaking change note removed – parameters are now optional
 - Unified to **numba>=0.60.0** across requirements

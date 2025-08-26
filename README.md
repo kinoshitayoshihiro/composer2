@@ -195,6 +195,26 @@ python -m tools.corpus_to_phrase_csv \
     --examples-per-key 2 --stats-json inst.json
 ```
 
+Quick bass workflow (discover → extract → train):
+
+```bash
+# 1. Inspect instruments
+python -m tools.corpus_to_phrase_csv --from-corpus data/corpus/NAME --list-instruments
+
+# 2. Extract bass phrases (safe range 28–60)
+python -m tools.corpus_to_phrase_csv \
+    --from-corpus data/corpus/NAME \
+    --instrument-regex '(?i)(?:^|[_ -])bass' \
+    --pitch-range 28 60 --include-programs 32 33 \
+    --out-train data/phrase_csv/bass_train.csv \
+    --out-valid data/phrase_csv/bass_valid.csv
+
+# 3. Train
+python scripts/train_phrase.py data/phrase_csv/bass_train.csv data/phrase_csv/bass_valid.csv
+```
+
+> In zsh, avoid inline `#` comments when using line continuations; they are treated as comments.
+
 Dry-run to see why rows are dropped and save histograms for pitch/velocity/duration:
 
 ```bash
@@ -209,14 +229,13 @@ sparse, fall back to pitch and General MIDI program filters:
 python -m tools.corpus_to_phrase_csv \
     --from-corpus data/corpus/NAME \
     --instrument-regex '(?i)(?:^|[_ -])bass' \
-    --pitch-range 28 60 --include-programs 32-39 \
+    --pitch-range 28 60 --include-programs 32 33 \
     --out-train train.csv --out-valid valid.csv
 ```
 
 When no rows survive filtering, the tool prints a compact histogram of
-`instrument`, `track_name`, and `program` to guide adjustments. Try relaxing
-`--instrument`/`--instrument-regex`, widening `--pitch-range`, or rerun with
-`--list-instruments`.
+`instrument`, `track_name`, and `program` to guide adjustments. If you hit 0 rows,
+relax `--instrument-regex` or widen `--pitch-range`, or rerun with `--list-instruments`.
 
 `scripts.sample_phrase` supports a linear temperature schedule via
 `--temperature-start`/`--temperature-end` and clamps event duration with

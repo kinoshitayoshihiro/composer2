@@ -306,10 +306,17 @@ def corpus_mode(
     def load_split(split: str) -> list[dict[str, object]]:
         base = root / split
         files: list[Path] = []
-        if (base / "samples.jsonl").is_file():
-            files = [base / "samples.jsonl"]
+        jsonl_file = base / "samples.jsonl"
+        samples_glob = base / "samples/*.jsonl"
+        if jsonl_file.is_file():
+            files = [jsonl_file]
         else:
             files = sorted((base / "samples").glob("*.jsonl"))
+        if not files:
+            raise SystemExit(
+                "Corpus is empty or missing: "
+                f"checked {jsonl_file} and {samples_glob} (from --from-corpus {root})"
+            )
         rows: list[dict[str, object]] = []
         stats = Counter()
         pitch_hist: Counter[int] = Counter()

@@ -588,6 +588,11 @@ def process_path(midi_path: Path, ns: FastCfg) -> List[Sample]:
     track_name = first_inst.name if first_inst else ""
     program = int(first_inst.program) if first_inst else -1
     channel = 9 if (first_inst and first_inst.is_drum) else 0
+    instrument_name = ""
+    if first_inst:
+        base_nm = first_inst.name or pretty_midi.program_to_instrument_name(first_inst.program)
+        instrument_name = base_nm.lower()
+    is_drum = bool(first_inst.is_drum) if first_inst else False
     for idx, seg in enumerate(
         split_samples(
             pm,
@@ -624,12 +629,9 @@ def process_path(midi_path: Path, ns: FastCfg) -> List[Sample]:
             "track_name": track_name,
             "channel": channel,
             "program": program,
+            "instrument": instrument_name,
+            "is_drum": is_drum,
         }
-        if not meta.get("instrument"):
-            if channel == 9:
-                meta["instrument"] = "drums"
-            elif 32 <= program <= 39:
-                meta["instrument"] = "bass"
         if rel in _EMBED_MAP:
             meta["text_emb"] = _EMBED_MAP[rel]
         elif (not (ns and getattr(ns, "skip_lyrics", False))) and rel in _LYRIC_MAP:

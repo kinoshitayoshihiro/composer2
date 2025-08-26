@@ -8,6 +8,7 @@ import json
 import random
 import logging
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Iterable, Iterator, Pattern
@@ -206,6 +207,43 @@ def read_samples_jsonl(path: Path) -> Iterator[dict[str, object]]:
                 yield json.loads(line)
 
 
+def list_instruments(root: Path) -> None:
+    counters = {
+        "instrument": Counter(),
+        "track_name": Counter(),
+        "program": Counter(),
+        "path": Counter(),
+    }
+    for split in ("train", "valid"):
+        base = root / split
+        files: list[Path] = []
+        if (base / "samples.jsonl").is_file():
+            files = [base / "samples.jsonl"]
+        else:
+            files = sorted((base / "samples").glob("*.jsonl"))
+        for p in files:
+            for obj in read_samples_jsonl(p):
+                if obj.get("instrument"):
+                    counters["instrument"][str(obj["instrument"]).lower()] += 1
+                if obj.get("track_name"):
+                    counters["track_name"][str(obj["track_name"]).lower()] += 1
+                if "program" in obj:
+                    counters["program"][int(obj["program"])] += 1
+                fname = str(
+                    obj.get("path")
+                    or obj.get("source_path")
+                    or obj.get("filename")
+                    or obj.get("file")
+                    or ""
+                )
+                if fname:
+                    counters["path"][Path(fname).stem.lower()] += 1
+    for key, ctr in counters.items():
+        print(f"{key}:")
+        for val, count in ctr.most_common(10):
+            print(f"  {val}: {count}")
+
+
 def corpus_mode(
     root: Path,
     *,
@@ -215,8 +253,12 @@ def corpus_mode(
     instrument: str | None = None,
     instrument_regex: Pattern[str] | None = None,
     pitch_range: tuple[int, int] | None = None,
-) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    strict_all: bool = False,
+    min_notes_per_sample: int = 0,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, dict[str, object]]]:
     instrument = instrument.lower() if instrument else None
+
+    stats_all: dict[str, dict[str, object]] = {}
 
     def load_split(split: str) -> list[dict[str, object]]:
         base = root / split
@@ -227,37 +269,69 @@ def corpus_mode(
             files = sorted((base / "samples").glob("*.jsonl"))
         rows: list[dict[str, object]] = []
         stats = Counter()
+        pitch_hist: Counter[int] = Counter()
+        vel_hist: Counter[int] = Counter()
+        dur_hist: Counter[int] = Counter()
         for p in files:
             for obj in read_samples_jsonl(p):
                 name = str(obj.get("instrument", ""))
+                track = str(obj.get("track_name", ""))
                 pitch = int(obj["pitch"])
-                if instrument or instrument_regex:
-                    matched = False
-                    name_l = name.lower()
-                    if instrument and instrument in name_l:
-                        matched = True
-                    elif instrument_regex and instrument_regex.search(name):
-                        matched = True
-                    elif name_l in {"", "unknown"}:
-                        fname = str(
-                            obj.get("path")
-                            or obj.get("source_path")
-                            or obj.get("filename")
-                            or obj.get("file")
-                            or ""
-                        )
-                        stem = Path(fname).stem.lower()
-                        if instrument and instrument in stem:
-                            matched = True
-                        elif instrument_regex and instrument_regex.search(stem):
-                            matched = True
-                        elif pitch_range and pitch_range[0] <= pitch <= pitch_range[1]:
-                            matched = True
-                    if not matched:
+                fname = str(
+                    obj.get("path")
+                    or obj.get("source_path")
+                    or obj.get("filename")
+                    or obj.get("file")
+                    or ""
+                )
+                stem = Path(fname).stem.lower()
+                note_count = int(
+                    obj.get("note_count")
+                    or (len(obj.get("notes", [])) if isinstance(obj.get("notes"), list) else 1)
+                )
+                if note_count < min_notes_per_sample:
+                    stats["removed_by_min_notes"] += 1
+                    stats["removed"] += 1
+                    continue
+                name_ok = False
+                regex_ok = False
+                pitch_ok = False
+                if instrument:
+                    nm = name.lower()
+                    if instrument in nm or instrument in track.lower() or instrument in stem:
+                        name_ok = True
+                if instrument_regex:
+                    if (
+                        instrument_regex.search(name)
+                        or instrument_regex.search(track)
+                        or instrument_regex.search(stem)
+                    ):
+                        regex_ok = True
+                if pitch_range:
+                    pitch_ok = pitch_range[0] <= pitch <= pitch_range[1]
+                keep = True
+                if strict_all:
+                    if instrument and not name_ok:
                         stats["removed_by_name"] += 1
-                        continue
-                if pitch_range and not (pitch_range[0] <= pitch <= pitch_range[1]):
-                    stats["removed_by_pitch"] += 1
+                        keep = False
+                    if instrument_regex and not regex_ok:
+                        stats["removed_by_regex"] += 1
+                        keep = False
+                    if pitch_range and not pitch_ok:
+                        stats["removed_by_pitch"] += 1
+                        keep = False
+                else:
+                    if instrument or instrument_regex or pitch_range:
+                        keep = name_ok or regex_ok or pitch_ok
+                        if not keep:
+                            if instrument and not name_ok:
+                                stats["removed_by_name"] += 1
+                            if instrument_regex and not regex_ok:
+                                stats["removed_by_regex"] += 1
+                            if pitch_range and not pitch_ok:
+                                stats["removed_by_pitch"] += 1
+                if not keep:
+                    stats["removed"] += 1
                     continue
                 row = {
                     "pitch": pitch,
@@ -279,16 +353,27 @@ def corpus_mode(
                     )
                 rows.append(row)
                 stats["kept"] += 1
-        logging.info("%s stats %s", split, dict(stats))
+                pitch_hist[pitch] += 1
+                vel_hist[int(row["velocity"])] += 1
+                dur_hist[int(round(float(row["duration"]) * 1000))] += 1
+        stats_dict = {
+            "kept": stats["kept"],
+            "removed": stats["removed"],
+            "removed_by_name": stats["removed_by_name"],
+            "removed_by_regex": stats["removed_by_regex"],
+            "removed_by_pitch": stats["removed_by_pitch"],
+            "removed_by_min_notes": stats["removed_by_min_notes"],
+            "pitch_hist": dict(pitch_hist),
+            "velocity_hist": dict(vel_hist),
+            "duration_hist": {str(k / 1000): v for k, v in dur_hist.items()},
+        }
+        stats_all[split] = stats_dict
+        logging.info("%s stats %s", split, stats_dict)
         return rows
 
     train_rows = load_split("train")
     valid_rows = load_split("valid")
-    if not train_rows or not valid_rows:
-        raise SystemExit(
-            "No rows matched filters. Try removing --instrument filters or use --pitch-range."
-        )
-    return train_rows, valid_rows
+    return train_rows, valid_rows, stats_all
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -339,6 +424,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="like --dry-run plus tag vocab check",
     )
+    parser.add_argument("--list-instruments", action="store_true")
+    parser.add_argument("--strict-all", action="store_true")
+    parser.add_argument("--min-notes-per-sample", type=int, default=0)
+    parser.add_argument("--stats-json", type=Path)
+    parser.add_argument("--duv-mode", choices=["reg", "cls", "both"], default="reg")
     args = parser.parse_args(argv)
 
     inst_re = re.compile(args.instrument_regex, re.I) if args.instrument_regex else None
@@ -352,8 +442,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.validate_only:
         args.dry_run = True
 
+    if args.duv_mode in {"cls", "both"} and not args.emit_buckets:
+        logging.warning("duv_mode %s requires buckets; enabling --emit-buckets", args.duv_mode)
+        args.emit_buckets = True
+
+    if args.list_instruments:
+        if not args.from_corpus:
+            raise SystemExit("--list-instruments requires --from-corpus")
+        list_instruments(args.from_corpus)
+        return 0
+
     if args.from_corpus:
-        train_rows, valid_rows = corpus_mode(
+        train_rows, valid_rows, stats = corpus_mode(
             args.from_corpus,
             emit_buckets=args.emit_buckets,
             dur_bins=args.dur_bins,
@@ -361,20 +461,38 @@ def main(argv: list[str] | None = None) -> int:
             instrument=args.instrument,
             instrument_regex=inst_re,
             pitch_range=pitch_range,
+            strict_all=args.strict_all,
+            min_notes_per_sample=args.min_notes_per_sample,
         )
+        if args.stats_json:
+            args.stats_json.parent.mkdir(parents=True, exist_ok=True)
+            args.stats_json.write_text(json.dumps(stats, indent=2))
+        if not train_rows or not valid_rows:
+            print("No rows matched filters. Try loosening filters or adjust pitch range.")
+            return 1
         if args.validate_only and args.tag_vocab_in:
             vocab = json.loads(args.tag_vocab_in.read_text())
             summarize_tags(train_rows + valid_rows, vocab)
         if args.dry_run or args.validate_only:
-            logging.info("train rows %d valid rows %d", len(train_rows), len(valid_rows))
-        else:
-            write_csv(train_rows, args.out_train)
-            write_csv(valid_rows, args.out_valid)
-            if args.tag_vocab_in and args.tag_vocab_out:
-                if not args.tag_vocab_in.is_file():
-                    raise SystemExit(f"tag vocab not found: {args.tag_vocab_in}")
-                args.tag_vocab_out.parent.mkdir(parents=True, exist_ok=True)
-                args.tag_vocab_out.write_text(args.tag_vocab_in.read_text())
+            for split, st in stats.items():
+                logging.info(
+                    "%s kept %d removed %d name_miss=%d regex_miss=%d pitch_miss=%d min_notes=%d",
+                    split,
+                    st.get("kept", 0),
+                    st.get("removed", 0),
+                    st.get("removed_by_name", 0),
+                    st.get("removed_by_regex", 0),
+                    st.get("removed_by_pitch", 0),
+                    st.get("removed_by_min_notes", 0),
+                )
+            return 0 if train_rows and valid_rows else 1
+        write_csv(train_rows, args.out_train)
+        write_csv(valid_rows, args.out_valid)
+        if args.tag_vocab_in and args.tag_vocab_out:
+            if not args.tag_vocab_in.is_file():
+                raise SystemExit(f"tag vocab not found: {args.tag_vocab_in}")
+            args.tag_vocab_out.parent.mkdir(parents=True, exist_ok=True)
+            args.tag_vocab_out.write_text(args.tag_vocab_in.read_text())
         return 0
 
     if args.src is None:

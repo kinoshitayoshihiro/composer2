@@ -180,6 +180,21 @@ Inspect available instrument and track names before filtering:
 python -m tools.corpus_to_phrase_csv --from-corpus data/corpus/NAME --list-instruments
 ```
 
+The command aggregates `instrument`, `track_name`, `program`, and path information
+from each sample JSON object. These fields may appear either at the top level or
+within a nested `meta` dictionary (`meta.instrument`, `meta.track_name`,
+`meta.program`, `meta.source_path`, etc.), and `--list-instruments` considers both
+locations when counting.
+
+For larger corpora, combine reporting flags:
+
+```bash
+python -m tools.corpus_to_phrase_csv \
+    --from-corpus data/corpus/NAME \
+    --list-instruments --min-count 10 \
+    --examples-per-key 2 --stats-json inst.json
+```
+
 Dry-run to see why rows are dropped and save histograms for pitch/velocity/duration:
 
 ```bash
@@ -187,8 +202,21 @@ python -m tools.corpus_to_phrase_csv --from-corpus data/corpus/NAME \
     --instrument bass --pitch-range 28 60 --dry-run --stats-json stats.json
 ```
 
-Use the JSON stats to choose a sensible `--pitch-range`. If a split keeps zero
-rows, relax `--instrument`/`--instrument-regex` or widen the pitch range.
+Use the JSON stats to choose a sensible `--pitch-range`. If instrument labels are
+sparse, fall back to pitch and General MIDI program filters:
+
+```bash
+python -m tools.corpus_to_phrase_csv \
+    --from-corpus data/corpus/NAME \
+    --instrument-regex '(?i)(?:^|[_ -])bass' \
+    --pitch-range 28 60 --include-programs 32-39 \
+    --out-train train.csv --out-valid valid.csv
+```
+
+When no rows survive filtering, the tool prints a compact histogram of
+`instrument`, `track_name`, and `program` to guide adjustments. Try relaxing
+`--instrument`/`--instrument-regex`, widening `--pitch-range`, or rerun with
+`--list-instruments`.
 
 `scripts.sample_phrase` supports a linear temperature schedule via
 `--temperature-start`/`--temperature-end` and clamps event duration with

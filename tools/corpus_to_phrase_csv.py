@@ -9,7 +9,7 @@ import random
 import logging
 import re
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Iterable, Iterator, Pattern
 
@@ -207,13 +207,21 @@ def read_samples_jsonl(path: Path) -> Iterator[dict[str, object]]:
                 yield json.loads(line)
 
 
-def list_instruments(root: Path) -> None:
+
+def list_instruments(
+    root: Path,
+    *,
+    min_count: int = 1,
+    stats_json: Path | None = None,
+    examples_per_key: int = 0,
+) -> None:
     counters = {
         "instrument": Counter(),
         "track_name": Counter(),
         "program": Counter(),
         "path": Counter(),
     }
+    examples = {k: defaultdict(list) for k in counters}
     for split in ("train", "valid"):
         base = root / split
         files: list[Path] = []
@@ -223,26 +231,60 @@ def list_instruments(root: Path) -> None:
             files = sorted((base / "samples").glob("*.jsonl"))
         for p in files:
             for obj in read_samples_jsonl(p):
-                if obj.get("instrument"):
-                    counters["instrument"][str(obj["instrument"]).lower()] += 1
-                if obj.get("track_name"):
-                    counters["track_name"][str(obj["track_name"]).lower()] += 1
-                if "program" in obj:
-                    counters["program"][int(obj["program"])] += 1
+                meta = obj.get("meta", {})
                 fname = str(
                     obj.get("path")
                     or obj.get("source_path")
                     or obj.get("filename")
                     or obj.get("file")
+                    or meta.get("path")
+                    or meta.get("source_path")
+                    or meta.get("filename")
+                    or meta.get("file")
                     or ""
                 )
-                if fname:
-                    counters["path"][Path(fname).stem.lower()] += 1
+                stem = Path(fname).stem.lower()
+                inst = obj.get("instrument")
+                if inst is None:
+                    inst = meta.get("instrument")
+                if inst:
+                    key = str(inst).lower()
+                    counters["instrument"][key] += 1
+                    if stem and len(examples["instrument"][key]) < examples_per_key:
+                        examples["instrument"][key].append(stem)
+                track = obj.get("track_name")
+                if track is None:
+                    track = meta.get("track_name")
+                if track:
+                    key = str(track).lower()
+                    counters["track_name"][key] += 1
+                    if stem and len(examples["track_name"][key]) < examples_per_key:
+                        examples["track_name"][key].append(stem)
+                prog = obj.get("program")
+                if prog is None and "program" in meta:
+                    prog = meta["program"]
+                if prog is not None:
+                    key_prog = int(prog)
+                    counters["program"][key_prog] += 1
+                    if stem and len(examples["program"][key_prog]) < examples_per_key:
+                        examples["program"][key_prog].append(stem)
+                if stem:
+                    counters["path"][stem] += 1
+                    if len(examples["path"][stem]) < examples_per_key:
+                        examples["path"][stem].append(stem)
+    if stats_json:
+        stats_json.parent.mkdir(parents=True, exist_ok=True)
+        stats_json.write_text(json.dumps({k: dict(v) for k, v in counters.items()}, indent=2))
     for key, ctr in counters.items():
         print(f"{key}:")
-        for val, count in ctr.most_common(10):
-            print(f"  {val}: {count}")
-
+        for val, count in ctr.most_common():
+            if count < min_count:
+                continue
+            ex = examples[key].get(val)
+            if ex:
+                print(f"  {val}: {count} (examples: {', '.join(ex)})")
+            else:
+                print(f"  {val}: {count}")
 
 def corpus_mode(
     root: Path,
@@ -253,6 +295,7 @@ def corpus_mode(
     instrument: str | None = None,
     instrument_regex: Pattern[str] | None = None,
     pitch_range: tuple[int, int] | None = None,
+    include_programs: set[int] | None = None,
     strict_all: bool = False,
     min_notes_per_sample: int = 0,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, dict[str, object]]]:
@@ -272,19 +315,35 @@ def corpus_mode(
         pitch_hist: Counter[int] = Counter()
         vel_hist: Counter[int] = Counter()
         dur_hist: Counter[int] = Counter()
+        inst_hist: Counter[str] = Counter()
+        track_hist: Counter[str] = Counter()
+        prog_hist: Counter[int] = Counter()
         for p in files:
             for obj in read_samples_jsonl(p):
-                name = str(obj.get("instrument", ""))
-                track = str(obj.get("track_name", ""))
+                meta = obj.get("meta", {})
+                name = str(obj.get("instrument") or meta.get("instrument") or "")
+                track = str(obj.get("track_name") or meta.get("track_name") or "")
+                program = obj.get("program")
+                if program is None and "program" in meta:
+                    program = meta["program"]
+                prog_int = int(program) if program is not None else None
                 pitch = int(obj["pitch"])
                 fname = str(
                     obj.get("path")
                     or obj.get("source_path")
                     or obj.get("filename")
                     or obj.get("file")
+                    or meta.get("path")
+                    or meta.get("source_path")
+                    or meta.get("filename")
+                    or meta.get("file")
                     or ""
                 )
                 stem = Path(fname).stem.lower()
+                inst_hist[name.lower()] += 1
+                track_hist[track.lower()] += 1
+                if prog_int is not None:
+                    prog_hist[prog_int] += 1
                 note_count = int(
                     obj.get("note_count")
                     or (len(obj.get("notes", [])) if isinstance(obj.get("notes"), list) else 1)
@@ -296,6 +355,7 @@ def corpus_mode(
                 name_ok = False
                 regex_ok = False
                 pitch_ok = False
+                program_ok = False
                 if instrument:
                     nm = name.lower()
                     if instrument in nm or instrument in track.lower() or instrument in stem:
@@ -309,6 +369,8 @@ def corpus_mode(
                         regex_ok = True
                 if pitch_range:
                     pitch_ok = pitch_range[0] <= pitch <= pitch_range[1]
+                if include_programs is not None and prog_int is not None:
+                    program_ok = prog_int in include_programs
                 keep = True
                 if strict_all:
                     if instrument and not name_ok:
@@ -320,9 +382,12 @@ def corpus_mode(
                     if pitch_range and not pitch_ok:
                         stats["removed_by_pitch"] += 1
                         keep = False
+                    if include_programs and not program_ok:
+                        stats["removed_by_program"] += 1
+                        keep = False
                 else:
-                    if instrument or instrument_regex or pitch_range:
-                        keep = name_ok or regex_ok or pitch_ok
+                    if instrument or instrument_regex or pitch_range or include_programs:
+                        keep = name_ok or regex_ok or pitch_ok or program_ok
                         if not keep:
                             if instrument and not name_ok:
                                 stats["removed_by_name"] += 1
@@ -330,6 +395,8 @@ def corpus_mode(
                                 stats["removed_by_regex"] += 1
                             if pitch_range and not pitch_ok:
                                 stats["removed_by_pitch"] += 1
+                            if include_programs and not program_ok:
+                                stats["removed_by_program"] += 1
                 if not keep:
                     stats["removed"] += 1
                     continue
@@ -362,10 +429,14 @@ def corpus_mode(
             "removed_by_name": stats["removed_by_name"],
             "removed_by_regex": stats["removed_by_regex"],
             "removed_by_pitch": stats["removed_by_pitch"],
+            "removed_by_program": stats["removed_by_program"],
             "removed_by_min_notes": stats["removed_by_min_notes"],
             "pitch_hist": dict(pitch_hist),
             "velocity_hist": dict(vel_hist),
             "duration_hist": {str(k / 1000): v for k, v in dur_hist.items()},
+            "instrument_hist": dict(inst_hist),
+            "track_name_hist": dict(track_hist),
+            "program_hist": dict(prog_hist),
         }
         stats_all[split] = stats_dict
         logging.info("%s stats %s", split, stats_dict)
@@ -379,8 +450,8 @@ def corpus_mode(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--in", dest="src", type=Path)
-    parser.add_argument("--out-train", type=Path, required=True)
-    parser.add_argument("--out-valid", type=Path, required=True)
+    parser.add_argument("--out-train", type=Path)
+    parser.add_argument("--out-valid", type=Path)
     parser.add_argument(
         "--instrument",
         help="case-insensitive substring filter (OR with --pitch-range in corpus mode)",
@@ -428,6 +499,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--strict-all", action="store_true")
     parser.add_argument("--min-notes-per-sample", type=int, default=0)
     parser.add_argument("--stats-json", type=Path)
+    parser.add_argument("--min-count", type=int, default=1)
+    parser.add_argument("--examples-per-key", type=int, default=3)
+    parser.add_argument("--include-programs")
     parser.add_argument("--duv-mode", choices=["reg", "cls", "both"], default="reg")
     args = parser.parse_args(argv)
 
@@ -439,6 +513,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.pitch_range:
         pitch_range = tuple(args.pitch_range)
 
+    include_programs: set[int] | None = None
+    if args.include_programs:
+        include_programs = set()
+        for part in args.include_programs.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "-" in part:
+                a, b = part.split("-", 1)
+                include_programs.update(range(int(a), int(b) + 1))
+            else:
+                include_programs.add(int(part))
+
     if args.validate_only:
         args.dry_run = True
 
@@ -446,10 +533,18 @@ def main(argv: list[str] | None = None) -> int:
         logging.warning("duv_mode %s requires buckets; enabling --emit-buckets", args.duv_mode)
         args.emit_buckets = True
 
+    if not args.list_instruments and (args.out_train is None or args.out_valid is None):
+        parser.error("--out-train and --out-valid are required unless --list-instruments")
+
     if args.list_instruments:
         if not args.from_corpus:
             raise SystemExit("--list-instruments requires --from-corpus")
-        list_instruments(args.from_corpus)
+        list_instruments(
+            args.from_corpus,
+            min_count=args.min_count,
+            stats_json=args.stats_json,
+            examples_per_key=args.examples_per_key,
+        )
         return 0
 
     if args.from_corpus:
@@ -461,6 +556,7 @@ def main(argv: list[str] | None = None) -> int:
             instrument=args.instrument,
             instrument_regex=inst_re,
             pitch_range=pitch_range,
+            include_programs=include_programs,
             strict_all=args.strict_all,
             min_notes_per_sample=args.min_notes_per_sample,
         )
@@ -468,7 +564,17 @@ def main(argv: list[str] | None = None) -> int:
             args.stats_json.parent.mkdir(parents=True, exist_ok=True)
             args.stats_json.write_text(json.dumps(stats, indent=2))
         if not train_rows or not valid_rows:
-            print("No rows matched filters. Try loosening filters or adjust pitch range.")
+            for split, rows in (("train", train_rows), ("valid", valid_rows)):
+                if not rows:
+                    st = stats.get(split, {})
+                    print(f"{split} histograms:")
+                    print(f"  instruments: {st.get('instrument_hist', {})}")
+                    print(f"  track_names: {st.get('track_name_hist', {})}")
+                    print(f"  programs: {st.get('program_hist', {})}")
+            print(
+                "No rows matched filters. Hints: try --pitch-range 28 60 (bass), "
+                "relax --instrument/--instrument-regex, run --list-instruments."
+            )
             return 1
         if args.validate_only and args.tag_vocab_in:
             vocab = json.loads(args.tag_vocab_in.read_text())

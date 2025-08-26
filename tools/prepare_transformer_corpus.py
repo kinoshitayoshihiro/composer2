@@ -574,6 +574,20 @@ def process_path(midi_path: Path, ns: FastCfg) -> List[Sample]:
     rel = normalize_key(midi_path, _BASE or Path("."))
     segments: List[Sample] = []
     include_programs = set(_ARGS.include_programs) if _ARGS.include_programs else None
+    first_inst = None
+    for inst in pm.instruments:
+        if _ARGS.drums_only and not inst.is_drum:
+            continue
+        if _ARGS.exclude_drums and inst.is_drum:
+            continue
+        if include_programs and inst.program not in include_programs:
+            continue
+        if inst.notes:
+            first_inst = inst
+            break
+    track_name = first_inst.name if first_inst else ""
+    program = int(first_inst.program) if first_inst else -1
+    channel = 9 if (first_inst and first_inst.is_drum) else 0
     for idx, seg in enumerate(
         split_samples(
             pm,
@@ -602,11 +616,20 @@ def process_path(midi_path: Path, ns: FastCfg) -> List[Sample]:
         meta: Dict[str, object] = {
             **tags,
             "source_path": rel,
+            "path": rel,
             "segment_index": idx,
             "tempo_est": tempo_est,
             "beats_per_bar": beats_per_bar,
             "time_signature": ts_str,
+            "track_name": track_name,
+            "channel": channel,
+            "program": program,
         }
+        if not meta.get("instrument"):
+            if channel == 9:
+                meta["instrument"] = "drums"
+            elif 32 <= program <= 39:
+                meta["instrument"] = "bass"
         if rel in _EMBED_MAP:
             meta["text_emb"] = _EMBED_MAP[rel]
         elif (not (ns and getattr(ns, "skip_lyrics", False))) and rel in _LYRIC_MAP:

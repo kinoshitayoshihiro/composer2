@@ -169,6 +169,24 @@ python -m scripts.sample_phrase --ckpt checkpoints/bass_duv_smoke.ckpt \
     --out-midi out/bass.mid --out-csv out/bass.csv --length 16 --seed 0
 ```
 
+### Debugging extraction
+
+Inspect available instrument and track names before filtering:
+
+```bash
+python -m tools.corpus_to_phrase_csv --from-corpus data/corpus/NAME --list-instruments
+```
+
+Dry-run to see why rows are dropped and save histograms for pitch/velocity/duration:
+
+```bash
+python -m tools.corpus_to_phrase_csv --from-corpus data/corpus/NAME \
+    --instrument bass --pitch-range 28 60 --dry-run --stats-json stats.json
+```
+
+Use the JSON stats to choose a sensible `--pitch-range`. If a split keeps zero
+rows, relax `--instrument`/`--instrument-regex` or widen the pitch range.
+
 `scripts.sample_phrase` supports a linear temperature schedule via
 `--temperature-start`/`--temperature-end` and clamps event duration with
 `--dur-max-beats` (default 16). For example:

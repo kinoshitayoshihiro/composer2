@@ -507,8 +507,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-notes-per-sample", type=int, default=0)
     parser.add_argument("--stats-json", type=Path)
     parser.add_argument("--min-count", type=int, default=1)
-    parser.add_argument("--examples-per-key", type=int, default=3)
-    parser.add_argument("--include-programs")
+    parser.add_argument("--examples-per-key", type=int, default=0)
+    parser.add_argument(
+        "--include-programs",
+        type=int,
+        nargs="+",
+        metavar="PROG",
+        help="keep only samples with these GM program numbers",
+    )
     parser.add_argument("--duv-mode", choices=["reg", "cls", "both"], default="reg")
     args = parser.parse_args(argv)
 
@@ -522,16 +528,7 @@ def main(argv: list[str] | None = None) -> int:
 
     include_programs: set[int] | None = None
     if args.include_programs:
-        include_programs = set()
-        for part in args.include_programs.split(","):
-            part = part.strip()
-            if not part:
-                continue
-            if "-" in part:
-                a, b = part.split("-", 1)
-                include_programs.update(range(int(a), int(b) + 1))
-            else:
-                include_programs.add(int(part))
+        include_programs = set(args.include_programs)
 
     if args.validate_only:
         args.dry_run = True

@@ -156,7 +156,8 @@ rows lacking requested keys are dropped.
 ```bash
 # 1) Convert a corpus with strict tags
 python -m tools.corpus_to_phrase_csv --from-corpus data/corpus/bass \
-    --emit-buckets --tag-vocab-in data/corpus/bass/tag_vocab.json \
+    --duv-mode both --emit-buckets \
+    --tag-vocab-in data/corpus/bass/tag_vocab.json \
     --tag-vocab-out data/phrase_csv/tag_vocab.json \
     --out-train data/phrase_csv/bass_train.csv --out-valid data/phrase_csv/bass_valid.csv
 
@@ -168,6 +169,8 @@ python scripts/train_phrase.py data/phrase_csv/bass_train.csv data/phrase_csv/ba
 python -m scripts.sample_phrase --ckpt checkpoints/bass_duv_smoke.ckpt \
     --out-midi out/bass.mid --out-csv out/bass.csv --length 16 --seed 0
 ```
+
+`--duv-mode cls` and `--duv-mode both` automatically enable `--emit-buckets` with a warning if omitted.
 
 ### Debugging extraction
 

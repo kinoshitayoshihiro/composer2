@@ -45,6 +45,7 @@ def test_instrument_hints(tmp_path: Path) -> None:
     metas = [d["meta"] for d in data]
     bass_meta = next(m for m in metas if m["program"] == 33)
     assert bass_meta["instrument"] == "bass"
-    drum_meta = next(m for m in metas if m["channel"] == 9)
+    assert bass_meta["is_drum"] is False
+    drum_meta = next(m for m in metas if m["is_drum"])
     assert drum_meta["instrument"] == "drums"
     assert "track_name" in bass_meta and "path" in bass_meta

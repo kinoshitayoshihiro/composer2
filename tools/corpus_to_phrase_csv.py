@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import random
 import logging
+import random
 import re
 import sys
 from collections import Counter, defaultdict
@@ -189,9 +189,7 @@ def midi_to_rows(
     return rows, inst_match
 
 
-def write_csv(
-    rows: Iterable[dict[str, object]], path: Path, fields: list[str] = FIELDS
-) -> None:
+def write_csv(rows: Iterable[dict[str, object]], path: Path, fields: list[str] = FIELDS) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -205,7 +203,6 @@ def read_samples_jsonl(path: Path) -> Iterator[dict[str, object]]:
             line = line.strip()
             if line:
                 yield json.loads(line)
-
 
 
 def list_instruments(
@@ -286,6 +283,7 @@ def list_instruments(
             else:
                 print(f"  {val}: {count}")
 
+
 def corpus_mode(
     root: Path,
     *,
@@ -316,10 +314,21 @@ def corpus_mode(
         if not files and alt_file.is_file():
             files = [alt_file]
         if not files:
-            raise SystemExit(
+            available = sorted(str(p) for p in root.parent.glob("*") if p.is_dir())
+            if available:
+                candidates = "\n".join(f"  - {p}" for p in available)
+            else:
+                candidates = "  (no corpus directories found)"
+            msg = (
                 "Corpus is empty or missing: "
-                f"checked {jsonl_file}, {samples_glob}, and {alt_file} (from --from-corpus {root})"
+                f"checked {jsonl_file}, {samples_glob}, and {alt_file} (from --from-corpus {root}).\n"
+                "--from-corpus may be incorrect. Available corpus directories:\n"
+                f"{candidates}\n"
+                "Example layout:\n"
+                "  data/corpus/NAME/train/samples.jsonl"
             )
+            print(msg, file=sys.stderr)
+            sys.exit(1)
         rows: list[dict[str, object]] = []
         stats = Counter()
         pitch_hist: Counter[int] = Counter()
@@ -433,12 +442,8 @@ def corpus_mode(
                     "duration_bucket": -1,
                 }
                 if emit_buckets:
-                    row["velocity_bucket"] = bin_velocity(
-                        int(row["velocity"]), vel_bins
-                    )
-                    row["duration_bucket"] = bin_duration(
-                        float(row["duration"]), dur_bins
-                    )
+                    row["velocity_bucket"] = bin_velocity(int(row["velocity"]), vel_bins)
+                    row["duration_bucket"] = bin_duration(float(row["duration"]), dur_bins)
                 rows.append(row)
                 stats["kept"] += 1
                 pitch_hist[pitch] += 1
@@ -622,11 +627,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.src is None:
         raise SystemExit("--in is required when not using --from-corpus")
 
-    files = [
-        p
-        for p in args.src.rglob("*")
-        if p.suffix.lower() in {".mid", ".midi"}
-    ]
+    files = [p for p in args.src.rglob("*") if p.suffix.lower() in {".mid", ".midi"}]
 
     tags: dict[str, list[tuple[float, str]]] = {}
     if args.boundary_on_section_change:

@@ -148,6 +148,18 @@ rows lacking requested keys are dropped.
        --tag-vocab-out data/phrase_csv/tag_vocab.json \
        --out-train data/phrase_csv/train.csv --out-valid data/phrase_csv/valid.csv
    ```
+   Each split directory should contain a `samples.jsonl` file or a `samples/` folder
+   of JSONL files. If neither is present, the converter falls back to top-level
+   `train.jsonl` and `valid.jsonl` files under `data/corpus/NAME`. The recommended
+   layout is:
+
+   ```
+   data/corpus/NAME/
+       train/
+           samples.jsonl
+       valid/
+           samples.jsonl
+   ```
 3. `scripts/train_phrase.py --strict-tags` expects `tag_vocab.json` beside the
    train/valid CSVs and will error on any unknown tag values.
 

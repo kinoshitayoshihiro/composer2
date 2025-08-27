@@ -308,14 +308,17 @@ def corpus_mode(
         files: list[Path] = []
         jsonl_file = base / "samples.jsonl"
         samples_glob = base / "samples/*.jsonl"
+        alt_file = root / f"{split}.jsonl"
         if jsonl_file.is_file():
             files = [jsonl_file]
         else:
             files = sorted((base / "samples").glob("*.jsonl"))
+        if not files and alt_file.is_file():
+            files = [alt_file]
         if not files:
             raise SystemExit(
                 "Corpus is empty or missing: "
-                f"checked {jsonl_file} and {samples_glob} (from --from-corpus {root})"
+                f"checked {jsonl_file}, {samples_glob}, and {alt_file} (from --from-corpus {root})"
             )
         rows: list[dict[str, object]] = []
         stats = Counter()
@@ -346,6 +349,17 @@ def corpus_mode(
                     or meta.get("file")
                     or ""
                 )
+                missing_fields = []
+                if not name:
+                    missing_fields.append("instrument")
+                if not track:
+                    missing_fields.append("track_name")
+                if prog_int is None:
+                    missing_fields.append("program")
+                if not fname:
+                    missing_fields.append("path")
+                if missing_fields:
+                    logging.warning("Sample missing %s in %s", ", ".join(missing_fields), p)
                 stem = Path(fname).stem.lower()
                 inst_hist[name.lower()] += 1
                 track_hist[track.lower()] += 1

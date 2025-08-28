@@ -43,7 +43,10 @@ rules:
 fills:
   enable: true
   build_on_section_end: true
-  pickslide_on_last_eighth: true
+  pickslide_on_last_eighth: false       # 旧挙動をデフォ無効化
+  pickslide_on_section_end: true        # セクション境界だけ入れる
+  pickslide_every_n_bars: 0             # 0=オフ, 例えば 16 にすると16小節ごと
+  pickslide_velocity: 95
 
 cc:
   enable: true

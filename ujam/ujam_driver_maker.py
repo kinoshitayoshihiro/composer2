@@ -253,7 +253,10 @@ def main():
         dummy, dur, est_tempo, beat_times = audio_onsets_to_dummy_notes(args.input)
         src_notes = sorted(dummy, key=lambda n: n.start)
         tempo = args.force_bpm or (est_tempo if est_tempo > 0 else 120.0)
-        total = float(dur) if dur > 0 else (src_notes[-1].end if src_notes else 0.0)
+        total = float(dur) if dur and dur > 0 else (src_notes[-1].end if src_notes else 0.0)
+        # さらに保険：総尺が極端に短く見積もられた時は仮で30秒扱い
+        if total <= 0.5:
+            total = 30.0
     if args.force_bpm:
         tempo = args.force_bpm
 
@@ -292,6 +295,7 @@ def main():
     # セクション検出
     energies = [energy(notes_in_window(src_notes, t0, t1)) for _, t0, t1 in bars]
     sections = detect_sections(energies, rules["section_window_bars"])
+    print(f"[INFO] sections={len(sections)}  notes_src={len(src_notes)}")
 
     # 出力MIDI
     out = pm.PrettyMIDI(initial_tempo=tempo)
@@ -383,11 +387,22 @@ def main():
                         end=t1 - 0.40 * bar_len_i,
                     )
                 )
-            if fills["pickslide_on_last_eighth"]:
-                if "pick_slide" in COMMON:
+            # ---- Pick Slide の頻度制御（セクション終端／N小節ごと）----
+            if "pick_slide" in COMMON:
+                put_pick = False
+                if fills.get("pickslide_on_section_end", False) and is_section_end:
+                    put_pick = True
+                nbar = int(fills.get("pickslide_every_n_bars", 0) or 0)
+                if nbar > 0 and ((b + 1) % nbar == 0):
+                    put_pick = True
+                if fills.get("pickslide_on_last_eighth", False):
+                    # 明示ONのときだけ毎小節
+                    put_pick = True
+                if put_pick:
+                    vel = int(fills.get("pickslide_velocity", 110))
                     drv.notes.append(
                         pm.Note(
-                            velocity=115,
+                            velocity=vel,
                             pitch=COMMON["pick_slide"],
                             start=t1 - bar_len_i / 8.0,
                             end=t1 - bar_len_i / 8.0 + 0.05,

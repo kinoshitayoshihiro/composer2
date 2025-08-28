@@ -661,6 +661,12 @@ python -m tools.ujam_bridge gen-staircase --product iron2 \
        --tempo 120 --ppq 480 --channel 0 --velocity 100
 ```
 
+### UJAM driver notes
+
+Dependencies: `pretty_midi`, `PyYAML`, `librosa` (optional: `soundfile` for audio I/O).
+In Studio One, map CC1 to swing/microtiming and CC11 to dynamics via MIDI Learn.
+Ensure `ujam.c0=24`, `ujam.c1=36`, `chord_low=60`, `chord_high=72` in `config.yaml`.
+
 List instruments in a corpus with JSON summary:
 
 ```

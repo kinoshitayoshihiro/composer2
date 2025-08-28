@@ -10,40 +10,35 @@ import yaml
 def audio_onsets_to_dummy_notes(audio_path: str):
     """
     Returns: (dummy_notes, duration_sec, est_tempo, beat_times)
-    - dummy_notes: オンセット時刻に短いノート（時刻情報のみ使用）
-    - duration_sec: 音声の総尺
-    - est_tempo: 推定テンポ（BPM, float）
-    - beat_times: 推定ビート時刻（numpy.ndarray[sec]）
     """
     try:
         import librosa, numpy as np
         y, sr = librosa.load(audio_path, sr=None, mono=True)
         dur = float(librosa.get_duration(y=y, sr=sr))
 
-        # ビート検出（テンポとビート列）
+        # beat 検出（秒）
         tempo, beats = librosa.beat.beat_track(y=y, sr=sr, units="time")
-        beat_times = np.array(beats, dtype=float) if beats is not None else np.array([])
+        beat_times = np.asarray(beats, dtype=float) if beats is not None else np.array([])
 
-        # オンセット検出（感度は控えめ）
+        # onset 検出
         onset_env = librosa.onset.onset_strength(y=y, sr=sr)
         onsets = librosa.onset.onset_detect(
             onset_envelope=onset_env, sr=sr, units="time",
             backtrack=True, pre_max=8, post_max=8, pre_avg=16, post_avg=16, delta=0.05
         )
-        # フォールバック：オンセットが少なければビートから補完（1/2拍刻み）
-        if len(onsets) < max(4, int(dur * tempo / 240.0)) and beat_times.size:
-            # 1/2拍グリッドに分割
+
+        # フォールバック：onset が少なければ beat から 1/2 拍で補完
+        if beat_times.size:
             half_beats = []
             for i in range(len(beat_times)-1):
                 t0, t1 = beat_times[i], beat_times[i+1]
                 half_beats.extend([t0, (t0+t1)/2.0])
-            onsets = np.unique(np.concatenate([onsets, np.array(half_beats)]))
+            # 結合して一意に
+            onsets = np.unique(np.concatenate([onsets, np.asarray(half_beats, dtype=float)]))
 
-        # ダミーMIDI
-        notes = []
-        for t in onsets:
-            notes.append(pm.Note(velocity=96, pitch=64, start=float(t), end=float(t)+0.05))
+        notes = [pm.Note(velocity=96, pitch=64, start=float(t), end=float(t)+0.05) for t in onsets]
         est_tempo = float(tempo) if tempo and tempo > 0 else 120.0
+        print(f"[INFO] audio_onsets={len(onsets)} beats={len(beat_times)} tempo_est={est_tempo:.1f}")
         return notes, dur, est_tempo, beat_times
     except Exception:
         return [], 0.0, 120.0, None
@@ -119,6 +114,25 @@ def detect_sections(bar_energies: List[float], win: int = 4) -> List[str]:
         else:
             bands.append("Build")
     return bands
+
+
+def build_bars_from_beats(beat_times, beats_per_bar=4, dur=None):
+    """beat列（秒）から [ (t0,t1), ... ] の小節境界列を作る"""
+    import statistics as _st
+
+    bt = list(map(float, list(beat_times or [])))
+    bars = []
+    for i in range(0, max(0, len(bt) - beats_per_bar), beats_per_bar):
+        t0 = bt[i]
+        t1 = bt[i + beats_per_bar]
+        if t1 > t0:
+            bars.append((t0, t1))
+    # 末尾が余る時は平均長で1小節ぶん補完（総尺があればそれ以内）
+    if dur and bars:
+        avg = _st.median([b[1] - b[0] for b in bars]) if len(bars) >= 2 else (bars[-1][1] - bars[-1][0])
+        if dur - bars[-1][1] > 0.5 * avg:
+            bars.append((bars[-1][1], min(dur, bars[-1][1] + avg)))
+    return bars
 
 
 def fold_to_range(p, lo, hi):
@@ -207,6 +221,11 @@ def main():
     ap.add_argument("out_mid")
     ap.add_argument("--config", default=os.path.join(os.path.dirname(__file__), "config.yaml"))
     ap.add_argument("--synchro", default=None, help="CSV(time_sec,type) for vocal sync")
+    ap.add_argument("--force-bpm", type=float, default=None, help="BPMを固定（推定を無視）")
+    ap.add_argument("--beats-per-bar", type=int, default=4, help="1小節の拍数（既定4/4）")
+    ap.add_argument("--min-bars", type=int, default=8, help="この本数未満ならテンポ等間隔へフォールバック")
+    ap.add_argument("--debug-bars", action="store_true",
+                    help="小節頭にC6の点を打って可視化（既定OFF）")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(open(args.config))
@@ -220,7 +239,7 @@ def main():
     # 入力パース（MIDI or Audio）
     src_notes = []
     tempo = 120.0
-    beats = 4
+    beats = args.beats_per_bar
     if os.path.splitext(args.input)[1].lower() in [".mid", ".midi"]:
         src = pm.PrettyMIDI(args.input)
         tempos = src.get_tempo_changes()[1]
@@ -233,14 +252,44 @@ def main():
         # ---- オーディオ直読み（改良版）----
         dummy, dur, est_tempo, beat_times = audio_onsets_to_dummy_notes(args.input)
         src_notes = sorted(dummy, key=lambda n: n.start)
-        tempo = est_tempo if est_tempo > 0 else 120.0
+        tempo = args.force_bpm or (est_tempo if est_tempo > 0 else 120.0)
         total = float(dur) if dur > 0 else (src_notes[-1].end if src_notes else 0.0)
+    if args.force_bpm:
+        tempo = args.force_bpm
 
     spb = 60.0 / tempo
-    bar = beats * spb
+    default_bar_len = beats * spb
+
+    # ---- 小節列の決定：ビート列があれば優先 ----
+    bars_from_beats = []
+    try:
+        if 'beat_times' in locals() and beat_times is not None and len(beat_times) >= 8:
+            bars_from_beats = build_bars_from_beats(beat_times, beats_per_bar=beats, dur=total)
+    except Exception:
+        bars_from_beats = []
+
+    if bars_from_beats:
+        bars = [(i, t0, t1) for i, (t0, t1) in enumerate(bars_from_beats)]
+        # 代表値（ログやフォールバック用）
+        try:
+            import statistics as _st
+            default_bar_len = _st.median([t1 - t0 for _, t0, t1 in bars])
+        except Exception:
+            pass
+        using = "beats"
+    else:
+        bars = list(bars_iter(total, default_bar_len))
+        using = "tempo"
+
+    # ここは既存の bars_from_beats / tempo フォールバック決定の直後に追加
+    MIN_BARS = args.min_bars  # これ未満なら等間隔にフォールバック
+    if len(bars) < MIN_BARS:
+        bars = list(bars_iter(total, default_bar_len))
+        using = "tempo_fallback"
+
+    print(f"[INFO] audio_dur={total:.2f}s tempo_est={tempo:.1f} bar_len~={default_bar_len:.3f}s bars={len(bars)} mode={using}")
 
     # セクション検出
-    bars = list(bars_iter(total, bar))
     energies = [energy(notes_in_window(src_notes, t0, t1)) for _, t0, t1 in bars]
     sections = detect_sections(energies, rules["section_window_bars"])
 
@@ -248,6 +297,11 @@ def main():
     out = pm.PrettyMIDI(initial_tempo=tempo)
     drv = pm.Instrument(program=0, name="UJAM Driver")
     out.instruments.append(drv)
+    if args.debug_bars:
+        dbg = pm.Instrument(program=0, name="BAR MARK")
+        out.instruments.append(dbg)
+        for _, t0, _ in bars:
+            dbg.notes.append(pm.Note(velocity=10, pitch=84, start=t0, end=t0 + 0.02))
 
     # CCレーン（Instrumentに付与）
     def add_cc(inst: pm.Instrument, time_s: float, cc_num: int, value: int):
@@ -279,8 +333,10 @@ def main():
     last_root = 64  # 初期ルート（E）、後で折返し
     # 生成ループ
     for (b, t0, t1), sect in zip(bars, sections):
+        bar_len_i = (t1 - t0) if (t1 > t0) else default_bar_len
+
         bn = notes_in_window(src_notes, t0, t1)
-        cat = choose_phrase(bn, bar, rules, sect)
+        cat = choose_phrase(bn, bar_len_i, rules, sect)
         # Common Phrase trigger
         drv.notes.append(pm.Note(velocity=100, pitch=COMMON[cat], start=t0 + 1e-4, end=t0 + 0.10))
 
@@ -298,14 +354,14 @@ def main():
             drv.notes.append(pm.Note(velocity=100, pitch=p, start=t0+0.01, end=t1-0.02))
 
         # —— スイング：CC と microtiming の両対応 ——
-        swing_amt = swing_ratio_16th(bn, bar)  # 0..1
+        swing_amt = swing_ratio_16th(bn, bar_len_i)  # 0..1
         if rules.get("swing_mode", "both") in ("both", "cc") and ccconf["enable"]:
             val = max(0, min(127, int(swing_amt * 127)))
             add_cc(drv, t0 + 0.01, ccconf["swing_cc"], val)
         if rules.get("swing_mode", "both") in ("both", "micro"):
             # コードとフレーズにまとめて適用
             bar_notes = [n for n in drv.notes if t0 <= n.start < t1]
-            apply_swing_microtiming(bar_notes, bar, swing_amt)
+            apply_swing_microtiming(bar_notes, bar_len_i, swing_amt)
 
         # —— フィル辞書（末小節など） ——
         if fills["enable"]:
@@ -321,7 +377,10 @@ def main():
                 )
                 drv.notes.append(
                     pm.Note(
-                        velocity=110, pitch=COMMON[key], start=t1 - 0.5 * bar, end=t1 - 0.40 * bar
+                        velocity=110,
+                        pitch=COMMON[key],
+                        start=t1 - 0.5 * bar_len_i,
+                        end=t1 - 0.40 * bar_len_i,
                     )
                 )
             if fills["pickslide_on_last_eighth"]:
@@ -330,17 +389,17 @@ def main():
                         pm.Note(
                             velocity=115,
                             pitch=COMMON["pick_slide"],
-                            start=t1 - bar / 8.0,
-                            end=t1 - bar / 8.0 + 0.05,
+                            start=t1 - bar_len_i / 8.0,
+                            end=t1 - bar_len_i / 8.0 + 0.05,
                         )
                     )
 
         # —— Vocal Synchro: 近傍イベントを拾って装飾 ——
         if synchro_evts:
-            win_s = bar / 8.0  # ±8分の窓
+            win_s = bar_len_i / 8.0  # ±8分の窓
             inbar = [ev for ev in synchro_evts if t0 - win_s <= ev[0] < t1 + win_s]
             for t, typ in inbar:
-                tt = nearest_grid_time(t, bar, div=8)
+                tt = nearest_grid_time(t, bar_len_i, div=8)
                 if typ == "cadence" and "slide_down" in COMMON:
                     drv.notes.append(
                         pm.Note(

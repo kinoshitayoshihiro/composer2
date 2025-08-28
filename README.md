@@ -630,6 +630,44 @@ as **B0** rather than **C1**, so exported UJAM patterns may look shifted even
 though the notes are correct. You can switch mappings programmatically via
 `utilities/drum_map_registry.get_drum_map`.
 
+### UJAM Bridge
+
+```
+python -m tools.ujam_bridge.ujam_map --plugin vg_iron2 \
+       --mapping tools/ujam_bridge/configs/vg_iron2.yaml \
+       --in input.mid --out output.mid \
+       --ks-lead 60 --groove-clip-head 10 --groove-clip-other 35 \
+       --no-redundant-ks --periodic-ks 4
+```
+
+Key flags:
+
+* `--ks-lead` – keyswitch lead‑in in ms (default 60, +20 ms on bar heads).
+* `--no-redundant-ks` – suppress repeating patterns.
+* `--periodic-ks` – resend pattern every N bars for stability.
+* `--ks-headroom` – clip note tails to leave headroom before the next KS (ms).
+* `--ks-channel` / `--ks-vel` – output channel (1‑16) and velocity for KS notes.
+* `--groove-clip-head` / `--groove-clip-other` – positional groove caps in ms.
+
+Recommended defaults (IRON2): `--ks-lead 60`, `--groove-clip-head 10`,
+`--groove-clip-other 35`, `--no-redundant-ks`, `--periodic-ks 4`.
+
+Validate bundled product maps and generate a keyswitch staircase:
+
+```
+python -m tools.ujam_bridge validate --all --strict
+python -m tools.ujam_bridge gen-staircase --product iron2 \
+       --out midi/iron2_keyswitch_staircase.mid --note-len 1.0 --gap 0.1 \
+       --tempo 120 --ppq 480 --channel 0 --velocity 100
+```
+
+List instruments in a corpus with JSON summary:
+
+```
+python -m tools.corpus_to_phrase_csv --from-corpus data/corpus/NAME --list-instruments \
+       --json --min-count 5 --examples-per-key 2
+```
+
 
 ## Project Goal
 "OtoKotoba" aims to synchronize literary expression and music.  Chapters of narration are mapped to emotional states so that chords, melodies and arrangements resonate with the text, ready for import into VOCALOID or Synthesizer V.

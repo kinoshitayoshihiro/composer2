@@ -211,7 +211,8 @@ def list_instruments(
     min_count: int = 1,
     stats_json: Path | None = None,
     examples_per_key: int = 0,
-) -> None:
+    json_out: bool = False,
+) -> bool:
     counters = {
         "instrument": Counter(),
         "track_name": Counter(),
@@ -269,19 +270,29 @@ def list_instruments(
                     counters["path"][stem] += 1
                     if len(examples["path"][stem]) < examples_per_key:
                         examples["path"][stem].append(stem)
+    data = {}
+    for key, ctr in counters.items():
+        data[key] = {
+            val: {"count": ctr[val], "examples": examples[key].get(val, [])}
+            for val in ctr if ctr[val] >= min_count
+        }
     if stats_json:
         stats_json.parent.mkdir(parents=True, exist_ok=True)
-        stats_json.write_text(json.dumps({k: dict(v) for k, v in counters.items()}, indent=2))
-    for key, ctr in counters.items():
-        print(f"{key}:")
-        for val, count in ctr.most_common():
-            if count < min_count:
-                continue
-            ex = examples[key].get(val)
-            if ex:
-                print(f"  {val}: {count} (examples: {', '.join(ex)})")
-            else:
-                print(f"  {val}: {count}")
+        stats_json.write_text(json.dumps(data, indent=2))
+    if json_out:
+        print(json.dumps(data, indent=2))
+    else:
+        for key, ctr in counters.items():
+            print(f"{key}:")
+            for val, count in ctr.most_common():
+                if count < min_count:
+                    continue
+                ex = examples[key].get(val)
+                if ex:
+                    print(f"  {val}: {count} (examples: {', '.join(ex)})")
+                else:
+                    print(f"  {val}: {count}")
+    return any(data[key] for key in data)
 
 
 def corpus_mode(
@@ -525,6 +536,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--strict-all", action="store_true")
     parser.add_argument("--min-notes-per-sample", type=int, default=0)
     parser.add_argument("--stats-json", type=Path)
+    parser.add_argument("--json", action="store_true")
     parser.add_argument("--min-count", type=int, default=1)
     parser.add_argument("--examples-per-key", type=int, default=0)
     parser.add_argument(
@@ -562,13 +574,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_instruments:
         if not args.from_corpus:
             raise SystemExit("--list-instruments requires --from-corpus")
-        list_instruments(
+        ok = list_instruments(
             args.from_corpus,
             min_count=args.min_count,
             stats_json=args.stats_json,
             examples_per_key=args.examples_per_key,
+            json_out=args.json,
         )
-        return 0
+        return 0 if ok else 1
 
     if args.from_corpus:
         train_rows, valid_rows, stats = corpus_mode(

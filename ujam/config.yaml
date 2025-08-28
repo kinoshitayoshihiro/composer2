@@ -1,0 +1,51 @@
+ujam:
+  c0: 24 # Studio One: C0=24
+  c1: 36 # Studio One: C1=36
+  chord_low: 60 # C3
+  chord_high: 72 # C5（UJAM安定レンジ）
+phrases_ui_order: # スクショ順に並べる（必要なら並べ替えで微調整）
+  - silence
+  - long_chord_2_4
+  - open_stops_1_4
+  - off_beat_2_4
+  - half_mute_1_4
+  - open_1_8
+  - muted_1_8
+  - off_beat_1_8
+  - pick_slide
+  - chord_rhythm_1_16
+  - generic_chord_rhythm
+  - single_note_rhythm
+  - generic_rhythm_sustain
+  - long_chord_with_fill
+  - muted_1_8_open
+  - build_up_open_1_8
+  - muted_1_16_riding
+  - build_up_muted_1_8
+  - slide_down
+
+style_phrases: # C1〜B1 に style_1..style_12 を割当（UJAM側で実体はプリセット依存）
+  base: 1 # Aセクションの開始スタイル番号
+  step_B: 4 # Bで +4
+  step_Build: 8 # Buildで +8（12超えたらループ）
+  cycle_8bars: true
+
+rules:
+  swing_mode: both # both | micro | cc | off
+  swing_threshold: 0.12 # 16分遅れ比の中央値→0..1で正規化
+  offbeat_threshold: 0.55
+  long_med_ratio: 0.45
+  dense_eighth_notes: 7
+  quarter_range: [3, 6]
+  section_window_bars: 4
+  build_every_8bars: true
+
+fills:
+  enable: true
+  build_on_section_end: true
+  pickslide_on_last_eighth: true
+
+cc:
+  enable: true
+  swing_cc: 1 # CC1
+  dyn_cc: 11 # CC11

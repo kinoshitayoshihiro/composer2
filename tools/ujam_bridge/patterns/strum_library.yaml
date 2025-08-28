@@ -3,5 +3,8 @@
 patterns:
   "D": ["down_strum"]
   "U": ["up_strum"]
+  "M": ["mute"]
+  "H": ["hold"]
+  "R": ["rasg"]
   "D U": ["down_strum", "up_strum"]
   "D D U D U - -": ["down_strum", "down_strum", "up_strum", "down_strum", "up_strum"]

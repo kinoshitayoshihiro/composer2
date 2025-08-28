@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from tests import _stubs  # ensure pretty_midi stub is registered
 from tools.ujam_bridge.ujam_map import pattern_to_keyswitches
 
 

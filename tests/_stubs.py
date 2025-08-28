@@ -24,9 +24,10 @@ class Note:
 
 
 class Instrument:
-    def __init__(self, program: int = 0, name: str | None = None):
+    def __init__(self, program: int = 0, name: str | None = None, midi_channel: int | None = None):
         self.program = int(program)
         self.name = name or ""
+        self.midi_channel = midi_channel
         self.control_changes: list[ControlChange] = []
         self.pitch_bends: list[PitchBend] = []
         self.notes: list[Note] = []
@@ -37,6 +38,7 @@ class PrettyMIDI:
         self.instruments: list[Instrument] = []
         self.resolution = 480
         # path/kwargs ignored; stub does not read from disk
+        self.time_signature_changes = []
 
     def write(self, path: str) -> None:  # pragma: no cover - stub
         try:
@@ -50,8 +52,14 @@ class PrettyMIDI:
     def time_to_tick(self, time: float) -> float:  # pragma: no cover - stub
         return time * self.resolution * 2
 
+    def tick_to_time(self, tick: float) -> float:  # pragma: no cover - stub
+        return tick / (self.resolution * 2)
+
     def time_to_beat(self, time: float) -> float:  # pragma: no cover - stub
         return time * 2
+
+    def get_downbeats(self):  # pragma: no cover - stub
+        return [0.0]
 
 
 pretty_midi = types.SimpleNamespace(

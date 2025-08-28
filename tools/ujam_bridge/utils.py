@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import List, Dict
 import random
+import bisect
 
 import pretty_midi
 
@@ -87,7 +88,15 @@ def chordify(pitches: Iterable[int], play_range: tuple[int, int], *, power_chord
     return notes
 
 
-def apply_groove_profile(pm: pretty_midi.PrettyMIDI, profile: Dict[str, float], *, max_ms: float | None = None) -> None:
+def apply_groove_profile(
+    pm: pretty_midi.PrettyMIDI,
+    profile: Dict[str, float],
+    *,
+    beats_per_bar: int | None = 4,
+    clip_head_ms: float | None = None,
+    clip_other_ms: float | None = None,
+    max_ms: float | None = None,
+) -> None:
     """Shift note offsets according to a groove *profile*.
 
     Parameters
@@ -96,24 +105,51 @@ def apply_groove_profile(pm: pretty_midi.PrettyMIDI, profile: Dict[str, float], 
         MIDI container to modify in-place.
     profile : Dict[str, float]
         Mapping of beat offsets as produced by :mod:`groove_profile`.
+    beats_per_bar : int, optional
+        Legacy default when no time signatures are present, by default 4.
+    clip_head_ms, clip_other_ms : float, optional
+        Positional clipping in milliseconds for bar-downbeats and other
+        positions respectively.  If provided, these take precedence over
+        *max_ms*.
     max_ms : float, optional
-        If given, cap the absolute timing shift to this many milliseconds.
+        Legacy absolute clip used when positional clips are not given.
     """
+    downbeats = pm.get_downbeats() if hasattr(pm, "get_downbeats") else [0.0]
+    ts_changes = getattr(pm, "time_signature_changes", [])
+    ts_idx = 0
+    bar_beats: Dict[int, int] = {}
+    for i, db in enumerate(downbeats):
+        while ts_idx + 1 < len(ts_changes) and ts_changes[ts_idx + 1].time <= db:
+            ts_idx += 1
+        num = ts_changes[ts_idx].numerator if ts_changes else (beats_per_bar or 4)
+        bar_beats[i] = int(num)
+
     for inst in pm.instruments:
         for note in inst.notes:
             beat = _time_to_tick(pm, note.start) / pm.resolution
             new_beat = gp.apply_groove(beat, profile)
             new_start = _tick_to_time(pm, new_beat * pm.resolution)
             delta = new_start - note.start
-            if max_ms is not None:
+            if clip_head_ms is not None and clip_other_ms is not None:
+                bar_idx = bisect.bisect_right(downbeats, note.start) - 1
+                bar_start_tick = _time_to_tick(pm, downbeats[bar_idx])
+                local_beats = bar_beats.get(bar_idx, beats_per_bar or 4)
+                beat_idx = int(round((beat * pm.resolution - bar_start_tick) / pm.resolution)) % local_beats
+                limit = (clip_head_ms if beat_idx == 0 else clip_other_ms) / 1000.0
+                if delta > limit:
+                    delta = limit
+                elif delta < -limit:
+                    delta = -limit
+                new_start = note.start + delta
+            elif max_ms is not None:
                 limit = max_ms / 1000.0
                 if delta > limit:
                     delta = limit
                 elif delta < -limit:
                     delta = -limit
                 new_start = note.start + delta
-            note.start = new_start
-            note.end += delta
+            note.start = max(0.0, new_start)
+            note.end = max(note.start + 0.005, note.end + delta)
 
 
 def humanize(pm: pretty_midi.PrettyMIDI, amount: float, *, rng: random.Random | None = None) -> None:
@@ -146,4 +182,7 @@ def humanize(pm: pretty_midi.PrettyMIDI, amount: float, *, rng: random.Random | 
     for data, note, dur in mapping:
         new_beat = float(data["offset"])
         note.start = _tick_to_time(pm, int(round(new_beat * pm.resolution)))
-        note.end = note.start + dur
+        if note.start < 0.0:
+            note.end -= note.start
+            note.start = 0.0
+        note.end = note.start + max(0.005, dur)

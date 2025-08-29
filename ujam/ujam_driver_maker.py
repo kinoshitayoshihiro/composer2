@@ -197,6 +197,12 @@ def detect_root_midi_simple(notes_bar):
     return min(notes_bar, key=lambda n: (n.start, n.pitch)).pitch if notes_bar else 60
 
 
+def _emit_chord_block(drv, cfg, root_use, sa, sb, start_off=0.01, end_off=0.02):
+    lo, hi = cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]
+    for p in power_chord_from_root(root_use, lo, hi):
+        drv.notes.append(pm.Note(velocity=100, pitch=p, start=sa + start_off, end=sb - end_off))
+
+
 # ===== phrase choice =====
 def choose_phrase(notes_bar, bar_len, rules, section_label):
     if not notes_bar:
@@ -421,6 +427,7 @@ def main():
         return f"style_{base}"
 
     last_root = 64  # 初期ルート（E）、後で折返し
+    carry = None  # None or {"start": float, "end": float, "root": int}
     # 生成ループ
     for (b, t0, t1), sect in zip(bars, sections):
         bar_len_i = (t1 - t0) if (t1 > t0) else default_bar_len
@@ -521,16 +528,32 @@ def main():
                 pm.Note(velocity=90, pitch=COMMON["silence"], start=thit, end=thit + 0.012)
             )
 
+        if args.chord_hold != "segment" and bn:
+            last_root = detect_root_midi_simple(bn)
+
+        # Build list of (sa, sb, root) for this bar
+        regions_with_root = []
         if args.chord_hold == "segment":
-            for sa, sb, root_use in play_regions:
-                for p in power_chord_from_root(root_use, cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]):
-                    drv.notes.append(pm.Note(velocity=100, pitch=p, start=sa + 0.001, end=sb - 0.002))
+            regions_with_root = list(play_regions)
         else:
-            if bn:
-                last_root = detect_root_midi_simple(bn)
-            for sa, sb in play_regions:
-                for p in power_chord_from_root(last_root, cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]):
-                    drv.notes.append(pm.Note(velocity=100, pitch=p, start=sa + 0.01, end=sb - 0.02))
+            for reg in play_regions:
+                if isinstance(reg, tuple) and len(reg) == 2:
+                    sa, sb = reg
+                    root_here = last_root
+                    if args.segment_root:
+                        act = [n for n in bn if n.start < sb and n.end > sa]
+                        if act:
+                            root_here = detect_root_midi_simple(act)
+                    regions_with_root.append((sa, sb, root_here))
+
+        # Merge into carry across bars
+        for sa, sb, root_use in regions_with_root:
+            if carry and carry["root"] == root_use and (sa - carry["end"]) <= args.chord_retrigger_gap:
+                carry["end"] = max(carry["end"], sb)
+            else:
+                if carry:
+                    _emit_chord_block(drv, cfg, carry["root"], carry["start"], carry["end"])
+                carry = {"start": sa, "end": sb, "root": root_use}
 
         # —— スイング：CC と microtiming の両対応 ——
         swing_amt = swing_ratio_16th(bn, bar_len_i)  # 0..1
@@ -619,6 +642,9 @@ def main():
         if ccconf["enable"]:
             dyn = {"A": 70, "B": 95, "Build": 115}.get(sect, 90)
             add_cc(drv, t0 + 0.02, ccconf["dyn_cc"], dyn)
+
+    if carry:
+        _emit_chord_block(drv, cfg, carry["root"], carry["start"], carry["end"])
 
     out.write(args.out_mid)
     print("Wrote:", args.out_mid)

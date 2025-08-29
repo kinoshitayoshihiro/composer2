@@ -64,6 +64,26 @@ def notes_in_window(notes, t0, t1):
     return [n for n in notes if not (n.end <= t0 or n.start >= t1)]
 
 
+def active_ratio(notes, t0, t1):
+    """[t0,t1) に重なる有音時間の合計 / 区間長"""
+    if t1 <= t0:
+        return 0.0
+    tot = 0.0
+    for n in notes:
+        a = max(t0, n.start)
+        b = min(t1, n.end)
+        if b > a:
+            tot += (b - a)
+    return tot / (t1 - t0)
+
+
+def beat_windows(t0, t1, beats_per_bar=4, subdiv=1):
+    span = (t1 - t0) / (beats_per_bar * max(1, subdiv))
+    k = beats_per_bar * max(1, subdiv)
+    for i in range(k):
+        yield t0 + i * span, t0 + (i + 1) * span
+
+
 def build_segments_from_notes(notes, t0, t1, min_rest=0.08):
     """区間[t0,t1)を、ソースノートのon/off境界で分割し、各セグメントが有音か休符かを返す。"""
     if t1 <= t0:
@@ -267,6 +287,16 @@ def main():
                     help="この隙間以下はリトリガせず延長扱い")
     ap.add_argument("--chord-grid", type=int, default=8,
                     help="コードの開始/終了をこの分割にスナップ(0で無効, 8 or 16推奨)")
+    ap.add_argument("--chord-hold", choices=["bar", "beat", "segment"], default="bar",
+                    help="コード保持の粒度。bar=小節単位, beat=拍単位, segment=細分(従来のゲート)")
+    ap.add_argument("--bar-rest-thresh", type=float, default=0.18,
+                    help="小節を“無音”とみなすカバレッジ閾値(0..1)")
+    ap.add_argument("--beat-rest-thresh", type=float, default=0.25,
+                    help="拍を“無音”とみなすカバレッジ閾値(0..1)")
+    ap.add_argument("--beat-subdiv", type=int, default=1,
+                    help="拍をさらに分割して判定(1=拍そのまま, 2で拍を二分など)")
+    ap.add_argument("--mute-silence", action="store_true",
+                    help="ミュートする小節/拍の頭で Common 'silence' を送る")
     args = ap.parse_args()
     is_audio_input = os.path.splitext(args.input)[1].lower() not in [".mid", ".midi"]
 
@@ -403,89 +433,104 @@ def main():
             for n in bn:
                 bn_for_gate.append(pm.Note(velocity=n.velocity, pitch=n.pitch,
                                            start=n.start, end=min(t1, n.start + gate_len)))
-        cat = choose_phrase(bn, bar_len_i, rules, sect)
-        limits = cfg.get("phrase_limits", {})
-        if cat in set(limits.get("blocklist", [])):
-            cat = limits.get("fallback", "open_1_8")
-        # Common Phrase trigger
-        drv.notes.append(pm.Note(velocity=100, pitch=COMMON[cat], start=t0 + 1e-4, end=t0 + 0.10))
-
-        # Style Phrase trigger（C1帯）
-        sty = style_for_bar(b, sect)
-        if sty in STYLE:
-            drv.notes.append(pm.Note(velocity=90, pitch=STYLE[sty], start=t0 + 0.02, end=t0 + 0.10))
-
-        # ---- コード：ソースに合わせてゲート、休符は鳴らさない ----
-        def _snap(t, bar_len, div):
-            if not div: return t
-            step = bar_len / div
-            return round(t / step) * step
-
-        if args.gate_by_source:
+        play_regions = []  # [(sa,sb)] or [(sa,sb,root)]
+        mute_hits = []
+        if args.chord_hold == "bar":
+            r = active_ratio(bn_for_gate, t0, t1)
+            if r >= args.bar_rest_thresh:
+                play_regions.append((t0, t1))
+            elif args.mute_silence and "silence" in COMMON:
+                mute_hits.append(t0 + 0.001)
+        elif args.chord_hold == "beat":
+            for wa, wb in beat_windows(t0, t1, beats, args.beat_subdiv):
+                r = active_ratio(bn_for_gate, wa, wb)
+                if r >= args.beat_rest_thresh:
+                    play_regions.append((wa, wb))
+                elif args.mute_silence and "silence" in COMMON:
+                    mute_hits.append(wa + 0.001)
+        else:  # segment
             segs_raw = build_segments_from_notes(bn_for_gate, t0, t1, min_rest=args.min_rest)
 
-            # 1) 平滑化：短い休符を埋め、短い有音は捨てる
+            def _snap(t, bar_len, div):
+                if not div:
+                    return t
+                step = bar_len / div
+                return round(t / step) * step
+
             segs = []
             for sa, sb, active in segs_raw:
                 L = sb - sa
                 if not active and L < max(args.min_rest * 1.5, 0.05):
-                    # 休符が極短 → 埋める（skip）
                     continue
                 if active and L < args.min_chord_len:
-                    # 有音が極短 → 捨てる（UJAMが荒れるため）
                     continue
-                # スナップ
                 sa2 = _snap(sa, bar_len_i, args.chord_grid)
                 sb2 = _snap(sb, bar_len_i, args.chord_grid)
                 if sb2 - sa2 <= 1e-4:
                     continue
                 segs.append((max(t0, sa2), min(t1, sb2), active))
 
-            # 2) 連続アクティブをマージ（同Root＆隙間が小さい）
             regions = []
             cur = None
             for sa, sb, active in segs:
                 if not active:
-                    # 休符：現在のリージョンを確定
-                    if cur: regions.append(cur); cur = None
+                    if cur:
+                        regions.append(cur)
+                        cur = None
                     continue
-                # この区間のroot（必要なら再判定）
                 root_here = last_root
                 if args.segment_root:
                     act = [n for n in bn if n.start < sb and n.end > sa]
                     if act:
                         root_here = detect_root_midi_simple(act)
-                # 直前が同rootで隙間が小さいなら延長
                 if cur and cur["root"] == root_here and sa - cur["end"] <= args.chord_retrigger_gap:
                     cur["end"] = max(cur["end"], sb)
                 else:
-                    if cur: regions.append(cur)
+                    if cur:
+                        regions.append(cur)
                     cur = {"start": sa, "end": sb, "root": root_here}
                 last_root = root_here
-            if cur: regions.append(cur)
+            if cur:
+                regions.append(cur)
 
-            # 3) 出力（最小長保証）
             for reg in regions:
                 sa, sb, root_use = reg["start"], reg["end"], reg["root"]
                 if (sb - sa) < args.min_chord_len:
                     sb = min(t1, sa + args.min_chord_len)
-                for p in power_chord_from_root(root_use, cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]):
-                    drv.notes.append(pm.Note(velocity=100, pitch=p, start=sa+0.001, end=sb-0.002))
+                play_regions.append((sa, sb, root_use))
 
-            # 4) 休符頭でだけ Silence（連打しない）
-            if args.preserve_rests and "silence" in COMMON:
+            if args.mute_silence and "silence" in COMMON:
                 prev_active = True
                 for sa, sb, active in segs:
                     if not active and prev_active:
-                        drv.notes.append(pm.Note(velocity=90, pitch=COMMON["silence"],
-                                                 start=max(t0, sa+0.0005), end=min(t1, sa+0.012)))
+                        mute_hits.append(max(t0, sa + 0.0005))
                     prev_active = active
+
+        if play_regions:
+            cat = choose_phrase(bn, bar_len_i, rules, sect)
+            limits = cfg.get("phrase_limits", {})
+            if cat in set(limits.get("blocklist", [])):
+                cat = limits.get("fallback", "open_1_8")
+            drv.notes.append(pm.Note(velocity=100, pitch=COMMON[cat], start=t0 + 1e-4, end=t0 + 0.10))
+            sty = style_for_bar(b, sect)
+            if sty in STYLE:
+                drv.notes.append(pm.Note(velocity=90, pitch=STYLE[sty], start=t0 + 0.02, end=t0 + 0.10))
+
+        for thit in sorted(set(round(t * 1000) / 1000 for t in mute_hits)):
+            drv.notes.append(
+                pm.Note(velocity=90, pitch=COMMON["silence"], start=thit, end=thit + 0.012)
+            )
+
+        if args.chord_hold == "segment":
+            for sa, sb, root_use in play_regions:
+                for p in power_chord_from_root(root_use, cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]):
+                    drv.notes.append(pm.Note(velocity=100, pitch=p, start=sa + 0.001, end=sb - 0.002))
         else:
-            # 従来どおり：小節いっぱい鳴らす
             if bn:
                 last_root = detect_root_midi_simple(bn)
-            for p in power_chord_from_root(last_root, cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]):
-                drv.notes.append(pm.Note(velocity=100, pitch=p, start=t0+0.01, end=t1-0.02))
+            for sa, sb in play_regions:
+                for p in power_chord_from_root(last_root, cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]):
+                    drv.notes.append(pm.Note(velocity=100, pitch=p, start=sa + 0.01, end=sb - 0.02))
 
         # —— スイング：CC と microtiming の両対応 ——
         swing_amt = swing_ratio_16th(bn, bar_len_i)  # 0..1
@@ -496,11 +541,15 @@ def main():
             add_cc(drv, t0 + 0.01, ccconf["swing_cc"], val)
         if rules.get("swing_mode", "both") in ("both", "micro"):
             # コードとフレーズにまとめて適用
-            bar_notes = [n for n in drv.notes if t0 <= n.start < t1]
+            bar_notes = [
+                n for n in drv.notes
+                if t0 <= n.start < t1 and (n.end - n.start) > 0.03
+            ]
             apply_swing_microtiming(bar_notes, bar_len_i, swing_amt)
 
         # —— フィル辞書（末小節など） ——
-        if fills["enable"]:
+        only_if_active = bool(play_regions)
+        if fills["enable"] and only_if_active:
             is_section_end = (b + 1 < len(sections) and sections[b] != sections[b + 1]) or (
                 b == len(sections) - 1
             )

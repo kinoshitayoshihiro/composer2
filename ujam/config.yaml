@@ -54,5 +54,36 @@ phrase_limits:
 
 cc:
   enable: true
-  swing_cc: 1 # CC1
+  swing_cc: 1      # CC for swing-CC mode（推奨は micro のみ or CC番号を変える）
   dyn_cc: 11 # CC11
+  mod_enable: true
+  mod_cc: 1
+  mod_hold: section      # song | section | bar
+  mod_variant: default   # default | low | open
+  mod_values:
+    A: 24
+    B: 36
+    Build: 60
+    default: 32
+
+  # ↓ 「もっと低く」「全体ひらく」用の即戦力サンプル値
+  mod_values_low:
+    A: 18
+    B: 28
+    Build: 48
+    default: 24
+  mod_values_open:
+    A: 12
+    B: 18
+    Build: 28
+    default: 16
+
+  mod_global_fallback_open: null  # 例: 20 を入れると全曲この値で固定
+  mod_scale: 1.0
+  mod_cap: null
+  mod_offset: 0.015
+  mod_only_when_active: false
+  mod_send_if_changed_only: true
+  mod_ramp_ms: 0
+  mod_preset: null               # 例: open_ballad / rock_low / ambient_open ...
+  mod_debug: false               # true でバー毎に Mod 値をログ出力

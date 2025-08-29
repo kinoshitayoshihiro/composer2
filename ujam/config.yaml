@@ -48,6 +48,10 @@ fills:
   pickslide_every_n_bars: 0             # 0=オフ, 例えば 16 にすると16小節ごと
   pickslide_velocity: 95
 
+phrase_limits:
+  blocklist: []
+  fallback: "open_1_8"
+
 cc:
   enable: true
   swing_cc: 1 # CC1

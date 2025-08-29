@@ -117,7 +117,7 @@ def detect_sections(bar_energies: List[float], win: int = 4) -> List[str]:
 
 
 def build_bars_from_beats(beat_times, beats_per_bar=4, dur=None):
-    """beat列（秒）から [ (t0,t1), ... ] の小節境界列を作る"""
+    """beat列（秒）から [ (t0,t1), ... ] の小節境界列を作る（dur まで伸ばす）"""
     import statistics as _st
 
     bt = list(map(float, list(beat_times or [])))
@@ -127,11 +127,13 @@ def build_bars_from_beats(beat_times, beats_per_bar=4, dur=None):
         t1 = bt[i + beats_per_bar]
         if t1 > t0:
             bars.append((t0, t1))
-    # 末尾が余る時は平均長で1小節ぶん補完（総尺があればそれ以内）
+    # 末尾を dur まで拡張
     if dur and bars:
         avg = _st.median([b[1] - b[0] for b in bars]) if len(bars) >= 2 else (bars[-1][1] - bars[-1][0])
-        if dur - bars[-1][1] > 0.5 * avg:
-            bars.append((bars[-1][1], min(dur, bars[-1][1] + avg)))
+        end = bars[-1][1]
+        while (end + 0.25 * avg) < dur:   # 少し手前まで増やす
+            bars.append((end, end + avg))
+            end += avg
     return bars
 
 
@@ -224,6 +226,8 @@ def main():
     ap.add_argument("--force-bpm", type=float, default=None, help="BPMを固定（推定を無視）")
     ap.add_argument("--beats-per-bar", type=int, default=4, help="1小節の拍数（既定4/4）")
     ap.add_argument("--min-bars", type=int, default=8, help="この本数未満ならテンポ等間隔へフォールバック")
+    ap.add_argument("--force-seconds", type=float, default=None, help="曲の総尺（秒）を強制")
+    ap.add_argument("--tail-pad", type=float, default=1.5, help="終端に追加する余白秒（既定1.5s）")
     ap.add_argument("--debug-bars", action="store_true",
                     help="小節頭にC6の点を打って可視化（既定OFF）")
     args = ap.parse_args()
@@ -253,9 +257,17 @@ def main():
         dummy, dur, est_tempo, beat_times = audio_onsets_to_dummy_notes(args.input)
         src_notes = sorted(dummy, key=lambda n: n.start)
         tempo = args.force_bpm or (est_tempo if est_tempo > 0 else 120.0)
-        total = float(dur) if dur and dur > 0 else (src_notes[-1].end if src_notes else 0.0)
-        # さらに保険：総尺が極端に短く見積もられた時は仮で30秒扱い
-        if total <= 0.5:
+        dur0 = float(dur) if dur and dur > 0 else 0.0
+        last_onset = (src_notes[-1].end if src_notes else 0.0)
+        avg_beat = (sum((beat_times[i+1]-beat_times[i]) for i in range(len(beat_times)-1)) /
+                    max(1, (len(beat_times)-1))) if (beat_times is not None and len(beat_times) > 1) else (60.0/tempo)
+        est_bar = avg_beat * args.beats_per_bar
+        last_beat = (beat_times[-1] if (beat_times is not None and len(beat_times)>0) else 0.0)
+        auto_total = max(dur0, last_beat + est_bar, last_onset + 2.0 * est_bar)
+        total = args.force_seconds or auto_total
+        total += float(args.tail_pad or 0.0)  # 末尾に余白
+        # 最低保障
+        if total < 5.0:
             total = 30.0
     if args.force_bpm:
         tempo = args.force_bpm
@@ -295,7 +307,13 @@ def main():
     # セクション検出
     energies = [energy(notes_in_window(src_notes, t0, t1)) for _, t0, t1 in bars]
     sections = detect_sections(energies, rules["section_window_bars"])
+    if len(sections) < len(bars) and sections:
+        sections += [sections[-1]] * (len(bars) - len(sections))
+    elif len(sections) > len(bars):
+        sections = sections[:len(bars)]
     print(f"[INFO] sections={len(sections)}  notes_src={len(src_notes)}")
+    if bars:
+        print(f"[INFO] bars_end={bars[-1][1]:.2f}s (target_total={total:.2f}s)")
 
     # 出力MIDI
     out = pm.PrettyMIDI(initial_tempo=tempo)
@@ -341,6 +359,9 @@ def main():
 
         bn = notes_in_window(src_notes, t0, t1)
         cat = choose_phrase(bn, bar_len_i, rules, sect)
+        limits = cfg.get("phrase_limits", {})
+        if cat in set(limits.get("blocklist", [])):
+            cat = limits.get("fallback", "open_1_8")
         # Common Phrase trigger
         drv.notes.append(pm.Note(velocity=100, pitch=COMMON[cat], start=t0 + 1e-4, end=t0 + 0.10))
 
@@ -359,6 +380,8 @@ def main():
 
         # —— スイング：CC と microtiming の両対応 ——
         swing_amt = swing_ratio_16th(bn, bar_len_i)  # 0..1
+        if swing_amt < float(rules.get("swing_threshold", 0.0)):
+            swing_amt = 0.0
         if rules.get("swing_mode", "both") in ("both", "cc") and ccconf["enable"]:
             val = max(0, min(127, int(swing_amt * 127)))
             add_cc(drv, t0 + 0.01, ccconf["swing_cc"], val)

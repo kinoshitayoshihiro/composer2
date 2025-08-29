@@ -5,6 +5,22 @@ from typing import List, Dict, Tuple, Optional
 import pretty_midi as pm
 import yaml
 
+# Genre-oriented presets for Mod (lower = more open / longer ring)
+MOD_PRESETS = {
+    # very open ballad / cinematic clean
+    "open_ballad":   {"A": 12, "B": 18, "Build": 28, "default": 16},
+    # pop open but a bit tighter than ballad
+    "pop_open":      {"A": 14, "B": 22, "Build": 32, "default": 18},
+    # rock lower (opens more than default, still punchy)
+    "rock_low":      {"A": 18, "B": 28, "Build": 48, "default": 24},
+    # ambient / post-rock very open
+    "ambient_open":  {"A":  8, "B": 12, "Build": 20, "default": 10},
+    # metal tight (more damp by default / higher values)
+    "metal_tight":   {"A": 30, "B": 42, "Build": 64, "default": 36},
+    # funk crisp but not choppy
+    "funk_open":     {"A": 16, "B": 24, "Build": 36, "default": 20},
+}
+
 
 # ===== optional audio onset (librosa) =====
 def audio_onsets_to_dummy_notes(audio_path: str):
@@ -303,6 +319,12 @@ def main():
                     help="拍をさらに分割して判定(1=拍そのまま, 2で拍を二分など)")
     ap.add_argument("--mute-silence", action="store_true",
                     help="ミュートする小節/拍の頭で Common 'silence' を送る")
+    ap.add_argument("--mod-preset", default=None)
+    ap.add_argument("--mod-variant", choices=["default","low","open"], default=None)
+    ap.add_argument("--mod-global-open", type=int, default=None)
+    ap.add_argument("--mod-scale", type=float, default=None)
+    ap.add_argument("--mod-cap", type=int, default=None)
+    ap.add_argument("--mod-hold", choices=["song","section","bar"], default=None)
     args = ap.parse_args()
     is_audio_input = os.path.splitext(args.input)[1].lower() not in [".mid", ".midi"]
 
@@ -313,6 +335,24 @@ def main():
     rules = cfg["rules"]
     fills = cfg["fills"]
     ccconf = cfg["cc"]
+
+    if args.mod_preset is not None:
+        ccconf["mod_preset"] = args.mod_preset
+    if args.mod_variant is not None:
+        ccconf["mod_variant"] = args.mod_variant
+    if args.mod_global_open is not None:
+        ccconf["mod_global_fallback_open"] = args.mod_global_open
+    if args.mod_scale is not None:
+        ccconf["mod_scale"] = args.mod_scale
+    if args.mod_cap is not None:
+        ccconf["mod_cap"] = args.mod_cap
+    if args.mod_hold is not None:
+        ccconf["mod_hold"] = args.mod_hold
+
+    warned_swing_mod_conflict = False
+    warned_unknown_mod_preset = False
+    last_mod_val = None
+    last_mod_cc = None
 
     # 入力パース（MIDI or Audio）
     src_notes = []
@@ -561,7 +601,86 @@ def main():
             swing_amt = 0.0
         if rules.get("swing_mode", "both") in ("both", "cc") and ccconf["enable"]:
             val = max(0, min(127, int(swing_amt * 127)))
-            add_cc(drv, t0 + 0.01, ccconf["swing_cc"], val)
+            swing_ccnum = ccconf.get("swing_cc")
+            if swing_ccnum is not None:
+                conflict = (ccconf.get("mod_enable") and swing_ccnum == ccconf.get("mod_cc", 1))
+                if conflict:
+                    if not warned_swing_mod_conflict:
+                        print(f"[WARN] swing_cc ({swing_ccnum}) and mod_cc are identical. Skipping swing CC sends to avoid conflicts.")
+                        warned_swing_mod_conflict = True
+                else:
+                    add_cc(drv, t0 + 0.01, swing_ccnum, val)
+
+        # --- Mod lane (low Mod/Damp) ---
+        mod_ccnum = ccconf.get("mod_cc", 1)
+        if ccconf.get("mod_enable") and mod_ccnum is not None:
+            hold = ccconf.get("mod_hold", "section")
+
+            # ---- choose map by preset / variant ----
+            mv_default = (ccconf.get("mod_values") or {})
+            preset_key = ccconf.get("mod_preset", None)
+            if preset_key and str(preset_key) in MOD_PRESETS:
+                mv = MOD_PRESETS[str(preset_key)]
+            else:
+                if preset_key and not warned_unknown_mod_preset:
+                    print(f"[WARN] Unknown mod_preset '{preset_key}'. Falling back to mod_variant.")
+                    warned_unknown_mod_preset = True
+                variant = str(ccconf.get("mod_variant", "default")).lower()
+                if variant == "low":
+                    mv = (ccconf.get("mod_values_low") or mv_default)
+                elif variant == "open":
+                    mv = (ccconf.get("mod_values_open") or mv_default)
+                else:
+                    mv = mv_default
+
+            # ---- global fallback (force-open) has highest priority ----
+            gfb = ccconf.get("mod_global_fallback_open", None)
+            if gfb is not None:
+                base_val = int(gfb)
+            else:
+                base_val = int(mv.get(sect, mv.get("default", 32)))
+
+            # ---- scale & cap ----
+            scale = float(ccconf.get("mod_scale", 1.0))
+            val = int(round(base_val * scale))
+            cap = ccconf.get("mod_cap", None)
+            if cap is not None:
+                try:
+                    val = min(val, int(cap))
+                except Exception:
+                    pass
+            val = max(0, min(127, val))
+
+            # ---- should_send based on hold & activity ----
+            should_send = False
+            if hold == "song":
+                should_send = (b == 0)
+            elif hold == "section":
+                should_send = (b == 0 or sections[b - 1] != sect)
+            else:  # "bar"
+                should_send = True
+            if ccconf.get("mod_only_when_active") and not play_regions:
+                should_send = False
+
+            if should_send:
+                # dedup identical sends
+                if not (ccconf.get("mod_send_if_changed_only", True) and last_mod_val == val and last_mod_cc == mod_ccnum):
+                    offset = float(ccconf.get("mod_offset", 0.015))
+                    if ccconf.get("swing_cc") == mod_ccnum:
+                        offset = max(offset, 0.015)
+
+                    ramp_ms = int(ccconf.get("mod_ramp_ms", 0) or 0)
+                    if ramp_ms > 0 and last_mod_val is not None and last_mod_val != val:
+                        # optional tiny ramp: send previous first, then new
+                        add_cc(drv, t0 + 0.0, mod_ccnum, max(0, min(127, int(last_mod_val))))
+                    add_cc(drv, t0 + offset, mod_ccnum, val)
+
+                    last_mod_val = val
+                    last_mod_cc = mod_ccnum
+
+            if ccconf.get("mod_debug"):
+                print(f"[MOD] bar={b} sect={sect} val={val} hold={hold} preset={ccconf.get('mod_preset')} variant={ccconf.get('mod_variant')}")
+
         if rules.get("swing_mode", "both") in ("both", "micro"):
             # コードとフレーズにまとめて適用
             bar_notes = [

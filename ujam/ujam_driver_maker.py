@@ -261,6 +261,12 @@ def main():
                     help="WAV入力時、オンセット周辺を 1/8音符×係数 だけ有音とみなす(0で無効)")
     ap.add_argument("--segment-root", action="store_true",
                     help="有音セグメントごとにルートを再判定（1小節内の転和音に追従）")
+    ap.add_argument("--min-chord-len", type=float, default=0.12,
+                    help="コード1回の最小長(秒)。短いものは捨てる/結合")
+    ap.add_argument("--chord-retrigger-gap", type=float, default=0.06,
+                    help="この隙間以下はリトリガせず延長扱い")
+    ap.add_argument("--chord-grid", type=int, default=8,
+                    help="コードの開始/終了をこの分割にスナップ(0で無効, 8 or 16推奨)")
     args = ap.parse_args()
     is_audio_input = os.path.splitext(args.input)[1].lower() not in [".mid", ".midi"]
 
@@ -410,28 +416,70 @@ def main():
             drv.notes.append(pm.Note(velocity=90, pitch=STYLE[sty], start=t0 + 0.02, end=t0 + 0.10))
 
         # ---- コード：ソースに合わせてゲート、休符は鳴らさない ----
+        def _snap(t, bar_len, div):
+            if not div: return t
+            step = bar_len / div
+            return round(t / step) * step
+
         if args.gate_by_source:
-            segs = build_segments_from_notes(bn_for_gate, t0, t1, min_rest=args.min_rest)
-            if bn:
-                last_root = detect_root_midi_simple(bn)
-            prev_active = True
+            segs_raw = build_segments_from_notes(bn_for_gate, t0, t1, min_rest=args.min_rest)
+
+            # 1) 平滑化：短い休符を埋め、短い有音は捨てる
+            segs = []
+            for sa, sb, active in segs_raw:
+                L = sb - sa
+                if not active and L < max(args.min_rest * 1.5, 0.05):
+                    # 休符が極短 → 埋める（skip）
+                    continue
+                if active and L < args.min_chord_len:
+                    # 有音が極短 → 捨てる（UJAMが荒れるため）
+                    continue
+                # スナップ
+                sa2 = _snap(sa, bar_len_i, args.chord_grid)
+                sb2 = _snap(sb, bar_len_i, args.chord_grid)
+                if sb2 - sa2 <= 1e-4:
+                    continue
+                segs.append((max(t0, sa2), min(t1, sb2), active))
+
+            # 2) 連続アクティブをマージ（同Root＆隙間が小さい）
+            regions = []
+            cur = None
             for sa, sb, active in segs:
-                if active:
-                    root_here = last_root
-                    if args.segment_root:
-                        act = [n for n in bn if n.start < sb and n.end > sa]
-                        if act:
-                            root_here = detect_root_midi_simple(act)
-                            last_root = root_here
-                    for p in power_chord_from_root(root_here, cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]):
-                        drv.notes.append(pm.Note(velocity=100, pitch=p,
-                                                 start=max(t0, sa+0.001), end=min(t1, sb-0.002)))
-                    prev_active = True
+                if not active:
+                    # 休符：現在のリージョンを確定
+                    if cur: regions.append(cur); cur = None
+                    continue
+                # この区間のroot（必要なら再判定）
+                root_here = last_root
+                if args.segment_root:
+                    act = [n for n in bn if n.start < sb and n.end > sa]
+                    if act:
+                        root_here = detect_root_midi_simple(act)
+                # 直前が同rootで隙間が小さいなら延長
+                if cur and cur["root"] == root_here and sa - cur["end"] <= args.chord_retrigger_gap:
+                    cur["end"] = max(cur["end"], sb)
                 else:
-                    if args.preserve_rests and "silence" in COMMON and prev_active:
+                    if cur: regions.append(cur)
+                    cur = {"start": sa, "end": sb, "root": root_here}
+                last_root = root_here
+            if cur: regions.append(cur)
+
+            # 3) 出力（最小長保証）
+            for reg in regions:
+                sa, sb, root_use = reg["start"], reg["end"], reg["root"]
+                if (sb - sa) < args.min_chord_len:
+                    sb = min(t1, sa + args.min_chord_len)
+                for p in power_chord_from_root(root_use, cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]):
+                    drv.notes.append(pm.Note(velocity=100, pitch=p, start=sa+0.001, end=sb-0.002))
+
+            # 4) 休符頭でだけ Silence（連打しない）
+            if args.preserve_rests and "silence" in COMMON:
+                prev_active = True
+                for sa, sb, active in segs:
+                    if not active and prev_active:
                         drv.notes.append(pm.Note(velocity=90, pitch=COMMON["silence"],
                                                  start=max(t0, sa+0.0005), end=min(t1, sa+0.012)))
-                    prev_active = False
+                    prev_active = active
         else:
             # 従来どおり：小節いっぱい鳴らす
             if bn:

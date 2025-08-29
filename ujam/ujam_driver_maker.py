@@ -319,6 +319,8 @@ def main():
                     help="拍をさらに分割して判定(1=拍そのまま, 2で拍を二分など)")
     ap.add_argument("--mute-silence", action="store_true",
                     help="ミュートする小節/拍の頭で Common 'silence' を送る")
+    ap.add_argument("--phrase-latch", choices=["always","bar","section","enter"], default="enter",
+                    help="Common Phraseを送る粒度。enter=休符明けのみ / section=セクション先頭のみ / bar=毎小節 / always=常時")
     ap.add_argument("--mod-preset", default=None)
     ap.add_argument("--mod-variant", choices=["default","low","open"], default=None)
     ap.add_argument("--mod-global-open", type=int, default=None)
@@ -468,6 +470,11 @@ def main():
 
     last_root = 64  # 初期ルート（E）、後で折返し
     carry = None  # None or {"start": float, "end": float, "root": int}
+    prev_active = False           # enter 用
+    was_active_any = False        # 全モード共通で前バーの有無音を覚える
+    last_cat = None
+    last_sect = None
+    last_style = None
     # 生成ループ
     for (b, t0, t1), sect in zip(bars, sections):
         bar_len_i = (t1 - t0) if (t1 > t0) else default_bar_len
@@ -547,21 +554,50 @@ def main():
                 play_regions.append((sa, sb, root_use))
 
             if args.mute_silence and "silence" in COMMON:
-                prev_active = True
+                seg_prev_active = True
                 for sa, sb, active in segs:
-                    if not active and prev_active:
+                    if not active and seg_prev_active:
                         mute_hits.append(max(t0, sa + 0.0005))
-                    prev_active = active
+                    seg_prev_active = active
 
-        if play_regions:
+        now_active = bool(play_regions)
+        cat = None
+        if now_active:
             cat = choose_phrase(bn, bar_len_i, rules, sect)
             limits = cfg.get("phrase_limits", {})
             if cat in set(limits.get("blocklist", [])):
                 cat = limits.get("fallback", "open_1_8")
+
+        should_trigger = False
+        if args.phrase_latch == "always":
+            should_trigger = now_active
+        elif args.phrase_latch == "bar":
+            # alias of "always"（処理がバー単位のため）
+            should_trigger = now_active
+        elif args.phrase_latch == "section":
+            # セクションが変わった時 or 休符からの復帰でリトリガ
+            should_trigger = now_active and ((sect != last_sect) or (not was_active_any))
+        else:  # "enter"
+            should_trigger = (now_active and not prev_active)
+            prev_active = now_active
+
+        if now_active:
+            if cat != last_cat:
+                should_trigger = True
+            last_cat = cat
+
+        # フレーズ: Latch条件を満たした時だけ再トリガ
+        if should_trigger and now_active and cat is not None:
             drv.notes.append(pm.Note(velocity=100, pitch=COMMON[cat], start=t0 + 1e-4, end=t0 + 0.10))
-            sty = style_for_bar(b, sect)
-            if sty in STYLE:
-                drv.notes.append(pm.Note(velocity=90, pitch=STYLE[sty], start=t0 + 0.02, end=t0 + 0.10))
+
+        # スタイル: 変更があれば常に送る（フレーズLatchと独立）
+        sty = style_for_bar(b, sect)
+        if (sty in STYLE) and (sty != last_style):
+            drv.notes.append(pm.Note(velocity=90, pitch=STYLE[sty], start=t0 + 0.02, end=t0 + 0.10))
+        last_style = sty
+
+        last_sect = sect
+        was_active_any = now_active
 
         for thit in sorted(set(round(t * 1000) / 1000 for t in mute_hits)):
             drv.notes.append(

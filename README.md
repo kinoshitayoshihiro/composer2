@@ -667,6 +667,16 @@ Dependencies: `pretty_midi`, `PyYAML`, `librosa` (optional: `soundfile` for audi
 In Studio One, map CC1 to swing/microtiming and CC11 to dynamics via MIDI Learn.
 Ensure `ujam.c0=24`, `ujam.c1=36`, `chord_low=60`, `chord_high=72` in `config.yaml`.
 
+* If `swing_cc` and `mod_cc` coincide, swing CC messages are skipped with a warning so the Mod value wins.
+* Use `mod_variant: low` for a more closed sound or `mod_variant: open` / `mod_global_fallback_open` to open the whole song.
+* CLI overrides:
+  ```
+  python ujam/ujam_driver_maker.py --mod-preset rock_low
+  python ujam/ujam_driver_maker.py --mod-variant open
+  python ujam/ujam_driver_maker.py --mod-global-open 20
+  ```
+* Future: `mod_ramp_ms` currently sends a two‑point ramp; it may be extended to a true multi‑point fade.
+
 List instruments in a corpus with JSON summary:
 
 ```

@@ -64,6 +64,27 @@ def notes_in_window(notes, t0, t1):
     return [n for n in notes if not (n.end <= t0 or n.start >= t1)]
 
 
+def build_segments_from_notes(notes, t0, t1, min_rest=0.08):
+    """区間[t0,t1)を、ソースノートのon/off境界で分割し、各セグメントが有音か休符かを返す。"""
+    if t1 <= t0:
+        return []
+    cuts = {t0, t1}
+    for n in notes:
+        if n.end > t0 and n.start < t1:
+            cuts.add(max(t0, n.start))
+            cuts.add(min(t1, n.end))
+    ts = sorted(cuts)
+    segs = []
+    for a, b in zip(ts[:-1], ts[1:]):
+        if b - a <= 1e-5:
+            continue
+        active = any((n.start < b and n.end > a) for n in notes)
+        if (b - a) < min_rest and not active:
+            continue
+        segs.append((a, b, active))
+    return segs
+
+
 def sixteenth_grid(bar_len: float) -> float:
     return bar_len / 16.0
 
@@ -230,7 +251,18 @@ def main():
     ap.add_argument("--tail-pad", type=float, default=1.5, help="終端に追加する余白秒（既定1.5s）")
     ap.add_argument("--debug-bars", action="store_true",
                     help="小節頭にC6の点を打って可視化（既定OFF）")
+    ap.add_argument("--gate-by-source", action="store_true",
+                    help="コードをソースMIDIのノート長でゲート（休符は鳴らさない）")
+    ap.add_argument("--preserve-rests", action="store_true",
+                    help="休符区間で Common 'silence' を自動トリガ")
+    ap.add_argument("--min-rest", type=float, default=0.08,
+                    help="休符として扱う最小長(秒)")
+    ap.add_argument("--audio-gate-8th", type=float, default=1.0,
+                    help="WAV入力時、オンセット周辺を 1/8音符×係数 だけ有音とみなす(0で無効)")
+    ap.add_argument("--segment-root", action="store_true",
+                    help="有音セグメントごとにルートを再判定（1小節内の転和音に追従）")
     args = ap.parse_args()
+    is_audio_input = os.path.splitext(args.input)[1].lower() not in [".mid", ".midi"]
 
     cfg = yaml.safe_load(open(args.config))
     c0, c1 = cfg["ujam"]["c0"], cfg["ujam"]["c1"]
@@ -244,7 +276,7 @@ def main():
     src_notes = []
     tempo = 120.0
     beats = args.beats_per_bar
-    if os.path.splitext(args.input)[1].lower() in [".mid", ".midi"]:
+    if not is_audio_input:
         src = pm.PrettyMIDI(args.input)
         tempos = src.get_tempo_changes()[1]
         if len(tempos):
@@ -358,6 +390,13 @@ def main():
         bar_len_i = (t1 - t0) if (t1 > t0) else default_bar_len
 
         bn = notes_in_window(src_notes, t0, t1)
+        bn_for_gate = bn
+        if is_audio_input and args.audio_gate_8th > 0:
+            gate_len = (bar_len_i / 8.0) * float(args.audio_gate_8th)
+            bn_for_gate = []
+            for n in bn:
+                bn_for_gate.append(pm.Note(velocity=n.velocity, pitch=n.pitch,
+                                           start=n.start, end=min(t1, n.start + gate_len)))
         cat = choose_phrase(bn, bar_len_i, rules, sect)
         limits = cfg.get("phrase_limits", {})
         if cat in set(limits.get("blocklist", [])):
@@ -370,13 +409,35 @@ def main():
         if sty in STYLE:
             drv.notes.append(pm.Note(velocity=90, pitch=STYLE[sty], start=t0 + 0.02, end=t0 + 0.10))
 
-        # ---- コード：オンセットが無くても「直前のルートを保持」して必ず鳴らす ----
-        if bn:
-            root = detect_root_midi_simple(bn)
-            last_root = root
-        root_use = last_root
-        for p in power_chord_from_root(root_use, cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]):
-            drv.notes.append(pm.Note(velocity=100, pitch=p, start=t0+0.01, end=t1-0.02))
+        # ---- コード：ソースに合わせてゲート、休符は鳴らさない ----
+        if args.gate_by_source:
+            segs = build_segments_from_notes(bn_for_gate, t0, t1, min_rest=args.min_rest)
+            if bn:
+                last_root = detect_root_midi_simple(bn)
+            prev_active = True
+            for sa, sb, active in segs:
+                if active:
+                    root_here = last_root
+                    if args.segment_root:
+                        act = [n for n in bn if n.start < sb and n.end > sa]
+                        if act:
+                            root_here = detect_root_midi_simple(act)
+                            last_root = root_here
+                    for p in power_chord_from_root(root_here, cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]):
+                        drv.notes.append(pm.Note(velocity=100, pitch=p,
+                                                 start=max(t0, sa+0.001), end=min(t1, sb-0.002)))
+                    prev_active = True
+                else:
+                    if args.preserve_rests and "silence" in COMMON and prev_active:
+                        drv.notes.append(pm.Note(velocity=90, pitch=COMMON["silence"],
+                                                 start=max(t0, sa+0.0005), end=min(t1, sa+0.012)))
+                    prev_active = False
+        else:
+            # 従来どおり：小節いっぱい鳴らす
+            if bn:
+                last_root = detect_root_midi_simple(bn)
+            for p in power_chord_from_root(last_root, cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]):
+                drv.notes.append(pm.Note(velocity=100, pitch=p, start=t0+0.01, end=t1-0.02))
 
         # —— スイング：CC と microtiming の両対応 ——
         swing_amt = swing_ratio_16th(bn, bar_len_i)  # 0..1

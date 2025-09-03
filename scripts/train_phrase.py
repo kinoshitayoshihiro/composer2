@@ -16,6 +16,12 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Iterable
 
+# Optional progress bar (tqdm)
+try:  # pragma: no cover - optional dependency
+    from tqdm.auto import tqdm as _tqdm  # type: ignore
+except Exception:  # pragma: no cover - tqdm missing
+    _tqdm = None
+
 # matplotlib imported lazily when --viz is enabled
 plt = None  # type: ignore
 
@@ -213,6 +219,7 @@ def train_model(
     duv_mode: str = "reg",
     vel_bins: int = 0,
     dur_bins: int = 0,
+    progress: bool = False,
     w_boundary: float = 1.0,
     w_vel_reg: float = 0.5,
     w_dur_reg: float = 0.5,
@@ -232,6 +239,13 @@ def train_model(
     grad_accum: int = 1,
     save_best: bool = False,
     save_last: bool = False,
+    use_sinusoidal_posenc: bool = False,
+    # fast iteration helpers
+    limit_train_batches: int = 0,
+    limit_val_batches: int = 0,
+    limit_train_groups: int = 0,
+    limit_val_groups: int = 0,
+    fast_dev_run: bool = False,
 ) -> tuple[float, str, dict[str, object]]:
     """Train the phrase boundary model and return the best F1, device, and stats."""
 
@@ -404,14 +418,18 @@ def train_model(
             mood_vocab: dict[str, int] | None = None,
             instrument_vocab: dict[str, int] | None = None,
             use_duv_embed: bool = False,
+            limit_groups: int = 0,
         ) -> None:
             by_bar: dict[int, list[dict[str, str]]] = {}
             for r in rows:
                 bar = int(r["bar"])
                 by_bar.setdefault(bar, []).append(r)
-            self.groups = [
+            groups = [
                 sorted(g, key=lambda r: int(r["pos"])) for bar, g in sorted(by_bar.items())
             ]
+            if limit_groups and limit_groups > 0:
+                groups = groups[: max(1, int(limit_groups))]
+            self.groups = groups
             self.group_tags = {
                 "section": [g[0].get("section", "") for g in self.groups],
                 "mood": [g[0].get("mood", "") for g in self.groups],
@@ -455,6 +473,9 @@ def train_model(
             dict[str, torch.Tensor],
         ]:
             g = self.groups[idx]
+            # クリッピング: 長すぎる系列は max_len に切り詰める
+            if len(g) > self.max_len:
+                g = g[: self.max_len]
             L = len(g)
             pad = self.max_len - L
             pitches = [int(r["pitch"]) for r in g]
@@ -466,7 +487,9 @@ def train_model(
             dur = torch.tensor(
                 [float(r["duration"]) for r in g] + [0] * pad, dtype=torch.float32
             )
-            pos = torch.tensor([int(r["pos"]) for r in g] + [0] * pad, dtype=torch.long)
+            # Normalize position to [0, max_len-1] to avoid large tick-based indices clamping
+            pos_vals = [(int(r["pos"]) % self.max_len) for r in g]
+            pos = torch.tensor(pos_vals + [0] * pad, dtype=torch.long)
             feats = {
                 "pitch_class": pc,
                 "velocity": vel,
@@ -654,6 +677,7 @@ def train_model(
         mood_vocab,
         instrument_vocab,
         use_duv_embed=use_duv_embed,
+        limit_groups=limit_train_groups,
     )
     ds_val = PhraseDataset(
         val_rows,
@@ -662,6 +686,7 @@ def train_model(
         mood_vocab,
         instrument_vocab,
         use_duv_embed=use_duv_embed,
+        limit_groups=limit_val_groups,
     )
 
     if duv_mode in {"cls", "both"}:
@@ -723,6 +748,21 @@ def train_model(
         persistent_workers=persist,
         worker_init_fn=worker_init_fn if num_workers else None,
     )
+    # If classification heads are enabled but their loss weights are zero,
+    # set sensible defaults so they learn during quick iterations.
+    if duv_mode in {"cls", "both"} and (w_vel_cls <= 0 and w_dur_cls <= 0):
+        logging.warning(
+            "duv_mode=%s with zero class-loss weights; setting w_vel_cls=0.5, w_dur_cls=0.5",
+            duv_mode,
+        )
+        w_vel_cls = 0.5
+        w_dur_cls = 0.5
+
+    # Fast dev run: cap batches to keep turnaround quick
+    if fast_dev_run:
+        limit_train_batches = max(1, int(limit_train_batches or 2))
+        limit_val_batches = max(1, int(limit_val_batches or 2))
+
     if arch == "lstm":
         model: nn.Module = PhraseLSTM(
             d_model=d_model,
@@ -749,8 +789,20 @@ def train_model(
             nhead=nhead,
             num_layers=layers,
             dropout=dropout,
+            use_sinusoidal_posenc=use_sinusoidal_posenc,
         )
     model = model.to(device)
+    # Initialize boundary head bias to dataset prior logit to avoid extreme initial saturation
+    try:
+        total_count = max(1, len(train_rows))
+        pos_prior = max(1e-6, min(1 - 1e-6, positive_count / total_count))
+        prior_logit = float(torch.log(torch.tensor(pos_prior / (1 - pos_prior))))
+        with torch.no_grad():
+            if hasattr(model, "head_boundary") and hasattr(model.head_boundary, "bias") and model.head_boundary.bias is not None:
+                model.head_boundary.bias.fill_(prior_logit)
+                logging.info("init head_boundary.bias to prior logit %.3f (p=%.3f)", prior_logit, pos_prior)
+    except Exception:
+        pass
     if compile:
         try:  # pragma: no cover - runtime optional
             model = torch.compile(model)
@@ -807,43 +859,45 @@ def train_model(
         dur_ok = 0
         dur_tot = 0
         with torch.no_grad():
-            for feats, targets, mask, tags in dl_val:
+            for i, (feats, targets, mask, tags) in enumerate(dl_val):
                 feats = {k: v.to(device) for k, v in feats.items()}
                 targets = {k: v.to(device) for k, v in targets.items()}
                 mask = mask.to(device)
-                out = model(feats, mask)
+                outputs = model(feats, mask)
                 m = mask.bool()
                 mask_cpu = m.cpu()
-                probs.extend(torch.sigmoid(out["boundary"][m]).cpu().tolist())
+                probs.extend(torch.sigmoid(outputs["boundary"][m]).cpu().tolist())
                 trues.extend(targets["boundary"][m].int().cpu().tolist())
-                if "vel_reg" in out:
+                if "vel_reg" in outputs:
                     vel_err += (
-                        torch.abs(out["vel_reg"][m] - targets["vel_reg"][m])
+                        torch.abs(outputs["vel_reg"][m] - targets["vel_reg"][m])
                         .mul(127.0)
                         .sum()
                         .item()
                     )
                     vel_n += int(m.sum())
-                if "dur_reg" in out:
+                if "dur_reg" in outputs:
                     dur_err += (
                         torch.abs(
-                            torch.expm1(out["dur_reg"][m])
+                            torch.expm1(outputs["dur_reg"][m])
                             - torch.expm1(targets["dur_reg"][m])
                         )
                         .sum()
                         .item()
                     )
                     dur_n += int(m.sum())
-                if "vel_cls" in out:
-                    preds = out["vel_cls"][m].argmax(dim=-1)
+                if "vel_cls" in outputs:
+                    preds = outputs["vel_cls"][m].argmax(dim=-1)
                     vel_ok += int((preds == targets["vel_cls"][m]).sum())
                     vel_tot += int(m.sum())
-                if "dur_cls" in out:
-                    preds = out["dur_cls"][m].argmax(dim=-1)
+                if "dur_cls" in outputs:
+                    preds = outputs["dur_cls"][m].argmax(dim=-1)
                     dur_ok += int((preds == targets["dur_cls"][m]).sum())
                     dur_tot += int(m.sum())
                 for k in tag_buf:
                     tag_buf[k].extend(tags[k][mask_cpu].tolist())
+                if limit_val_batches and (i + 1) >= limit_val_batches:
+                    break
         best_f1, best_th = -1.0, 0.5
         start, end, step = f1_scan_range
         n = int(round((end - start) / step)) + 1
@@ -853,11 +907,18 @@ def train_model(
             f1 = f1_score(trues, preds)
             if f1 > best_f1:
                 best_f1, best_th = f1, float(th)
+        # Additional diagnostics to detect saturation/imbalance during eval
+        total = max(1, len(probs))
+        preds_best = [1 if p > best_th else 0 for p in probs]
+        pos_rate = sum(preds_best) / total
+        mean_prob = sum(probs) / total
         metrics = {
             "vel_mae": vel_err / vel_n if vel_n else 0.0,
             "dur_mae": dur_err / dur_n if dur_n else 0.0,
             "vel_acc": vel_ok / vel_tot if vel_tot else 0.0,
             "dur_acc": dur_ok / dur_tot if dur_tot else 0.0,
+            "pos_rate": pos_rate,
+            "mean_prob": mean_prob,
         }
         return best_f1, best_th, probs, trues, tag_buf, metrics
 
@@ -868,13 +929,22 @@ def train_model(
     best_metric_val = -1.0
     viz_files: list[str] = []
     metrics_rows: list[dict[str, float]] = []
+    use_progress = bool(progress and _tqdm is not None)
     for ep in range(start_epoch, epochs):
         t0 = time.time()
         model.train()
         loss_sum = 0.0
         lb_sum = lv_sum = ld_sum = lvb_sum = ldb_sum = lp_sum = 0.0
         opt.zero_grad()
-        for step, (feats, targets, mask, _) in enumerate(dl_train):
+        iter_train = dl_train
+        if use_progress:
+            iter_train = _tqdm(
+                dl_train,
+                total=len(dl_train),
+                desc=f"epoch {ep + 1}/{epochs}",
+                leave=False,
+            )
+        for step, (feats, targets, mask, _) in enumerate(iter_train):
             feats = {k: v.to(device) for k, v in feats.items()}
             targets = {k: v.to(device) for k, v in targets.items()}
             mask = mask.to(device)
@@ -884,27 +954,27 @@ def train_model(
                 else nullcontext()
             )
             with ctx:
-                out = model(feats, mask)
+                outputs = model(feats, mask)
                 m = mask.bool()
                 loss = 0.0
                 lb = lv = ld = lvb = ldb = lp = 0.0
-                if "boundary" in out:
-                    lb = crit_boundary(out["boundary"][m], targets["boundary"][m])
+                if "boundary" in outputs:
+                    lb = crit_boundary(outputs["boundary"][m], targets["boundary"][m])
                     loss = loss + w_boundary * lb
-                if "vel_reg" in out:
-                    lv = crit_vel_reg(out["vel_reg"][m], targets["vel_reg"][m])
+                if "vel_reg" in outputs:
+                    lv = crit_vel_reg(outputs["vel_reg"][m], targets["vel_reg"][m])
                     loss = loss + w_vel_reg * lv
-                if "dur_reg" in out:
-                    ld = crit_dur_reg(out["dur_reg"][m], targets["dur_reg"][m])
+                if "dur_reg" in outputs:
+                    ld = crit_dur_reg(outputs["dur_reg"][m], targets["dur_reg"][m])
                     loss = loss + w_dur_reg * ld
-                if "vel_cls" in out:
-                    lvb = crit_vel_cls(out["vel_cls"][m], targets["vel_cls"][m])
+                if "vel_cls" in outputs:
+                    lvb = crit_vel_cls(outputs["vel_cls"][m], targets["vel_cls"][m])
                     loss = loss + w_vel_cls * lvb
-                if "dur_cls" in out:
-                    ldb = crit_dur_cls(out["dur_cls"][m], targets["dur_cls"][m])
+                if "dur_cls" in outputs:
+                    ldb = crit_dur_cls(outputs["dur_cls"][m], targets["dur_cls"][m])
                     loss = loss + w_dur_cls * ldb
-                if "pitch_logits" in out:
-                    lp = crit_pitch(out["pitch_logits"][m], targets["pitch"][m])
+                if "pitch_logits" in outputs:
+                    lp = crit_pitch(outputs["pitch_logits"][m], targets["pitch"][m])
                     loss = loss + w_pitch * lp
                 lb_sum += float(lb)
                 lv_sum += float(lv)
@@ -937,6 +1007,13 @@ def train_model(
                     else:
                         sched.step()
                 global_step += 1
+            if limit_train_batches and (step + 1) >= limit_train_batches:
+                break
+        if use_progress:
+            try:
+                iter_train.close()  # type: ignore[attr-defined]
+            except Exception:
+                pass
         f1, th, probs, trues, tag_buf, metrics = evaluate()
         n_batches = max(1, len(dl_train))
         avg_loss = loss_sum / n_batches
@@ -949,7 +1026,7 @@ def train_model(
         lr_cur = opt.param_groups[0]["lr"]
         elapsed = time.time() - t0
         logging.info(
-            "epoch %d train_loss %.4f val_f1 %.3f vel_mae %.3f dur_mae %.3f vel_acc %.3f dur_acc %.3f lr %.2e th %.2f time %.1fs",
+            "epoch %d train_loss %.4f val_f1 %.3f vel_mae %.3f dur_mae %.3f vel_acc %.3f dur_acc %.3f lr %.2e th %.2f pos_rate %.3f mean_p %.3f time %.1fs",
             ep + 1,
             avg_loss,
             f1,
@@ -959,6 +1036,8 @@ def train_model(
             metrics["dur_acc"],
             lr_cur,
             th,
+            metrics.get("pos_rate", 0.0),
+            metrics.get("mean_prob", 0.0),
             elapsed,
         )
         metrics_rows.append(
@@ -1173,8 +1252,8 @@ def train_model(
             feats, targets, mask, _tags = next(iter(dl_val))
             feats = {k: v.to(device) for k, v in feats.items()}
             mask0 = mask[0].bool()
-            out = model(feats, mask.to(device))
-            logits = out["boundary"][0, mask0.to(device)]
+            outputs = model(feats, mask.to(device))
+            logits = outputs["boundary"][0, mask0.to(device)]
             probs = torch.sigmoid(logits).cpu().tolist()
             preds = [1 if p > best_threshold else 0 for p in probs]
             trues = targets["boundary"][0][mask0].int().cpu().tolist()
@@ -1220,6 +1299,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nhead", type=int, default=8)
     parser.add_argument("--layers", type=int, default=4)
     parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--sin-posenc", action="store_true", help="use sinusoidal positional encoding in transformer")
     parser.add_argument("--compile", action="store_true")
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--pin-memory", action="store_true")
@@ -1283,6 +1363,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sample", type=int, default=0)
     parser.add_argument("--viz", action="store_true", help="save PR/CM plots")
     parser.add_argument("--strict-tags", action="store_true", help="drop rows missing requested tags")
+    parser.add_argument("--progress", action="store_true", help="show training progress bar")
+    # fast iteration helpers
+    parser.add_argument("--limit-train-batches", type=int, default=0, help="max train batches per epoch for quick runs")
+    parser.add_argument("--limit-val-batches", type=int, default=0, help="max validation batches per eval for quick runs")
+    parser.add_argument("--limit-train-groups", type=int, default=0, help="limit number of training groups (bars)")
+    parser.add_argument("--limit-val-groups", type=int, default=0, help="limit number of validation groups (bars)")
+    parser.add_argument("--fast-dev-run", action="store_true", help="run a very small loop to sanity-check")
     parser.add_argument(
         "--best-metric",
         default="macro_f1",
@@ -1474,6 +1561,7 @@ def main(argv: list[str] | None = None) -> int:
             duv_mode=args.duv_mode,
             vel_bins=args.vel_bins,
             dur_bins=args.dur_bins,
+            progress=args.progress,
             w_boundary=args.w_boundary,
             w_vel_reg=args.w_vel_reg,
             w_dur_reg=args.w_dur_reg,
@@ -1493,6 +1581,12 @@ def main(argv: list[str] | None = None) -> int:
             grad_accum=args.grad_accum,
             save_best=args.save_best,
             save_last=args.save_last,
+            use_sinusoidal_posenc=args.sin_posenc,
+            limit_train_batches=args.limit_train_batches,
+            limit_val_batches=args.limit_val_batches,
+            limit_train_groups=args.limit_train_groups,
+            limit_val_groups=args.limit_val_groups,
+            fast_dev_run=args.fast_dev_run,
         )
     except ValueError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)

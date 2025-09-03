@@ -40,6 +40,7 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         nhead: int = 8,
         num_layers: int = 4,
         dropout: float = 0.1,
+        use_sinusoidal_posenc: bool = False,
         pitch_vocab_size: int = 128,
     ) -> None:
         super().__init__()
@@ -71,12 +72,22 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         else:
             self.dur_bucket_emb = None
         self.feat_proj = nn.Linear(d_model + extra_dim, d_model)
+        self.in_norm = nn.LayerNorm(d_model)
+        self.use_cls = True
         self.cls = nn.Parameter(torch.zeros(1, 1, d_model))
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=nhead, batch_first=True, dropout=dropout
         )
-        self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
-        self.pos_enc = PositionalEncoding(d_model, max_len + 1)
+        # PyTorch 2.1+ exposes nested-tensor optimization in TransformerEncoder.
+        # On Apple MPS this path can crash or be unimplemented; disable when available.
+        try:  # prefer explicit disable when supported
+            self.encoder = nn.TransformerEncoder(
+                enc_layer, num_layers=num_layers, enable_nested_tensor=False
+            )
+        except TypeError:  # older torch without the kwarg
+            self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
+        self.pos_enc = PositionalEncoding(d_model, max_len + 1) if use_sinusoidal_posenc else None
+        self.out_norm = nn.LayerNorm(d_model)
         self.head_boundary = nn.Linear(d_model, 1)
         self.head_vel_reg = (
             nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
@@ -111,16 +122,19 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
             parts.append(self.dur_bucket_emb(feats["dur_bucket"]))
         x = torch.cat(parts, dim=-1)
         x = self.feat_proj(x)
+        x = self.in_norm(x)
         cls = self.cls.expand(x.size(0), 1, -1)
         x = torch.cat([cls, x], dim=1)
         x = x * math.sqrt(self.d_model)
-        x = self.pos_enc(x)
+        if self.pos_enc is not None:
+            x = self.pos_enc(x)
         pad_mask = torch.cat(
             [torch.ones(mask.size(0), 1, dtype=torch.bool, device=mask.device), mask],
             dim=1,
         )
         h = self.encoder(x, src_key_padding_mask=~pad_mask)
         h = h[:, 1:]
+        h = self.out_norm(h)
         outputs: dict[str, torch.Tensor] = {}
         outputs["boundary"] = self.head_boundary(h).squeeze(-1)
         if self.head_vel_reg is not None:

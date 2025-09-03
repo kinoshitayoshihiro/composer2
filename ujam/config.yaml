@@ -49,7 +49,10 @@ fills:
   pickslide_velocity: 95
 
 phrase_limits:
-  blocklist: []
+  blocklist:
+    - muted_1_8
+    - half_mute_1_4
+    - muted_1_16_riding
   fallback: "open_1_8"
 
 cc:

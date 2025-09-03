@@ -13,10 +13,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Iterable, Iterator, Pattern
 
-try:  # pragma: no cover - pretty_midi optional
-    import pretty_midi
-except Exception:  # pragma: no cover - no pretty_midi
-    pretty_midi = None  # type: ignore
+# pretty_midi は MIDI 入力時のみ必要。\n# from-corpus モードでは読み込まず、警告も出さないため遅延インポートにする。
 try:  # pragma: no cover - PyYAML optional for --help
     import yaml
 except Exception:  # pragma: no cover - no yaml
@@ -101,6 +98,7 @@ def midi_to_rows(
     instrument_filter: str | None,
     instrument_regex: Pattern[str] | None,
     pitch_range: tuple[int, int] | None,
+    path_hint_match: bool = False,
     *,
     emit_buckets: bool = False,
     dur_bins: int = 16,
@@ -110,8 +108,13 @@ def midi_to_rows(
 
     Returns the parsed rows and whether any instrument matched *instrument_filter*.
     """
-    if pretty_midi is None:
-        raise RuntimeError("pretty_midi is required to parse MIDI files (pip install pretty_midi)")
+    # 遅延インポート: MIDI 入力時にのみ pretty_midi を読み込む
+    try:  # pragma: no cover - optional dependency
+        import pretty_midi  # type: ignore
+    except Exception as e:  # pragma: no cover - not installed
+        raise RuntimeError(
+            "pretty_midi is required to parse MIDI files (pip install pretty_midi)"
+        ) from e
     pm = pretty_midi.PrettyMIDI(str(path))
     ticks_per_beat = pm.resolution
 
@@ -130,11 +133,27 @@ def midi_to_rows(
     inst_match = False
     for inst in pm.instruments:
         name = inst.name or pretty_midi.program_to_instrument_name(inst.program)
-        if instrument_filter and instrument_filter not in name.lower():
+        # Instrument selection logic:
+        # 1) Prefer explicit instrument filters (substring/regex) against the MIDI track name.
+        # 2) If those do not match but the file/folder path hints match the instrument, fall back to including.
+        # 3) If no instrument filter is provided, include all instruments.
+        selected = True
+        has_any_filter = bool(instrument_filter or instrument_regex)
+        if has_any_filter:
+            name_lc = (name or "").lower()
+            name_ok = bool(instrument_filter and instrument_filter in name_lc)
+            regex_ok = bool(instrument_regex and instrument_regex.search(name))
+            if name_ok or regex_ok:
+                selected = True
+                inst_match = True
+            elif path_hint_match:
+                # Path-based fallback: allow even if MIDI track name didn't match
+                selected = True
+                inst_match = True
+            else:
+                selected = False
+        if not selected:
             continue
-        if instrument_regex and not instrument_regex.search(name):
-            continue
-        inst_match = True
         for n in inst.notes:
             if pitch_range and not (pitch_range[0] <= n.pitch <= pitch_range[1]):
                 continue
@@ -227,6 +246,8 @@ def list_instruments(
             files = [base / "samples.jsonl"]
         else:
             files = sorted((base / "samples").glob("*.jsonl"))
+        sample_counter = 0
+        sample_counter = 0
         for p in files:
             for obj in read_samples_jsonl(p):
                 meta = obj.get("meta", {})
@@ -348,6 +369,7 @@ def corpus_mode(
         inst_hist: Counter[str] = Counter()
         track_hist: Counter[str] = Counter()
         prog_hist: Counter[int] = Counter()
+        sample_counter = 0
         for p in files:
             for obj in read_samples_jsonl(p):
                 meta = obj.get("meta", {})
@@ -357,6 +379,142 @@ def corpus_mode(
                 if program is None and "program" in meta:
                     program = meta["program"]
                 prog_int = int(program) if program is not None else None
+                # Support two corpus formats:
+                # 1) "samples" JSONL with explicit per-note fields (pitch/velocity/duration/...)
+                # 2) Token corpora with NOTE_x and DUV_d_v (or D_/V_) sequences
+                if "tokens" in obj and isinstance(obj["tokens"], list):
+                    tokens = [str(t) for t in obj["tokens"]]
+                    # Derive beats-per-bar if present (default to 4)
+                    try:
+                        beats_per_bar = float(meta.get("beats_per_bar", 4.0))
+                    except Exception:
+                        beats_per_bar = 4.0
+
+                    # Counters for min-notes filter and position tracking within the sequence
+                    note_tokens = [t for t in tokens if t.startswith("NOTE_")]
+                    note_count = len(note_tokens)
+                    if note_count < min_notes_per_sample:
+                        stats["removed_by_min_notes"] += 1
+                        stats["removed"] += 1
+                        continue
+
+                    cur_time_beats = 0.0
+                    prev_local_bar: int | None = None
+                    cur_bar = 0  # global (with offset) tracker for pos reset
+                    pos_idx_in_bar = 0
+                    bar_offset = sample_counter * 10000
+                    # Walk NOTE/(DUV|D/V) pairs in order
+                    i = 0
+                    while i < len(tokens):
+                        tok = tokens[i]
+                        if not tok.startswith("NOTE_"):
+                            i += 1
+                            continue
+                        try:
+                            pitch = int(tok.split("_", 1)[1])
+                        except Exception:
+                            i += 1
+                            continue
+                        dur_beats: float = 0.0
+                        vel_val: int = 0
+                        vb_idx: int | None = None
+                        db_idx: int | None = None
+                        if i + 1 < len(tokens):
+                            nxt = tokens[i + 1]
+                            if nxt.startswith("DUV_"):
+                                parts = nxt.split("_")
+                                if len(parts) == 3:
+                                    try:
+                                        db_idx = int(parts[1])
+                                        vb_idx = int(parts[2])
+                                    except Exception:
+                                        db_idx = vb_idx = None
+                            elif nxt.startswith("D_") or nxt.startswith("V_"):
+                                # Handle non-combined duration/velocity tokens
+                                j = i + 1
+                                while j < len(tokens) and (tokens[j].startswith("D_") or tokens[j].startswith("V_")):
+                                    if tokens[j].startswith("D_"):
+                                        try:
+                                            db_idx = int(tokens[j].split("_", 1)[1])
+                                        except Exception:
+                                            pass
+                                    elif tokens[j].startswith("V_"):
+                                        try:
+                                            vb_idx = int(tokens[j].split("_", 1)[1])
+                                        except Exception:
+                                            pass
+                                    j += 1
+                        # Approximate continuous values from bucket indices when available
+                        if db_idx is not None:
+                            try:
+                                dur_beats = max(0.0, float(db_idx) / max(1, dur_bins))
+                            except Exception:
+                                dur_beats = 0.0
+                        if vb_idx is not None:
+                            try:
+                                # Map velocity bucket index back to 0..127 via bin midpoint
+                                step = 128 / max(1, vel_bins)
+                                vel_val = int(min(127, max(0, round((vb_idx + 0.5) * step))))
+                            except Exception:
+                                vel_val = 0
+
+                        # Compute bar/pos and boundary using beat position
+                        start_beats = cur_time_beats
+                        local_bar_idx = int(start_beats // max(1.0, beats_per_bar))
+                        bar_idx = local_bar_idx + bar_offset
+                        # Use ordinal position within the (local) bar to keep values small and ordered
+                        if prev_local_bar is None or local_bar_idx != prev_local_bar:
+                            cur_bar = bar_idx
+                            pos_idx_in_bar = 0
+                        pos = int(pos_idx_in_bar)
+                        boundary_flag = 1 if (prev_local_bar is None or local_bar_idx != prev_local_bar) else 0
+
+                        # Apply optional filters
+                        keep_note = True
+                        if pitch_range:
+                            keep_note = pitch_range[0] <= pitch <= pitch_range[1]
+                            if not keep_note:
+                                stats["removed_by_pitch"] += 1
+                                stats["removed"] += 1
+                        if keep_note:
+                            row = {
+                                "pitch": pitch,
+                                "velocity": vel_val,
+                                "duration": dur_beats,
+                                "pos": pos,
+                                "boundary": boundary_flag,
+                                "bar": bar_idx,
+                                "instrument": name,
+                                "velocity_bucket": -1,
+                                "duration_bucket": -1,
+                            }
+                            if emit_buckets:
+                                if vb_idx is not None:
+                                    row["velocity_bucket"] = int(vb_idx)
+                                else:
+                                    row["velocity_bucket"] = bin_velocity(int(row["velocity"]), vel_bins)
+                                if db_idx is not None:
+                                    row["duration_bucket"] = int(db_idx)
+                                else:
+                                    row["duration_bucket"] = bin_duration(float(row["duration"]), dur_bins)
+                            rows.append(row)
+                            stats["kept"] += 1
+                            pitch_hist[pitch] += 1
+                            vel_hist[int(row["velocity"])] += 1
+                            dur_hist[int(round(float(row["duration"]) * 1000))] += 1
+
+                        # Advance cursors
+                        prev_local_bar = local_bar_idx
+                        pos_idx_in_bar += 1
+                        cur_time_beats += max(0.0, float(dur_beats))
+                        i += 2  # Skip NOTE and its following (DUV|D|V)
+                        continue
+                    # Finished token-sequence sample
+                    # Histograms for inst/track/program gathered above
+                    sample_counter += 1
+                    continue
+
+                # Legacy/explicit-sample format path (expects pitch field)
                 pitch = int(obj["pitch"])
                 fname = str(
                     obj.get("path")
@@ -641,6 +799,10 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--in is required when not using --from-corpus")
 
     files = [p for p in args.src.rglob("*") if p.suffix.lower() in {".mid", ".midi"}]
+    if not files:
+        raise SystemExit(
+            f"No MIDI files found under {args.src}. Place .mid/.midi files (Unicode/日本語のパス対応) and retry."
+        )
 
     tags: dict[str, list[tuple[float, str]]] = {}
     if args.boundary_on_section_change:
@@ -662,6 +824,22 @@ def main(argv: list[str] | None = None) -> int:
     train_stats = Counter()
     for p in train_files:
         sec = tags.get(p.name)
+        # Path-based instrument hint: allow folder/file names to drive selection when MIDI names are unhelpful.
+        path_str = "/".join([part for part in p.parts]).lower()
+        path_hint = False
+        if args.instrument:
+            try:
+                if args.instrument.lower() in path_str:
+                    path_hint = True
+            except Exception:
+                pass
+        if inst_re and not path_hint:
+            try:
+                if inst_re.search(path_str):
+                    path_hint = True
+            except Exception:
+                pass
+
         rows, matched = midi_to_rows(
             p,
             args.boundary_gap_beats,
@@ -669,6 +847,7 @@ def main(argv: list[str] | None = None) -> int:
             args.instrument.lower() if args.instrument else None,
             inst_re,
             pitch_range,
+            path_hint_match=path_hint,
             emit_buckets=args.emit_buckets,
             dur_bins=args.dur_bins,
             vel_bins=args.vel_bins,
@@ -692,6 +871,21 @@ def main(argv: list[str] | None = None) -> int:
     valid_stats = Counter()
     for p in valid_files:
         sec = tags.get(p.name)
+        path_str = "/".join([part for part in p.parts]).lower()
+        path_hint = False
+        if args.instrument:
+            try:
+                if args.instrument.lower() in path_str:
+                    path_hint = True
+            except Exception:
+                pass
+        if inst_re and not path_hint:
+            try:
+                if inst_re.search(path_str):
+                    path_hint = True
+            except Exception:
+                pass
+
         rows, matched = midi_to_rows(
             p,
             args.boundary_gap_beats,
@@ -699,6 +893,7 @@ def main(argv: list[str] | None = None) -> int:
             args.instrument.lower() if args.instrument else None,
             inst_re,
             pitch_range,
+            path_hint_match=path_hint,
             emit_buckets=args.emit_buckets,
             dur_bins=args.dur_bins,
             vel_bins=args.vel_bins,

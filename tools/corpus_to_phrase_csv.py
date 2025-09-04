@@ -36,6 +36,7 @@ FIELDS = [
     "boundary",
     "bar",
     "instrument",
+    "song_id",
     "velocity_bucket",
     "duration_bucket",
 ]
@@ -852,6 +853,10 @@ def main(argv: list[str] | None = None) -> int:
             dur_bins=args.dur_bins,
             vel_bins=args.vel_bins,
         )
+        # attach song_id from filename stem
+        sid = p.stem
+        for r in rows:
+            r["song_id"] = sid
         if not rows:
             if args.instrument and not matched:
                 train_stats["instrument"] += 1
@@ -898,6 +903,9 @@ def main(argv: list[str] | None = None) -> int:
             dur_bins=args.dur_bins,
             vel_bins=args.vel_bins,
         )
+        sid = p.stem
+        for r in rows:
+            r["song_id"] = sid
         if not rows:
             if args.instrument and not matched:
                 valid_stats["instrument"] += 1

@@ -420,13 +420,31 @@ def train_model(
             use_duv_embed: bool = False,
             limit_groups: int = 0,
         ) -> None:
-            by_bar: dict[int, list[dict[str, str]]] = {}
+            # Group contiguously by bar value to avoid mixing bars from different files.
+            # The CSV rows are appended file-by-file, so a reset of the bar index
+            # indicates a new file. Using contiguous grouping preserves per-file bars
+            # without requiring an explicit file id column.
+            groups: list[list[dict[str, str]]] = []
+            cur: list[dict[str, str]] = []
+            prev_bar: int | None = None
             for r in rows:
-                bar = int(r["bar"])
-                by_bar.setdefault(bar, []).append(r)
-            groups = [
-                sorted(g, key=lambda r: int(r["pos"])) for bar, g in sorted(by_bar.items())
-            ]
+                try:
+                    bar = int(r.get("bar", 0))
+                except Exception:
+                    bar = 0
+                if prev_bar is None:
+                    cur = [r]
+                    prev_bar = bar
+                    continue
+                if bar != prev_bar:
+                    # finalize previous group
+                    groups.append(sorted(cur, key=lambda x: int(x.get("pos", 0))))
+                    cur = [r]
+                    prev_bar = bar
+                else:
+                    cur.append(r)
+            if cur:
+                groups.append(sorted(cur, key=lambda x: int(x.get("pos", 0))))
             if limit_groups and limit_groups > 0:
                 groups = groups[: max(1, int(limit_groups))]
             self.groups = groups
@@ -1262,7 +1280,20 @@ def train_model(
         )
     except StopIteration:  # pragma: no cover - empty validation set
         pass
-    print(json.dumps({"f1": best_f1}))
+    # Emit a compact JSON summary to ease sweeps/log parsing
+    print(
+        json.dumps(
+            {
+                "f1": float(best_f1),
+                "best_th": float(best_threshold),
+                "arch": arch,
+                "d_model": int(d_model),
+                "pos_weight": float(pos_weight) if pos_weight else None,
+                "w_boundary": float(w_boundary),
+                "duv_mode": duv_mode,
+            }
+        )
+    )
     stats = {
         "class_counts": class_counts,
         "tag_counts": tag_counts,

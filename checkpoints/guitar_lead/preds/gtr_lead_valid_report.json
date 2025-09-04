@@ -1,0 +1,82 @@
+{
+  "source": "data/phrase_csv/gtr_lead_valid.csv",
+  "out_csv": "checkpoints/guitar_lead/preds/gtr_lead_valid_preds.csv",
+  "th": 0.51,
+  "wrote": 2763,
+  "eval_on_input": {
+    "best_f1": 0.7908820614469773,
+    "best_th": 0.49,
+    "pr_auc": 0.8981506145942759
+  },
+  "by_song": [
+    {
+      "song_id": "S0001",
+      "len": 246,
+      "best_f1": 0.801980198019802,
+      "best_th": 0.63
+    },
+    {
+      "song_id": "S0002",
+      "len": 373,
+      "best_f1": 0.7777777777777778,
+      "best_th": 0.39
+    },
+    {
+      "song_id": "S0003",
+      "len": 345,
+      "best_f1": 0.777292576419214,
+      "best_th": 0.53
+    },
+    {
+      "song_id": "S0004",
+      "len": 514,
+      "best_f1": 0.8168316831683168,
+      "best_th": 0.49
+    },
+    {
+      "song_id": "S0005",
+      "len": 172,
+      "best_f1": 0.859504132231405,
+      "best_th": 0.49
+    },
+    {
+      "song_id": "S0006",
+      "len": 474,
+      "best_f1": 0.7630057803468208,
+      "best_th": 0.39
+    },
+    {
+      "song_id": "S0007",
+      "len": 246,
+      "best_f1": 0.801980198019802,
+      "best_th": 0.63
+    },
+    {
+      "song_id": "S0008",
+      "len": 97,
+      "best_f1": 0.8363636363636363,
+      "best_th": 0.63
+    },
+    {
+      "song_id": "S0009",
+      "len": 296,
+      "best_f1": 0.8175182481751825,
+      "best_th": 0.63
+    }
+  ],
+  "viz_files": [
+    "checkpoints/guitar_lead/preds/figs/pr_curve.png",
+    "checkpoints/guitar_lead/preds/figs/confusion_matrix.png"
+  ],
+  "viz_timeseries": [
+    "checkpoints/guitar_lead/preds/figs/timeseries_S0004.png",
+    "checkpoints/guitar_lead/preds/figs/timeseries_S0006.png",
+    "checkpoints/guitar_lead/preds/figs/timeseries_S0002.png",
+    "checkpoints/guitar_lead/preds/figs/timeseries_S0003.png",
+    "checkpoints/guitar_lead/preds/figs/timeseries_S0009.png",
+    "checkpoints/guitar_lead/preds/figs/timeseries_S0001.png",
+    "checkpoints/guitar_lead/preds/figs/timeseries_S0007.png",
+    "checkpoints/guitar_lead/preds/figs/timeseries_S0005.png",
+    "checkpoints/guitar_lead/preds/figs/timeseries_S0008.png"
+  ]
+}

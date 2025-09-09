@@ -1,11 +1,3 @@
-pitch,duration,prev_vel,velocity
-60,1.0,64,64
-62,1.0,64,64
-64,1.0,64,64
-65,1.0,64,64
-67,1.0,64,64
-69,1.0,64,64
-71,1.0,64,64
-72,1.0,64,64
-74,1.0,64,64
-76,1.0,64,64
+version https://git-lfs.github.com/spec/v1
+oid sha256:b060f10947e6dd1f94132f9ef18d1be72e148d93838a4a5b0cfa6b8022e3efb1
+size 163

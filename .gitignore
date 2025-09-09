@@ -65,3 +65,6 @@ ls -la data/loops_converted/ | head -5
 ls -la utilities/duration_csv.py
 q
 
+data/phrase_csv/*.csv
+data/phrase_csv/piano_shards/
+.venv311/

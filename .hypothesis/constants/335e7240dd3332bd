@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/tools/generate_demo_midis.py
-# hypothesis_version: 6.135.29
-
-['*', '-', '--dry-run', '--main-cfg', '--output-dir', '--output-filename', '--sections', '-m', 'Sax Solo', '_', '__main__', 'demos', 'modular_composer.py', 'python3', 'r', 'sections_to_generate', 'utf-8', '‑']

@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/generator/melody_generator.py
-# hypothesis_version: 6.135.29
-
-[0.0, 0.125, 0.5, 0.7, 0.95, 1.0, 2.0, 3.0, 4.0, 100, '.fallback_utils', '4/4', 'C', 'Melody', 'Soprano Sax', '__main__', '_opt', '_template', 'chord_label', 'default_subtle', 'density', 'description', 'humanize', 'humanize_', 'humanize_profile', 'major', 'melody', 'melody_humanize', 'melody_humanize_', 'midi', 'mode', 'n.c.', 'nc', 'none', 'note_duration_ql', 'octave_range', 'part_params', 'pattern', 'q_length', 'rest', 'rhythm_key', 'skip', 'stretch_factor', 'tonic_of_section', 'velocity']

@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/mixing_assistant/download_ref_masters.py
-# hypothesis_version: 6.136.0
-
-[300, 8192, 65536, '--concurrency', '--csv', '--out', '--timeout', '..', '.part', '.zip', 'B', 'Content-Length', 'Range', 'Skipping %s', '__main__', 'ab', 'checksum_sha1', 'download_refs', 'main', 'master.wav', 'rb', 'stems', 'stems.zip', 'url', 'wb']

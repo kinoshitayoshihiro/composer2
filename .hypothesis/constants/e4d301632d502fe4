@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/streamlit_app/phrase_gui.py
-# hypothesis_version: 6.136.0
-
-[0.0, 0.5, 1.0, 'Architecture', 'MIDI or MusicXML', 'Phrase Segmenter', 'Refine & Re-train', 'Threshold', '__main__', '_arch', '_model', 'arch', 'boundary-json', 'cache_data', 'lstm', 'mid', 'midi', 'phrase.ckpt', 'retrain', 'roll', 'thr', 'transformer', 'upload', 'xml']

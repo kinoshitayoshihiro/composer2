@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/scripts/evaluate_piano_model.py
-# hypothesis_version: 6.135.29
-
-[0.0, 1e-08, 1e-05, 1.0, 100.0, 127, '*.mid', '--generated', '--out', '--reference', '__main__', 'groove_similarity', 'pitch_precision', 'pitch_recall', 'velocity_kl', 'w']

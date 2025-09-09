@@ -1,6 +1,0 @@
-product: pianist_vibe
-octave_base: -2
-keyswitches:
-  - name: placeholder
-    note: 24
-    hold: true

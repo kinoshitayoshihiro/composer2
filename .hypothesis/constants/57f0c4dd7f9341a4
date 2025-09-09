@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/audio_to_midi_batch.py
-# hypothesis_version: 6.135.29
-
-[-40.0, 0.0, 1e-06, 0.15, 1.0, 120, 127, ',', '--ext', '--jobs', '--min-db', '--overwrite', '--part', '--stem', '__main__', 'drums', 'in_dir', 'out_dir', 'perc', 'store_true', 'wav,mp3,flac']

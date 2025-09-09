@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/time_utils.py
-# hypothesis_version: 6.136.0
-
-[0.0, 60.0, 'get_end_time', 'seconds_to_qlen']

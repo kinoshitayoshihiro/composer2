@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/override_loader.py
-# hypothesis_version: 6.135.29
-
-[127, '--list-sections', '--part', '--section', '.json', '.toml', '.yaml', '.yml', 'Sections found:', '__main__', 'allow', 'extra', 'file', 'store_true', 'utf-8']

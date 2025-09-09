@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/fx_envelope.py
-# hypothesis_version: 6.135.29
-
-[0.5, 1.0, 120.0, 3000.0, 127, '_extra_cc', 'apply', 'brightness', 'cc', 'chorus', 'delay', 'duration_ql', 'end', 'end_val', 'exp', 'lin', 'log', 'reverb', 'shape', 'start', 'start_val', 'type']

@@ -1,5 +1,0 @@
-allow_internet: true
-setup_scripts:
-  - bash setup.sh
-test_commands:
-  - pytest -q

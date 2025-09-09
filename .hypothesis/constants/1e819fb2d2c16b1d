@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/bass_timbre_dataset.py
-# hypothesis_version: 6.136.0
-
-[1e-08, 0.5, 2.0, 128, 512, 2048, 24000, 30000, '*.wav', '.mel_cache', 'BassTimbreDataset', 'TimbrePair', '__', 'compute_mel_pair', 'find_pairs', 'full', 'id', 'librosa is required', 'src', 'synth', 'tgt', 'wood']

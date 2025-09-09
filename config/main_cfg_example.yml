@@ -1,8 +1,0 @@
-part_defaults:
-  piano:
-    tone_preset: grand_clean
-    enable_articulation: true
-  vocal:
-    vibrato_depth: 0.5
-    vibrato_rate: 5.0
-    enable_articulation: true

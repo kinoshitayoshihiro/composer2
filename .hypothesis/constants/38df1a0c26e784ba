@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/generator/piano_template_generator.py
-# hypothesis_version: 6.135.29
-
-[0.0, 0.5, 1.0, 127, 480, '<[^>]+>', 'C', '_down', '_extra_cc', '_up', 'activeSite', 'cc', 'chord_stream', 'down', 'drop2', 'extra_cc', 'gliss', 'groove_kicks', 'guide', 'high', 'humanize_profile', 'intensity', 'low', 'medium', 'musical_intent', 'pedalType', 'piano_lh', 'piano_rh', 'q_length', 'shell', 'swing_ratio', 'time', 'trill', 'up', 'use_pedal', 'val', 'voicing_mode']

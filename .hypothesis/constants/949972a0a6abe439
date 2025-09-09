@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/eval/latency.py
-# hypothesis_version: 6.135.29
-
-[0.0, 0.25, 60.0, 120.0, 1000.0, 100, 'avg_ms', 'duration', 'instrument', 'kick', 'ngram', 'offset', 'velocity']

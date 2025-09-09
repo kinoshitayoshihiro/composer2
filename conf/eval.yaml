@@ -1,8 +1,0 @@
-ckpt: outputs/last.ckpt
-data:
-  _target_: data.articulation_datamodule.ArticulationDataModule
-  csv_path: data/val.csv
-  batch_size: 1
-  weighted: false
-  val_pct: 0.0
-  num_workers: 0

@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/live_player.py
-# hypothesis_version: 6.135.29
-
-[60.0, 100, 'No MIDI output ports', 'instrument', 'kick', 'next_step', 'note_off', 'note_on', 'offset', 'velocity']

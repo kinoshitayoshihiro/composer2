@@ -1,4 +1,0 @@
--r gpu.txt
-TorchCRF>=1.0.5
-TorchCRF>=1.0,<2.0
-pandas>=2.0

@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/scripts/audio_to_velocity_csv.py
-# hypothesis_version: 6.136.6
-
-[0.1, '*.wav', '--loops-dir', '--midi-dir', '--out', '__main__', 'data/loops', 'data/loops_converted', 'data/velocity.csv', 'note_on', 'time', 'velocity', 'w']

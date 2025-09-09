@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/scripts/extract_piano_voicings.py
-# hypothesis_version: 6.136.0
-
-[60.0, 120.0, '*.mid*', '--midi-dir', '--out', 'C', 'Chord', 'LH', 'RH', '__main__', 'bar', 'beat', 'dur', 'events', 'file', 'hand', 'lh', 'note', 'quality', 'rh', 'root', 'unknown', 'utf-8', 'velocity', 'voicing', 'w']

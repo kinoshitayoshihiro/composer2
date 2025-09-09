@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/onset_heatmap.py
-# hypothesis_version: 6.135.29
-
-[4.0, '?', 'Bins per measure', 'Input MIDI file', 'Output JSON path', '__main__', 'count', 'grid_index', 'heatmap.json', 'midi_path', 'output', 'r', 'resolution', 'utf-8', 'w', '拍子情報が見つかりませんでした。']

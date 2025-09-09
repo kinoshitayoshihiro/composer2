@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/pedal_frames.py
-# hypothesis_version: 6.136.0
-
-[512, 22050, '*.mid', '--csv', '__main__', 'csv_out', 'frame_id', 'midi_dir', 'no MIDI files found', 'pedal_state', 'rel_release', 'right', 'track_id']

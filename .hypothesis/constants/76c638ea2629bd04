@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/fastapi_compat.py
+# hypothesis_version: 6.136.4
+
+[200, 422, 'FastAPI', 'HTTPException', 'JSONResponse', 'Request', 'WebSocket', 'WebSocketDisconnect', 'status']

@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/velocity_csv.py
+# hypothesis_version: 6.136.0
+
+['*.mid', 'build_velocity_csv', 'duration', 'events', 'file', 'pitch', 'pretty_midi required', 'prev_vel', 'velocity', 'w']

@@ -1,0 +1,8 @@
+_target_: ml_models.tagger_module.TaggerModule
+num_labels: 9
+pitch_dim: 16
+bucket_dim: 4
+pedal_dim: 2
+hidden_size: 128
+num_layers: 2
+dropout: 0.2

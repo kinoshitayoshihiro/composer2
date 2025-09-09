@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/realtime/rtmidi_streamer.py
+# hypothesis_version: 6.135.29
+
+[0.0, 0.25, 4.0, 30.0, 60.0, 120.0, 1000.0, 100, 128, 144, 'beat', 'bpm', 'duration', 'jitter %.1f ms', 'offset', 'pitch', 'velocity']

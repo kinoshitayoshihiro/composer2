@@ -1,0 +1,28 @@
+name: Data-Ops Smoke
+on: [push, pull_request]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
+      - name: Install dependencies
+        run: |
+          for i in 1 2 3; do
+            pip install -e .[test,all] -r requirements-test.txt && break || sleep 5
+          done
+          pip install -e .[audio]
+      - run: ruff check data_ops streamlit_app_v2.py tests/test_auto_tag.py tests/test_augment.py tests/test_gui_import.py
+      - run: mypy data_ops streamlit_app_v2.py tests/test_auto_tag.py tests/test_augment.py tests/test_gui_import.py --strict
+      - run: pytest -m "data_ops or gui" -q
+        timeout-minutes: 5
+      - run: pytest -m "velocity" -q
+        timeout-minutes: 5

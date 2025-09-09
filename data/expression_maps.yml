@@ -1,0 +1,18 @@
+gentle_legato:
+  articulations: ["legato"]
+  cc:
+    11: [40, 80]
+  velocity_curve_name: "soft"
+  mute_velocity_factor: 0.85
+marcato_drive:
+  articulations: ["accent", "detaché"]
+  cc:
+    1: 80
+    11: 90
+  velocity_curve_name: "hard"
+  mute_velocity_factor: 0.85
+emotion_map:
+  default:
+    default: gentle_legato
+    high: marcato_drive
+    very_high: marcato_drive

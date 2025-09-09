@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/rtmidi_streamer.py
+# hypothesis_version: 6.136.0
+
+[0.0, 5.0, 120.0, 1000.0, 127, 128, 144, 176, 'MIDI send failed: %s', 'No MIDI output ports', '_extra_cc', 'beat', 'bpm', 'cc', 'extra_cc', 'max_ms', 'mean_ms', 'stdev_ms', 'time', 'val']

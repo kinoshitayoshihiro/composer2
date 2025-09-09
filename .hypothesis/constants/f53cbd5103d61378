@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/rhythm_library_loader.py
+# hypothesis_version: 6.135.29
+
+[0.0, 1.0, 4.0, 127, 200, 2048, ' -> ', '*.*', '*/*', '--extra-dir', '--force-reload', '--list', '--show', '.', '...', '.json', '.toml', '.yaml', '.yml', '4/4', '?', 'PATH.TO.KEY', 'PyYAML not installed', 'RHYTHM_EXTRA_DIR', 'RHYTHM_LIBRARY_PATH', '__main__', 'allow', 'bass', 'beat', 'before', 'ctx', 'drum_patterns', 'drums', 'duration', 'extra', 'extra_patterns', 'fixed_pattern', 'guitar', 'guitar_patterns', 'input', 'length_beats', 'library_file', 'loc', 'pattern', 'piano', 'populate_by_name', 'r', 'store_true', 'str_max_length', 'time_signature', 'tomli not installed', 'utf-8']

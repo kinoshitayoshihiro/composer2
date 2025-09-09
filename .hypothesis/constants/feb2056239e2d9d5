@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/data/articulation_dataset.py
+# hypothesis_version: 6.136.0
+
+[0.0, 1.0, 'ArticulationDataset', 'articulation_label', 'bucket', 'collate', 'dur', 'get_dataloader', 'label', 'labels', 'onset', 'pad_mask', 'pedal', 'pedal_state', 'pitch', 'qlen', 'seq_collate', 'track_id', 'vel', 'velocity']

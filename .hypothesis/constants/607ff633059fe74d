@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/plugins/vocal_companion_stub.py
+# hypothesis_version: 6.135.29
+
+[0.0, 0.5, 1.0, 5.0, 120.0, 100, 'backend', 'duration', 'enable_articulation', 'model_path', 'offset', 'pitch', 'synthv', 'velocity', 'vibrato_depth', 'vibrato_rate']

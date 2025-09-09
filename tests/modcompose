@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import sys
+from pathlib import Path
+
+# minimal stub for tests avoiding heavy imports
+
+def main(argv: list[str]) -> None:
+    if argv[:2] == ["fx", "render"]:
+        out = Path(argv[argv.index("-o") + 1]) if "-o" in argv else Path("out.wav")
+        out.touch()
+        return
+    raise SystemExit(0)
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

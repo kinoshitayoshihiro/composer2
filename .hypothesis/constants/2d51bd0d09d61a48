@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/loop_ingest.py
+# hypothesis_version: 6.135.29
+
+[0.1, 0.2, 60.0, 120.0, 100, 480, 600, ',', '--ext', '--out', '--ppq', '--resolution', '.', '.mid', '.midi', '.wav', 'Infer aux metadata', 'LoopEntry', 'Timed out loading %s', '__main__', 'bar_beats', 'cache', 'cache.pkl', 'cli', 'data', 'file', 'float32', 'hann', 'heat_bin', 'high', 'info', 'intensity', 'invalid loop cache', 'load_cache', 'low', 'main', 'mid', 'mid,wav', 'midi', 'out_path', 'paths', 'perc', 'ppq', 'rb', 'resolution', 'save_cache', 'scan', 'scan_loops', 'section', 'tempo_bpm', 'tokens', 'unknown', 'wav', 'wb', 'windows']

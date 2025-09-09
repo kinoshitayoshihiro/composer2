@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/sitecustomize.py
+# hypothesis_version: 6.136.0
+
+[0.0, 60.0, 120.0, '1', 'COMPOSER_CI_STUBS', '_stub_utils', 'music21', 'obj', 'scipy', 'set_tempo_changes', 'stub_utils.py', 'utilities']

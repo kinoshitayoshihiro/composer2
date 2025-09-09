@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/tone_shaper.py
+# hypothesis_version: 6.135.29
+
+[-6.0, -3.0, -1.5, 0.0, 0.3, 0.5, 0.8, 1.0, 64.0, 100, 110, 120, 127, 200, 3000, 8000, '.yaml', '.yml', '0', '1', 'IGNORE_MISSING_IR', 'IR file missing: %s', 'PRESET_LIBRARY_PATH', 'ToneShaper', '__builtins__', 'amp', 'avg_velocity', 'cc', 'cc_map', 'chorus', 'chorus_depth', 'clean', 'crunch', 'data', 'data/ir/clean.wav', 'data/ir/crunch.wav', 'data/ir/drive.wav', 'data/ir/dx7_ep.wav', 'data/ir/fuzz.wav', 'delay', 'drive', 'drive_default', 'ep_phase', 'eq', 'fuzz', 'gain_db', 'grand_clean', 'h', 'high', 'if', 'intensity', 'ir', 'ir_file', 'levels', 'loud', 'low', 'lpf', 'lufs', 'm', 'medium', 'preset', 'preset_library.yml', 'presets', 'r', 'reverb', 'rules', 'soft', 'time', 'upright_mellow', 'utf-8', 'val']

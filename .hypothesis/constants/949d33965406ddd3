@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/api/server.py
+# hypothesis_version: 6.136.4
+
+['/generate', 'bars', 'chords']

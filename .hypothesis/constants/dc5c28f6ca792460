@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/generator/piano_ml_generator.py
+# hypothesis_version: 6.135.29
+
+[0.9, 512, 'PianoMLGenerator', 'bar']

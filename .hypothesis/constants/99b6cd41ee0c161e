@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/duration_datamodule.py
+# hypothesis_version: 6.136.0
+
+[0.0, 0.9, 'DurationDataModule', 'bar', 'collate_fn', 'duration', 'pitch', 'pitch_class', 'position', 'position_in_bar', 'velocity']

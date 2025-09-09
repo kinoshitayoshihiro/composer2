@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/tools/generate_demo_midis.py
+# hypothesis_version: 6.136.0
+
+[0.999, 60.0, 120, '*', '-', '--cond-feel', '--cond-style', '--dry-run', '--main-cfg', '--output-dir', '--output-filename', '--sections', '-m', '/', '4/4', 'DISPLAY', 'MC_SF2', 'Percussion', 'Sax Solo', '_', '__main__', 'assets/default.sf2', 'cond', 'demos', 'drums', 'duration', 'feel', 'global_settings', 'instrument', 'kick', 'model_path', 'modular_composer.py', 'offset', 'part_defaults', 'percussion', 'python3', 'r', 'sections_to_generate', 'snare', 'style', 'tempo_bpm', 'time_signature', 'utf-8', 'velocity', '‑']

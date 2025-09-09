@@ -1,0 +1,18 @@
+sample_rate: 16000
+hop_length_ms: 20
+midi_feature_dim: 64
+hidden_size: 256
+dropout: 0.1
+ctc_blank: "<blank>"
+freeze_encoder: false
+gradient_checkpointing: false
+train_dir: data/train
+val_dir: data/val
+batch_size: 2
+epochs: 1
+lr: 0.001
+warmup_steps: 1000
+max_grad_norm: 1.0
+checkpoint: outputs/lyrics_align.ckpt
+trainer:
+  default_root_dir: ./outputs

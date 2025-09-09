@@ -1,0 +1,4 @@
+[run]
+omit =
+    utilities/progression_templates_broken.py
+    utilities/vocal_sync_backup.py

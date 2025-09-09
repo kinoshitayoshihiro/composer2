@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/generator_factory.py
+# hypothesis_version: 6.135.29
+
+['4/4', 'bass', 'bass_patterns', 'counter', 'default_instrument', 'drum_map', 'drum_patterns', 'drums', 'global_settings', 'guitar', 'key_mode', 'key_tonic', 'main_cfg', 'melody', 'model_dump', 'pad', 'part_defaults', 'part_parameters', 'piano', 'piano_patterns', 'rhythm', 'riff', 'role', 'sax', 'strings', 'tempo_bpm', 'time_signature', 'unison']

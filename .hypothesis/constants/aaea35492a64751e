@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/tools/dump_tree.py
+# hypothesis_version: 6.136.0
+
+[1024, '\n\nLargest files:\n', '\nLargest dirs:\n', '\nLargest files:', '\n```\n', ' -> ', '--color', '--depth', '--exclude', '--follow-symlinks', '--human-size', '--include-hidden', '--largest', '--match', '--max-files-per-dir', '--out', '--progress', '--summary', '--version', '-a', '-d', '.', '.json', '.md', '0.2.1', '?', 'B', 'GiB', 'KiB', 'Largest dirs:', 'MiB', 'Summary', 'TiB', '__main__', '```\n', 'append', 'children', 'colorize stdout', 'dir', 'dirs', 'file', 'files', 'glob to exclude', 'glob to include', 'include hidden files', 'largest', 'note', 'output file path', 'path', 'placeholder', 'root', 'scanning', 'show progress bar', 'size', 'store_true', 'summary', 'symlink', 'target', 'total_size', 'tree', 'type', 'version', '…', '│   ', '└', '└── ', '├', '├── ']

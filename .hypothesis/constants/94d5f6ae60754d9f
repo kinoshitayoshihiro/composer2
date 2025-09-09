@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/conftest.py
+# hypothesis_version: 6.136.6
+
+[120, '4/4', 'C', 'default_instrument', 'global_settings', 'global_tempo', 'major', 'part_name', 'strings']

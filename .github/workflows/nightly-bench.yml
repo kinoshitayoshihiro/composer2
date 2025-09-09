@@ -1,0 +1,78 @@
+name: nightly-bench
+on:
+  schedule:
+    - cron: '0 2 * * *'
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
+      - name: Install dependencies
+        run: |
+          for i in 1 2 3; do
+            pip install -e .[test,rnn,live,data_ops] -r requirements-test.txt && break || sleep 5
+          done
+      - name: mini corpus
+        run: |
+          python - <<'PY'
+          import pretty_midi, json, pathlib
+          p = pathlib.Path('mini')
+          p.mkdir(exist_ok=True)
+          pm = pretty_midi.PrettyMIDI(initial_tempo=120)
+          inst = pretty_midi.Instrument(program=0, is_drum=True)
+          inst.notes.append(pretty_midi.Note(velocity=100, pitch=36, start=0.0, end=0.1))
+          pm.instruments.append(inst)
+          pm.write(str(p/'0.mid'))
+          PY
+      - run: modcompose groove train mini --ext midi --out ngram.pkl
+      - run: modcompose groove sample ngram.pkl -l 1 --humanize vel > gen.mid
+      - run: |
+          python - <<'PY'
+          import json
+          from eval import metrics, latency
+
+          ev = [
+              {'instrument': 'kick', 'offset': 0.0, 'velocity': 100},
+              {'instrument': 'kick', 'offset': 0.5, 'velocity': 100},
+          ]
+          res = {
+              'latency': latency.evaluate_model('ngram.pkl'),
+              'swing_score': metrics.swing_score(ev),
+          }
+          with open('results.json', 'w') as fh:
+              json.dump(res, fh)
+          PY
+      - run: |
+          blec=$(modcompose eval metrics mini/0.mid --ref gen.mid | jq -r '.blec')
+          jq --arg blec "$blec" '. + {blec: ($blec|tonumber)}' results.json > tmp && mv tmp results.json
+          python - <<'PY'
+          import json
+          with open('results.json') as fh:
+              res = json.load(fh)
+          if (res['latency']['avg_ms'] > 12 or res['blec'] > 0.22 or res['swing_score'] < 0.6):
+              raise SystemExit('benchmark fail')
+          PY
+      - name: realtime ws bench
+        run: |
+          python - <<'PY'
+          import re, subprocess, sys
+          out = subprocess.check_output(['python', 'scripts/bench_ws.py'], text=True)
+          m = re.search(r'avg (\d+\.\d+)', out)
+          val = float(m.group(1)) if m else 1e9
+          print('ws avg', val)
+          if val > 50:
+              sys.exit('ws too slow')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-results
+          path: results.json

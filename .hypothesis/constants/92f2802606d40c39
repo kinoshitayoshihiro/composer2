@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/ml_models/articulation_tagger.py
+# hypothesis_version: 6.136.4
+
+[0.001, 0.2, 128, 'decode', 'loss', 'lr_scheduler', 'mask', 'monitor', 'optimizer', 'pad_mask', 'pedal', 'pitch', 'qlen', 'scheduler', 'val_loss', 'velocity']

@@ -1,0 +1,43 @@
+name: Lint and Test
+on: [push, pull_request]
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip/wheels/**/cyext*
+          key: ${{ runner.os }}-cyext-${{ hashFiles('cyext/**.pyx') }}
+      - name: Install dependencies
+        run: |
+          for i in 1 2 3; do
+            pip install -e .[dev,audio] -r requirements-test.txt && break || sleep 5
+          done
+      - name: Install formatters
+        run: pip install black isort
+      - name: Check formatting
+        run: |
+          black --check .
+          isort --check .
+      - run: pip install .[all,audio,ml]
+      - run: bash scripts/ci_groove.sh
+      - run: pytest -q
+
+  stretch-smoke:
+    if: startsWith(github.ref, 'refs/heads/stretch/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: |
+          for i in 1 2 3; do
+            pip install -e .[dev,groove,gui,rnn] && break || sleep 5
+          done
+      - run: bash scripts/ci_groove_rnn.sh

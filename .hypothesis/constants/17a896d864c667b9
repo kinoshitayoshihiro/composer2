@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/vocal_sync.py
+# hypothesis_version: 6.135.29
+
+[1e-06, 0.25, 2.0, '--tempo-map', '__main__', 'midi', 'peaks', 'r', 'tempo_map']

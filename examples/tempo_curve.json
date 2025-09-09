@@ -1,0 +1,5 @@
+[
+  {"beat": 0, "bpm": 120, "curve": "linear"},
+  {"beat": 32, "bpm": 108, "curve": "linear"},
+  {"beat": 64, "bpm": 128}
+]

@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/merge_artic_features.py
+# hypothesis_version: 6.136.0
+
+[0.0, 1e-06, '*', '+', '--float-rnd', '--note-features', '--out', '--pedal-features', '--schema-check', '__main__', 'artic.csv', 'articulation_label', 'duration', 'onset', 'pedal_state', 'pitch', 'records', 'store_true', 'track_id', 'velocity']

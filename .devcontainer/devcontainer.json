@@ -1,0 +1,16 @@
+{
+  "name": "composer2-dev",
+  "build": { "dockerfile": "Dockerfile" },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter"
+      ]
+    }
+  },
+
+  "postCreateCommand": "bash ./setup_project.sh",
+  "remoteUser": "vscode"
+}

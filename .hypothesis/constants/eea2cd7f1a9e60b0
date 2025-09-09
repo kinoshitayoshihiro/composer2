@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/data_ops/auto_tag.py
+# hypothesis_version: 6.136.0
+
+[60.0, 120.0, '*.mid', '--csv', '--k-intensity', '--out', '__main__', 'bar', 'bridge', 'chorus', 'file', 'high', 'intensity', 'intro', 'loop_dir', 'low', 'meta.json', 'mid', 'modcompose tag', 'section', 'size', 'verse', 'w']

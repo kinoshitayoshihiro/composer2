@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/vocal_synth.py
+# hypothesis_version: 6.136.0
+
+['--model', '--output', 'Hello', 'Vocal synthesis', '__main__', 'sunoai not installed']

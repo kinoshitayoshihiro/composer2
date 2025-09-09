@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/midi_capture.py
+# hypothesis_version: 6.135.29
+
+[0.0, 60.0, 120.0, 128, 144, 240, 'No MIDI input ports']

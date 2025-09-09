@@ -1,0 +1,20 @@
+presets:
+  clean: 20
+  crunch: 50
+  drive: 90
+  fuzz: 110
+ir:
+  clean: "irs/blackface-clean.wav"
+  crunch: "irs/vintage-30.wav"
+  drive: "irs/greenback-drive.wav"
+  fuzz: "irs/fuzz-factory.wav"
+levels:
+  clean:  {reverb: 40, chorus: 20, delay: 10}
+  crunch: {reverb: 50, chorus: 35, delay: 20}
+  drive:  {reverb: 60, chorus: 45, delay: 30}
+  fuzz:   {reverb: 70, chorus: 55, delay: 35}
+rules:
+  - if: "intensity=='high' or avg_velocity>100"
+    preset: drive
+  - if: "avg_velocity<50"
+    preset: clean

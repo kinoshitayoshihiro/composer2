@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/synth.py
+# hypothesis_version: 6.135.29
+
+[0.0, 44100, '-F', '-ni', 'SF2_PATH', 'fluidsynth', 'ir_file', 'metadata', 'stream.Part']

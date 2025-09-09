@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/generator/__init__.py
+# hypothesis_version: 6.135.29
+
+['BasePartGenerator', 'BassGenerator', 'ChordVoicer', 'DrumGenerator', 'EXEC_STYLE_TREMOLO', 'EXEC_STYLE_TRILL', 'GuitarGenerator', 'MelodyGenerator', 'ModularComposer', 'PianoGenerator', 'PianoMLGenerator', 'PianoTransformer', 'SaxGenerator', 'StringsGenerator', 'VocalGenerator']

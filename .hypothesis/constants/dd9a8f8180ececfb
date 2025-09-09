@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/scripts/align_lyrics.py
+# hypothesis_version: 6.136.6
+
+[511, 1000, '--audio', '--batch', '--ckpt', '--device', '--midi', '--out_json', '--verbose', '__main__', 'audio', 'config', 'cpu', 'ctc_blank', 'dropout', 'freeze_encoder', 'hidden_size', 'hop_length_ms', 'midi', 'midi_feature_dim', 'missing file', 'model', 'phoneme', 'sample_rate', 'store_true', 'time_ms', 'vocab']

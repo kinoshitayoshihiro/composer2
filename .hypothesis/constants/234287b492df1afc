@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/tools/golden.py
+# hypothesis_version: 6.135.29
+
+['.mid', '1', 'MIDI files differ', 'UPDATE_GOLDENS', '__main__', 'ascii', 'generated', 'golden']

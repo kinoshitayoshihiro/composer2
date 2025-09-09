@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/scripts/train_lyrics_align.py
+# hypothesis_version: 6.136.4
+
+[0.0, 50.0, 511, 1000, '*.wav', '--epochs', '--out', '--train_dir', '--val_dir', '../configs', '.mid', '.phn', '1.3', '<blank>', '__main__', 'config', 'ctc_blank', 'dropout', 'freeze_encoder', 'hidden_size', 'hop_length_ms', 'hydra-core required', 'inf', 'lr_scheduler', 'lyrics_align.yaml', 'midi_feature_dim', 'min', 'model', 'model.ckpt', 'monitor', 'optimizer', 'sample_rate', 'scheduler', 'train_loss', 'val_loss', 'val_mae', 'vocab']

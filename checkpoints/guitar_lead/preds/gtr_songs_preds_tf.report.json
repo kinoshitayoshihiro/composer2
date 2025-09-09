@@ -1,6 +1,0 @@
-{
-  "source": "data/songs_norm",
-  "out_csv": "checkpoints/guitar_lead/preds/gtr_songs_preds_tf.csv",
-  "th": 0.3,
-  "wrote": 25652
-}

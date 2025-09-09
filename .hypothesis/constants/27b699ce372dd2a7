@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/scripts/dump_tree_v3.py
+# hypothesis_version: 6.136.0
+
+['\n```\n', '--version', '__main__', 'root', 'tree.md']

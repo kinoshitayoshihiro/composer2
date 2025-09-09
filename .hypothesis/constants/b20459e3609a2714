@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/cc_tools.py
+# hypothesis_version: 6.135.29
+
+[0.0, 'CCEvent', '_extra_cc', '_extra_cc_installed', 'add_cc_events', 'cc', 'extra_cc', 'finalize_cc_events', 'merge_cc_events', 'metadata', 'time', 'to_sorted_dicts', 'val', 'value']

@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/articulation_mapper.py
+# hypothesis_version: 6.135.29
+
+[-2.0, 0.0, 0.5, 127, 'add_key_switches', 'add_portamento', 'cc', 'duration', 'extra_cc', 'finger', 'mute', 'offset', 'slap', 'time', 'val']

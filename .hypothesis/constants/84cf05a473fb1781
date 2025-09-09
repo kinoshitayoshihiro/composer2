@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/generator/vocal_generator.py
+# hypothesis_version: 6.136.0
+
+[0.0, 0.125, 0.5, 5.0, 120, '.fallback_core_util', '4/4', 'H', 'L', 'Length', 'Offset', 'Pitch', 'Velocity', 'Vocal', '[gliss]', '[trill]', 'aeiou', 'aftertouch', 'cc', 'extra_cc', 'input', 'length', 'offset', 'phoneme_dict.json', 'pitch', 'pitch_bends', 'pitch_str', 'q_length', 'r', 'section_name', 'time', 'utf-8', 'utilities', 'val', 'velocity', 'vibrato', 'vocal_ballad_smooth']

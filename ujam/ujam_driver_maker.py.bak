@@ -1,0 +1,345 @@
+# ujam/ujam_driver_maker.py
+from __future__ import annotations
+import argparse, math, csv, statistics as st, os
+from typing import List, Dict, Tuple, Optional
+import pretty_midi as pm
+import yaml
+
+
+# ===== optional audio onset (librosa) =====
+def audio_onsets_to_dummy_notes(audio_path: str, tempo: float, beats: int = 4):
+    try:
+        import librosa
+
+        y, sr = librosa.load(audio_path, sr=None, mono=True)
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        onsets = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr, units="time")
+    except Exception:
+        return []  # librosa未導入や失敗時は無視
+    notes = []
+    for t in onsets:
+        # ダミー音（ピッチは適当、後工程では時刻情報のみ使用）
+        notes.append(pm.Note(velocity=96, pitch=64, start=float(t), end=float(t) + 0.05))
+    return notes
+
+
+# ===== phrase / style maps =====
+def build_common_phrase_map(c0: int, names_in_ui_order: List[str]) -> Dict[str, int]:
+    return {name: c0 + i for i, name in enumerate(names_in_ui_order)}
+
+
+def build_style_phrase_map(c1: int) -> Dict[str, int]:
+    return {f"style_{i+1}": c1 + i for i in range(12)}  # C1..B1
+
+
+# ===== utility =====
+def bars_iter(total_dur: float, bar_len: float):
+    n_bars = int(math.ceil(total_dur / bar_len + 1e-6))
+    for b in range(n_bars):
+        yield b, b * bar_len, (b + 1) * bar_len
+
+
+def notes_in_window(notes, t0, t1):
+    return [n for n in notes if not (n.end <= t0 or n.start >= t1)]
+
+
+def sixteenth_grid(bar_len: float) -> float:
+    return bar_len / 16.0
+
+
+def offbeat_ratio_16th(notes, bar_len):
+    if not notes:
+        return 0.0
+    six = sixteenth_grid(bar_len)
+    qpos = [round(((n.start % bar_len) / six)) for n in notes]
+    return sum(1 for q in qpos if q % 2 == 1) / max(1, len(qpos))
+
+
+def swing_ratio_16th(notes, bar_len):
+    if not notes:
+        return 0.0
+    six = sixteenth_grid(bar_len)
+    offs = []
+    for n in notes:
+        q = (n.start % bar_len) / six
+        frac = q - round(q)
+        offs.append(abs(frac))
+    if not offs:
+        return 0.0
+    return min(0.25, st.median(offs)) / 0.25  # 0..1
+
+
+def energy(notes):
+    if not notes:
+        return 0.0
+    return len(notes) + 0.005 * sum(n.velocity for n in notes)
+
+
+def detect_sections(bar_energies: List[float], win: int = 4) -> List[str]:
+    sm = []
+    for i in range(len(bar_energies)):
+        s = bar_energies[max(0, i - win + 1) : i + 1]
+        sm.append(sum(s) / max(1, len(s)))
+    if not sm:
+        return []
+    qs = st.quantiles(sm, n=4) if len(set(sm)) > 1 else [0, 0, 0]
+    lo, hi = qs[1], qs[2] if len(qs) >= 3 else (0.0, 0.0)
+    bands = []
+    for v in sm:
+        if v < lo:
+            bands.append("A")
+        elif v < hi:
+            bands.append("B")
+        else:
+            bands.append("Build")
+    return bands
+
+
+def fold_to_range(p, lo, hi):
+    while p < lo:
+        p += 12
+    while p > hi:
+        p -= 12
+    return p
+
+
+def power_chord_from_root(root, lo=60, hi=72):
+    r = fold_to_range(root, lo, hi)
+    pcs = [r, r + 7, r + 12]
+    return [p for p in pcs if p <= hi]
+
+
+def detect_root_midi_simple(notes_bar):
+    # 最低音をルート代理に（music21省略版）
+    return min(notes_bar, key=lambda n: (n.start, n.pitch)).pitch if notes_bar else 60
+
+
+# ===== phrase choice =====
+def choose_phrase(notes_bar, bar_len, rules, section_label):
+    if not notes_bar:
+        return "silence"
+    n = len(notes_bar)
+    durs = sorted([x.end - x.start for x in notes_bar])
+    med = durs[len(durs) // 2]
+    off = offbeat_ratio_16th(notes_bar, bar_len)
+
+    if med > rules["long_med_ratio"] * bar_len and n <= 3:
+        return "generic_rhythm_sustain"
+
+    if n >= rules["dense_eighth_notes"]:
+        if med < 0.10 * bar_len:
+            return "muted_1_8"
+        if off > rules["offbeat_threshold"]:
+            return "off_beat_1_8"
+        return "open_1_8"
+
+    if rules["quarter_range"][0] <= n <= rules["quarter_range"][1]:
+        return "open_stops_1_4"
+
+    if section_label == "Build":
+        return "build_up_open_1_8"
+
+    return "generic_chord_rhythm"
+
+
+# ===== swing microtiming =====
+def apply_swing_microtiming(note_list: List[pm.Note], bar_len: float, amount01: float):
+    """偶数16分（裏）を後ろへズラす。amount01=0..1"""
+    if amount01 <= 0:
+        return
+    six = sixteenth_grid(bar_len)
+    delay = amount01 * six * 0.5  # 最大で裏16分の半分だけ後ろへ
+    for n in note_list:
+        q = round(((n.start % bar_len) / six))
+        if q % 2 == 1:  # 裏
+            n.start += delay
+            n.end += delay
+
+
+# ===== vocal synchro =====
+def load_synchro_csv(path: str) -> List[Tuple[float, str]]:
+    evts = []
+    with open(path, newline="") as f:
+        for t, typ in csv.reader(f):
+            try:
+                evts.append((float(t), typ.strip()))
+            except Exception:
+                pass
+    return sorted(evts, key=lambda x: x[0])
+
+
+def nearest_grid_time(t: float, bar_len: float, div: int = 8) -> float:
+    step = bar_len / div
+    k = round(t / step)
+    return k * step
+
+
+# ===== main =====
+def main():
+    ap = argparse.ArgumentParser(description="Suno → UJAM driver MIDI (IRON2)")
+    ap.add_argument("input", help="MIDI or audio path")
+    ap.add_argument("out_mid")
+    ap.add_argument("--config", default=os.path.join(os.path.dirname(__file__), "config.yaml"))
+    ap.add_argument("--synchro", default=None, help="CSV(time_sec,type) for vocal sync")
+    args = ap.parse_args()
+
+    cfg = yaml.safe_load(open(args.config))
+    c0, c1 = cfg["ujam"]["c0"], cfg["ujam"]["c1"]
+    COMMON = build_common_phrase_map(c0, cfg["phrases_ui_order"])
+    STYLE = build_style_phrase_map(c1)
+    rules = cfg["rules"]
+    fills = cfg["fills"]
+    ccconf = cfg["cc"]
+
+    # 入力パース（MIDI or Audio）
+    src_notes = []
+    tempo = 120.0
+    beats = 4
+    if os.path.splitext(args.input)[1].lower() in [".mid", ".midi"]:
+        src = pm.PrettyMIDI(args.input)
+        tempos = src.get_tempo_changes()[1]
+        if len(tempos):
+            tempo = float(tempos[0])
+        inst_src = max(src.instruments, key=lambda i: len(i.notes))
+        src_notes = sorted(inst_src.notes, key=lambda n: n.start)
+        total = max((n.end for n in src_notes), default=0.0)
+    else:
+        tempo = 120.0
+        src_notes = audio_onsets_to_dummy_notes(args.input, tempo, beats=beats)
+        total = src_notes[-1].end if src_notes else 0.0
+
+    spb = 60.0 / tempo
+    bar = beats * spb
+
+    # セクション検出
+    bars = list(bars_iter(total, bar))
+    energies = [energy(notes_in_window(src_notes, t0, t1)) for _, t0, t1 in bars]
+    sections = detect_sections(energies, rules["section_window_bars"])
+
+    # 出力MIDI
+    out = pm.PrettyMIDI(initial_tempo=tempo)
+    drv = pm.Instrument(program=0, name="UJAM Driver")
+    out.instruments.append(drv)
+
+    # CCレーン（Instrumentに付与）
+    def add_cc(inst: pm.Instrument, time_s: float, cc_num: int, value: int):
+        inst.control_changes.append(pm.ControlChange(cc_num, value, time_s))
+
+    # Vocal Synchro
+    synchro_evts = load_synchro_csv(args.synchro) if args.synchro else []
+
+    # スタイル選択の起点
+    style_base = int(cfg["style_phrases"]["base"])
+    step_B = int(cfg["style_phrases"]["step_B"])
+    step_Build = int(cfg["style_phrases"]["step_Build"])
+    cycle_8bars = bool(cfg["style_phrases"]["cycle_8bars"])
+
+    def style_for_bar(b_idx: int, sect: str) -> str:
+        base = style_base
+        if sect == "B":
+            base += step_B
+        if sect == "Build":
+            base += step_Build
+        if cycle_8bars:
+            base += (b_idx // 8) % 12
+        while base > 12:
+            base -= 12
+        if base < 1:
+            base = 1
+        return f"style_{base}"
+
+    # 生成ループ
+    for (b, t0, t1), sect in zip(bars, sections):
+        bn = notes_in_window(src_notes, t0, t1)
+        cat = choose_phrase(bn, bar, rules, sect)
+        # Common Phrase trigger
+        drv.notes.append(pm.Note(velocity=100, pitch=COMMON[cat], start=t0 + 1e-4, end=t0 + 0.10))
+
+        # Style Phrase trigger（C1帯）
+        sty = style_for_bar(b, sect)
+        if sty in STYLE:
+            drv.notes.append(pm.Note(velocity=90, pitch=STYLE[sty], start=t0 + 0.02, end=t0 + 0.10))
+
+        # コード（単純：最低音をルートにしたパワーコード）
+        if bn:
+            root = detect_root_midi_simple(bn)
+            for p in power_chord_from_root(
+                root, cfg["ujam"]["chord_low"], cfg["ujam"]["chord_high"]
+            ):
+                n = pm.Note(velocity=100, pitch=p, start=t0 + 0.01, end=t1 - 0.02)
+                drv.notes.append(n)
+
+        # —— スイング：CC と microtiming の両対応 ——
+        swing_amt = swing_ratio_16th(bn, bar)  # 0..1
+        if rules.get("swing_mode", "both") in ("both", "cc") and ccconf["enable"]:
+            val = max(0, min(127, int(swing_amt * 127)))
+            add_cc(drv, t0 + 0.01, ccconf["swing_cc"], val)
+        if rules.get("swing_mode", "both") in ("both", "micro"):
+            # コードとフレーズにまとめて適用
+            bar_notes = [n for n in drv.notes if t0 <= n.start < t1]
+            apply_swing_microtiming(bar_notes, bar, swing_amt)
+
+        # —— フィル辞書（末小節など） ——
+        if fills["enable"]:
+            is_section_end = (b + 1 < len(sections) and sections[b] != sections[b + 1]) or (
+                b == len(sections) - 1
+            )
+            is_8end = (b % 8) == 7
+            if (fills["build_on_section_end"] and is_section_end) or (
+                rules["build_every_8bars"] and is_8end
+            ):
+                key = (
+                    "build_up_muted_1_8" if "build_up_muted_1_8" in COMMON else "build_up_open_1_8"
+                )
+                drv.notes.append(
+                    pm.Note(
+                        velocity=110, pitch=COMMON[key], start=t1 - 0.5 * bar, end=t1 - 0.40 * bar
+                    )
+                )
+            if fills["pickslide_on_last_eighth"]:
+                if "pick_slide" in COMMON:
+                    drv.notes.append(
+                        pm.Note(
+                            velocity=115,
+                            pitch=COMMON["pick_slide"],
+                            start=t1 - bar / 8.0,
+                            end=t1 - bar / 8.0 + 0.05,
+                        )
+                    )
+
+        # —— Vocal Synchro: 近傍イベントを拾って装飾 ——
+        if synchro_evts:
+            win_s = bar / 8.0  # ±8分の窓
+            inbar = [ev for ev in synchro_evts if t0 - win_s <= ev[0] < t1 + win_s]
+            for t, typ in inbar:
+                tt = nearest_grid_time(t, bar, div=8)
+                if typ == "cadence" and "slide_down" in COMMON:
+                    drv.notes.append(
+                        pm.Note(
+                            velocity=120,
+                            pitch=COMMON["slide_down"],
+                            start=max(t0, tt - 0.05),
+                            end=max(t0, tt),
+                        )
+                    )
+                elif typ == "accent" and "muted_1_16_riding" in COMMON:
+                    drv.notes.append(
+                        pm.Note(
+                            velocity=100,
+                            pitch=COMMON["muted_1_16_riding"],
+                            start=max(t0, tt),
+                            end=min(t1, tt + 0.08),
+                        )
+                    )
+
+        # —— Dynamics CC（ざっくり：セクションに応じて） ——
+        if ccconf["enable"]:
+            dyn = {"A": 70, "B": 95, "Build": 115}.get(sect, 90)
+            add_cc(drv, t0 + 0.02, ccconf["dyn_cc"], dyn)
+
+    out.write(args.out_mid)
+    print("Wrote:", args.out_mid)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/scripts/segment_phrase.py
+# hypothesis_version: 6.136.0
+
+[0.5, '--arch', '--ckpt', '--threshold', '__main__', 'cpu', 'duration', 'lstm', 'midi', 'phrase.ckpt', 'pitch_class', 'position', 'transformer', 'velocity']

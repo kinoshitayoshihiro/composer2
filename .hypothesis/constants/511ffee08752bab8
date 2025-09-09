@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/vocal_sync.py
+# hypothesis_version: 6.135.29
+
+[1e-06, 0.25, 0.5, 60.0, 120.0, '1', 'consonant_json', 'consonant_peaks', 'onsets', 'peaks', 'r', 'rests', 'utf-8', 'vocal_midi_path']

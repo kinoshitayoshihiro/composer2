@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/plugins/piano_companion_stub.py
+# hypothesis_version: 6.135.29
+
+[0.0, 0.7, 1.0, 120.0, 100, 'Default', 'Intensity', 'Temperature', 'TonePreset', 'duration', 'offset', 'pitch', 'velocity']

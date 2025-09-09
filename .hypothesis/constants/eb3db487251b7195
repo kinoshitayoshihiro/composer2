@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/midi_export.py
+# hypothesis_version: 6.136.0
+
+[0.0, 0.5, 4.0, 60.0, 120.0, 120, '--bass', '--drum', '--fixed-t', '--out', '--piano', '--tempo-map', '.csv', 'Export MIDI song', '__main__', 'apply_tempo_map', 'bars', 'bass', 'cc', 'control_change', 'drum', 'export_song', 'extra_cc', 'generate', 'piano', 'set_tempo_changes', 'song.mid', 'tempo_map', 'time', 'val']

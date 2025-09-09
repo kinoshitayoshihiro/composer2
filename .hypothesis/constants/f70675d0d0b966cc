@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/generator/chord_voicer.py
+# hypothesis_version: 6.136.0
+
+[12.0, 120, '(', ')', '+', '-', '-7', '/', '4/4', '6', '7', 'A-', 'Ab', 'B-', 'Bb', 'C', 'ChordsVoiced', 'D-', 'Db', 'E-', 'Eb', 'G-', 'Gb', 'M7', 'MA7', 'Ma7', 'Maj7', 'N.C.', 'NC', 'NO CHORD', 'NOCHORD', 'R', 'REST', 'Rest', 'SILENCE', '[△Δ]', 'absolute_offset', 'accent', 'add9', 'add\\s*9', 'articulation', 'aug', 'chords', 'closed', 'dim', 'dim7', 'drop2', 'drop2and4', 'drop3', 'four_way_close', 'legato', 'm', 'm7', 'm7b5', 'maj', 'maj7', 'majmaj', 'majmaj7', 'min7', 'num_voices', 'offset', 'open', 'original_chord_label', 'part_params', 'piano', 'q_length', 'ratioString', 'rest', 'semi_closed', 'staccato', 'sus', 'sus2', 'sus4', 'sus\\s*2', 'target_octave', 'tenuto', 'velocity', 'voicing_style', '°7', 'Ø', 'ø', 'Φ']

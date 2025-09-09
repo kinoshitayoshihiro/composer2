@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/convolver.py
+# hypothesis_version: 6.135.29
+
+[-60.0, -3.0, 0.0, 0.5, 1.0, 2.0, 3.0, 8.0, 10.0, 16.0, 20.0, 1000.0, 127, 1000, 44100, '.dry.wav', '.norm.mid', '8', 'CONVOLVER_IR_CACHE', 'FLOAT', 'IR', 'PCM_16', 'PCM_24', 'auto', 'convolve_ir', 'fast', 'float32', 'high', 'kaiser', 'load_ir', 'mean', 'midi', 'mix_opts', 'none', 'normalize_velocities', 'read', 'render_wav', 'render_with_ir', 'rms', 'stereo', 'ultra', 'write']

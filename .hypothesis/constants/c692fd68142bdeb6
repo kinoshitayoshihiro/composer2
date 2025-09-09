@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/data_ops/augment.py
+# hypothesis_version: 6.136.0
+
+[0.0, 0.001, 0.5, 50.0, 60.0, 100.0, 120.0, '--out', '--shuffle', '--swing', '--transpose', '-o', '__main__', 'midi', 'modcompose augment', 'size']

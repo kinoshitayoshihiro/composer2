@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/mix_profile.py
+# hypothesis_version: 6.135.29
+
+['MIX_PROFILE_PATH', '_selected', 'bass', 'cello', 'extra_cc', 'fx_cc', 'fx_envelope', 'id', 'ir_file', 'metadata', 'part', 'preset', 'rendered_wav', 'strings', 'tone_shaper', 'utf-8', 'viola', 'violin', 'w']

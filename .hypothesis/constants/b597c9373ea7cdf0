@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/phrase_filter.py
+# hypothesis_version: 6.135.29
+
+[0.75, 1.0, 'cluster_phrases', 'precomputed', 'word']

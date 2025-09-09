@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/tools/midi_feature_extractor.py
+# hypothesis_version: 6.135.29
+
+[0.0, 1.0, '--output', '-o', '__main__', 'mean_velocity', 'midi_file', 'note_density_per_sec', 'tempo_bpm', 'total_notes']

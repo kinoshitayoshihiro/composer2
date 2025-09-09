@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/streamlit_app_v2.py
+# hypothesis_version: 6.135.29
+
+[0.0, 1.0, 1.5, 100, '.pt', 'Backend', 'Bars', 'Generate', 'Intensity', 'Load Preset', 'Model', 'Play', 'Preset name', 'Save Preset', 'Section', 'Temperature', 'Viridis', '__main__', 'audio/midi', 'aux_cache', 'backend', 'bars', 'bridge', 'chorus', 'high', 'intensity', 'intro', 'low', 'mid', 'ngram', 'offset', 'pitch', 'pkl', 'presets', 'pt', 'rnn', 'section', 'temp', 'tmp.mid', 'velocity', 'verse', 'wide']

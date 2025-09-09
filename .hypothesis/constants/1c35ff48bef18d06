@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/progression_templates.py
+# hypothesis_version: 6.135.26
+
+['--path', '?', 'PROG_TEMPLATES_YAML', '__main__', '_default', 'bucket', 'major', 'mode', 'r', 'soft_reflective', 'unknown', 'utf-8']

@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/realtime_engine.py
+# hypothesis_version: 6.135.29
+
+[0.0, 1.0, 60.0, 120.0, 'Install extras: rnn', 'RealtimeEngine', 'ThreadPoolExecutor', '_incoming', 'clock', 'cpu', 'external', 'internal', 'meta', 'ngram', 'note_on', 'offset', 'rnn', 'songpos', 'state_dict', 'velocity', 'vocab']

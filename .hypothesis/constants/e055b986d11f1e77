@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music21/composer2-3/scripts/synthesize_vocal.py
+# hypothesis_version: 6.135.29
+
+['--log-level', '--mid', '--onnx-model', '--out', '--phonemes', 'CRITICAL', 'DEBUG', 'ERROR', 'Finished synthesis', 'INFO', 'WARNING', '__main__', 'r', 'utf-8']

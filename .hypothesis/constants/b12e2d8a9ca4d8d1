@@ -1,0 +1,4 @@
+# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/transformer_sampler.py
+# hypothesis_version: 6.136.0
+
+[1.0, ',', '--length', '--parts', '__main__', 'cmd', 'cpu', 'duration', 'hyper_parameters', 'instrument', 'load', 'model', 'offset', 'sample', 'sample_multi', 'state_dict', 'torch not available', 'transformer_sampler']

@@ -1,0 +1,105 @@
+{
+  "source": "data/phrase_csv/gtr_midi_gap10_valid.csv",
+  "out_csv": "checkpoints/guitar_lead/preds/gtr_gap10_valid.csv",
+  "th": 0.5,
+  "wrote": 14923,
+  "eval_on_input": {
+    "best_f1": 0.792181532239946,
+    "best_th": 0.46,
+    "pr_auc": 0.8551215099604214
+  },
+  "by_song": [
+    {
+      "song_id": "DL. 契りきぬ 達郎 Stems",
+      "len": 408,
+      "best_f1": 0.7934426229508197,
+      "best_th": 0.46,
+      "applied_th": 0.5,
+      "applied_f1": 0.7934426229508197
+    },
+    {
+      "song_id": "DL_Guitar",
+      "len": 539,
+      "best_f1": 0.7684964200477327,
+      "best_th": 0.46,
+      "applied_th": 0.46,
+      "applied_f1": 0.7684964200477327
+    },
+    {
+      "song_id": "DL_Guitar_1",
+      "len": 142,
+      "best_f1": 0.9051094890510949,
+      "best_th": 0.55,
+      "applied_th": 0.55,
+      "applied_f1": 0.9051094890510949
+    },
+    {
+      "song_id": "DL_deepemotion_Guitar",
+      "len": 345,
+      "best_f1": 0.7542372881355932,
+      "best_th": 0.46,
+      "applied_th": 0.46,
+      "applied_f1": 0.7542372881355932
+    },
+    {
+      "song_id": "Molitor, Franz Simon, Guitar Sonata, Op.12, 34IIpKUMx_M",
+      "len": 6130,
+      "best_f1": 0.7886855241264559,
+      "best_th": 0.46,
+      "applied_th": 0.5,
+      "applied_f1": 0.7886855241264559
+    },
+    {
+      "song_id": "Molitor, Franz Simon, Guitar Sonata, Op.15, 8KeDwsjwu4Y",
+      "len": 5718,
+      "best_f1": 0.8003731343283582,
+      "best_th": 0.46,
+      "applied_th": 0.5,
+      "applied_f1": 0.8003731343283582
+    },
+    {
+      "song_id": "Rocky",
+      "len": 134,
+      "best_f1": 0.831858407079646,
+      "best_th": 0.38,
+      "applied_th": 0.38,
+      "applied_f1": 0.831858407079646
+    },
+    {
+      "song_id": "Stems",
+      "len": 221,
+      "best_f1": 0.8617886178861789,
+      "best_th": 0.3,
+      "applied_th": 0.3,
+      "applied_f1": 0.8617886178861789
+    },
+    {
+      "song_id": "_Guitar",
+      "len": 342,
+      "best_f1": 0.8028673835125448,
+      "best_th": 0.36,
+      "applied_th": 0.36,
+      "applied_f1": 0.8028673835125448
+    },
+    {
+      "song_id": "koumou_heartfullpop_ruriko",
+      "len": 503,
+      "best_f1": 0.8044280442804428,
+      "best_th": 0.3,
+      "applied_th": 0.3,
+      "applied_f1": 0.8044280442804428
+    },
+    {
+      "song_id": "watasino",
+      "len": 441,
+      "best_f1": 0.7831715210355987,
+      "best_th": 0.36,
+      "applied_th": 0.36,
+      "applied_f1": 0.7831715210355987
+    }
+  ],
+  "viz_files": [
+    "checkpoints/guitar_lead/preds/viz_gap10/pr_curve.png",
+    "checkpoints/guitar_lead/preds/viz_gap10/confusion_matrix.png"
+  ]
+}

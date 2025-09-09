@@ -34,6 +34,7 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         mood_vocab_size: int = 0,
         vel_bucket_size: int = 0,
         dur_bucket_size: int = 0,
+        use_bar_beat: bool = False,
         duv_mode: str = "reg",
         vel_bins: int = 0,
         dur_bins: int = 0,
@@ -51,6 +52,15 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         self.dur_proj = nn.Linear(1, d_model // 4)
         self.vel_proj = nn.Linear(1, d_model // 4)
         extra_dim = 0
+        # Optional bar/beat phase projections (to match some checkpoints)
+        self.use_bar_beat = bool(use_bar_beat)
+        if self.use_bar_beat:
+            self.barpos_proj = nn.Linear(1, d_model // 8)
+            self.beatpos_proj = nn.Linear(1, d_model // 8)
+            extra_dim += (d_model // 8) * 2
+        else:
+            self.barpos_proj = None
+            self.beatpos_proj = None
         if section_vocab_size:
             self.section_emb = nn.Embedding(section_vocab_size, 16)
             extra_dim += 16
@@ -112,6 +122,10 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         pc = self.pitch_emb(feats["pitch_class"] % 12)
         pos = self.pos_emb(pos_ids)
         parts = [dur, vel, pc, pos]
+        if self.use_bar_beat and self.barpos_proj is not None and self.beatpos_proj is not None and "bar_phase" in feats and "beat_phase" in feats:
+            bp = self.barpos_proj(feats["bar_phase"].unsqueeze(-1))
+            bt = self.beatpos_proj(feats["beat_phase"].unsqueeze(-1))
+            parts.extend([bp, bt])
         if self.section_emb is not None and "section" in feats:
             parts.append(self.section_emb(feats["section"]))
         if self.mood_emb is not None and "mood" in feats:

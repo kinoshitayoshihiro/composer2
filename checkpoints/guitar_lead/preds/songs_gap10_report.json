@@ -1,0 +1,6 @@
+{
+  "source": "data/songs",
+  "out_csv": "checkpoints/guitar_lead/preds/songs_gap10.csv",
+  "th": 0.5,
+  "wrote": 25652
+}

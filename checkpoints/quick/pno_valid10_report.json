@@ -1,0 +1,1033 @@
+{
+  "source": "data/phrase_csv/pno_valid_10.csv",
+  "out_csv": "checkpoints/quick/pno_valid10_preds.csv",
+  "th": 0.5,
+  "wrote": 349147,
+  "eval_on_input": {
+    "best_f1": 0.829530473582801,
+    "best_th": 0.28,
+    "pr_auc": 0.8581132883077199
+  },
+  "by_song": [
+    {
+      "song_id": "016-v1",
+      "len": 1195,
+      "best_f1": 0.967741935483871,
+      "best_th": 0.17,
+      "applied_th": 0.17,
+      "applied_f1": 0.967741935483871
+    },
+    {
+      "song_id": "097-v1",
+      "len": 970,
+      "best_f1": 0.872093023255814,
+      "best_th": 0.25,
+      "applied_th": 0.25,
+      "applied_f1": 0.872093023255814
+    },
+    {
+      "song_id": "113-v1",
+      "len": 1405,
+      "best_f1": 0.6038961038961039,
+      "best_th": 0.19,
+      "applied_th": 0.19,
+      "applied_f1": 0.6038961038961039
+    },
+    {
+      "song_id": "159",
+      "len": 1375,
+      "best_f1": 0.8765957446808511,
+      "best_th": 0.25,
+      "applied_th": 0.25,
+      "applied_f1": 0.8765957446808511
+    },
+    {
+      "song_id": "180-v2",
+      "len": 1788,
+      "best_f1": 0.8706896551724138,
+      "best_th": 0.25,
+      "applied_th": 0.25,
+      "applied_f1": 0.8706896551724138
+    },
+    {
+      "song_id": "256-v2",
+      "len": 1482,
+      "best_f1": 0.9230769230769231,
+      "best_th": 0.24,
+      "applied_th": 0.24,
+      "applied_f1": 0.9230769230769231
+    },
+    {
+      "song_id": "285",
+      "len": 1036,
+      "best_f1": 0.7437185929648241,
+      "best_th": 0.28,
+      "applied_th": 0.28,
+      "applied_f1": 0.7437185929648241
+    },
+    {
+      "song_id": "303",
+      "len": 1431,
+      "best_f1": 0.749034749034749,
+      "best_th": 0.28,
+      "applied_th": 0.28,
+      "applied_f1": 0.749034749034749
+    },
+    {
+      "song_id": "343-v2",
+      "len": 944,
+      "best_f1": 0.775,
+      "best_th": 0.27,
+      "applied_th": 0.27,
+      "applied_f1": 0.775
+    },
+    {
+      "song_id": "349",
+      "len": 855,
+      "best_f1": 0.9734513274336283,
+      "best_th": 0.28,
+      "applied_th": 0.28,
+      "applied_f1": 0.9734513274336283
+    },
+    {
+      "song_id": "391-v1",
+      "len": 820,
+      "best_f1": 0.922077922077922,
+      "best_th": 0.22,
+      "applied_th": 0.22,
+      "applied_f1": 0.922077922077922
+    },
+    {
+      "song_id": "395",
+      "len": 1236,
+      "best_f1": 0.9367088607594937,
+      "best_th": 0.23,
+      "applied_th": 0.23,
+      "applied_f1": 0.9367088607594937
+    },
+    {
+      "song_id": "436-v1",
+      "len": 686,
+      "best_f1": 0.7198177676537585,
+      "best_th": 0.18,
+      "applied_th": 0.18,
+      "applied_f1": 0.7198177676537585
+    },
+    {
+      "song_id": "465-v2",
+      "len": 1121,
+      "best_f1": 0.7932960893854749,
+      "best_th": 0.26,
+      "applied_th": 0.26,
+      "applied_f1": 0.7932960893854749
+    },
+    {
+      "song_id": "506-v4",
+      "len": 712,
+      "best_f1": 0.8023952095808383,
+      "best_th": 0.28,
+      "applied_th": 0.28,
+      "applied_f1": 0.8023952095808383
+    },
+    {
+      "song_id": "516-v1",
+      "len": 1417,
+      "best_f1": 0.9166666666666666,
+      "best_th": 0.27,
+      "applied_th": 0.27,
+      "applied_f1": 0.9166666666666666
+    },
+    {
+      "song_id": "527",
+      "len": 1353,
+      "best_f1": 0.9558823529411765,
+      "best_th": 0.17,
+      "applied_th": 0.17,
+      "applied_f1": 0.9558823529411765
+    },
+    {
+      "song_id": "580",
+      "len": 574,
+      "best_f1": 0.9302325581395349,
+      "best_th": 0.21,
+      "applied_th": 0.21,
+      "applied_f1": 0.9302325581395349
+    },
+    {
+      "song_id": "627",
+      "len": 1214,
+      "best_f1": 1.0,
+      "best_th": 0.23,
+      "applied_th": 0.23,
+      "applied_f1": 1.0
+    },
+    {
+      "song_id": "646",
+      "len": 1153,
+      "best_f1": 0.9076923076923077,
+      "best_th": 0.21,
+      "applied_th": 0.21,
+      "applied_f1": 0.9076923076923077
+    },
+    {
+      "song_id": "736-v3",
+      "len": 1048,
+      "best_f1": 0.9868421052631579,
+      "best_th": 0.21,
+      "applied_th": 0.21,
+      "applied_f1": 0.9868421052631579
+    },
+    {
+      "song_id": "748-v2",
+      "len": 875,
+      "best_f1": 0.9594594594594594,
+      "best_th": 0.25,
+      "applied_th": 0.25,
+      "applied_f1": 0.9594594594594594
+    },
+    {
+      "song_id": "796-v4",
+      "len": 772,
+      "best_f1": 1.0,
+      "best_th": 0.25,
+      "applied_th": 0.25,
+      "applied_f1": 1.0
+    },
+    {
+      "song_id": "Alnæs, Eyvind, 3 Piano Pieces, Op.9, 4JYFS3GciOk",
+      "len": 3218,
+      "best_f1": 0.7937915742793792,
+      "best_th": 0.26,
+      "applied_th": 0.5,
+      "applied_f1": 0.7937915742793792
+    },
+    {
+      "song_id": "Anson, Antoni, L'amitié, _zrIMaYHUjA",
+      "len": 516,
+      "best_f1": 0.60431654676259,
+      "best_th": 0.27,
+      "applied_th": 0.27,
+      "applied_f1": 0.60431654676259
+    },
+    {
+      "song_id": "Ansons, Stephane, Fantaisie valse, iTbWH2kndO0",
+      "len": 1169,
+      "best_f1": 0.921875,
+      "best_th": 0.21,
+      "applied_th": 0.21,
+      "applied_f1": 0.921875
+    },
+    {
+      "song_id": "Ascher, Joseph, La cascade de roses, Op.80, 81YJ4BH0Bxg",
+      "len": 4763,
+      "best_f1": 0.98,
+      "best_th": 0.21,
+      "applied_th": 0.5,
+      "applied_f1": 0.98
+    },
+    {
+      "song_id": "Aubert, Louis, 2 pièces en forme de Mazurka, Op.12, _aXtQFR2Hnw",
+      "len": 1938,
+      "best_f1": 0.8171428571428572,
+      "best_th": 0.24,
+      "applied_th": 0.5,
+      "applied_f1": 0.8081395348837209
+    },
+    {
+      "song_id": "Bach, Johann Sebastian, Fugue in B-flat major, BWV Anh.105, uBuSTf464T0",
+      "len": 444,
+      "best_f1": 0.8846153846153846,
+      "best_th": 0.21,
+      "applied_th": 0.5,
+      "applied_f1": 0.8775510204081632
+    },
+    {
+      "song_id": "Bach, Johann Sebastian, Prelude and Fugue in C-sharp minor, BWV 873, 0xW-dH0a23s",
+      "len": 2688,
+      "best_f1": 0.9453551912568307,
+      "best_th": 0.27,
+      "applied_th": 0.27,
+      "applied_f1": 0.9453551912568307
+    },
+    {
+      "song_id": "Balmer, Charles, Montesano Waltz, khSVwdBc6e4",
+      "len": 2265,
+      "best_f1": 0.9494949494949495,
+      "best_th": 0.24,
+      "applied_th": 0.24,
+      "applied_f1": 0.9494949494949495
+    },
+    {
+      "song_id": "Barrios Mangoré, Agustín, Luisito, G0PYmxrc5cw",
+      "len": 2137,
+      "best_f1": 0.8513011152416357,
+      "best_th": 0.28,
+      "applied_th": 0.28,
+      "applied_f1": 0.8513011152416357
+    },
+    {
+      "song_id": "Beach, Amy Marcy, By the Still Waters, Op.114, Mploz6oawnA",
+      "len": 600,
+      "best_f1": 0.9213483146067416,
+      "best_th": 0.26,
+      "applied_th": 0.5,
+      "applied_f1": 0.9213483146067416
+    },
+    {
+      "song_id": "Bennett, William Sterndale, Scherzo, Op.27, HePKuMDN2AU",
+      "len": 2607,
+      "best_f1": 0.9813084112149533,
+      "best_th": 0.15,
+      "applied_th": 0.5,
+      "applied_f1": 0.9813084112149533
+    },
+    {
+      "song_id": "Berger, Ludwig, Piano Sonata, Op.7, grhA-Mn2Zr8",
+      "len": 15014,
+      "best_f1": 0.8656009473060983,
+      "best_th": 0.28,
+      "applied_th": 0.5,
+      "applied_f1": 0.8656009473060983
+    },
+    {
+      "song_id": "Beyer, Ferdinand, 6 Morceaux élégants, Op.99, da__7iR4xZU",
+      "len": 1486,
+      "best_f1": 0.9318181818181818,
+      "best_th": 0.1,
+      "applied_th": 0.5,
+      "applied_f1": 0.9318181818181818
+    },
+    {
+      "song_id": "Bénet, Charles, Piano Sonata in C major, Op.5, rsP8-7xMxTM",
+      "len": 1973,
+      "best_f1": 0.9574468085106383,
+      "best_th": 0.2,
+      "applied_th": 0.5,
+      "applied_f1": 0.9565217391304348
+    },
+    {
+      "song_id": "Bridge, Frank, The Hour Glass, H.148, 2YGGEbSI_fo",
+      "len": 3755,
+      "best_f1": 0.8421052631578947,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.8421052631578947
+    },
+    {
+      "song_id": "Busoni, Ferruccio, Perpetuum mobile, BV 293, 97JY9y55h_c",
+      "len": 3777,
+      "best_f1": 0.9938650306748467,
+      "best_th": 0.1,
+      "applied_th": 0.1,
+      "applied_f1": 0.9938650306748467
+    },
+    {
+      "song_id": "Carbajo, Víctor, Pink Chinese Rag, 1zyiiFLXMSE",
+      "len": 1345,
+      "best_f1": 0.967741935483871,
+      "best_th": 0.18,
+      "applied_th": 0.18,
+      "applied_f1": 0.967741935483871
+    },
+    {
+      "song_id": "Carbajo, Víctor, The Alphabets of the Foam, qAc9o3Rc9zA",
+      "len": 5119,
+      "best_f1": 0.9375,
+      "best_th": 0.27,
+      "applied_th": 0.27,
+      "applied_f1": 0.9375
+    },
+    {
+      "song_id": "Cervantes, Ignacio, 2 Songs without Words, I_7CwauhVNE",
+      "len": 32432,
+      "best_f1": 0.7163972924437076,
+      "best_th": 0.27,
+      "applied_th": 0.27,
+      "applied_f1": 0.7163972924437076
+    },
+    {
+      "song_id": "Chitty, Gina Ismene, The Spanish Dancer and the Jongleur, _4FAVvvGqvo",
+      "len": 3352,
+      "best_f1": 0.9951690821256038,
+      "best_th": 0.15,
+      "applied_th": 0.15,
+      "applied_f1": 0.9951690821256038
+    },
+    {
+      "song_id": "Clutsam, George Howard, Berceuse, gVWOq8Yn-xY",
+      "len": 1351,
+      "best_f1": 0.7768595041322314,
+      "best_th": 0.22,
+      "applied_th": 0.22,
+      "applied_f1": 0.7768595041322314
+    },
+    {
+      "song_id": "Debussy, Claude, D'un cahier d'esquisses, YsNMxNqEx2A",
+      "len": 1293,
+      "best_f1": 0.7268292682926829,
+      "best_th": 0.23,
+      "applied_th": 0.23,
+      "applied_f1": 0.7268292682926829
+    },
+    {
+      "song_id": "Debussy, Claude, Images, 2ème série, a5IGwbHGna0",
+      "len": 2810,
+      "best_f1": 0.9142857142857143,
+      "best_th": 0.22,
+      "applied_th": 0.22,
+      "applied_f1": 0.9142857142857143
+    },
+    {
+      "song_id": "Decourcelle, Maurice, Nocturne No.4, Op.34, I-sAQKsTxCk",
+      "len": 1954,
+      "best_f1": 0.9702127659574468,
+      "best_th": 0.26,
+      "applied_th": 0.5,
+      "applied_f1": 0.9702127659574468
+    },
+    {
+      "song_id": "Delibes, Léo, Le jardinier et son seigneur, ChV8K0UdRGA",
+      "len": 4236,
+      "best_f1": 0.8654708520179372,
+      "best_th": 0.27,
+      "applied_th": 0.27,
+      "applied_f1": 0.8654708520179372
+    },
+    {
+      "song_id": "Dennée, Charles, Suite de Ballet, Op.23, WuI6MxIDY1k",
+      "len": 2412,
+      "best_f1": 0.9874476987447699,
+      "best_th": 0.2,
+      "applied_th": 0.5,
+      "applied_f1": 0.9874476987447699
+    },
+    {
+      "song_id": "Diabelli, Anton, 7 Piano Sonatinas, Op.168, -rjykTKlZGc",
+      "len": 2737,
+      "best_f1": 0.9453376205787781,
+      "best_th": 0.24,
+      "applied_th": 0.5,
+      "applied_f1": 0.9453376205787781
+    },
+    {
+      "song_id": "Dvořák, Antonín, Album Leaves, B.109, 1foNCsABvnE",
+      "len": 3496,
+      "best_f1": 0.811965811965812,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.811965811965812
+    },
+    {
+      "song_id": "Ekert, Matias, Sonatine, zJDEtWstI_w",
+      "len": 2788,
+      "best_f1": 0.8421052631578947,
+      "best_th": 0.28,
+      "applied_th": 0.28,
+      "applied_f1": 0.8421052631578947
+    },
+    {
+      "song_id": "Field, John, Nocturne in B-flat major, H 37, ozHFlVuiZNo",
+      "len": 1111,
+      "best_f1": 0.926829268292683,
+      "best_th": 0.23,
+      "applied_th": 0.23,
+      "applied_f1": 0.926829268292683
+    },
+    {
+      "song_id": "Fieldhouse, Alfred, Concert Waltz in E-flat major, 9CwEfiFCuCY",
+      "len": 3689,
+      "best_f1": 0.9655172413793104,
+      "best_th": 0.26,
+      "applied_th": 0.26,
+      "applied_f1": 0.9655172413793104
+    },
+    {
+      "song_id": "Foote, Arthur, A Little Etude in A minor, LQ0MnIl30fE",
+      "len": 443,
+      "best_f1": 0.9230769230769231,
+      "best_th": 0.24,
+      "applied_th": 0.24,
+      "applied_f1": 0.9230769230769231
+    },
+    {
+      "song_id": "Gallay, Jacques François, 6 Duos faciles, Op.41, f3ynaR-oMKY",
+      "len": 1949,
+      "best_f1": 0.8914285714285715,
+      "best_th": 0.17,
+      "applied_th": 0.5,
+      "applied_f1": 0.8888888888888888
+    },
+    {
+      "song_id": "Glazunov, Aleksandr, Thème et Variations, Op.72, gB9zcM9UKeg",
+      "len": 10826,
+      "best_f1": 0.8532374100719424,
+      "best_th": 0.28,
+      "applied_th": 0.5,
+      "applied_f1": 0.8532374100719424
+    },
+    {
+      "song_id": "Godard, Benjamin, Lanterne magique I, Op.50, xXpREgdcWLY",
+      "len": 1294,
+      "best_f1": 0.8876404494382022,
+      "best_th": 0.25,
+      "applied_th": 0.5,
+      "applied_f1": 0.8876404494382022
+    },
+    {
+      "song_id": "Godard, Benjamin, Lanterne magique V, Op.115, B-c9sekBb3s",
+      "len": 965,
+      "best_f1": 0.9054054054054054,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.9054054054054054
+    },
+    {
+      "song_id": "Godfrey, Charles, H.M.S. Pinafore Quadrille, vGXlTElyuEo",
+      "len": 774,
+      "best_f1": 0.9508196721311475,
+      "best_th": 0.13,
+      "applied_th": 0.5,
+      "applied_f1": 0.9508196721311475
+    },
+    {
+      "song_id": "Gottschalk, Louis Moreau, Ballade No.6, Op.85, 7Spy_bqSDrU",
+      "len": 2831,
+      "best_f1": 0.8123620309050773,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.8123620309050773
+    },
+    {
+      "song_id": "Grieg, Edvard, 19 Norwegian Folk Tunes, Op.66, VgylpvirT0A",
+      "len": 8359,
+      "best_f1": 0.7101654846335698,
+      "best_th": 0.28,
+      "applied_th": 0.5,
+      "applied_f1": 0.7101654846335698
+    },
+    {
+      "song_id": "Grieg, Edvard, Poetic Tone-Pictures, Op.3, AoaK_o8EsPk",
+      "len": 4852,
+      "best_f1": 0.8445078459343794,
+      "best_th": 0.25,
+      "applied_th": 0.5,
+      "applied_f1": 0.8430232558139535
+    },
+    {
+      "song_id": "Haydn, Joseph, Divertimento in F major, Hob.XVI:9, bcbmzJ4sZ-g",
+      "len": 539,
+      "best_f1": 0.9642857142857143,
+      "best_th": 0.25,
+      "applied_th": 0.5,
+      "applied_f1": 0.9642857142857143
+    },
+    {
+      "song_id": "Henselt, Adolf von, Rhapsodie, Op.4, eGI00mX07Jc",
+      "len": 1375,
+      "best_f1": 0.9271523178807947,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.9271523178807947
+    },
+    {
+      "song_id": "Hullah, John, The Storm, 6nFaK8B2c5o",
+      "len": 548,
+      "best_f1": 0.7283950617283951,
+      "best_th": 0.28,
+      "applied_th": 0.28,
+      "applied_f1": 0.7283950617283951
+    },
+    {
+      "song_id": "Kodály, Zoltán, Valsette, ZXSirvRtVJw",
+      "len": 961,
+      "best_f1": 0.9863013698630136,
+      "best_th": 0.17,
+      "applied_th": 0.17,
+      "applied_f1": 0.9863013698630136
+    },
+    {
+      "song_id": "Kosenko, Viktor, Piano Sonata No.2, Op.14, 4e_kYjbxo-M",
+      "len": 5168,
+      "best_f1": 0.8998242530755711,
+      "best_th": 0.26,
+      "applied_th": 0.5,
+      "applied_f1": 0.8998242530755711
+    },
+    {
+      "song_id": "Ladmirault, Paul, Hommage à Gabriel Fauré, RR7g2sz0eAk",
+      "len": 1361,
+      "best_f1": 0.9025641025641026,
+      "best_th": 0.24,
+      "applied_th": 0.24,
+      "applied_f1": 0.9025641025641026
+    },
+    {
+      "song_id": "Lange, Gustav, The Merry Goldfinch, LG3L0pAZ1Yg",
+      "len": 1822,
+      "best_f1": 0.9282296650717703,
+      "best_th": 0.23,
+      "applied_th": 0.23,
+      "applied_f1": 0.9282296650717703
+    },
+    {
+      "song_id": "Lehrer, Oscar J., Okla!, Fvy6zS0KZ3Y",
+      "len": 2040,
+      "best_f1": 0.964824120603015,
+      "best_th": 0.17,
+      "applied_th": 0.5,
+      "applied_f1": 0.964824120603015
+    },
+    {
+      "song_id": "Liszt, Franz, 2 Polonaises, S.223, VvreQKtsObY",
+      "len": 8057,
+      "best_f1": 0.8993288590604027,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.898989898989899
+    },
+    {
+      "song_id": "Liszt, Franz, Albumblatt in E major, S.164, s1vScFa6iuc",
+      "len": 846,
+      "best_f1": 0.7741935483870968,
+      "best_th": 0.26,
+      "applied_th": 0.5,
+      "applied_f1": 0.7741935483870968
+    },
+    {
+      "song_id": "Liszt, Franz, Hungarian Rhapsody No.1, S.244_1, Ts7nUwUcvYk",
+      "len": 7829,
+      "best_f1": 0.8473205257836198,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.8438133874239351
+    },
+    {
+      "song_id": "Liszt, Franz, Hungarian Rhapsody No.12, S.244_12, xAoLsWMKIx8",
+      "len": 7227,
+      "best_f1": 0.8503496503496504,
+      "best_th": 0.28,
+      "applied_th": 0.5,
+      "applied_f1": 0.8503496503496504
+    },
+    {
+      "song_id": "Liszt, Franz, Ungarische Nationalmelodien, S.243, 7vc8H1IsPig",
+      "len": 856,
+      "best_f1": 0.8686868686868687,
+      "best_th": 0.17,
+      "applied_th": 0.5,
+      "applied_f1": 0.8686868686868687
+    },
+    {
+      "song_id": "Lushpa, Ilia, Tragedy, iLiIhYInjFE",
+      "len": 7118,
+      "best_f1": 0.8551136363636364,
+      "best_th": 0.27,
+      "applied_th": 0.27,
+      "applied_f1": 0.8551136363636364
+    },
+    {
+      "song_id": "Lysenko, Mykola, 3 Pieces from 'Album from the Summer of 1902', Op.41, ZbO4EugQrtI",
+      "len": 757,
+      "best_f1": 0.7692307692307693,
+      "best_th": 0.25,
+      "applied_th": 0.5,
+      "applied_f1": 0.7686274509803922
+    },
+    {
+      "song_id": "Marmontel, Antoine François, 50 Etudes de Salon, Op.108, Y1ZGtQaqL7Y",
+      "len": 789,
+      "best_f1": 0.8776371308016878,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.8776371308016878
+    },
+    {
+      "song_id": "Mayer, Charles, Galop militaire No.1, Op.117, lEd_WfIA06E",
+      "len": 4023,
+      "best_f1": 0.9834710743801653,
+      "best_th": 0.23,
+      "applied_th": 0.5,
+      "applied_f1": 0.9834710743801653
+    },
+    {
+      "song_id": "Mendelssohn, Felix, Scherzo à capriccio, WoO 3, oU_keRVsGT0",
+      "len": 4825,
+      "best_f1": 0.9731182795698925,
+      "best_th": 0.23,
+      "applied_th": 0.23,
+      "applied_f1": 0.9731182795698925
+    },
+    {
+      "song_id": "Merikanto, Oskar, Barcarolle, Op.65, l5x_cdxIv6g",
+      "len": 3369,
+      "best_f1": 0.9235668789808917,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.9235668789808917
+    },
+    {
+      "song_id": "Merula, Tarquinio, L'Ara, Op.12 No.21, pAJ56twmxWk",
+      "len": 807,
+      "best_f1": 0.896551724137931,
+      "best_th": 0.2,
+      "applied_th": 0.5,
+      "applied_f1": 0.896551724137931
+    },
+    {
+      "song_id": "Meyer-Helmund, Erik, 2 Lieder, Op.24, dqPJ2Omiihg",
+      "len": 3452,
+      "best_f1": 0.7639639639639639,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.7639639639639639
+    },
+    {
+      "song_id": "Meyer-Helmund, Erik, J'y pense, CukC-3B5eM8",
+      "len": 1237,
+      "best_f1": 0.8680851063829788,
+      "best_th": 0.25,
+      "applied_th": 0.25,
+      "applied_f1": 0.8680851063829788
+    },
+    {
+      "song_id": "Miguez, Leopoldo, Allegro appassionato, Op.11, LQysCDDQhdU",
+      "len": 3383,
+      "best_f1": 0.9709302325581395,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.9709302325581395
+    },
+    {
+      "song_id": "Mills, Kerry, Kerry Mills Ragtime Dance, wyrFC536ae0",
+      "len": 2594,
+      "best_f1": 0.9467455621301775,
+      "best_th": 0.1,
+      "applied_th": 0.1,
+      "applied_f1": 0.9467455621301775
+    },
+    {
+      "song_id": "Molina, Akiana, Talamanca, Op.21, deWmCwnRTqo",
+      "len": 1249,
+      "best_f1": 0.7781350482315113,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.7781350482315113
+    },
+    {
+      "song_id": "Montgeroult, Hélène, Cours complet pour l'enseignement du forte piano, 0emMmsUltQs",
+      "len": 1509,
+      "best_f1": 0.8713450292397661,
+      "best_th": 0.28,
+      "applied_th": 0.28,
+      "applied_f1": 0.8713450292397661
+    },
+    {
+      "song_id": "Mudarra, Alonso, Fabordon I de vihuela, lLqXxcCHlUI",
+      "len": 97,
+      "best_f1": 0.7317073170731707,
+      "best_th": 0.28,
+      "applied_th": 0.28,
+      "applied_f1": 0.7317073170731707
+    },
+    {
+      "song_id": "Nacci, Andrea Antonello, Improvviso, ZhU1TOUcI1U",
+      "len": 1322,
+      "best_f1": 0.9359605911330049,
+      "best_th": 0.24,
+      "applied_th": 0.24,
+      "applied_f1": 0.9359605911330049
+    },
+    {
+      "song_id": "Nietzsche, Friedrich, Im Mondschein auf der Puszta, AcbTMKgX3ZI",
+      "len": 501,
+      "best_f1": 0.9696969696969697,
+      "best_th": 0.23,
+      "applied_th": 0.23,
+      "applied_f1": 0.9696969696969697
+    },
+    {
+      "song_id": "Oberthür, Charles, Fantasie über Hänsel und Gretel von E. Humperdinck, 0SItMMaOFuw",
+      "len": 4578,
+      "best_f1": 0.8376623376623377,
+      "best_th": 0.24,
+      "applied_th": 0.5,
+      "applied_f1": 0.8357723577235773
+    },
+    {
+      "song_id": "Paderewski, Ignacy Jan, Chants du voyageur, Op.8, 1_quFqVN5rs",
+      "len": 2654,
+      "best_f1": 0.8521739130434782,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.8521739130434782
+    },
+    {
+      "song_id": "Palmgren, Selim, 3 Piano Pieces, Op.54, VMHi58svRvU",
+      "len": 2470,
+      "best_f1": 0.84375,
+      "best_th": 0.23,
+      "applied_th": 0.5,
+      "applied_f1": 0.8401253918495298
+    },
+    {
+      "song_id": "Parodi Ortega, Luis Félix, 12 Estudios para Piano, Op.49, dNDVDQ9KaYU",
+      "len": 79,
+      "best_f1": 0.7878787878787878,
+      "best_th": 0.25,
+      "applied_th": 0.5,
+      "applied_f1": 0.75
+    },
+    {
+      "song_id": "Plante, Cyril, Epitaphes, Op.233, evxUhg5stLM",
+      "len": 572,
+      "best_f1": 0.8304093567251462,
+      "best_th": 0.28,
+      "applied_th": 0.5,
+      "applied_f1": 0.8304093567251462
+    },
+    {
+      "song_id": "Polovinkin, Leonid, Humoresque No.2, dRoSKzbrpeo",
+      "len": 2041,
+      "best_f1": 0.9396551724137931,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.9396551724137931
+    },
+    {
+      "song_id": "Puccini, Giacomo, Morire?, SC 89, iCouVQkGHps",
+      "len": 753,
+      "best_f1": 0.9545454545454546,
+      "best_th": 0.25,
+      "applied_th": 0.25,
+      "applied_f1": 0.9545454545454546
+    },
+    {
+      "song_id": "Ranzato, Virgilio, Passione, 115kOwv_JwY",
+      "len": 1841,
+      "best_f1": 0.5814977973568282,
+      "best_th": 0.19,
+      "applied_th": 0.19,
+      "applied_f1": 0.5814977973568282
+    },
+    {
+      "song_id": "Ravina, Jean Henri, Le charme, Op.65, iYXgeHlEv_Y",
+      "len": 1312,
+      "best_f1": 0.7924528301886793,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.7924528301886793
+    },
+    {
+      "song_id": "Ravina, Jean Henri, Rondo-polka, Op.20, mo0fAMdY3rg",
+      "len": 3587,
+      "best_f1": 0.9771689497716894,
+      "best_th": 0.23,
+      "applied_th": 0.5,
+      "applied_f1": 0.9771689497716894
+    },
+    {
+      "song_id": "Rhené-Baton, Emmanuel, Album Rose, sO707AaoHa4",
+      "len": 858,
+      "best_f1": 0.7605633802816901,
+      "best_th": 0.27,
+      "applied_th": 0.27,
+      "applied_f1": 0.7605633802816901
+    },
+    {
+      "song_id": "Ropartz, Guy, Dans l'Ombre de la Montagne, -ARR5eUQJ9s",
+      "len": 518,
+      "best_f1": 0.696969696969697,
+      "best_th": 0.25,
+      "applied_th": 0.25,
+      "applied_f1": 0.696969696969697
+    },
+    {
+      "song_id": "Roussel, Albert, Suite, Op.14, zjJQmY3uYb0",
+      "len": 13147,
+      "best_f1": 0.8060836501901141,
+      "best_th": 0.23,
+      "applied_th": 0.5,
+      "applied_f1": 0.8028079132099554
+    },
+    {
+      "song_id": "Scarlatti, Domenico, Keyboard Sonata in D major, K.401, fzFEv-EPGVM",
+      "len": 2117,
+      "best_f1": 0.9276595744680851,
+      "best_th": 0.21,
+      "applied_th": 0.5,
+      "applied_f1": 0.9276595744680851
+    },
+    {
+      "song_id": "Schubert, Franz, Fugue in E minor, D.952, tnbt1VpwMPE",
+      "len": 1231,
+      "best_f1": 0.7329545454545454,
+      "best_th": 0.2,
+      "applied_th": 0.5,
+      "applied_f1": 0.7151898734177216
+    },
+    {
+      "song_id": "Scott, James, Troubadour Rag, LTzRGHuEklg",
+      "len": 4061,
+      "best_f1": 0.96875,
+      "best_th": 0.28,
+      "applied_th": 0.28,
+      "applied_f1": 0.96875
+    },
+    {
+      "song_id": "Seamon, R. L., Under the Balcony, xpeoohx0QhA",
+      "len": 1734,
+      "best_f1": 0.9458483754512635,
+      "best_th": 0.25,
+      "applied_th": 0.5,
+      "applied_f1": 0.9458483754512635
+    },
+    {
+      "song_id": "Simpson, Daniel Léo, Invention No.24 in A-flat minor, qDOR0WURiqE",
+      "len": 3590,
+      "best_f1": 0.9906890130353817,
+      "best_th": 0.24,
+      "applied_th": 0.5,
+      "applied_f1": 0.9869158878504672
+    },
+    {
+      "song_id": "Sor, Fernando, Fantaisie and Variations brillantes, Op.30, lmXyt-jYF2U",
+      "len": 2078,
+      "best_f1": 0.7480916030534351,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.7480916030534351
+    },
+    {
+      "song_id": "Spindler, Fritz, Maienblüthen, Op.160, sU5ZWciAZxg",
+      "len": 836,
+      "best_f1": 0.9534883720930233,
+      "best_th": 0.25,
+      "applied_th": 0.5,
+      "applied_f1": 0.9534883720930233
+    },
+    {
+      "song_id": "Stenhammar, Wilhelm, Sensommarnätter, Op.33, hAWSmFmUONs",
+      "len": 1163,
+      "best_f1": 0.8012422360248447,
+      "best_th": 0.25,
+      "applied_th": 0.5,
+      "applied_f1": 0.8
+    },
+    {
+      "song_id": "Stiehl, Heinrich, Impressions du soir, 0iPKhjvfkc8",
+      "len": 1165,
+      "best_f1": 0.8888888888888888,
+      "best_th": 0.25,
+      "applied_th": 0.25,
+      "applied_f1": 0.8888888888888888
+    },
+    {
+      "song_id": "Streicher, Andreas, Keyboard Sonata in E-flat major, fcdI-l_T1-c",
+      "len": 1392,
+      "best_f1": 0.9902912621359223,
+      "best_th": 0.2,
+      "applied_th": 0.2,
+      "applied_f1": 0.9902912621359223
+    },
+    {
+      "song_id": "Strong, George Templeton, 4 Poems, Op.36, JFphbZRrV_8",
+      "len": 724,
+      "best_f1": 0.7099236641221374,
+      "best_th": 0.26,
+      "applied_th": 0.5,
+      "applied_f1": 0.7099236641221374
+    },
+    {
+      "song_id": "Turchetto, Andrea, Intermezzo in F minor, i2CYrxBGq68",
+      "len": 946,
+      "best_f1": 0.896969696969697,
+      "best_th": 0.27,
+      "applied_th": 0.27,
+      "applied_f1": 0.896969696969697
+    },
+    {
+      "song_id": "Turina, Joaquín, El Circo, Op.68, UtnKIvFWiuU",
+      "len": 734,
+      "best_f1": 0.9484536082474226,
+      "best_th": 0.28,
+      "applied_th": 0.5,
+      "applied_f1": 0.9484536082474226
+    },
+    {
+      "song_id": "Van Alstyne, Egbert, Piccolo, FoEWBDS4_tM",
+      "len": 3998,
+      "best_f1": 0.9230769230769231,
+      "best_th": 0.22,
+      "applied_th": 0.22,
+      "applied_f1": 0.9230769230769231
+    },
+    {
+      "song_id": "Voříšek, Jan Václav, Fantasia, Op.12, tks63t_dnbA",
+      "len": 6914,
+      "best_f1": 0.812989921612542,
+      "best_th": 0.25,
+      "applied_th": 0.5,
+      "applied_f1": 0.8126410835214447
+    },
+    {
+      "song_id": "Wagner, Richard, Albumblatt für Frau Betty Schott, WWV 108, _A3BxhOpjU0",
+      "len": 1136,
+      "best_f1": 0.7371273712737128,
+      "best_th": 0.26,
+      "applied_th": 0.26,
+      "applied_f1": 0.7371273712737128
+    },
+    {
+      "song_id": "Wagner, Richard, Fantasia in F-sharp minor, WWV 22, nIWgpVr_elw",
+      "len": 8799,
+      "best_f1": 0.8140096618357487,
+      "best_th": 0.28,
+      "applied_th": 0.28,
+      "applied_f1": 0.8140096618357487
+    },
+    {
+      "song_id": "Weber, Carl Maria von, 7 Variations sur un thème original, Op.9, ZL_JDkUYM08",
+      "len": 9955,
+      "best_f1": 0.9104072398190045,
+      "best_th": 0.27,
+      "applied_th": 0.5,
+      "applied_f1": 0.9104072398190045
+    },
+    {
+      "song_id": "Wot, Felix Firmiana, Garden in Cloud, Op.178, Bz6FQEFyTfU",
+      "len": 842,
+      "best_f1": 0.8207547169811321,
+      "best_th": 0.28,
+      "applied_th": 0.5,
+      "applied_f1": 0.8207547169811321
+    },
+    {
+      "song_id": "Yatsevich, Yuri, Piano Sonata No.3, j0jlAFkFpsg",
+      "len": 2628,
+      "best_f1": 0.9411764705882353,
+      "best_th": 0.26,
+      "applied_th": 0.5,
+      "applied_f1": 0.9411764705882353
+    },
+    {
+      "song_id": "Zarębski, Juliusz, 3 Danses galiciennes, Op.2, zfESsJHpLos",
+      "len": 4070,
+      "best_f1": 0.9785407725321889,
+      "best_th": 0.18,
+      "applied_th": 0.5,
+      "applied_f1": 0.9785407725321889
+    },
+    {
+      "song_id": "Zhang, Shuwen, Chinese Suite in Baroque Form No.1, ro37cjrd9eU",
+      "len": 2733,
+      "best_f1": 0.9159663865546218,
+      "best_th": 0.25,
+      "applied_th": 0.5,
+      "applied_f1": 0.9159663865546218
+    }
+  ],
+  "viz_files": [
+    "checkpoints/quick/viz_pno_valid10/pr_curve.png",
+    "checkpoints/quick/viz_pno_valid10/confusion_matrix.png"
+  ]
+}

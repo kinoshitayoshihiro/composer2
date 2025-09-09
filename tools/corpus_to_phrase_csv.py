@@ -247,6 +247,10 @@ def list_instruments(
             files = [base / "samples.jsonl"]
         else:
             files = sorted((base / "samples").glob("*.jsonl"))
+        # Fallback to flat JSONL layout (e.g., root/train.jsonl)
+        alt_file = root / f"{split}.jsonl"
+        if not files and alt_file.is_file():
+            files = [alt_file]
         sample_counter = 0
         sample_counter = 0
         for p in files:
@@ -329,6 +333,8 @@ def corpus_mode(
     include_programs: set[int] | None = None,
     strict_all: bool = False,
     min_notes_per_sample: int = 0,
+    token_ioi_gap: float = 0.0,
+    token_pitch_leap: int = 0,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, dict[str, object]]]:
     instrument = instrument.lower() if instrument else None
 
@@ -399,11 +405,55 @@ def corpus_mode(
                         stats["removed"] += 1
                         continue
 
+                    # Optional sample-level filtering for instrument hints via source_path/track/name
+                    # Many token corpora omit explicit instrument fields; fall back to path stem.
+                    keep_sample = True
+                    if instrument or instrument_regex:
+                        fname = str(
+                            meta.get("source_path")
+                            or meta.get("path")
+                            or obj.get("path")
+                            or obj.get("source_path")
+                            or ""
+                        )
+                        stem = Path(fname).stem.lower() if fname else ""
+                        nm = (name or "").lower()
+                        tr = (track or "").lower()
+                        name_ok = bool(instrument and (instrument in nm or instrument in tr or instrument in stem))
+                        regex_ok = bool(
+                            instrument_regex
+                            and (
+                                instrument_regex.search(nm)
+                                or instrument_regex.search(tr)
+                                or instrument_regex.search(stem)
+                            )
+                        )
+                        if strict_all:
+                            keep_sample = (not instrument or name_ok) and (not instrument_regex or regex_ok)
+                            if not keep_sample:
+                                if instrument and not name_ok:
+                                    stats["removed_by_name"] += 1
+                                if instrument_regex and not regex_ok:
+                                    stats["removed_by_regex"] += 1
+                                stats["removed"] += 1
+                                continue
+                        else:
+                            keep_sample = name_ok or regex_ok
+                            if (instrument or instrument_regex) and not keep_sample:
+                                if instrument and not name_ok:
+                                    stats["removed_by_name"] += 1
+                                if instrument_regex and not regex_ok:
+                                    stats["removed_by_regex"] += 1
+                                stats["removed"] += 1
+                                continue
+
                     cur_time_beats = 0.0
                     prev_local_bar: int | None = None
                     cur_bar = 0  # global (with offset) tracker for pos reset
                     pos_idx_in_bar = 0
                     bar_offset = sample_counter * 10000
+                    prev_pitch: int | None = None
+                    prev_dur_beats: float = 0.0
                     # Walk NOTE/(DUV|D/V) pairs in order
                     i = 0
                     while i < len(tokens):
@@ -469,6 +519,17 @@ def corpus_mode(
                             pos_idx_in_bar = 0
                         pos = int(pos_idx_in_bar)
                         boundary_flag = 1 if (prev_local_bar is None or local_bar_idx != prev_local_bar) else 0
+                        # Optional token-heuristics: large preceding IOI or large pitch leap
+                        if not boundary_flag:
+                            if token_ioi_gap and token_ioi_gap > 0.0:
+                                if prev_dur_beats >= float(token_ioi_gap):
+                                    boundary_flag = 1
+                            if not boundary_flag and token_pitch_leap and token_pitch_leap > 0 and prev_pitch is not None:
+                                try:
+                                    if abs(int(pitch) - int(prev_pitch)) >= int(token_pitch_leap):
+                                        boundary_flag = 1
+                                except Exception:
+                                    pass
 
                         # Apply optional filters
                         keep_note = True
@@ -506,6 +567,8 @@ def corpus_mode(
 
                         # Advance cursors
                         prev_local_bar = local_bar_idx
+                        prev_pitch = int(pitch)
+                        prev_dur_beats = float(max(0.0, dur_beats))
                         pos_idx_in_bar += 1
                         cur_time_beats += max(0.0, float(dur_beats))
                         i += 2  # Skip NOTE and its following (DUV|D|V)
@@ -706,6 +769,24 @@ def main(argv: list[str] | None = None) -> int:
         help="keep only samples with these GM program numbers",
     )
     parser.add_argument("--duv-mode", choices=["reg", "cls", "both"], default="reg")
+    parser.add_argument(
+        "--no-path-hint",
+        action="store_true",
+        help="disable path-based instrument hinting when filtering in --in (MIDI) mode",
+    )
+    # token-corpus heuristic options (disabled by default)
+    parser.add_argument(
+        "--token-ioi-gap",
+        type=float,
+        default=0.0,
+        help="in token corpora, mark boundary when preceding note duration (approx IOI) >= this many beats",
+    )
+    parser.add_argument(
+        "--token-pitch-leap",
+        type=int,
+        default=0,
+        help="in token corpora, mark boundary when abs pitch leap >= this many semitones",
+    )
     args = parser.parse_args(argv)
 
     inst_re = re.compile(args.instrument_regex, re.I) if args.instrument_regex else None
@@ -754,6 +835,8 @@ def main(argv: list[str] | None = None) -> int:
             include_programs=include_programs,
             strict_all=args.strict_all,
             min_notes_per_sample=args.min_notes_per_sample,
+            token_ioi_gap=args.token_ioi_gap,
+            token_pitch_leap=args.token_pitch_leap,
         )
         if args.stats_json:
             args.stats_json.parent.mkdir(parents=True, exist_ok=True)
@@ -828,18 +911,19 @@ def main(argv: list[str] | None = None) -> int:
         # Path-based instrument hint: allow folder/file names to drive selection when MIDI names are unhelpful.
         path_str = "/".join([part for part in p.parts]).lower()
         path_hint = False
-        if args.instrument:
-            try:
-                if args.instrument.lower() in path_str:
-                    path_hint = True
-            except Exception:
-                pass
-        if inst_re and not path_hint:
-            try:
-                if inst_re.search(path_str):
-                    path_hint = True
-            except Exception:
-                pass
+        if not args.no_path_hint:
+            if args.instrument:
+                try:
+                    if args.instrument.lower() in path_str:
+                        path_hint = True
+                except Exception:
+                    pass
+            if inst_re and not path_hint:
+                try:
+                    if inst_re.search(path_str):
+                        path_hint = True
+                except Exception:
+                    pass
 
         rows, matched = midi_to_rows(
             p,

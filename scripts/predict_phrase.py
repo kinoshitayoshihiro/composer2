@@ -54,6 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pitch-range", type=int, nargs=2, metavar=("LOW", "HIGH"))
     p.add_argument("--boundary-gap-beats", type=float, default=1.05)
     p.add_argument("--boundary-on-section-change", action="store_true")
+    p.add_argument("--no-path-hint", action="store_true", help="disable path-based instrument hint when parsing MIDI")
     # Threshold auto-calibration on labeled CSV
     p.add_argument("--val-csv", type=Path, help="validation CSV with ground-truth boundary")
     p.add_argument("--scan-range", type=float, nargs=3, default=(0.3, 0.95, 0.01), metavar=("START", "END", "STEP"))
@@ -64,6 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--viz-dir", type=Path, help="directory to save visualizations (defaults to out_csv parent)")
     p.add_argument("--viz-sort", choices=["len", "f1_asc", "f1_desc"], default="len", help="ordering for per-song visualizations when limiting count")
     p.add_argument("--viz-pdf", type=Path, help="write a multi-page PDF with per-song plots (PR/CM/timeseries) for selected songs")
+    # Append mode for large batch runs (useful when iterating files)
+    p.add_argument("--append", action="store_true", help="append to --out-csv if it exists (write header only when creating)")
     # Song ID handling
     p.add_argument("--song-id-col", type=str, help="column name in CSV that holds song ID")
     p.add_argument(
@@ -84,6 +87,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="save probability timeseries per song (limit to N songs; 0 to disable)",
     )
+    # Post-processing
+    p.add_argument("--th-on", type=float, help="hysteresis ON threshold (defaults to --th)")
+    p.add_argument("--th-off", type=float, help="hysteresis OFF threshold (defaults to --th)")
+    p.add_argument("--min-gap", type=int, default=1, help="minimum gap between boundaries (in steps)")
     return p
 
 
@@ -93,11 +100,16 @@ def read_csv_rows(path: Path) -> list[dict[str, str]]:
         return [row for row in reader]
 
 
-def write_csv(rows: Iterable[dict[str, object]], path: Path, fieldnames: List[str]) -> None:
+def write_csv(rows: Iterable[dict[str, object]], path: Path, fieldnames: List[str], *, append: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="") as f:
+    mode = "a" if append else "w"
+    need_header = True
+    if append and path.exists() and path.stat().st_size > 0:
+        need_header = False
+    with path.open(mode, newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
+        if need_header:
+            w.writeheader()
         w.writerows(rows)
 
 
@@ -137,6 +149,7 @@ def reconstruct_model(ckpt_path: Path, device):
     sd_full = state.get("model", state)
     vb_size = 0
     db_size = 0
+    feat_in_ckpt = None
     if isinstance(sd_full, dict):
         w = sd_full.get("vel_bucket_emb.weight")
         if w is not None:
@@ -144,8 +157,12 @@ def reconstruct_model(ckpt_path: Path, device):
         w = sd_full.get("dur_bucket_emb.weight")
         if w is not None:
             db_size = int(w.shape[0])
+        w = sd_full.get("feat_proj.weight")
+        if w is not None and hasattr(w, "shape") and len(w.shape) == 2:
+            # torch Linear weight shape: (out_features, in_features)
+            feat_in_ckpt = int(w.shape[1])
 
-    class PhraseLSTM(nn.Module):  # minimal replica for inference
+    class PhraseLSTM(nn.Module):  # minimal replica for inference (optionally with TCN/2-class head)
         def __init__(
             self,
             d_model: int,
@@ -155,6 +172,9 @@ def reconstruct_model(ckpt_path: Path, device):
             dur_bins: int,
             vel_bucket_size: int,
             dur_bucket_size: int,
+            use_bar_beat: bool,
+            use_tcn: bool = False,
+            two_class_head: bool = False,
         ) -> None:
             super().__init__()
             self.d_model = d_model
@@ -163,6 +183,15 @@ def reconstruct_model(ckpt_path: Path, device):
             self.pos_emb = nn.Embedding(max_len, d_model // 4)
             self.dur_proj = nn.Linear(1, d_model // 4)
             self.vel_proj = nn.Linear(1, d_model // 4)
+            self.use_bar_beat = use_bar_beat
+            if use_bar_beat:
+                self.barpos_proj = nn.Linear(1, d_model // 8)
+                self.beatpos_proj = nn.Linear(1, d_model // 8)
+                extra_bar_beat = d_model // 4
+            else:
+                self.barpos_proj = None
+                self.beatpos_proj = None
+                extra_bar_beat = 0
             extra = 0
             self.vel_bucket_emb = None
             self.dur_bucket_emb = None
@@ -173,11 +202,26 @@ def reconstruct_model(ckpt_path: Path, device):
             if dur_bucket_size > 0:
                 self.dur_bucket_emb = nn.Embedding(dur_bucket_size, 8)
                 extra += 8
-            self.feat_proj = nn.Linear(d_model + extra, d_model)
+            self.feat_proj = nn.Linear(d_model + extra + extra_bar_beat, d_model)
             self.lstm = nn.LSTM(
                 d_model, d_model // 2, num_layers=2, batch_first=True, bidirectional=True
             )
-            self.head_boundary = nn.Linear(d_model, 1)
+            self.use_tcn = bool(use_tcn)
+            if self.use_tcn:
+                self.tcn = nn.Sequential(
+                    nn.Conv1d(d_model, d_model, kernel_size=3, padding=1),
+                    nn.ReLU(),
+                )
+            else:
+                self.tcn = None
+            # boundary head(s)
+            self.two_class_head = bool(two_class_head)
+            if self.two_class_head:
+                self.head_boundary2 = nn.Linear(d_model, 2)
+                self.head_boundary = None
+            else:
+                self.head_boundary = nn.Linear(d_model, 1)
+                self.head_boundary2 = None
             # heads below are created to match state_dict keys, though unused here
             self.head_vel_reg = nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
             self.head_dur_reg = nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
@@ -193,6 +237,10 @@ def reconstruct_model(ckpt_path: Path, device):
             pc = self.pitch_emb(feats["pitch_class"] % 12)
             pos = self.pos_emb(pos_ids)
             parts = [dur, vel, pc, pos]
+            if self.use_bar_beat and "bar_phase" in feats and "beat_phase" in feats and self.barpos_proj is not None and self.beatpos_proj is not None:
+                bp = self.barpos_proj(feats["bar_phase"].unsqueeze(-1))
+                bt = self.beatpos_proj(feats["beat_phase"].unsqueeze(-1))
+                parts.extend([bp, bt])
             if self.vel_bucket_emb is not None and "vel_bucket" in feats:
                 parts.append(self.vel_bucket_emb(feats["vel_bucket"]))
             if self.dur_bucket_emb is not None and "dur_bucket" in feats:
@@ -206,10 +254,25 @@ def reconstruct_model(ckpt_path: Path, device):
             out, _ = nn.utils.rnn.pad_packed_sequence(
                 out, batch_first=True, total_length=self.max_len
             )
-            logits = self.head_boundary(out).squeeze(-1)
+            if self.tcn is not None:
+                tmp = out.transpose(1, 2)
+                tmp = self.tcn(tmp)
+                out = tmp.transpose(1, 2)
+            if self.two_class_head and self.head_boundary2 is not None:
+                logits2 = self.head_boundary2(out)
+                # use difference as single-logit boundary score
+                logits = (logits2[..., 1] - logits2[..., 0]).squeeze(-1)
+            elif self.head_boundary is not None:
+                logits = self.head_boundary(out).squeeze(-1)
+            else:
+                logits = out.new_zeros(out.size(0), out.size(1))
             return {"boundary": logits}
 
-    if arch == "lstm":
+    # Detect optional modules from state_dict
+    has_two_class = isinstance(sd_full, dict) and any(k.startswith("head_boundary2.") for k in sd_full.keys())
+    has_tcn = isinstance(sd_full, dict) and any(k.startswith("tcn.0.") for k in sd_full.keys())
+
+    if arch in {"lstm", "bilstm_tcn"}:
         model = PhraseLSTM(
             d_model=d_model,
             max_len=max_len,
@@ -218,6 +281,9 @@ def reconstruct_model(ckpt_path: Path, device):
             dur_bins=dur_bins,
             vel_bucket_size=vb_size,
             dur_bucket_size=db_size,
+            use_bar_beat=bool(meta.get("use_bar_beat", False)),
+            use_tcn=has_tcn,
+            two_class_head=has_two_class,
         )
     else:
         # Try to import transformer
@@ -225,13 +291,30 @@ def reconstruct_model(ckpt_path: Path, device):
             from models.phrase_transformer import PhraseTransformer  # type: ignore
         except Exception as e:  # pragma: no cover
             raise SystemError("Transformer model not available; install models.phrase_transformer") from e
+        # Prefer sizes detected from checkpoint to avoid mismatches
+        vel_bucket_size = vb_size if vb_size > 0 else (vel_bins if duv_mode in {"cls", "both"} else 0)
+        dur_bucket_size = db_size if db_size > 0 else (dur_bins if duv_mode in {"cls", "both"} else 0)
+        # Infer bar/beat usage from checkpoint feat_proj input size if possible
+        use_bar_beat_meta = bool(meta.get("use_bar_beat", False))
+        use_bar_beat_sd = False
+        if feat_in_ckpt is not None:
+            extra_known = 0
+            if vel_bucket_size:
+                extra_known += 8
+            if dur_bucket_size:
+                extra_known += 8
+            # If checkpoint's feat_proj expects +2*(d_model//8) beyond known extras, assume bar+beat
+            if feat_in_ckpt == (d_model + extra_known + 2 * (d_model // 8)):
+                use_bar_beat_sd = True
+        use_bar_beat_tf = use_bar_beat_meta or use_bar_beat_sd
         model = PhraseTransformer(
             d_model=d_model,
             max_len=max_len,
             section_vocab_size=0,
             mood_vocab_size=0,
-            vel_bucket_size=vel_bins if duv_mode in {"cls", "both"} else 0,
-            dur_bucket_size=dur_bins if duv_mode in {"cls", "both"} else 0,
+            vel_bucket_size=vel_bucket_size,
+            dur_bucket_size=dur_bucket_size,
+            use_bar_beat=use_bar_beat_tf,
             duv_mode=duv_mode,
             vel_bins=vel_bins,
             dur_bins=dur_bins,
@@ -272,7 +355,7 @@ def build_groups(rows: list[dict[str, str]]) -> list[list[dict[str, str]]]:
     return groups
 
 
-def rows_to_feats(groups: list[list[dict[str, str]]], max_len: int, use_duv_embed: bool):
+def rows_to_feats(groups: list[list[dict[str, str]]], max_len: int, use_duv_embed: bool, use_bar_beat: bool, use_harmony: bool):
     import torch
 
     feats_list = []
@@ -296,11 +379,25 @@ def rows_to_feats(groups: list[list[dict[str, str]]], max_len: int, use_duv_embe
             "duration": dur_t,
             "position": pos_t,
         }
+        if use_bar_beat:
+            L_eff = len(g[:L])
+            bar_phase = [i / max(1, L_eff - 1) for i in range(L_eff)] + [0.0] * pad
+            max_pos = float(max(pos_vals)) if pos_vals else 1.0
+            beat_phase = [float(v) / max(1.0, max_pos) for v in pos_vals] + [0.0] * pad
+            feats["bar_phase"] = torch.tensor(bar_phase, dtype=torch.float32)
+            feats["beat_phase"] = torch.tensor(beat_phase, dtype=torch.float32)
         if use_duv_embed:
             vb = [int(r.get("velocity_bucket", 0)) for r in g[:L]] + [0] * pad
             db = [int(r.get("duration_bucket", 0)) for r in g[:L]] + [0] * pad
             feats["vel_bucket"] = torch.tensor(vb, dtype=torch.long)
             feats["dur_bucket"] = torch.tensor(db, dtype=torch.long)
+        if use_harmony:
+            hr = [int(r.get("harm_root", 0)) for r in g[:L]] + [0] * pad
+            hf = [int(r.get("harm_func", 0)) for r in g[:L]] + [0] * pad
+            hd = [int(r.get("harm_degree", 0)) for r in g[:L]] + [0] * pad
+            feats["harm_root"] = torch.tensor(hr, dtype=torch.long)
+            feats["harm_func"] = torch.tensor(hf, dtype=torch.long)
+            feats["harm_degree"] = torch.tensor(hd, dtype=torch.long)
         feats_list.append(feats)
         m = torch.zeros(max_len, dtype=torch.bool)
         m[:L] = 1
@@ -309,11 +406,11 @@ def rows_to_feats(groups: list[list[dict[str, str]]], max_len: int, use_duv_embe
     return feats_list, masks, idx_maps
 
 
-def predict(model, device, groups, max_len: int, use_duv_embed: bool, th: float):
+def predict(model, device, groups, max_len: int, use_duv_embed: bool, th: float, temp: float | None = None, use_bar_beat: bool = False, use_harmony: bool = False):
     import torch
     from torch.nn import functional as F
 
-    feats_list, masks, idx_maps = rows_to_feats(groups, max_len=max_len, use_duv_embed=use_duv_embed)
+    feats_list, masks, idx_maps = rows_to_feats(groups, max_len=max_len, use_duv_embed=use_duv_embed, use_bar_beat=use_bar_beat, use_harmony=use_harmony)
     probs_flat: list[float] = []
     preds_flat: list[int] = []
     for feats, mask, idxs in zip(feats_list, masks, idx_maps):
@@ -322,6 +419,8 @@ def predict(model, device, groups, max_len: int, use_duv_embed: bool, th: float)
         with torch.no_grad():
             out = model(feats, mask_b)
             logits = out["boundary"][0, mask]
+            if temp and temp > 0:
+                logits = logits / float(temp)
             probs = torch.sigmoid(logits).cpu().tolist()
         preds = [1 if p > th else 0 for p in probs]
         probs_flat.extend(probs)
@@ -341,6 +440,8 @@ def midi_to_rows_batch(
     instrument: str | None,
     instrument_regex: str | None,
     pitch_range: tuple[int, int] | None,
+    *,
+    path_hint: bool = True,
 ) -> list[dict[str, object]]:
     # Lazy import to avoid hard dependency
     from tools.corpus_to_phrase_csv import midi_to_rows  # type: ignore
@@ -356,7 +457,7 @@ def midi_to_rows_batch(
             instrument_filter=instrument.lower() if instrument else None,
             instrument_regex=inst_re,
             pitch_range=pitch_range,
-            path_hint_match=True,
+            path_hint_match=bool(path_hint),
             emit_buckets=True,  # ensure velocity/duration buckets available
             dur_bins=16,
             vel_bins=8,
@@ -416,6 +517,82 @@ def split_songs(rows: list[dict[str, str]]) -> list[list[dict[str, str]]]:
     if cur:
         songs.append(cur)
     return songs
+
+
+def apply_hysteresis(probs: list[float], th_on: float, th_off: float) -> list[int]:
+    preds: list[int] = []
+    state = 0
+    for p in probs:
+        if state == 0 and p > th_on:
+            state = 1
+        elif state == 1 and p < th_off:
+            state = 0
+        preds.append(state)
+    return preds
+
+
+def enforce_min_gap(preds: list[int], probs: list[float], min_gap: int) -> list[int]:
+    if min_gap <= 1:
+        return preds
+    last_pos = -min_gap - 1
+    out = preds[:]
+    for i, v in enumerate(preds):
+        if v == 1:
+            if i - last_pos < min_gap:
+                # conflict: keep the higher-prob one
+                if probs[i] > probs[last_pos] if 0 <= last_pos < len(probs) else True:
+                    out[last_pos] = 0
+                    last_pos = i
+                else:
+                    out[i] = 0
+            else:
+                last_pos = i
+    return out
+
+
+def viterbi_binary(probs: list[float], switch_cost: float = 1.0) -> list[int]:
+    import math
+    n = len(probs)
+    if n == 0:
+        return []
+    log = lambda x: -1e9 if x <= 0 else math.log(x)
+    e0 = [log(1 - p) for p in probs]
+    e1 = [log(p) for p in probs]
+    # transitions
+    stay = 0.0
+    switch = -abs(float(switch_cost))
+    dp0 = [e0[0]]
+    dp1 = [e1[0]]
+    bt0 = [-1]
+    bt1 = [-1]
+    for t in range(1, n):
+        a0 = dp0[t - 1] + stay
+        b0 = dp1[t - 1] + switch
+        if a0 >= b0:
+            dp0.append(a0 + e0[t])
+            bt0.append(0)
+        else:
+            dp0.append(b0 + e0[t])
+            bt0.append(1)
+        a1 = dp1[t - 1] + stay
+        b1 = dp0[t - 1] + switch
+        if a1 >= b1:
+            dp1.append(a1 + e1[t])
+            bt1.append(1)
+        else:
+            dp1.append(b1 + e1[t])
+            bt1.append(0)
+    # backtrack
+    out = [0] * n
+    state = 1 if dp1[-1] >= dp0[-1] else 0
+    for t in reversed(range(n)):
+        out[t] = state
+        if t > 0:
+            if state == 0:
+                state = bt0[t]
+            else:
+                state = bt1[t]
+    return out
 
 
 def _stem(val: str) -> str:
@@ -488,6 +665,7 @@ def main(argv: list[str] | None = None) -> int:
             instrument=args.instrument,
             instrument_regex=args.instrument_regex,
             pitch_range=pr,
+            path_hint=not bool(args.no_path_hint),
         )
         source = str(args.in_midi)
     else:
@@ -501,7 +679,18 @@ def main(argv: list[str] | None = None) -> int:
         val_groups = build_groups(val_rows)
         cols_val = set(val_rows[0].keys()) if val_rows else set()
         use_duv_val = "velocity_bucket" in cols_val and "duration_bucket" in cols_val
-        probs_val, _ = predict(model, device, val_groups, max_len=max_len, use_duv_embed=use_duv_val, th=0.5)
+        use_bar_beat_val = bool(meta.get("use_bar_beat", False))
+        use_harmony_val = bool(meta.get("use_harmony", False))
+        probs_val, _ = predict(
+            model,
+            device,
+            val_groups,
+            max_len=max_len,
+            use_duv_embed=use_duv_val,
+            th=0.5,
+            use_bar_beat=use_bar_beat_val,
+            use_harmony=use_harmony_val,
+        )
         trues_val = [int(r.get("boundary", 0)) for r in val_rows]
         best_f1, best_th, pr_auc = scan_thresholds(trues_val, probs_val, *tuple(args.scan_range))
         th_used = best_th
@@ -512,7 +701,27 @@ def main(argv: list[str] | None = None) -> int:
     groups = build_groups(rows_str)
     cols = set(groups[0][0].keys()) if groups and groups[0] else set()
     use_duv_embed = "velocity_bucket" in cols and "duration_bucket" in cols
-    probs, _ = predict(model, device, groups, max_len=max_len, use_duv_embed=use_duv_embed, th=th_used)
+    # Determine calibration temperature from checkpoint meta
+    temp = None
+    calib = meta.get("calibration") if isinstance(meta, dict) else None
+    if isinstance(calib, dict) and "temperature" in calib:
+        try:
+            temp = float(calib["temperature"])
+        except Exception:
+            temp = None
+    use_bar_beat = bool(meta.get("use_bar_beat", False))
+    use_harmony = bool(meta.get("use_harmony", False))
+    probs, _ = predict(
+        model,
+        device,
+        groups,
+        max_len=max_len,
+        use_duv_embed=use_duv_embed,
+        th=th_used,
+        temp=temp,
+        use_bar_beat=use_bar_beat,
+        use_harmony=use_harmony,
+    )
 
     # Flatten and write
     out_rows: list[dict[str, object]] = []
@@ -553,7 +762,18 @@ def main(argv: list[str] | None = None) -> int:
             val_groups = build_groups(val_rows)
             cols_val = set(val_rows[0].keys()) if val_rows else set()
             use_duv_val = "velocity_bucket" in cols_val and "duration_bucket" in cols_val
-            probs_val, _ = predict(model, device, val_groups, max_len=max_len, use_duv_embed=use_duv_val, th=0.5)
+            use_bar_beat_val = bool(meta.get("use_bar_beat", False))
+            use_harmony_val = bool(meta.get("use_harmony", False))
+            probs_val, _ = predict(
+                model,
+                device,
+                val_groups,
+                max_len=max_len,
+                use_duv_embed=use_duv_val,
+                th=0.5,
+                use_bar_beat=use_bar_beat_val,
+                use_harmony=use_harmony_val,
+            )
             # Compute per-song thresholds on val
             tmp: dict[str, list[int]] = {}
             probs_map: dict[str, list[float]] = {}
@@ -564,12 +784,44 @@ def main(argv: list[str] | None = None) -> int:
                 f1s, ths, _ = scan_thresholds(tmp[sid], probs_map[sid], *tuple(args.scan_range))
                 per_song_th_map[sid] = ths
 
+    # Optional post-processing per song (apply on probabilities before thresholding)
+    # Build per-song probability vectors (in original row order)
+    probs_by_song: dict[str, list[float]] = {}
+    idx_by_song: dict[str, list[int]] = {}
+    for idx, sid in enumerate(song_ids):
+        probs_by_song.setdefault(sid, []).append(probs[idx])
+        idx_by_song.setdefault(sid, []).append(idx)
+
+    post_preds: dict[int, int] = {}
+    th_on = float(args.th_on) if args.th_on is not None else th_used
+    th_off = float(args.th_off) if args.th_off is not None else th_used
+    # Hysteresis thresholds from args if provided via environment or defaults (optional future)
+    # For now, we keep th_on=th_off unless per-song-th is used
+    if args.per_song_th:
+        # already have per_song_th_map
+        pass
+    # Apply CRF-like smoothing or hysteresis/min-gap per song
+    for sid, pv in probs_by_song.items():
+        indices = idx_by_song[sid]
+        if len(pv) == 0:
+            continue
+        # Default path: hysteresis + min-gap
+        preds_seq = apply_hysteresis(pv, th_on, th_off)
+        preds_seq = enforce_min_gap(preds_seq, pv, min_gap=max(0, int(args.min_gap)))
+        for j, idx in enumerate(indices):
+            post_preds[idx] = int(preds_seq[j])
+
     for r, sid in zip(rows_str, song_ids):
         rr = dict(r)
         prob = float(probs[i]) if i < len(probs) else 0.0
         rr["pred_prob"] = prob
         th_row = per_song_th_map.get(sid, th_used)
-        rr["pred_boundary"] = int(1 if prob > th_row else 0)
+        # start from post-processing decision; if per-song threshold differs, re-apply threshold
+        pred_bin = post_preds.get(i, int(prob > th_used))
+        if th_row != th_used:
+            pred_bin = int(prob > th_row)
+        rr["pred_boundary"] = int(pred_bin)
+        rr["applied_th"] = float(th_row)
         rr.setdefault("song_id", sid)
         out_rows.append(rr)
         i += 1
@@ -583,8 +835,8 @@ def main(argv: list[str] | None = None) -> int:
             base_fields = base_fields[:idx] + ["song_id"] + base_fields[idx:]
         else:
             base_fields.append("song_id")
-    fieldnames = base_fields + ["pred_prob", "pred_boundary"]
-    write_csv(out_rows, args.out_csv, fieldnames)
+    fieldnames = base_fields + ["pred_prob", "pred_boundary", "applied_th"]
+    write_csv(out_rows, args.out_csv, fieldnames, append=bool(args.append))
 
     # Optional report: if ground-truth is present in input CSV, compute summary and by-song metrics
     report = {"source": source, "out_csv": str(args.out_csv), "th": th_used, "wrote": len(out_rows)}

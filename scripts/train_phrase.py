@@ -216,9 +216,15 @@ def train_model(
     lr_patience: int = 2,
     lr_factor: float = 0.5,
     use_duv_embed: bool = False,
+    use_bar_beat: bool = False,
+    use_local_stats: bool = False,
+    use_harmony: bool = False,
     duv_mode: str = "reg",
     vel_bins: int = 0,
     dur_bins: int = 0,
+    head: str = "linear",
+    loss: str = "bce",
+    focal_gamma: float = 2.0,
     progress: bool = False,
     w_boundary: float = 1.0,
     w_vel_reg: float = 0.5,
@@ -324,6 +330,11 @@ def train_model(
             duv_mode: str = "reg",
             vel_bins: int = 0,
             dur_bins: int = 0,
+            use_bar_beat: bool = False,
+            use_tcn: bool = False,
+            use_crf_head: bool = False,
+            use_harmony: bool = False,
+            use_local_stats: bool = False,
         ) -> None:
             super().__init__()
             self.d_model = d_model
@@ -332,6 +343,15 @@ def train_model(
             self.pos_emb = nn.Embedding(max_len, d_model // 4)
             self.dur_proj = nn.Linear(1, d_model // 4)
             self.vel_proj = nn.Linear(1, d_model // 4)
+            self.use_bar_beat = use_bar_beat
+            if use_bar_beat:
+                self.barpos_proj = nn.Linear(1, d_model // 8)
+                self.beatpos_proj = nn.Linear(1, d_model // 8)
+                extra_bar_beat = d_model // 4
+            else:
+                self.barpos_proj = None
+                self.beatpos_proj = None
+                extra_bar_beat = 0
             extra_dim = 0
             if section_vocab_size:
                 self.section_emb = nn.Embedding(section_vocab_size, 16)
@@ -353,11 +373,40 @@ def train_model(
                 extra_dim += 8
             else:
                 self.dur_bucket_emb = None
-            self.feat_proj = nn.Linear(d_model + extra_dim, d_model)
+            self.use_harmony = use_harmony
+            if use_harmony:
+                self.harm_root_emb = nn.Embedding(12, 8)
+                self.harm_func_emb = nn.Embedding(3, 4)
+                self.harm_degree_emb = nn.Embedding(8, 4)
+                extra_dim += (8 + 4 + 4)
+            else:
+                self.harm_root_emb = None
+                self.harm_func_emb = None
+                self.harm_degree_emb = None
+            self.use_local_stats = use_local_stats
+            if use_local_stats:
+                self.local_proj = nn.Linear(4, d_model // 8)
+                extra_dim += d_model // 8
+            else:
+                self.local_proj = None
+            self.feat_proj = nn.Linear(d_model + extra_dim + extra_bar_beat, d_model)
             self.lstm = nn.LSTM(
                 d_model, d_model // 2, num_layers=2, batch_first=True, bidirectional=True
             )
-            self.head_boundary = nn.Linear(d_model, 1)
+            self.use_tcn = use_tcn
+            if self.use_tcn:
+                self.tcn = nn.Sequential(
+                    nn.Conv1d(d_model, d_model, kernel_size=3, padding=1),
+                    nn.ReLU(),
+                )
+            else:
+                self.tcn = None
+            if use_crf_head:
+                self.head_boundary2 = nn.Linear(d_model, 2)
+                self.head_boundary = None
+            else:
+                self.head_boundary = nn.Linear(d_model, 1)
+                self.head_boundary2 = None
             self.head_vel_reg = (
                 nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
             )
@@ -388,6 +437,17 @@ def train_model(
                 parts.append(self.vel_bucket_emb(feats["vel_bucket"]))
             if self.dur_bucket_emb is not None and "dur_bucket" in feats:
                 parts.append(self.dur_bucket_emb(feats["dur_bucket"]))
+            if self.use_harmony and self.harm_root_emb is not None and self.harm_func_emb is not None and self.harm_degree_emb is not None:
+                if "harm_root" in feats and "harm_func" in feats and "harm_degree" in feats:
+                    parts.append(self.harm_root_emb(feats["harm_root"]))
+                    parts.append(self.harm_func_emb(feats["harm_func"]))
+                    parts.append(self.harm_degree_emb(feats["harm_degree"]))
+            if self.use_local_stats and self.local_proj is not None and "local_stats" in feats:
+                parts.append(self.local_proj(feats["local_stats"]))
+            if self.use_bar_beat and "bar_phase" in feats and "beat_phase" in feats and self.barpos_proj is not None and self.beatpos_proj is not None:
+                bp = self.barpos_proj(feats["bar_phase"].unsqueeze(-1))
+                bt = self.beatpos_proj(feats["beat_phase"].unsqueeze(-1))
+                parts.extend([bp, bt])
             x = torch.cat(parts, dim=-1)
             x = self.feat_proj(x)
             packed = nn.utils.rnn.pack_padded_sequence(
@@ -398,7 +458,15 @@ def train_model(
                 out, batch_first=True, total_length=self.max_len
             )
             outputs: dict[str, torch.Tensor] = {}
-            outputs["boundary"] = self.head_boundary(out).squeeze(-1)
+            if self.tcn is not None:
+                out = out.transpose(1, 2)
+                out = self.tcn(out)
+                out = out.transpose(1, 2)
+            outputs: dict[str, torch.Tensor] = {}
+            if self.head_boundary is not None:
+                outputs["boundary"] = self.head_boundary(out).squeeze(-1)
+            if self.head_boundary2 is not None:
+                outputs["boundary2"] = self.head_boundary2(out)
             if self.head_vel_reg is not None:
                 outputs["vel_reg"] = self.head_vel_reg(out).squeeze(-1)
             if self.head_dur_reg is not None:
@@ -419,6 +487,9 @@ def train_model(
             instrument_vocab: dict[str, int] | None = None,
             use_duv_embed: bool = False,
             limit_groups: int = 0,
+            use_bar_beat: bool = False,
+            use_harmony: bool = False,
+            use_local_stats: bool = False,
         ) -> None:
             # Group contiguously by bar value to avoid mixing bars from different files.
             # The CSV rows are appended file-by-file, so a reset of the bar index
@@ -448,6 +519,9 @@ def train_model(
             if limit_groups and limit_groups > 0:
                 groups = groups[: max(1, int(limit_groups))]
             self.groups = groups
+            self.use_bar_beat = use_bar_beat
+            self.use_harmony = use_harmony
+            self.use_local_stats = use_local_stats
             self.group_tags = {
                 "section": [g[0].get("section", "") for g in self.groups],
                 "mood": [g[0].get("mood", "") for g in self.groups],
@@ -514,6 +588,22 @@ def train_model(
                 "duration": dur,
                 "position": pos,
             }
+            if self.use_harmony:
+                # Always include fields (fill 0 when missing)
+                hr = [int(r.get("harm_root", 0)) for r in g] + [0] * pad
+                hf = [int(r.get("harm_func", 0)) for r in g] + [0] * pad
+                hd = [int(r.get("harm_degree", 0)) for r in g] + [0] * pad
+                feats["harm_root"] = torch.tensor(hr, dtype=torch.long)
+                feats["harm_func"] = torch.tensor(hf, dtype=torch.long)
+                feats["harm_degree"] = torch.tensor(hd, dtype=torch.long)
+            if self.use_bar_beat:
+                # bar_phase: 0..1 across the group length
+                denom = max(1, L - 1)
+                bar_phase = [i / denom for i in range(L)] + [0.0] * pad
+                max_pos = float(max(pos_vals)) if pos_vals else 1.0
+                beat_phase = [float(v) / max(1.0, max_pos) for v in pos_vals] + [0.0] * pad
+                feats["bar_phase"] = torch.tensor(bar_phase, dtype=torch.float32)
+                feats["beat_phase"] = torch.tensor(beat_phase, dtype=torch.float32)
             if self.section_vocab:
                 sec = [
                     self.section_vocab.get(r.get("section", ""), 0) for r in g
@@ -534,6 +624,39 @@ def train_model(
                     int(r.get("duration_bucket", r.get("dur_bucket", 0))) for r in g
                 ] + [0] * pad
                 feats["dur_bucket"] = torch.tensor(db, dtype=torch.long)
+            if self.use_local_stats:
+                # ローカル統計: 直近K=8 の IOI/interval/velocity の平均/分散（簡易）
+                K = 8
+                ioi = [0.0] * L
+                interval = [0.0] * L
+                vel_list = [float(r["velocity"]) for r in g]
+                for j in range(1, L):
+                    ioi[j] = float(pos_vals[j] - pos_vals[j - 1])
+                    interval[j] = float(abs(pitches[j] - pitches[j - 1]))
+                mean_ioi = []
+                std_ioi = []
+                mean_interval = []
+                mean_vel = []
+                for j in range(L):
+                    a = max(0, j - K + 1)
+                    ioi_w = ioi[a : j + 1]
+                    int_w = interval[a : j + 1]
+                    vel_w = vel_list[a : j + 1]
+                    m_ioi = sum(ioi_w) / len(ioi_w)
+                    m_int = sum(int_w) / len(int_w)
+                    m_vel = sum(vel_w) / len(vel_w)
+                    var_ioi = sum((x - m_ioi) ** 2 for x in ioi_w) / len(ioi_w)
+                    mean_ioi.append(m_ioi)
+                    std_ioi.append(var_ioi ** 0.5)
+                    mean_interval.append(m_int)
+                    mean_vel.append(m_vel)
+                # 正規化（簡易、ゼロ除去）
+                def norm(vs: list[float]) -> list[float]:
+                    mx = max(1e-6, max(vs))
+                    return [x / mx for x in vs]
+                ls = list(zip(norm(mean_ioi), norm(std_ioi), norm(mean_interval), norm(mean_vel)))
+                ls += [(0.0, 0.0, 0.0, 0.0)] * pad
+                feats["local_stats"] = torch.tensor(ls, dtype=torch.float32)
             mask = torch.zeros(self.max_len, dtype=torch.bool)
             mask[:L] = 1
             targets = {
@@ -696,6 +819,9 @@ def train_model(
         instrument_vocab,
         use_duv_embed=use_duv_embed,
         limit_groups=limit_train_groups,
+        use_bar_beat=use_bar_beat,
+        use_harmony=use_harmony,
+        use_local_stats=use_local_stats,
     )
     ds_val = PhraseDataset(
         val_rows,
@@ -705,6 +831,9 @@ def train_model(
         instrument_vocab,
         use_duv_embed=use_duv_embed,
         limit_groups=limit_val_groups,
+        use_bar_beat=use_bar_beat,
+        use_harmony=use_harmony,
+        use_local_stats=use_local_stats,
     )
 
     if duv_mode in {"cls", "both"}:
@@ -781,7 +910,7 @@ def train_model(
         limit_train_batches = max(1, int(limit_train_batches or 2))
         limit_val_batches = max(1, int(limit_val_batches or 2))
 
-    if arch == "lstm":
+    if arch in {"lstm", "bilstm_tcn"}:
         model: nn.Module = PhraseLSTM(
             d_model=d_model,
             max_len=max_len,
@@ -792,6 +921,11 @@ def train_model(
             duv_mode=duv_mode,
             vel_bins=vel_bins,
             dur_bins=dur_bins,
+            use_bar_beat=use_bar_beat,
+            use_harmony=use_harmony,
+            use_tcn=(arch == "bilstm_tcn"),
+            use_crf_head=(head == "crf"),
+            use_local_stats=use_local_stats,
         )
     else:
         model = PhraseTransformer(
@@ -801,6 +935,7 @@ def train_model(
             mood_vocab_size=len(mood_vocab) + 1 if mood_vocab else 0,
             vel_bucket_size=vel_bucket_size,
             dur_bucket_size=dur_bucket_size,
+            use_bar_beat=use_bar_beat,
             duv_mode=duv_mode,
             vel_bins=vel_bins,
             dur_bins=dur_bins,
@@ -837,7 +972,19 @@ def train_model(
     else:
         sched = None
     pw = torch.tensor([pos_weight], device=device) if pos_weight else None
-    crit_boundary = nn.BCEWithLogitsLoss(pos_weight=pw)
+    # Optional focal loss
+    class FocalLoss(nn.Module):
+        def __init__(self, gamma: float = 2.0, pos_weight: torch.Tensor | None = None) -> None:
+            super().__init__()
+            self.gamma = gamma
+            self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='none')
+        def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+            bce = self.bce(logits, targets)
+            p = torch.sigmoid(logits)
+            pt = p * targets + (1 - p) * (1 - targets)
+            loss = ((1 - pt) ** self.gamma) * bce
+            return loss.mean()
+    crit_boundary = FocalLoss(gamma=focal_gamma, pos_weight=pw) if loss == 'focal' else nn.BCEWithLogitsLoss(pos_weight=pw)
     crit_vel_reg = nn.SmoothL1Loss()
     crit_dur_reg = nn.SmoothL1Loss()
     crit_vel_cls = nn.CrossEntropyLoss()
@@ -845,6 +992,32 @@ def train_model(
     crit_pitch = nn.CrossEntropyLoss(
         ignore_index=-100, label_smoothing=pitch_smoothing
     )
+    # Lightweight 2-state CRF for sequence consistency（必要時のみ有効化）
+    class CRF2(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.trans = nn.Parameter(torch.zeros(2, 2))
+        def nll(self, emissions: torch.Tensor, tags: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+            # emissions: (B,L,2), tags: (B,L) int 0/1, mask: (B,L) bool
+            B, L, C = emissions.shape
+            # 前向き計算で対数分配関数を求める
+            alpha = emissions[:, 0, :]
+            for t in range(1, L):
+                e_t = emissions[:, t, :].unsqueeze(1)  # (B,1,2)
+                a = alpha.unsqueeze(2) + self.trans.unsqueeze(0) + e_t  # (B,2,2)
+                alpha_t = torch.logsumexp(a, dim=1)  # (B,2)
+                alpha = torch.where(mask[:, t].unsqueeze(1), alpha_t, alpha)
+            logZ = torch.logsumexp(alpha, dim=1)  # (B,)
+            # 正解パスのスコア
+            score = emissions[torch.arange(B), 0, tags[:, 0]]
+            for t in range(1, L):
+                emit = emissions[torch.arange(B), t, tags[:, t]]
+                trans = self.trans[tags[:, t - 1], tags[:, t]]
+                step = emit + trans
+                score = torch.where(mask[:, t], score + step, score)
+            nll = (logZ - score).mean()
+            return nll
+    crf = CRF2().to(device) if head == 'crf' else None
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     writer = SummaryWriter(logdir) if logdir and SummaryWriter else None
 
@@ -862,12 +1035,13 @@ def train_model(
         best_f1 = float(state.get("best_f1", -1.0))
 
     def evaluate() -> tuple[
-        float, float, list[float], list[int], dict[str, list[int]], dict[str, float]
+        float, float, list[float], list[int], dict[str, list[int]], dict[str, float], list[float]
     ]:
         model.eval()
         probs: list[float] = []
         trues: list[int] = []
         tag_buf = {"instrument": [], "section": [], "mood": []}
+        logits_all: list[float] = []
         vel_err = 0.0
         dur_err = 0.0
         vel_n = 0
@@ -884,7 +1058,16 @@ def train_model(
                 outputs = model(feats, mask)
                 m = mask.bool()
                 mask_cpu = m.cpu()
-                probs.extend(torch.sigmoid(outputs["boundary"][m]).cpu().tolist())
+                if "boundary2" in outputs:
+                    # CRF/2-class logits present; use softmax prob of class 1
+                    logits2 = outputs["boundary2"][m].detach().cpu()
+                    logits_all.extend((logits2[:, 1] - logits2[:, 0]).tolist())
+                    import torch as _t
+                    probs.extend(_t.softmax(logits2, dim=-1)[:, 1].tolist())
+                else:
+                    logits_this = outputs["boundary"][m].detach().cpu().tolist()
+                    logits_all.extend([float(v) for v in logits_this])
+                    probs.extend(torch.sigmoid(outputs["boundary"][m]).cpu().tolist())
                 trues.extend(targets["boundary"][m].int().cpu().tolist())
                 if "vel_reg" in outputs:
                     vel_err += (
@@ -938,7 +1121,7 @@ def train_model(
             "pos_rate": pos_rate,
             "mean_prob": mean_prob,
         }
-        return best_f1, best_th, probs, trues, tag_buf, metrics
+        return best_f1, best_th, probs, trues, tag_buf, metrics, logits_all
 
     ts = int(time.time())
     best_state = None
@@ -976,7 +1159,19 @@ def train_model(
                 m = mask.bool()
                 loss = 0.0
                 lb = lv = ld = lvb = ldb = lp = 0.0
-                if "boundary" in outputs:
+                if "boundary2" in outputs:
+                    # 2-class logits available (CRF head or softmax head); use BCE on class-1 logit if not CRF
+                    if head == 'crf':
+                        # CRF NLL
+                        # build emissions and tags
+                        emissions = outputs["boundary2"]  # (B,L,2)
+                        tags = targets["boundary"].long()
+                        lb = crf.nll(emissions, tags, m)
+                        loss = loss + w_boundary * lb
+                    else:
+                        lb = crit_boundary(outputs["boundary2"][m][:, 1] - outputs["boundary2"][m][:, 0], targets["boundary"][m])
+                        loss = loss + w_boundary * lb
+                elif "boundary" in outputs:
                     lb = crit_boundary(outputs["boundary"][m], targets["boundary"][m])
                     loss = loss + w_boundary * lb
                 if "vel_reg" in outputs:
@@ -1032,7 +1227,7 @@ def train_model(
                 iter_train.close()  # type: ignore[attr-defined]
             except Exception:
                 pass
-        f1, th, probs, trues, tag_buf, metrics = evaluate()
+        f1, th, probs, trues, tag_buf, metrics, _ = evaluate()
         n_batches = max(1, len(dl_train))
         avg_loss = loss_sum / n_batches
         lb_avg = lb_sum / n_batches
@@ -1181,6 +1376,8 @@ def train_model(
         "duv_mode": duv_mode,
         "vel_bins": vel_bins,
         "dur_bins": dur_bins,
+        "use_bar_beat": bool(use_bar_beat),
+        "use_harmony": bool(use_harmony),
         "vocab_pitch": 128,
         "vocab": {},
         "corpus_name": corpus_name,
@@ -1215,7 +1412,7 @@ def train_model(
         writer.close()
     if best_state is not None:
         model.load_state_dict(best_state)
-    best_f1, best_threshold, probs, trues, tag_buf, _ = evaluate()
+    best_f1, best_threshold, probs, trues, tag_buf, metrics, logits_all = evaluate()
     inv_section = {i: s for s, i in section_vocab.items()} if section_vocab else {}
     inv_mood = {i: s for s, i in mood_vocab.items()} if mood_vocab else {}
     inv_inst = {i: s for s, i in instrument_vocab.items()} if instrument_vocab else {}
@@ -1271,8 +1468,13 @@ def train_model(
             feats = {k: v.to(device) for k, v in feats.items()}
             mask0 = mask[0].bool()
             outputs = model(feats, mask.to(device))
-            logits = outputs["boundary"][0, mask0.to(device)]
-            probs = torch.sigmoid(logits).cpu().tolist()
+            if "boundary2" in outputs:
+                logits2 = outputs["boundary2"][0, mask0.to(device)]  # (T,2)
+                probs_t = torch.softmax(logits2, dim=-1)[:, 1]
+            else:
+                logits = outputs["boundary"][0, mask0.to(device)]
+                probs_t = torch.sigmoid(logits)
+            probs = probs_t.cpu().tolist()
             preds = [1 if p > best_threshold else 0 for p in probs]
             trues = targets["boundary"][0][mask0].int().cpu().tolist()
         preview_path.write_text(
@@ -1321,7 +1523,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--out", type=Path, default=Path("phrase.ckpt"))
-    parser.add_argument("--arch", choices=["transformer", "lstm"], default="transformer")
+    parser.add_argument("--arch", choices=["transformer", "lstm", "bilstm_tcn"], default="transformer")
+    parser.add_argument("--head", choices=["linear", "crf"], default="linear")
+    parser.add_argument("--loss", choices=["bce", "focal"], default="bce")
+    parser.add_argument("--focal-gamma", type=float, default=2.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
     parser.add_argument("--batch-size", type=int, default=8)
@@ -1369,6 +1574,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--exclude-tags", type=str, default=None)
     parser.add_argument("--reweight", type=str, default=None)
     parser.add_argument("--use-duv-embed", action="store_true")
+    # bar/beat 位相特徴の有効化（重複定義だったため単一に統一）
+    parser.add_argument("--use-bar-beat", action="store_true", help="add bar/beat phase features")
+    parser.add_argument("--use-harmony", action="store_true", help="use harmony features if present (harm_root/func/degree)")
+    parser.add_argument("--use-local-stats", action="store_true", help="use local rolling stats (IOI/interval/velocity)")
     parser.add_argument(
         "--duv-mode", choices=["none", "reg", "cls", "both"], default="reg"
     )
@@ -1395,6 +1604,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--viz", action="store_true", help="save PR/CM plots")
     parser.add_argument("--strict-tags", action="store_true", help="drop rows missing requested tags")
     parser.add_argument("--progress", action="store_true", help="show training progress bar")
+    parser.add_argument("--calibrate-temp", action="store_true", help="calibrate temperature on validation logits and save to checkpoint meta")
     # fast iteration helpers
     parser.add_argument("--limit-train-batches", type=int, default=0, help="max train batches per epoch for quick runs")
     parser.add_argument("--limit-val-batches", type=int, default=0, help="max validation batches per eval for quick runs")
@@ -1589,9 +1799,14 @@ def main(argv: list[str] | None = None) -> int:
             lr_patience=args.lr_patience,
             lr_factor=args.lr_factor,
             use_duv_embed=args.use_duv_embed,
+            use_bar_beat=args.use_bar_beat,
+            use_harmony=args.use_harmony,
             duv_mode=args.duv_mode,
             vel_bins=args.vel_bins,
             dur_bins=args.dur_bins,
+            head=args.head,
+            loss=args.loss,
+            focal_gamma=args.focal_gamma,
             progress=args.progress,
             w_boundary=args.w_boundary,
             w_vel_reg=args.w_vel_reg,
@@ -1635,6 +1850,7 @@ def main(argv: list[str] | None = None) -> int:
     (args.out.parent / "hparams.json").write_text(
         json.dumps(hparams, ensure_ascii=False, indent=2)
     )
+    # temperature calibration is handled inside train_model when enabled
     return 0 if args.min_f1 < 0 or f1 >= args.min_f1 else 1
 
 

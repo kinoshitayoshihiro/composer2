@@ -363,6 +363,9 @@ def read_chords_yaml(path: Path) -> List['ChordSpan']:
         data = [data]
     spans: List[ChordSpan] = []
     for item in data:
+        for key in ('start', 'end', 'root'):
+            if key not in item:
+                raise KeyError(key)
         start = float(item['start']); end = float(item['end'])
         root = item['root'].strip()
         quality = item.get('quality', 'maj').strip().lower()

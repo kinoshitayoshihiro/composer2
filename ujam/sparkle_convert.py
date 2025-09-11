@@ -358,17 +358,33 @@ def read_chords_csv(path: Path) -> List['ChordSpan']:
 def read_chords_yaml(path: Path) -> List['ChordSpan']:
     if yaml is None:
         raise SystemExit("PyYAML is required to read YAML chord files. pip install pyyaml")
-    data = yaml.safe_load(path.read_text()) or []
-    if isinstance(data, dict):
-        data = [data]
+    raw = yaml.safe_load(path.read_text())
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        items = [raw]
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        raise ValueError("Chord YAML must be a list or mapping")
+
     spans: List[ChordSpan] = []
-    for item in data:
-        for key in ('start', 'end', 'root'):
-            if key not in item:
-                raise KeyError(key)
-        start = float(item['start']); end = float(item['end'])
-        root = item['root'].strip()
-        quality = item.get('quality', 'maj').strip().lower()
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ValueError(f"Chord YAML item {i} must be a mapping")
+        # 必須キー（欠損→KeyError）
+        missing = [k for k in ("start", "end", "root") if k not in item]
+        if missing:
+            raise KeyError(missing[0])
+        # 型変換（数値以外→ValueError）
+        try:
+            start = float(item["start"])
+            end = float(item["end"])
+        except Exception as e:
+            raise ValueError("start/end must be numeric") from e
+        root = str(item["root"]).strip()
+        quality = str(item.get("quality", "maj")).strip().lower()
+        # 未対応ルート→ValueError（テスト想定どおり）
         if root not in PITCH_CLASS:
             raise ValueError(f"Unknown root {root}")
         spans.append(ChordSpan(start, end, PITCH_CLASS[root], quality))

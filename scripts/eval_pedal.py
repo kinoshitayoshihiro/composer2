@@ -14,12 +14,14 @@ It auto-detects device, optionally loads feature stats from --stats-json or
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
+from torch.utils.data import DataLoader, TensorDataset
 
 try:
     # Optional; if unavailable we fall back to simple metrics
@@ -29,6 +31,13 @@ except Exception:  # pragma: no cover - optional dependency
     precision_recall_fscore_support = None  # type: ignore
 
 from ml_models.pedal_model import PedalModel
+
+
+def _resolve_workers_cli(v):
+    if v is not None:
+        return max(int(v), 0)
+    env = os.getenv("COMPOSER2_NUM_WORKERS")
+    return max(int(env), 0) if (env and env.isdigit()) else 0
 
 # ------------------------------
 # Utilities
@@ -61,7 +70,7 @@ def _get_device(name: str) -> torch.device:
 # ------------------------------
 
 def _load_stats(stats_json: Optional[Path], ckpt_path: Optional[Path]):
-    """Return (feat_cols, mean, std) or None if not found/invalid.
+    """Return (feat_cols, mean, std, meta) or None if not found/invalid.
 
     Supports two layouts:
       {"feat_cols": [...], "mean": {col: val}, "std": {col: val}}
@@ -90,16 +99,24 @@ def _load_stats(stats_json: Optional[Path], ckpt_path: Optional[Path]):
             return None
 
     std[std < 1e-8] = 1.0
-    return feat_cols, mean, std
+    meta = {k: obj.get(k) for k in ("fps", "window", "hop", "pad_multiple")}
+    return feat_cols, mean, std, meta
 
 
-def _apply_stats(X: torch.Tensor, mean: np.ndarray, std: np.ndarray) -> torch.Tensor:
-    tmean = torch.tensor(mean, dtype=X.dtype, device=X.device)
-    tstd = torch.tensor(std, dtype=X.dtype, device=X.device)
-    while tmean.ndim < X.ndim:  # broadcast across (B,T,F) or (N,F)
-        tmean = tmean.unsqueeze(0)
-        tstd = tstd.unsqueeze(0)
-    return (X - tmean) / tstd
+def _apply_stats(df: pd.DataFrame, feat_cols: Sequence[str], mean: np.ndarray, std: np.ndarray, *, strict: bool = False) -> tuple[np.ndarray, List[str]]:
+    cols = list(feat_cols)
+    have = [c for c in df.columns if c.startswith("chroma_") or c == "rel_release"]
+    missing = [c for c in cols if c not in have]
+    extra = [c for c in have if c not in cols]
+    if strict and (missing or extra):
+        raise ValueError(f"stats/CSV mismatch: missing={missing}, extra={extra}")
+    if missing:
+        sys.stderr.write(f"[composer2] warn: filling missing feat cols with zeros: {missing}\n")
+    arr = df.reindex(columns=cols, fill_value=0).to_numpy(dtype="float32", copy=True)
+    arr = (arr - mean) / np.maximum(std, 1e-8)
+    if missing:
+        arr[:, [cols.index(c) for c in missing]] = 0.0
+    return arr, cols
 
 
 # ------------------------------
@@ -129,7 +146,7 @@ def _feature_columns(df: pd.DataFrame, prefer: Optional[Sequence[str]] = None) -
     return cols
 
 
-def load_csv_frames(path: Path, stats: Optional[Tuple[Optional[List[str]], np.ndarray, np.ndarray]]):
+def load_csv_frames(path: Path, stats: Optional[Tuple[Optional[List[str]], np.ndarray, np.ndarray]], strict: bool = False):
     """Load CSV and return (X[N,F], y[N]).
 
     More forgiving about required columns; only needs a binary 'pedal_state'.
@@ -149,12 +166,15 @@ def load_csv_frames(path: Path, stats: Optional[Tuple[Optional[List[str]], np.nd
         raise SystemExit("CSV missing required column: pedal_state")
     y = _as_int(df["pedal_state"], "uint8").values.astype("float32")
 
-    feat_cols = _feature_columns(df, stats[0] if stats else None)
-    if not feat_cols:
-        raise SystemExit("No feature columns (expected chroma_* and optional rel_release)")
-    X = df[feat_cols].values.astype("float32")
+    if stats is not None:
+        X_np, feat_cols = _apply_stats(df, stats[0], stats[1], stats[2], strict=strict)
+    else:
+        feat_cols = _feature_columns(df, None)
+        if not feat_cols:
+            raise SystemExit("No feature columns (expected chroma_* and optional rel_release)")
+        X_np = df[feat_cols].values.astype("float32")
 
-    x_t = torch.from_numpy(X)
+    x_t = torch.from_numpy(X_np)
     y_t = torch.from_numpy(y)
     return x_t, y_t, feat_cols
 
@@ -168,7 +188,7 @@ def _make_windows(arr: torch.Tensor, win: int, hop: int) -> torch.Tensor:
 
 
 def load_csv_to_windows(path: Path, window: int, hop: int,
-                        stats: Optional[Tuple[Optional[List[str]], np.ndarray, np.ndarray]]):
+                        stats: Optional[Tuple[Optional[List[str]], np.ndarray, np.ndarray]], strict: bool = False):
     """Load CSV and return (X[B,T,F], Y[B,T]).
 
     Requires time order via 'frame_id' when present; otherwise assumes existing order.
@@ -188,9 +208,12 @@ def load_csv_to_windows(path: Path, window: int, hop: int,
     if "pedal_state" not in df.columns:
         raise SystemExit("CSV missing required column: pedal_state")
 
-    feat_cols = _feature_columns(df, stats[0] if stats else None)
-    if not feat_cols:
-        raise SystemExit("No feature columns (expected chroma_* and optional rel_release)")
+    if stats is not None:
+        _, feat_cols = _apply_stats(df, stats[0], stats[1], stats[2], strict=strict)
+    else:
+        feat_cols = _feature_columns(df, None)
+        if not feat_cols:
+            raise SystemExit("No feature columns (expected chroma_* and optional rel_release)")
 
     groups_cols = _infer_groups_cols(df)
 
@@ -200,7 +223,10 @@ def load_csv_to_windows(path: Path, window: int, hop: int,
     for _, g in df.groupby(groups_cols):
         if sort_cols:
             g = g.sort_values(sort_cols).reset_index(drop=True)
-        x_np = g[feat_cols].values.astype("float32")
+        if stats is not None:
+            x_np, _ = _apply_stats(g, feat_cols, stats[1], stats[2], strict=strict)
+        else:
+            x_np = g[feat_cols].values.astype("float32")
         y_np = _as_int(g["pedal_state"], "uint8").values.astype("float32")
         x_t = torch.from_numpy(x_np)
         y_t = torch.from_numpy(y_np)
@@ -295,58 +321,87 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--hop", type=int, default=16, help="hop size between windows")
     ap.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     ap.add_argument("--batch", type=int, default=64, help="mini-batch size for evaluation")
+    ap.add_argument("--num-workers", type=int, default=None, help="DataLoader workers (optional, or set COMPOSER2_NUM_WORKERS)")
+    ap.add_argument("--fail-under-roc", type=float, default=None, help="exit code 2 if ROC-AUC below this")
     ap.add_argument("--stats-json", type=Path, help="feature stats JSON; defaults to <ckpt>.stats.json if present")
+    ap.add_argument("--strict-stats", action="store_true", help="enforce stats/CSV column match")
     args = ap.parse_args(argv)
 
     device = _get_device(args.device)
 
     stats = _load_stats(args.stats_json, args.ckpt)
+    if stats is not None:
+        meta = stats[3]
+        if isinstance(meta, dict):
+            if args.window == 64 and meta.get("window") is not None:
+                args.window = int(meta["window"])
+            if args.hop == 16 and meta.get("hop") is not None:
+                args.hop = int(meta["hop"])
 
     # Load features
     if args.window and args.window > 1:
-        X, Y, feat_cols = load_csv_to_windows(args.csv, args.window, args.hop, stats)
+        X, Y, feat_cols = load_csv_to_windows(args.csv, args.window, args.hop, stats, args.strict_stats)
         mode = "windows"
     else:
-        X, Y, feat_cols = load_csv_frames(args.csv, stats)
+        X, Y, feat_cols = load_csv_frames(args.csv, stats, args.strict_stats)
         mode = "frames"
-
-    # Apply stats if supplied and dimension matches
-    if stats is not None:
-        _, mean, std = stats
-        if X.shape[-1] == mean.size:
-            X = _apply_stats(X, mean, std)
 
     model = load_pedal_model(args.ckpt, device)
 
-    # Forward
+    _nw = _resolve_workers_cli(args.num_workers)
+    _pw = _nw > 0
+    _pf = 2 if _nw > 0 else None
+    print(f"[composer2] num_workers={_nw} (persistent={_pw}, prefetch_factor={_pf or 'n/a'})")
+    base_seed = torch.initial_seed()
+    def _worker_init_fn(worker_id: int) -> None:
+        np.random.seed(base_seed + worker_id)
+        torch.manual_seed(base_seed + worker_id)
+
     bs = max(1, int(args.batch))
+    ds = TensorDataset(X, Y)
+    dl_kwargs = dict(batch_size=bs, shuffle=False, drop_last=False,
+                    num_workers=_nw, persistent_workers=_pw,
+                    worker_init_fn=_worker_init_fn)
+    if _pf is not None and _nw > 0:
+        dl_kwargs["prefetch_factor"] = _pf
+    if device.type == "cuda":
+        dl_kwargs["pin_memory"] = True
+    try:
+        loader = DataLoader(ds, **dl_kwargs)
+    except Exception:
+        print("[composer2] DataLoader failed with workers, falling back to num_workers=0")
+        fb_kwargs = dict(batch_size=bs, shuffle=False, drop_last=False,
+                         num_workers=0, persistent_workers=False,
+                         worker_init_fn=_worker_init_fn)
+        if device.type == "cuda":
+            fb_kwargs["pin_memory"] = True
+        loader = DataLoader(ds, **fb_kwargs)
     probs: List[np.ndarray] = []
+    y_true_list: List[np.ndarray] = []
     with torch.no_grad():
-        if mode == "windows":
-            for i in range(0, X.shape[0], bs):
-                xb = X[i : i + bs].to(device)  # (B, T, F)
-                logits = model(xb)  # expect (B, T) or (B, T, 1)
-                if logits.ndim == 3:
-                    logits = logits.squeeze(-1)
-                pb = torch.sigmoid(logits).cpu().numpy().reshape(-1)
-                probs.append(pb)
-            y_true = Y.numpy().reshape(-1)
-        else:  # frames
-            for i in range(0, X.shape[0], bs):
-                xb = X[i : i + bs].to(device)  # (B, F)
-                logits = model(xb)  # expect (B,) or (B,1)
-                if logits.ndim > 1:
-                    logits = logits.squeeze(-1)
-                pb = torch.sigmoid(logits).cpu().numpy().reshape(-1)
-                probs.append(pb)
-            y_true = Y.numpy().reshape(-1)
+        for xb, yb in loader:
+            xb = xb.to(device)
+            logits = model(xb)
+            if logits.ndim == 3:
+                logits = logits.squeeze(-1)
+            if logits.ndim > 1:
+                logits = logits.squeeze(-1)
+            pb = torch.sigmoid(logits).cpu().numpy().reshape(-1)
+            probs.append(pb)
+            y_true_list.append(yb.numpy().reshape(-1))
 
     prob = np.concatenate(probs, axis=0) if probs else np.array([], dtype=np.float32)
+    y_true = np.concatenate(y_true_list, axis=0) if y_true_list else np.array([], dtype=np.float32)
 
     metrics = _compute_metrics(y_true, prob)
     metrics["mode"] = mode
     print(metrics)
-    return 0
+    exit_code = 0
+    if args.fail_under_roc is not None:
+        auc = metrics.get("roc_auc")
+        if auc is not None and auc < float(args.fail_under_roc):
+            exit_code = 2
+    return exit_code
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI

@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
+from pathlib import Path
+
 import librosa
 import numpy as np
 import pandas as pd
@@ -26,6 +28,7 @@ def extract_from_midi(
     *,
     sr: int = SR,
     hop_length: int = HOP_LENGTH,
+    cc_num: int = 64,
     cc_th: int = 64,
     max_seconds: float = 0.0,
 ) -> pd.DataFrame:
@@ -36,7 +39,8 @@ def extract_from_midi(
         file_id = "pm"
     else:
         pm = pretty_midi.PrettyMIDI(str(src))
-        file_id = Path(src).stem
+        # caller will override to root-relative; fallback is basename to preserve current behavior
+        file_id = Path(src).name
 
     # Render audio; skip files that produce empty audio to avoid librosa errors
     audio = _get_audio(pm, sr)
@@ -52,7 +56,7 @@ def extract_from_midi(
     )
 
     pedal_events = [
-        cc for inst in pm.instruments for cc in inst.control_changes if cc.number == 64
+        cc for inst in pm.instruments for cc in inst.control_changes if cc.number == cc_num
     ]
     pedal_events.sort(key=lambda c: c.time)
     pedal_times = np.array([cc.time for cc in pedal_events])
@@ -84,7 +88,7 @@ def extract_from_midi(
                 "rel_release": rel_release,
                 "pedal_state": pedal_state,
             }
-            rows.append(row)
+            rows.append(row)  # caller may replace "file" with relpath
 
     return pd.DataFrame(rows)
 
@@ -99,6 +103,7 @@ def main(argv: Iterable[str] | None = None) -> None:
     p.add_argument(
         "--hop", type=int, default=HOP_LENGTH, help=f"hop length (default {HOP_LENGTH})"
     )
+    p.add_argument("--cc-num", type=int, default=64, help="CC number to treat as pedal (default 64)")
     p.add_argument("--cc-th", type=int, default=64, help="threshold for CC64 on/off (default 64)")
     # workload control / logging
     p.add_argument("--file-list", type=Path, help="optional text file with MIDI paths to process (one per line)")
@@ -111,13 +116,12 @@ def main(argv: Iterable[str] | None = None) -> None:
     p.add_argument("--max-seconds", type=float, default=0.0, help="limit audio render to first N seconds (0=full)")
     args = p.parse_args(list(argv) if argv else None)
 
-    all_frames = []
     # Resolve file list
     midi_paths: list[Path]
     if args.file_list and args.file_list.is_file():
         midi_paths = [Path(line.strip()) for line in args.file_list.read_text().splitlines() if line.strip()]
     else:
-        midi_paths = sorted(list(args.midi_dir.rglob("*.mid")))
+        midi_paths = sorted(args.midi_dir.rglob("*.mid")) + sorted(args.midi_dir.rglob("*.midi"))
     # shard selection
     shards = max(1, int(args.shards))
     shard_idx = max(0, int(args.shard_index)) % shards
@@ -136,6 +140,7 @@ def main(argv: Iterable[str] | None = None) -> None:
     header_written = False
     total_rows = 0
     total_pos = 0
+    pos_files = 0
     processed = 0
     # open logs in append mode if requested
     fail_f = None
@@ -148,11 +153,14 @@ def main(argv: Iterable[str] | None = None) -> None:
             args.success_log.parent.mkdir(parents=True, exist_ok=True)
             succ_f = args.success_log.open("a")
         for path in midi_paths:
+            if any(seg.startswith('.') for seg in path.parts):
+                continue
             try:
                 df = extract_from_midi(
                     path,
                     sr=args.sr,
                     hop_length=args.hop,
+                    cc_num=args.cc_num,
                     cc_th=args.cc_th,
                     max_seconds=float(args.max_seconds or 0.0),
                 )
@@ -161,7 +169,7 @@ def main(argv: Iterable[str] | None = None) -> None:
                     try:
                         if args.midi_dir:
                             rel = path.relative_to(args.midi_dir)
-                            df["file"] = str(rel)
+                            df["file"] = rel.as_posix()
                         else:
                             df["file"] = path.name
                     except Exception:
@@ -170,7 +178,10 @@ def main(argv: Iterable[str] | None = None) -> None:
                     df.to_csv(args.csv_out, index=False, mode=mode, header=not header_written)
                     header_written = True
                     total_rows += len(df)
-                    total_pos += int(df["pedal_state"].sum()) if "pedal_state" in df else 0
+                    pos_frames = int(df["pedal_state"].sum()) if "pedal_state" in df else 0
+                    total_pos += pos_frames
+                    if pos_frames > 0:
+                        pos_files += 1
                 # success (even if empty)
                 if succ_f:
                     succ_f.write(str(path) + "\n")
@@ -185,7 +196,8 @@ def main(argv: Iterable[str] | None = None) -> None:
             fail_f.close()
         if succ_f:
             succ_f.close()
-    print(f"wrote {total_rows} rows to {args.csv_out} (positives={total_pos}) from {len(midi_paths)} files")
+    print(f"wrote {total_rows} rows to {args.csv_out}")
+    print(f"scanned={len(midi_paths)} positives={pos_files} frame_positives={total_pos}")
 
 
 if __name__ == "__main__":  # pragma: no cover

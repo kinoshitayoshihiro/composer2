@@ -40,9 +40,14 @@ import os
 import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
-
-import numpy as np
-import pandas as pd
+try:
+    import numpy as np
+except Exception as e:  # pragma: no cover - friendlier error
+    raise RuntimeError("numpy is required for predict_pedal. Try: `pip install numpy`") from e
+try:
+    import pandas as pd
+except Exception as e:  # pragma: no cover - friendlier error
+    raise RuntimeError("pandas is required for predict_pedal. Try: `pip install pandas`") from e
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 import pretty_midi as pm
@@ -73,7 +78,7 @@ except Exception:  # pragma: no cover - optional; enable CSV mode even without t
 # Stats loading / normalization
 # ------------------------------
 
-def _load_stats(ckpt_path: Path, stats_json: Optional[Path] = None) -> tuple[Optional[List[str]], np.ndarray, np.ndarray, dict]:
+def _load_stats(ckpt_path: Path, stats_json: Optional[Path] = None) -> Optional[tuple[Optional[List[str]], np.ndarray, np.ndarray, dict]]:
     """Return (feat_cols, mean, std, meta) from JSON.
 
     Supports both schemas:
@@ -82,7 +87,7 @@ def _load_stats(ckpt_path: Path, stats_json: Optional[Path] = None) -> tuple[Opt
     """
     path = stats_json if stats_json and stats_json.is_file() else ckpt_path.with_suffix(ckpt_path.suffix + ".stats.json")
     if not path.is_file():
-        raise SystemExit(f"feature stats JSON not found: {path}")
+        return None
 
     obj = json.loads(path.read_text())
     feat_cols: Optional[List[str]] = obj.get("feat_cols")
@@ -94,7 +99,7 @@ def _load_stats(ckpt_path: Path, stats_json: Optional[Path] = None) -> tuple[Opt
         mean = np.array(obj.get("mean", []), dtype=np.float32)
         std = np.array(obj.get("std", []), dtype=np.float32)
         if mean.size == 0 or std.size == 0:
-            raise SystemExit("invalid stats JSON (missing mean/std)")
+            return None
 
     std[std < 1e-8] = 1.0
     meta = {k: obj.get(k) for k in ("fps", "window", "hop", "pad_multiple")}
@@ -105,8 +110,8 @@ def _load_stats(ckpt_path: Path, stats_json: Optional[Path] = None) -> tuple[Opt
     return feat_cols, mean, std, meta
 
 
-def _apply_stats(df: pd.DataFrame, feat_cols: Sequence[str], mean: np.ndarray, std: np.ndarray, *, strict: bool = False) -> tuple[np.ndarray, List[str]]:
-    cols = list(feat_cols)
+def _apply_stats(df: pd.DataFrame, feat_cols: Optional[Sequence[str]], mean: np.ndarray, std: np.ndarray, *, strict: bool = False) -> tuple[np.ndarray, List[str]]:
+    cols = list(feat_cols) if feat_cols else _feature_columns(df, None)
     have = [c for c in df.columns if c.startswith("chroma_") or c == "rel_release"]
     missing = [c for c in cols if c not in have]
     extra = [c for c in have if c not in cols]
@@ -115,6 +120,9 @@ def _apply_stats(df: pd.DataFrame, feat_cols: Sequence[str], mean: np.ndarray, s
     if missing:
         sys.stderr.write(f"[composer2] warn: filling missing feat cols with zeros: {missing}\n")
     arr = df.reindex(columns=cols, fill_value=0).to_numpy(dtype="float32", copy=True)
+    if arr.shape[1] != mean.size:
+        print(f"[composer2] WARNING: stats dimension mismatch: X={arr.shape[1]} mean={mean.size}; skip normalization")
+        return arr, cols
     arr = (arr - mean) / np.maximum(std, 1e-8)
     if missing:
         arr[:, [cols.index(c) for c in missing]] = 0.0
@@ -186,17 +194,16 @@ def _make_windows(arr: torch.Tensor, win: int, hop: int) -> tuple[torch.Tensor, 
     return out, starts
 
 
-def predict_per_frame(df: pd.DataFrame, *, feat_cols: Optional[List[str]], mean: np.ndarray, std: np.ndarray,
+def predict_per_frame(df: pd.DataFrame, *, feat_cols: Optional[List[str]], mean: Optional[np.ndarray], std: Optional[np.ndarray],
                       model: PedalModel, window: int, hop: int, device: torch.device, batch: int = 64,
                       num_workers: int = 0, strict: bool = False) -> np.ndarray:
     cols = _feature_columns(df, feat_cols)
     if not cols:
         raise SystemExit("no feature columns found (expected chroma_* and optional rel_release)")
-    X, cols = _apply_stats(df, cols, mean, std, strict=strict)
-    C = X.shape[1]
-    if C != mean.size:
-        raise SystemExit(f"feature dimension mismatch: got {C}, expected {mean.size}")
-
+    if mean is not None and std is not None:
+        X, cols = _apply_stats(df, cols, mean, std, strict=strict)
+    else:
+        X = df[cols].values.astype("float32")
     xt = torch.from_numpy(X)
     win, starts = _make_windows(xt, window, hop)
     if len(starts) == 0:
@@ -364,11 +371,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # Inputs
     ap.add_argument("--in", dest="inp", type=Path, help="input MIDI file or directory")
     ap.add_argument("--feat-csv", dest="feat_csv", type=Path, help="precomputed feature CSV (chroma_* [+ rel_release])")
-    ap.add_argument("--csv", dest="feat_csv", type=Path, help="alias of --feat-csv")
+    ap.add_argument("--csv", dest="feat_csv_alias", type=Path, help="alias of --feat-csv")
     ap.add_argument("--ckpt", type=Path, required=True)
     # Outputs
     ap.add_argument("--out-mid", type=Path, help="output MIDI path for single-file mode")
-    ap.add_argument("--out", dest="out_mid", type=Path, help="alias of --out-mid")
+    ap.add_argument("--out", dest="out_mid_alias", type=Path, help="alias of --out-mid")
     ap.add_argument("--out-dir", type=Path, help="output directory for directory mode")
     ap.add_argument("--debug-json", type=Path, help="write debug metrics JSON")
     # Feature/Model params
@@ -398,6 +405,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--off-consec-sec", type=float, default=0.0, help="require this many consecutive seconds below OFF threshold before turning OFF")
 
     args = ap.parse_args(argv)
+    if args.feat_csv and args.feat_csv_alias and args.feat_csv != args.feat_csv_alias:
+        raise SystemExit("conflict: --feat-csv and --csv point to different files")
+    args.feat_csv = args.feat_csv or args.feat_csv_alias
+    if args.inp and args.feat_csv:
+        raise SystemExit("conflict: cannot use --in with --feat-csv/--csv")
+    if args.out_mid and args.out_mid_alias and args.out_mid != args.out_mid_alias:
+        raise SystemExit("conflict: --out and --out-mid point to different files")
+    args.out_mid = args.out_mid or args.out_mid_alias
+    if args.out_mid is None and args.out_dir is None:
+        args.out_mid = Path("outputs/pedal_pred.mid")
 
     # Validate input mode
     if args.feat_csv is None and args.inp is None:
@@ -410,17 +427,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"[composer2] num_workers={_nw} (persistent={_pw}, prefetch_factor={_pf or 'n/a'})")
 
     # Stats + model
-    try:
-        feat_cols, mean, std, stats_meta = _load_stats(args.ckpt, args.stats_json)
-    except SystemExit as e:
-        # If the user provided --stats-json path-like string in the old script style
-        # we still bubble up; otherwise show clear message
-        raise
-    if isinstance(stats_meta, dict):
-        if args.window == 64 and stats_meta.get("window") is not None:
-            args.window = int(stats_meta["window"])
-        if args.hop == 16 and stats_meta.get("hop") is not None:
-            args.hop = int(stats_meta["hop"])
+    stats = _load_stats(args.ckpt, args.stats_json)
+    if stats is None:
+        print("[composer2] WARNING: feature stats not found; proceeding without normalization")
+        feat_cols = None
+        mean = std = None
+        stats_meta = {}
+    else:
+        feat_cols, mean, std, stats_meta = stats
+        if isinstance(stats_meta, dict):
+            if args.window == 64 and stats_meta.get("window") is not None:
+                args.window = int(stats_meta["window"])
+            if args.hop == 16 and stats_meta.get("hop") is not None:
+                args.hop = int(stats_meta["hop"])
     model = _load_model(args.ckpt, device)
 
     # Determine frame rate (fps) for time axis

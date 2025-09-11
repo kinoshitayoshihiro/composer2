@@ -38,9 +38,16 @@
 
 import argparse
 import csv
+import re
+import bisect
+import math
+import random
+import logging
+import copy
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Union
 
 try:
     import pretty_midi  # type: ignore
@@ -52,7 +59,86 @@ try:
 except Exception:
     yaml = None
 
-PITCH_CLASS = {'C':0,'C#':1,'Db':1,'D':2,'D#':3,'Eb':3,'E':4,'F':5,'F#':6,'Gb':6,'G':7,'G#':8,'Ab':8,'A':9,'A#':10,'Bb':10,'B':11}
+PITCH_CLASS = {
+    'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3, 'E': 4,
+    'E#': 5, 'F': 5, 'F#': 6, 'Gb': 6, 'Fb': 4,
+    'G': 7, 'G#': 8, 'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10,
+    'B': 11, 'Cb': 11, 'B#': 0
+}
+
+NOTE_RE = re.compile(r'^([A-G][b#]?)(-?\d+)$')
+
+
+def parse_midi_note(token: str) -> int:
+    """Parse a MIDI note from integer or note name like C1 or F#2."""
+    token = token.strip().replace('＃', '#').replace('♯', '#').replace('♭', 'b').replace('ｂ', 'b')
+    fw = {chr(ord('Ａ') + i): chr(ord('A') + i) for i in range(26)}
+    fw.update({chr(ord('０') + i): str(i) for i in range(10)})
+    token = token.translate(str.maketrans(fw))
+    try:
+        v = int(token)
+        if not (0 <= v <= 127):
+            raise ValueError
+        return v
+    except ValueError:
+        m = NOTE_RE.match(token)
+        if not m:
+            raise SystemExit(f"Invalid note token: {token} (use int 0-127 or names like C1)")
+        name, octv = m.groups()
+        pc = PITCH_CLASS.get(name)
+        if pc is None:
+            raise SystemExit(f"Unknown pitch class: {name}")
+        val = (int(octv) + 1) * 12 + pc
+        if not (0 <= val <= 127):
+            raise SystemExit(f"Note out of MIDI range: {token}")
+        return val
+
+
+def validate_midi_note(v: int) -> int:
+    """Validate MIDI note range 0..127."""
+    v = int(v)
+    if not (0 <= v <= 127):
+        raise SystemExit(
+            "cycle_phrase_notes must be MIDI 0..127, 'rest', or note names"
+        )
+    return v
+
+
+def clip_note_interval(start_t: float, end_t: float, *, eps: float = 1e-4) -> Tuple[float, float]:
+    """Ensure end_t is at least eps after start_t and clamp negatives."""
+    if start_t < 0:
+        start_t = 0.0
+    if end_t < start_t + eps:
+        end_t = start_t + eps
+    return start_t, end_t
+
+
+def validate_accent(accent: Optional[List[Union[int, float]]]) -> Optional[List[float]]:
+    if accent is None:
+        return None
+    if not isinstance(accent, list):
+        raise SystemExit("--accent must be JSON list of numbers")
+    if not accent:
+        return None
+    cleaned: List[float] = []
+    for x in accent:
+        if not isinstance(x, (int, float)):
+            raise SystemExit("--accent must be JSON list of numbers")
+        v = float(x)
+        if v < 0.1:
+            v = 0.1
+        if v > 2.0:
+            v = 2.0
+        cleaned.append(v)
+    return cleaned
+
+
+def parse_accent_arg(s: str) -> Optional[List[float]]:
+    try:
+        data = json.loads(s)
+    except Exception:
+        raise SystemExit("--accent must be JSON list of numbers")
+    return validate_accent(data)
 
 @dataclass
 class ChordSpan:
@@ -89,6 +175,48 @@ def triad_pitches(root_pc: int, quality: str, octave: int, mapping: Dict) -> Lis
     base_c = (octave + 1) * 12  # C-octave base
     return [base_c + ((root_pc + iv) % 12) for iv in intervals]
 
+def place_in_range(pitches: List[int], lo: int, hi: int, *, voicing_mode: str = 'stacked') -> List[int]:
+    res: List[int] = []
+    prev: Optional[int] = None
+    if voicing_mode == 'closed':
+        for p in pitches:
+            while p < lo:
+                p += 12
+            while p > hi:
+                p -= 12
+            res.append(p)
+        res.sort()
+        changed = True
+        while changed:
+            changed = False
+            res.sort()
+            for i in range(1, len(res)):
+                while res[i] - res[i-1] > 12 and res[i] - 12 >= lo:
+                    res[i] -= 12
+                    changed = True
+        for i in range(len(res)):
+            while res[i] > hi and res[i] - 12 >= lo:
+                res[i] -= 12
+        res.sort()
+        return res
+
+    for p in pitches:
+        while p < lo:
+            p += 12
+        while p > hi:
+            p -= 12
+        if prev is not None:
+            while p <= prev:
+                p += 12
+        prev = p
+        res.append(p)
+    if res and res[-1] > hi:
+        while any(p > hi for p in res) and all(p - 12 >= lo for p in res):
+            res = [p - 12 for p in res]
+        if any(p > hi for p in res):
+            logging.warning("place_in_range: notes fall outside range %s-%s", lo, hi)
+    return res
+
 def load_mapping(path: Optional[Path]) -> Dict:
     default = {
         "phrase_note": 36,          # Default left-hand "Common" phrase key (C2)
@@ -99,7 +227,20 @@ def load_mapping(path: Optional[Path]) -> Dict:
         "triad_intervals": {
             "maj": [0,4,7],
             "min": [0,3,7]
-        }
+        },
+        "cycle_phrase_notes": [],  # e.g., [24, 26] to alternate per bar
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+        "chord_input_range": None,
+        "voicing_mode": "stacked",
+        "top_note_max": None,
+        "phrase_channel": None,
+        "chord_channel": None,
+        "cycle_stride": 1,
+        "accent": None,
+        "silent_qualities": [],
+        "clone_meta_only": False,
+        "strict": False,
     }
     if path is None:
         return default
@@ -107,7 +248,99 @@ def load_mapping(path: Optional[Path]) -> Dict:
         raise SystemExit("PyYAML is required to read mapping files. pip install pyyaml")
     data = yaml.safe_load(Path(path).read_text())
     default.update(data or {})
+    rng = default.get("chord_input_range")
+    if rng is not None:
+        try:
+            lo = int(rng.get("lo"))
+            hi = int(rng.get("hi"))
+        except Exception:
+            raise SystemExit("chord_input_range must have integer lo/hi")
+        if not (0 <= lo <= 127 and 0 <= hi <= 127 and lo <= hi):
+            raise SystemExit("chord_input_range lo/hi must be 0..127 and lo<=hi")
+        default["chord_input_range"] = {"lo": lo, "hi": hi}
+    top = default.get("top_note_max")
+    if top is not None:
+        try:
+            top_i = int(top)
+        except Exception:
+            raise SystemExit("top_note_max must be int")
+        if not (0 <= top_i <= 127):
+            raise SystemExit("top_note_max must be 0..127")
+        default["top_note_max"] = top_i
+    for key in ("phrase_channel", "chord_channel"):
+        ch = default.get(key)
+        if ch is not None:
+            try:
+                ch_i = int(ch)
+            except Exception:
+                raise SystemExit(f"{key} must be int 0..15")
+            if not (0 <= ch_i <= 15):
+                raise SystemExit(f"{key} must be 0..15")
+            default[key] = ch_i
+    cs = default.get("cycle_stride", 1)
+    try:
+        cs_i = int(cs)
+    except Exception:
+        raise SystemExit("cycle_stride must be int >=1")
+    if cs_i <= 0:
+        raise SystemExit("cycle_stride must be int >=1")
+    default["cycle_stride"] = cs_i
+    sq = default.get("silent_qualities")
+    if sq is None:
+        default["silent_qualities"] = []
+    elif not isinstance(sq, list):
+        raise SystemExit("silent_qualities must be list")
+    default["strict"] = bool(default.get("strict", False))
     return default
+
+
+def generate_mapping_template(full: bool) -> str:
+    """Return a YAML mapping template string."""
+    if full:
+        return (
+            "phrase_note: 36\n"
+            "phrase_velocity: 96\n"
+            "phrase_length_beats: 0.25\n"
+            "chord_octave: 4\n"
+            "chord_velocity: 90\n"
+            "triad_intervals:\n"
+            "  maj: [0,4,7]\n"
+            "  min: [0,3,7]\n"
+            "cycle_phrase_notes: []  # e.g., [24, rest, 26] to alternate per bar (小節ごとに切替)\n"
+            "cycle_start_bar: 0\n"
+            "cycle_mode: bar  # or 'chord'\n"
+            "cycle_stride: 1  # number of bars/chords before advancing cycle\n"
+            "voicing_mode: stacked  # or 'closed'\n"
+            "top_note_max: null  # e.g., 72 to cap highest chord tone\n"
+            "phrase_channel: null  # MIDI channel for phrase notes\n"
+            "chord_channel: null  # MIDI channel for chord notes\n"
+            "accent: []  # velocity multipliers per pulse\n"
+            "skip_phrase_in_rests: false\n"
+            "clone_meta_only: false\n"
+            "silent_qualities: []\n"
+            "swing: 0.0  # 0..1 swing feel\n"
+            "swing_unit: 1/8  # subdivision for swing\n"
+            "chord_input_range: {lo: 48, hi: 72}\n"
+        )
+    else:
+        return (
+            "phrase_note: 36\n"
+            "cycle_phrase_notes: []  # e.g., [24, rest, 26] to alternate per bar (小節ごとに切替)\n"
+            "cycle_start_bar: 0\n"
+            "cycle_mode: bar  # or 'chord'\n"
+            "cycle_stride: 1\n"
+            "voicing_mode: stacked  # or 'closed'\n"
+            "top_note_max: null\n"
+            "phrase_channel: null\n"
+            "chord_channel: null\n"
+            "accent: []\n"
+            "skip_phrase_in_rests: false\n"
+            "clone_meta_only: false\n"
+            "silent_qualities: []\n"
+            "swing: 0.0\n"
+            "swing_unit: 1/8\n"
+            "chord_input_range: {lo: 48, hi: 72}\n"
+        )
 
 def read_chords_csv(path: Path) -> List['ChordSpan']:
     spans: List[ChordSpan] = []
@@ -122,16 +355,30 @@ def read_chords_csv(path: Path) -> List['ChordSpan']:
             spans.append(ChordSpan(start, end, PITCH_CLASS[root], quality))
     return spans
 
+def read_chords_yaml(path: Path) -> List['ChordSpan']:
+    if yaml is None:
+        raise SystemExit("PyYAML is required to read YAML chord files. pip install pyyaml")
+    data = yaml.safe_load(path.read_text()) or []
+    spans: List[ChordSpan] = []
+    for item in data:
+        start = float(item['start']); end = float(item['end'])
+        root = item['root'].strip()
+        quality = item.get('quality', 'maj').strip().lower()
+        if root not in PITCH_CLASS:
+            raise ValueError(f"Unknown root {root}")
+        spans.append(ChordSpan(start, end, PITCH_CLASS[root], quality))
+    return spans
+
 def infer_chords_by_bar(pm: 'pretty_midi.PrettyMIDI', ts_num=4, ts_den=4) -> List['ChordSpan']:
     # Build a simplistic bar grid from downbeats. If absent, estimate from tempo.
     downbeats = pm.get_downbeats()
     if len(downbeats) < 2:
-        # fallback: use beats to construct measures
         beats = pm.get_beats()
         if len(beats) < 2:
             raise ValueError("Cannot infer beats/downbeats from this MIDI; please provide a chord CSV.")
-        # take every 4 beats as a bar (assume 4/4)
-        downbeats = beats[::ts_num]
+        bar_beats = ts_num * (4.0 / ts_den)
+        step = max(1, int(round(bar_beats)))
+        downbeats = beats[::step]
 
     spans: List[ChordSpan] = []
     # Aggregate pitch-class histograms per bar
@@ -177,38 +424,244 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
                        chords: List['ChordSpan'],
                        mapping: Dict,
                        pulse_subdiv_beats: float,
-                       bpm: float) -> 'pretty_midi.PrettyMIDI':
-    out = pretty_midi.PrettyMIDI(initial_tempo=bpm)
+                       cycle_mode: str,
+                       humanize_ms: float,
+                       humanize_vel: int,
+                       vel_curve: str,
+                       bpm: float,
+                       swing: float,
+                       swing_unit_beats: float,
+                       *,
+                       phrase_channel: Optional[int] = None,
+                       chord_channel: Optional[int] = None,
+                       cycle_stride: int = 1,
+                       accent: Optional[List[float]] = None,
+                       skip_phrase_in_rests: bool = False,
+                       silent_qualities: Optional[List[str]] = None,
+                       clone_meta_only: bool = False,
+                       stats: Optional[Dict] = None) -> 'pretty_midi.PrettyMIDI':
+    if clone_meta_only:
+        out = pretty_midi.PrettyMIDI()
+        out.time_signature_changes = copy.deepcopy(pm_in.time_signature_changes)
+        if hasattr(pm_in, '_tempo_changes') and hasattr(out, '_tempo_changes'):
+            out._tempo_changes = copy.deepcopy(pm_in._tempo_changes)
+            out._tick_scales = copy.deepcopy(pm_in._tick_scales)
+            out._tick_to_time = copy.deepcopy(pm_in._tick_to_time)
+            meta_src = "private"
+        else:
+            times, tempos = pm_in.get_tempo_changes()
+            if hasattr(out, '_add_tempo_change'):
+                for t, tempo in zip(times, tempos):
+                    try:
+                        out._add_tempo_change(tempo, t)
+                    except Exception:
+                        pass
+            elif tempos:
+                out.initial_tempo = tempos[0]
+            meta_src = "public"
+    else:
+        out = copy.deepcopy(pm_in)
+        out.instruments = []
 
-    chord_inst = pretty_midi.Instrument(program=0, name="Sparkle Chords")  # program ignored by UJAM
+    chord_inst = pretty_midi.Instrument(program=0, name="Sparkle Chords")
     phrase_inst = pretty_midi.Instrument(program=0, name="Sparkle Phrase (Common Pulse)")
+    if chord_channel is not None:
+        chord_inst.midi_channel = chord_channel
+    if phrase_channel is not None:
+        phrase_inst.midi_channel = phrase_channel
 
     chord_oct = int(mapping.get("chord_octave", 4))
     chord_vel = int(mapping.get("chord_velocity", 90))
     phrase_note = int(mapping.get("phrase_note", 36))
     phrase_vel = int(mapping.get("phrase_velocity", 96))
     phrase_len_beats = float(mapping.get("phrase_length_beats", 0.25))
+    if phrase_len_beats <= 0 or pulse_subdiv_beats <= 0:
+        raise SystemExit("phrase_length_beats and pulse_subdiv_beats must be positive")
+    cycle_notes: List[Optional[int]] = list(mapping.get("cycle_phrase_notes", []) or [])
+    cycle_start_bar = int(mapping.get("cycle_start_bar", 0))
+    if cycle_notes:
+        L = len(cycle_notes)
+        cycle_start_bar = ((cycle_start_bar % L) + L) % L
+    chord_range = mapping.get("chord_input_range")
+    voicing_mode = mapping.get("voicing_mode", "stacked")
+    top_note_max = mapping.get("top_note_max")
+    strict = bool(mapping.get("strict", False))
 
-    for span in chords:
-        # Chord triad
-        triad = triad_pitches(span.root_pc, span.quality, chord_oct, mapping)
-        # make a single long note per pitch across the span
-        for p in triad:
-            chord_inst.notes.append(pretty_midi.Note(
-                velocity=chord_vel, pitch=p, start=span.start, end=span.end
-            ))
-        # Phrase pulses
-        t = span.start
-        pulse_len_sec = beats_to_seconds(phrase_len_beats, bpm)
-        step_sec = beats_to_seconds(pulse_subdiv_beats, bpm)
-        while t < span.end - 1e-6:
-            phrase_inst.notes.append(pretty_midi.Note(
-                velocity=phrase_vel, pitch=phrase_note, start=t, end=min(t + pulse_len_sec, span.end)
-            ))
-            t += step_sec
+    beat_times = pm_in.get_beats()
+    if len(beat_times) < 2:
+        raise SystemExit("Could not determine beats from MIDI")
+
+    def beat_to_time(b: float) -> float:
+        idx = int(math.floor(b))
+        frac = b - idx
+        if idx >= len(beat_times) - 1:
+            last = beat_times[-1] - beat_times[-2]
+            return beat_times[-1] + (b - (len(beat_times) - 1)) * last
+        return beat_times[idx] + frac * (beat_times[idx + 1] - beat_times[idx])
+
+    def time_to_beat(t: float) -> float:
+        idx = bisect.bisect_right(beat_times, t) - 1
+        if idx < 0:
+            return 0.0
+        if idx >= len(beat_times) - 1:
+            last = beat_times[-1] - beat_times[-2]
+            return (len(beat_times) - 1) + (t - beat_times[-1]) / last
+        span = beat_times[idx + 1] - beat_times[idx]
+        return idx + (t - beat_times[idx]) / span
+
+    ts_changes = pm_in.time_signature_changes
+    meter_map: List[Tuple[float, int, int]] = []
+    estimated_4_4 = False
+    if ts_changes:
+        for ts in ts_changes:
+            meter_map.append((ts.time, ts.numerator, ts.denominator))
+    else:
+        meter_map.append((0.0, 4, 4))
+        estimated_4_4 = True
+    downbeats = pm_in.get_downbeats()
+    if len(downbeats) < 2:
+        beats = beat_times
+        if ts_changes:
+            downbeats = []
+            for i, ts in enumerate(ts_changes):
+                next_t = ts_changes[i + 1].time if i + 1 < len(ts_changes) else pm_in.get_end_time()
+                start_b = time_to_beat(ts.time)
+                end_b = time_to_beat(next_t)
+                bar_beats = ts.numerator * (4.0 / ts.denominator)
+                bar = start_b
+                while bar < end_b - 1e-9:
+                    downbeats.append(beat_to_time(bar))
+                    bar += bar_beats
+            downbeats.sort()
+        else:
+            downbeats = beats[::4]
+    if cycle_notes and len(downbeats) < 2 and cycle_mode == 'bar':
+        logging.info("cycle disabled; using fixed phrase_note=%d", phrase_note)
+        cycle_notes = []
+        if stats is not None:
+            stats["cycle_disabled"] = True
+
+    if stats is not None:
+        stats["downbeats"] = downbeats
+        stats["bar_pulses"] = {}
+        stats["bar_phrase_notes"] = {}
+        stats["bar_velocities"] = {}
+        stats["triads"] = []
+        stats["meters"] = meter_map
+        if estimated_4_4:
+            stats["estimated_4_4"] = True
+
+    # precompute pulses per bar for velocity curves
+    bar_counts: Dict[int, int] = {}
+    for i, start in enumerate(downbeats):
+        end = downbeats[i + 1] if i + 1 < len(downbeats) else pm_in.get_end_time()
+        sb = time_to_beat(start)
+        eb = time_to_beat(end)
+        bar_counts[i] = int(math.ceil((eb - sb) / pulse_subdiv_beats))
+
+    bar_progress: Dict[int, int] = {}
+
+    def vel_factor(mode: str, idx: int, total: int) -> float:
+        if total <= 1:
+            x = 0.0
+        else:
+            x = idx / (total - 1)
+        if mode == 'up':
+            return x
+        if mode == 'down':
+            return 1.0 - x
+        if mode == 'sine':
+            return math.sin(math.pi * x)
+        return 1.0
+
+    def pick_phrase_note(t: float, chord_idx: int) -> Optional[int]:
+        if not cycle_notes:
+            return phrase_note
+        if cycle_mode == 'bar':
+            base = max(0, bisect.bisect_right(downbeats, t) - 1)
+        else:
+            base = chord_idx
+        idx = ((base + cycle_start_bar) // max(1, cycle_stride)) % len(cycle_notes)
+        return cycle_notes[idx]
+
+    silent_qualities = set(silent_qualities or [])
+    for c_idx, span in enumerate(chords):
+        is_silent = span.quality in silent_qualities or span.quality == 'rest'
+        triad: List[int] = []
+        if not is_silent:
+            triad = triad_pitches(span.root_pc, span.quality, chord_oct, mapping)
+            if chord_range:
+                triad = place_in_range(triad, chord_range['lo'], chord_range['hi'], voicing_mode=voicing_mode)
+            if top_note_max is not None:
+                while max(triad) > top_note_max and all(n - 12 >= 0 for n in triad):
+                    triad = [n - 12 for n in triad]
+                if triad and max(triad) > top_note_max:
+                    msg = f"top_note_max={top_note_max} cannot be satisfied for triad {triad}"
+                    if strict:
+                        raise SystemExit(msg)
+                    logging.warning(msg)
+            s_t, e_t = clip_note_interval(span.start, span.end)
+            for p in triad:
+                chord_inst.notes.append(pretty_midi.Note(velocity=chord_vel, pitch=p, start=s_t, end=e_t))
+        if stats is not None:
+            stats["triads"].append(triad)
+        if skip_phrase_in_rests and is_silent:
+            continue
+
+        sb = time_to_beat(span.start)
+        eb = time_to_beat(span.end)
+        b = sb
+        while b < eb - 1e-9:
+            t = beat_to_time(b)
+            bar_idx = max(0, bisect.bisect_right(downbeats, t) - 1)
+            total = bar_counts.get(bar_idx, 1)
+            idx = bar_progress.get(bar_idx, 0)
+            bar_progress[bar_idx] = idx + 1
+            vf = vel_factor(vel_curve, idx, total)
+            af = accent[idx % len(accent)] if accent else 1.0
+            base_vel = max(1, min(127, int(round(phrase_vel * vf * af))))
+            if humanize_vel > 0:
+                base_vel = max(1, min(127, int(round(base_vel + random.uniform(-humanize_vel, humanize_vel)))))
+
+            pn = pick_phrase_note(t, c_idx)
+            end_b = b + phrase_len_beats
+            boundary = beat_to_time(end_b)
+            if cycle_mode == 'bar' and bar_idx + 1 < len(downbeats):
+                boundary = min(boundary, downbeats[bar_idx + 1])
+            boundary = min(boundary, span.end)
+
+            if stats is not None:
+                stats["bar_pulses"].setdefault(bar_idx, []).append((b, t))
+            if pn is not None:
+                if humanize_ms > 0.0:
+                    delta_s = random.uniform(-humanize_ms, humanize_ms) / 1000.0
+                    delta_e = random.uniform(-humanize_ms, humanize_ms) / 1000.0
+                else:
+                    delta_s = delta_e = 0.0
+                start_t = t + delta_s
+                if cycle_mode == 'bar':
+                    start_t = max(downbeats[bar_idx], span.start, start_t)
+                else:
+                    start_t = max(span.start, start_t)
+                end_t = min(boundary, boundary + delta_e)
+                start_t, end_t = clip_note_interval(start_t, end_t)
+                phrase_inst.notes.append(pretty_midi.Note(velocity=base_vel, pitch=pn, start=start_t, end=end_t))
+                if stats is not None and bar_idx not in stats["bar_phrase_notes"]:
+                    stats["bar_phrase_notes"][bar_idx] = pn
+                if stats is not None:
+                    stats["bar_velocities"].setdefault(bar_idx, []).append(base_vel)
+            interval = pulse_subdiv_beats
+            if swing > 0.0 and abs(pulse_subdiv_beats - swing_unit_beats) < 1e-9:
+                interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
+            b += interval
 
     out.instruments.append(chord_inst)
     out.instruments.append(phrase_inst)
+    if clone_meta_only and logging.getLogger().isEnabledFor(logging.INFO):
+        logging.info("clone_meta_only tempo/time-signature via %s API", meta_src)
+    if stats is not None:
+        stats["pulse_count"] = len(phrase_inst.notes)
+        stats["bar_count"] = len(downbeats)
     return out
 
 def main():
@@ -217,26 +670,197 @@ def main():
     ap.add_argument("--out", type=str, required=True, help="Output MIDI file")
     ap.add_argument("--pulse", type=str, default="1/8", help="Pulse subdivision (e.g., 1/8, 1/16, 1/4)")
     ap.add_argument("--bpm", type=float, default=None, help="Fallback BPM if input has no tempo")
-    ap.add_argument("--chords", type=str, default=None, help="Chord CSV file (start,end,root,quality). If omitted, infer per bar.")
+    ap.add_argument("--chords", type=str, default=None, help="Chord CSV/YAML file. If omitted, infer per bar.")
     ap.add_argument("--mapping", type=str, default=None, help="YAML for Sparkle mapping (phrase note, chord octave, velocities, triad intervals).")
-    args = ap.parse_args()
+    ap.add_argument("--cycle-phrase-notes", type=str, default=None,
+                    help="Comma-separated phrase trigger notes to cycle per bar (e.g., 24,26,C1,rest)")
+    ap.add_argument("--cycle-start-bar", type=int, default=None,
+                    help="Bar offset for cycling (default 0)")
+    ap.add_argument("--cycle-mode", choices=["bar", "chord"], default=None, help="Cycle mode")
+    ap.add_argument("--cycle-stride", type=int, default=None, help="Number of bars/chords before advancing cycle")
+    ap.add_argument(
+        "--phrase-channel",
+        type=int,
+        default=None,
+        help="MIDI channel for phrase notes (0-15, best effort; instruments are split regardless)",
+    )
+    ap.add_argument(
+        "--chord-channel",
+        type=int,
+        default=None,
+        help="MIDI channel for chord notes (0-15, best effort; instruments are split regardless)",
+    )
+    ap.add_argument("--humanize-timing-ms", type=float, default=0.0, help="Randomize note timing +/- ms")
+    ap.add_argument("--humanize-vel", type=int, default=0, help="Randomize velocity +/- value")
+    ap.add_argument("--vel-curve", choices=["flat", "up", "down", "sine"], default="flat", help="Velocity curve within bar")
+    ap.add_argument("--seed", type=int, default=None, help="Random seed for humanization")
+    ap.add_argument("--swing", type=float, default=0.0, help="Swing amount 0..1")
+    ap.add_argument("--swing-unit", type=str, default="1/8", choices=["1/8", "1/16"], help="Subdivision for swing")
+    ap.add_argument("--accent", type=str, default=None, help="JSON velocity multipliers per pulse")
+    ap.add_argument("--skip-phrase-in-rests", action="store_true", help="Suppress phrase notes in rest spans")
+    ap.add_argument(
+        "--clone-meta-only",
+        action="store_true",
+        help="Clone only tempo/time-signature from input (best effort across pretty_midi versions)",
+    )
+    ap.add_argument("--write-mapping-template", action="store_true", help="Print mapping YAML template to stdout")
+    ap.add_argument("--write-mapping-template-path", type=str, default=None, help="Write mapping YAML template to PATH")
+    ap.add_argument("--template-style", choices=["full", "minimal"], default="full", help="Template style")
+    ap.add_argument("--dry-run", action="store_true", help="Do not write output; log summary")
+    ap.add_argument("--quiet", action="store_true", help="Reduce log output")
+    ap.add_argument("--verbose", action="store_true", help="Increase log output")
+    args, extras = ap.parse_known_args()
+
+    if extras and args.write_mapping_template:
+        legacy_tpl_args = []
+        while extras and not extras[0].startswith('-'):
+            legacy_tpl_args.append(extras.pop(0))
+        logging.info("--write-mapping-template with arguments is deprecated; use --template-style/--write-mapping-template-path")
+    else:
+        legacy_tpl_args = None
+    if extras:
+        ap.error(f"unrecognized arguments: {' '.join(extras)}")
+
+    if args.quiet:
+        logging.basicConfig(level=logging.WARNING)
+    elif args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+
+    if args.seed is not None:
+        random.seed(args.seed)
+
+    if args.write_mapping_template or args.write_mapping_template_path or legacy_tpl_args is not None:
+        style = args.template_style
+        path = args.write_mapping_template_path
+        if legacy_tpl_args is not None:
+            if legacy_tpl_args and legacy_tpl_args[0] in ("full", "minimal"):
+                style = legacy_tpl_args[0]
+                legacy_tpl_args = legacy_tpl_args[1:]
+            if legacy_tpl_args:
+                path = legacy_tpl_args[0]
+        content = generate_mapping_template(style == 'full')
+        if path:
+            Path(path).write_text(content)
+        else:
+            print(content, end="")
+        return
 
     pm = pretty_midi.PrettyMIDI(args.input_midi)
 
     ts_num, ts_den = parse_time_sig()  # currently fixed 4/4; extend as needed
     bpm = ensure_tempo(pm, args.bpm)
     pulse_beats = parse_pulse(args.pulse)
+    swing_unit_beats = parse_pulse(args.swing_unit)
+    if not (0.0 <= args.swing < 1.0):
+        raise SystemExit("--swing must be 0.0<=s<1.0")
+    swing = args.swing
+    if swing > 0.0 and abs(swing_unit_beats - pulse_beats) >= 1e-9:
+        logging.info("swing disabled: swing unit %s != pulse %s", args.swing_unit, args.pulse)
+        swing = 0.0
 
     mapping = load_mapping(Path(args.mapping) if args.mapping else None)
+    cycle_notes_raw = mapping.get("cycle_phrase_notes", [])
+    cycle_notes: List[Optional[int]] = []
+    for tok in cycle_notes_raw:
+        if tok is None:
+            cycle_notes.append(None)
+        elif isinstance(tok, str):
+            if tok.strip().lower() == 'rest':
+                cycle_notes.append(None)
+            else:
+                cycle_notes.append(parse_midi_note(tok))
+        else:
+            cycle_notes.append(validate_midi_note(tok))
+    cycle_start_bar = int(mapping.get("cycle_start_bar", 0))
+    cycle_mode = mapping.get("cycle_mode", "bar")
+    cycle_stride = int(mapping.get("cycle_stride", 1))
+    phrase_channel = mapping.get("phrase_channel")
+    chord_channel = mapping.get("chord_channel")
+    accent = validate_accent(mapping.get("accent"))
+    silent_qualities = mapping.get("silent_qualities", [])
+    clone_meta_only = bool(mapping.get("clone_meta_only", False))
+    if args.cycle_phrase_notes is not None:
+        tokens = [t for t in args.cycle_phrase_notes.split(',') if t.strip()]
+        parsed: List[Optional[int]] = []
+        for tok in tokens:
+            if tok.strip().lower() == 'rest':
+                parsed.append(None)
+            else:
+                parsed.append(parse_midi_note(tok))
+        cycle_notes = parsed
+    if args.cycle_start_bar is not None:
+        cycle_start_bar = args.cycle_start_bar
+    if args.cycle_mode is not None:
+        cycle_mode = args.cycle_mode
+    if args.cycle_stride is not None:
+        if args.cycle_stride <= 0:
+            raise SystemExit("cycle-stride must be >=1")
+        cycle_stride = args.cycle_stride
+    for key, val in (("phrase_channel", args.phrase_channel), ("chord_channel", args.chord_channel)):
+        if val is not None:
+            if not (0 <= val <= 15):
+                raise SystemExit(f"{key.replace('_', '-')} must be 0..15")
+            if key == "phrase_channel":
+                phrase_channel = val
+            else:
+                chord_channel = val
+    if args.accent is not None:
+        accent = parse_accent_arg(args.accent)
+    mapping["cycle_phrase_notes"] = cycle_notes
+    mapping["cycle_start_bar"] = cycle_start_bar
+    mapping["cycle_mode"] = cycle_mode
+    mapping["cycle_stride"] = cycle_stride
+    mapping["phrase_channel"] = phrase_channel
+    mapping["chord_channel"] = chord_channel
+    mapping["accent"] = accent
+    mapping["silent_qualities"] = silent_qualities
+    clone_meta_only = bool(args.clone_meta_only or clone_meta_only)
 
     if args.chords:
-        chords = read_chords_csv(Path(args.chords))
+        chord_path = Path(args.chords)
+        if chord_path.suffix in {'.yaml', '.yml'}:
+            chords = read_chords_yaml(chord_path)
+        else:
+            chords = read_chords_csv(chord_path)
     else:
         chords = infer_chords_by_bar(pm, ts_num, ts_den)
 
-    out_pm = build_sparkle_midi(pm, chords, mapping, pulse_beats, bpm)
+    stats: Dict = {}
+    out_pm = build_sparkle_midi(pm, chords, mapping, pulse_beats, cycle_mode,
+                                args.humanize_timing_ms, args.humanize_vel,
+                                args.vel_curve, bpm, swing, swing_unit_beats,
+                                phrase_channel=phrase_channel, chord_channel=chord_channel,
+                                cycle_stride=cycle_stride, accent=accent,
+                                skip_phrase_in_rests=args.skip_phrase_in_rests,
+                                silent_qualities=silent_qualities,
+                                clone_meta_only=clone_meta_only, stats=stats)
+    if args.dry_run:
+        logging.info("bars=%d pulses=%d", stats.get("bar_count", 0), stats.get("pulse_count", 0))
+        if stats.get("cycle_disabled"):
+            logging.info("cycle disabled; using fixed phrase_note=%d", mapping.get("phrase_note"))
+        if stats.get("meters"):
+            if stats.get("estimated_4_4"):
+                logging.info("meter_map=%s (estimated 4/4 grid)", stats["meters"])
+            else:
+                logging.info("meter_map=%s", stats["meters"])
+        if mapping.get("cycle_phrase_notes"):
+            example = [stats["bar_phrase_notes"].get(i) for i in range(min(4, stats.get("bar_count", 0)))]
+            logging.info("cycle_mode=%s notes=%s", cycle_mode, example)
+        if mapping.get("chord_input_range"):
+            logging.info("chord_input_range=%s first_triads=%s", mapping.get("chord_input_range"), stats.get("triads", [])[:2])
+        for i in range(min(4, stats.get("bar_count", 0))):
+            pn = stats["bar_phrase_notes"].get(i, mapping.get("phrase_note"))
+            pulses = stats["bar_pulses"].get(i, [])
+            vels = stats["bar_velocities"].get(i, [])
+            logging.info("bar %d | phrase %s | pulses %d | vel %s", i, pn, len(pulses), vels)
+        if args.verbose:
+            for b_idx in sorted(stats["bar_pulses"].keys()):
+                logging.info("bar %d pulses %s", b_idx, stats["bar_pulses"][b_idx])
+        return
     out_pm.write(args.out)
-    print(f"Wrote {args.out}")
+    logging.info("Wrote %s", args.out)
 
 if __name__ == "__main__":
     main()

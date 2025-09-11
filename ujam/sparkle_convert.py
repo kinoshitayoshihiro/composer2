@@ -359,6 +359,8 @@ def read_chords_yaml(path: Path) -> List['ChordSpan']:
     if yaml is None:
         raise SystemExit("PyYAML is required to read YAML chord files. pip install pyyaml")
     data = yaml.safe_load(path.read_text()) or []
+    if isinstance(data, dict):
+        data = [data]
     spans: List[ChordSpan] = []
     for item in data:
         start = float(item['start']); end = float(item['end'])
@@ -460,8 +462,33 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
                 out.initial_tempo = tempos[0]
             meta_src = "public"
     else:
-        out = copy.deepcopy(pm_in)
-        out.instruments = []
+        pm_cls = getattr(pretty_midi, 'PrettyMIDI', None)
+        if isinstance(pm_cls, type) and isinstance(pm_in, pm_cls):
+            out = copy.deepcopy(pm_in)
+            out.instruments = []
+        else:
+            try:
+                out = pretty_midi.PrettyMIDI()
+            except TypeError:
+                out = pretty_midi.PrettyMIDI(None)
+            out.time_signature_changes = copy.deepcopy(getattr(pm_in, 'time_signature_changes', []))
+            if hasattr(pm_in, '_tempo_changes') and hasattr(out, '_tempo_changes'):
+                out._tempo_changes = copy.deepcopy(getattr(pm_in, '_tempo_changes', []))
+                out._tick_scales = copy.deepcopy(getattr(pm_in, '_tick_scales', []))
+                out._tick_to_time = copy.deepcopy(getattr(pm_in, '_tick_to_time', []))
+            else:
+                try:
+                    times, tempos = pm_in.get_tempo_changes()
+                except Exception:
+                    times, tempos = [], []
+                if hasattr(out, '_add_tempo_change'):
+                    for t, tempo in zip(times, tempos):
+                        try:
+                            out._add_tempo_change(tempo, t)
+                        except Exception:
+                            pass
+                elif tempos:
+                    out.initial_tempo = tempos[0]
 
     chord_inst = pretty_midi.Instrument(program=0, name="Sparkle Chords")
     phrase_inst = pretty_midi.Instrument(program=0, name="Sparkle Phrase (Common Pulse)")
@@ -519,6 +546,21 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
         meter_map.append((0.0, 4, 4))
         estimated_4_4 = True
     downbeats = pm_in.get_downbeats()
+    if ts_changes and len(downbeats) >= 2:
+        ts0 = ts_changes[0]
+        expected_bar = beat_to_time(ts0.numerator * (4.0 / ts0.denominator))
+        if abs((downbeats[1] - downbeats[0]) - expected_bar) > 1e-6:
+            downbeats = []
+            for i, ts in enumerate(ts_changes):
+                next_t = ts_changes[i + 1].time if i + 1 < len(ts_changes) else pm_in.get_end_time()
+                start_b = time_to_beat(ts.time)
+                end_b = time_to_beat(next_t)
+                bar_beats = ts.numerator * (4.0 / ts.denominator)
+                bar = start_b
+                while bar < end_b - 1e-9:
+                    downbeats.append(beat_to_time(bar))
+                    bar += bar_beats
+            downbeats.sort()
     if len(downbeats) < 2:
         beats = beat_times
         if ts_changes:

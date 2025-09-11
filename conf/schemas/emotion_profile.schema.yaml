@@ -1,0 +1,21 @@
+title: EmotionProfileSchema
+type: object
+required: [timeline]
+properties:
+  timeline:
+    type: array
+    items:
+      type: object
+      required: [at_bar, valence, arousal]
+      properties:
+        at_bar:
+          type: integer
+          minimum: 0
+        valence:
+          type: number
+          minimum: -1
+          maximum: 1
+        arousal:
+          type: number
+          minimum: 0
+          maximum: 1

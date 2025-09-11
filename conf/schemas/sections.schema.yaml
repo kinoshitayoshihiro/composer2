@@ -1,0 +1,25 @@
+title: SectionTagSchema
+type: object
+required: [sections]
+properties:
+  sections:
+    type: array
+    items:
+      type: object
+      required: [name, bars]
+      properties:
+        name:
+          type: string
+          enum: [Verse, PreChorus, Chorus, Bridge, Intro, Outro]
+        bars:
+          type: integer
+          minimum: 1
+        intensity:
+          type: string
+          enum: [low, mid, high]
+        energy:
+          type: string
+          enum: [calm, steady, strong]
+        articulation_hint:
+          type: string
+          enum: [legato, staccato, accent, sustain]

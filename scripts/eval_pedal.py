@@ -18,8 +18,14 @@ import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
-import numpy as np
-import pandas as pd
+try:
+    import numpy as np
+except Exception as e:  # pragma: no cover - friendlier error
+    raise RuntimeError("numpy is required for eval_pedal. Try: `pip install numpy`") from e
+try:
+    import pandas as pd
+except Exception as e:  # pragma: no cover - friendlier error
+    raise RuntimeError("pandas is required for eval_pedal. Try: `pip install pandas`") from e
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -103,8 +109,8 @@ def _load_stats(stats_json: Optional[Path], ckpt_path: Optional[Path]):
     return feat_cols, mean, std, meta
 
 
-def _apply_stats(df: pd.DataFrame, feat_cols: Sequence[str], mean: np.ndarray, std: np.ndarray, *, strict: bool = False) -> tuple[np.ndarray, List[str]]:
-    cols = list(feat_cols)
+def _apply_stats(df: pd.DataFrame, feat_cols: Optional[Sequence[str]], mean: np.ndarray, std: np.ndarray, *, strict: bool = False) -> tuple[np.ndarray, List[str]]:
+    cols = list(feat_cols) if feat_cols else _feature_columns(df, None)
     have = [c for c in df.columns if c.startswith("chroma_") or c == "rel_release"]
     missing = [c for c in cols if c not in have]
     extra = [c for c in have if c not in cols]
@@ -113,6 +119,9 @@ def _apply_stats(df: pd.DataFrame, feat_cols: Sequence[str], mean: np.ndarray, s
     if missing:
         sys.stderr.write(f"[composer2] warn: filling missing feat cols with zeros: {missing}\n")
     arr = df.reindex(columns=cols, fill_value=0).to_numpy(dtype="float32", copy=True)
+    if arr.shape[1] != mean.size:
+        print(f"[composer2] WARNING: stats dimension mismatch: X={arr.shape[1]} mean={mean.size}; skip normalization")
+        return arr, cols
     arr = (arr - mean) / np.maximum(std, 1e-8)
     if missing:
         arr[:, [cols.index(c) for c in missing]] = 0.0
@@ -330,7 +339,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     device = _get_device(args.device)
 
     stats = _load_stats(args.stats_json, args.ckpt)
-    if stats is not None:
+    if stats is None:
+        print("[composer2] WARNING: feature stats not found; proceeding without normalization")
+    else:
         meta = stats[3]
         if isinstance(meta, dict):
             if args.window == 64 and meta.get("window") is not None:

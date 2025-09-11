@@ -24,9 +24,14 @@ PITCHWHEEL_RAW_MAX = PB_CENTER * 2 - 1
 RAW_CENTER = PITCHWHEEL_CENTER  # legacy name
 RAW_MAX = PITCHWHEEL_RAW_MAX  # legacy name
 DELTA_MAX = PB_MAX  # legacy name
+# Legacy aliases (do not remove; tests & old call sites may import these)
+PBMIN = PB_MIN
+PBMAX = PB_MAX
 __all__ = [
     "PB_MIN",
     "PB_MAX",
+    "PBMIN",
+    "PBMAX",
     "PB_CENTER",
     "PB_FS",
     "PITCHWHEEL_CENTER",

@@ -400,6 +400,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--min-on-sec", type=float, default=0.05)
     ap.add_argument("--min-hold-sec", type=float, default=0.05)
     ap.add_argument("--eps-on", type=float, default=1e-6)
+    ap.add_argument("--target-on-ratio", type=float, default=None,
+                    help="target ON ratio; sets on_thr via quantile (1-ratio) and off_thr=on_thr-hyst_delta")
     # Optional smoothing / debouncing
     ap.add_argument("--smooth-sigma", type=float, default=0.0, help="Gaussian smoothing sigma (frames) before hysteresis; 0 to disable")
     ap.add_argument("--off-consec-sec", type=float, default=0.0, help="require this many consecutive seconds below OFF threshold before turning OFF")
@@ -487,6 +489,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 hyst_delta=args.hyst_delta,
                 eps_on=args.eps_on,
             )
+        if args.target_on_ratio is not None:
+            r = float(max(0.0, min(1.0, args.target_on_ratio)))
+            qthr = float(np.quantile(prob, 1.0 - r))
+            on_thr = qthr
+            off_thr = on_thr - args.hyst_delta
+            if not np.isfinite(on_thr):
+                on_thr = float(np.nanmedian(prob))
+                off_thr = on_thr - args.hyst_delta
         on = postprocess_on(
             prob,
             on_thr=on_thr,
@@ -573,6 +583,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 hyst_delta=args.hyst_delta,
                 eps_on=args.eps_on,
             )
+        if args.target_on_ratio is not None:
+            r = float(max(0.0, min(1.0, args.target_on_ratio)))
+            qthr = float(np.quantile(prob, 1.0 - r))
+            on_thr = qthr
+            off_thr = on_thr - args.hyst_delta
+            if not np.isfinite(on_thr):
+                on_thr = float(np.nanmedian(prob))
+                off_thr = on_thr - args.hyst_delta
         on = postprocess_on(
             prob,
             on_thr=on_thr,

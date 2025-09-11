@@ -1,0 +1,20 @@
+learning_rate: 1.0e-3
+batch_size: 32
+class_weight: null  # pos_weight for BCEWithLogitsLoss; e.g., 2.0 for imbalance
+
+data:
+  train: data/pedal/train.csv
+  val: data/pedal/val.csv
+  window: 64
+  hop: 16
+
+trainer:
+  max_epochs: 15
+  accelerator: auto  # picks mps/cuda/cpu
+  devices: 1
+  log_every_n_steps: 10
+  enable_progress_bar: true
+  deterministic: false
+
+# output checkpoint path
+out: checkpoints/pedal.ckpt

@@ -38,6 +38,12 @@ except Exception:  # pragma: no cover - optional dependency
 
 from ml_models.pedal_model import PedalModel
 
+_worker_init_seed = 0
+
+def _worker_init_fn(worker_id: int) -> None:
+    np.random.seed(_worker_init_seed + worker_id)
+    torch.manual_seed(_worker_init_seed + worker_id)
+
 
 def _resolve_workers_cli(v):
     if v is not None:
@@ -364,9 +370,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _pf = 2 if _nw > 0 else None
     print(f"[composer2] num_workers={_nw} (persistent={_pw}, prefetch_factor={_pf or 'n/a'})")
     base_seed = torch.initial_seed()
-    def _worker_init_fn(worker_id: int) -> None:
-        np.random.seed(base_seed + worker_id)
-        torch.manual_seed(base_seed + worker_id)
+    global _worker_init_seed
+    _worker_init_seed = base_seed
 
     bs = max(1, int(args.batch))
     ds = TensorDataset(X, Y)

@@ -1712,5 +1712,23 @@ python -m tools.auto_tag_loops --in data/loops --out-combined tags.yaml \
 Use `--dry-run` to skip file writes or `--split-output` to also emit legacy `sections.yaml` and `mood.yaml`.
 
 
+## UJAM Sparkle MIDI converter
+`ujam/sparkle_convert.py` converts generic MIDI to the chord and phrase trigger layout used by Virtual Guitarist Sparkle.
+Chords and phrase notes are written to separate instruments so DAWs load them on distinct tracks, and MIDI channels are assigned on a best-effort basis.  The optional `--clone-meta-only` flag copies tempo and time-signature events without notes; if private tempo fields are unavailable, these values are reconstructed via public APIs, so results may vary across `pretty_midi` versions.
+
+| Option | Summary |
+| --- | --- |
+| `--cycle-phrase-notes` LIST | per-bar phrase note rotation (e.g., 24,26,rest) |
+| `--cycle-start-bar` INT | offset bar index for phrase note cycle |
+| `--cycle-stride` INT | advance cycle every N bars/chords |
+| `--accent` JSON | velocity multipliers per pulse (0.1–2.0) |
+| `--skip-phrase-in-rests` | omit phrase pulses during rest spans |
+| `--phrase-channel` / `--chord-channel` INT | assign MIDI channels (best effort) |
+| `--voicing-mode` {stacked,closed} | chord voicing style |
+| `--top-note-max` INT | cap highest chord tone (mapping `strict` for errors) |
+| `--swing` FLOAT | swing amount; disabled if `--swing-unit` ≠ `--pulse` |
+| `--clone-meta-only` | copy tempo/time-signature only |
+| `--dry-run` | log stats without writing output |
+
 ## License
 This project is licensed under the [MIT License](LICENSE).

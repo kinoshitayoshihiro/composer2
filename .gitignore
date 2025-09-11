@@ -23,3 +23,22 @@ checkpoints/
 
 # システムファイル
 .DS_Store
+# Python
+__pycache__/
+*.pyc
+
+# venv
+.venv/
+.venv*/
+venv/
+
+# 実験アーティファクト・データ
+data/
+outputs/
+tmp/
+lightning_logs/
+reports/
+checkpoints/
+*.ckpt
+*.onnx
+.DS_Store

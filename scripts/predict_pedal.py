@@ -37,15 +37,24 @@ Examples
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
+from torch.utils.data import DataLoader, TensorDataset
 import pretty_midi as pm
 
 from ml_models.pedal_model import PedalModel
+
+
+def _resolve_workers_cli(v):
+    if v is not None:
+        return max(int(v), 0)
+    env = os.getenv("COMPOSER2_NUM_WORKERS")
+    return max(int(env), 0) if (env and env.isdigit()) else 0
 
 # Optional dependency: feature extraction from MIDI
 try:
@@ -64,12 +73,12 @@ except Exception:  # pragma: no cover - optional; enable CSV mode even without t
 # Stats loading / normalization
 # ------------------------------
 
-def _load_stats(ckpt_path: Path, stats_json: Optional[Path] = None) -> tuple[Optional[List[str]], np.ndarray, np.ndarray, Optional[float]]:
-    """Return (feat_cols, mean, std, fps) from JSON.
+def _load_stats(ckpt_path: Path, stats_json: Optional[Path] = None) -> tuple[Optional[List[str]], np.ndarray, np.ndarray, dict]:
+    """Return (feat_cols, mean, std, meta) from JSON.
 
     Supports both schemas:
-      A) {"feat_cols": [...], "mean": {col: val}, "std": {col: val}, "fps": 100.0}
-      B) {"mean": [...], "std": [...], "fps": 100.0}  # arrays match column order
+      A) {"feat_cols": [...], "mean": {col: val}, "std": {col: val}, ...}
+      B) {"mean": [...], "std": [...], ...}  # arrays match column order
     """
     path = stats_json if stats_json and stats_json.is_file() else ckpt_path.with_suffix(ckpt_path.suffix + ".stats.json")
     if not path.is_file():
@@ -88,18 +97,28 @@ def _load_stats(ckpt_path: Path, stats_json: Optional[Path] = None) -> tuple[Opt
             raise SystemExit("invalid stats JSON (missing mean/std)")
 
     std[std < 1e-8] = 1.0
-    fps = obj.get("fps")
-    fps = float(fps) if isinstance(fps, (int, float)) else None
-    return feat_cols, mean, std, fps
+    meta = {k: obj.get(k) for k in ("fps", "window", "hop", "pad_multiple")}
+    if isinstance(meta.get("fps"), (int, float)):
+        meta["fps"] = float(meta["fps"])
+    else:
+        meta["fps"] = None
+    return feat_cols, mean, std, meta
 
 
-def _apply_stats(X: torch.Tensor, mean: np.ndarray, std: np.ndarray) -> torch.Tensor:
-    tmean = torch.tensor(mean, dtype=X.dtype, device=X.device)
-    tstd = torch.tensor(std, dtype=X.dtype, device=X.device)
-    while tmean.ndim < X.ndim:
-        tmean = tmean.unsqueeze(0)
-        tstd = tstd.unsqueeze(0)
-    return (X - tmean) / tstd
+def _apply_stats(df: pd.DataFrame, feat_cols: Sequence[str], mean: np.ndarray, std: np.ndarray, *, strict: bool = False) -> tuple[np.ndarray, List[str]]:
+    cols = list(feat_cols)
+    have = [c for c in df.columns if c.startswith("chroma_") or c == "rel_release"]
+    missing = [c for c in cols if c not in have]
+    extra = [c for c in have if c not in cols]
+    if strict and (missing or extra):
+        raise ValueError(f"stats/CSV mismatch: missing={missing}, extra={extra}")
+    if missing:
+        sys.stderr.write(f"[composer2] warn: filling missing feat cols with zeros: {missing}\n")
+    arr = df.reindex(columns=cols, fill_value=0).to_numpy(dtype="float32", copy=True)
+    arr = (arr - mean) / np.maximum(std, 1e-8)
+    if missing:
+        arr[:, [cols.index(c) for c in missing]] = 0.0
+    return arr, cols
 
 
 # ------------------------------
@@ -168,36 +187,63 @@ def _make_windows(arr: torch.Tensor, win: int, hop: int) -> tuple[torch.Tensor, 
 
 
 def predict_per_frame(df: pd.DataFrame, *, feat_cols: Optional[List[str]], mean: np.ndarray, std: np.ndarray,
-                      model: PedalModel, window: int, hop: int, device: torch.device, batch: int = 64) -> np.ndarray:
+                      model: PedalModel, window: int, hop: int, device: torch.device, batch: int = 64,
+                      num_workers: int = 0, strict: bool = False) -> np.ndarray:
     cols = _feature_columns(df, feat_cols)
     if not cols:
         raise SystemExit("no feature columns found (expected chroma_* and optional rel_release)")
-    X = df[cols].values.astype("float32")
+    X, cols = _apply_stats(df, cols, mean, std, strict=strict)
     C = X.shape[1]
     if C != mean.size:
         raise SystemExit(f"feature dimension mismatch: got {C}, expected {mean.size}")
 
     xt = torch.from_numpy(X)
-    xt = _apply_stats(xt, mean, std)
     win, starts = _make_windows(xt, window, hop)
     if len(starts) == 0:
         # too short: return zeros
         return np.zeros(X.shape[0], dtype=np.float32)
 
+    _nw = max(int(num_workers), 0)
+    _pw = _nw > 0
+    _pf = 2 if _nw > 0 else None
+    base_seed = torch.initial_seed()
+    def _worker_init_fn(worker_id: int) -> None:
+        np.random.seed(base_seed + worker_id)
+        torch.manual_seed(base_seed + worker_id)
+
     bs = max(1, int(batch))
+    starts_t = torch.tensor(starts, dtype=torch.int64)
+    ds = TensorDataset(win, starts_t)
+    dl_kwargs = dict(batch_size=bs, shuffle=False, drop_last=False,
+                    num_workers=_nw, persistent_workers=_pw,
+                    worker_init_fn=_worker_init_fn)
+    if _pf is not None and _nw > 0:
+        dl_kwargs["prefetch_factor"] = _pf
+    if device.type == "cuda":
+        dl_kwargs["pin_memory"] = True
+    try:
+        loader = DataLoader(ds, **dl_kwargs)
+    except Exception:
+        print("[composer2] DataLoader failed with workers, falling back to num_workers=0")
+        fb_kwargs = dict(batch_size=bs, shuffle=False, drop_last=False,
+                         num_workers=0, persistent_workers=False,
+                         worker_init_fn=_worker_init_fn)
+        if device.type == "cuda":
+            fb_kwargs["pin_memory"] = True
+        loader = DataLoader(ds, **fb_kwargs)
     prob_sum = np.zeros(X.shape[0], dtype=np.float64)
     logit_sum = np.zeros(X.shape[0], dtype=np.float64)
     cnt = np.zeros(X.shape[0], dtype=np.int32)
 
     with torch.no_grad():
-        for i in range(0, win.shape[0], bs):
-            wb = win[i : i + bs].to(device)  # (B, win, F)
+        for wb, sb in loader:
+            wb = wb.to(device)
             logits = model(wb)               # expect (B, win) or (B, win, 1)
             if logits.ndim == 3:
                 logits = logits.squeeze(-1)
             pb = torch.sigmoid(logits).cpu().numpy()
             lg = logits.cpu().numpy()
-            for k, s in enumerate(starts[i : i + bs]):
+            for k, s in enumerate(sb.numpy().tolist()):
                 e = s + window
                 prob_sum[s:e] += pb[k]
                 logit_sum[s:e] += lg[k]
@@ -322,9 +368,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--ckpt", type=Path, required=True)
     # Outputs
     ap.add_argument("--out-mid", type=Path, help="output MIDI path for single-file mode")
+    ap.add_argument("--out", dest="out_mid", type=Path, help="alias of --out-mid")
     ap.add_argument("--out-dir", type=Path, help="output directory for directory mode")
+    ap.add_argument("--debug-json", type=Path, help="write debug metrics JSON")
     # Feature/Model params
     ap.add_argument("--stats-json", type=Path, help="feature stats JSON (defaults to <ckpt>.stats.json)")
+    ap.add_argument("--strict-stats", action="store_true", help="enforce stats/CSV column match")
     ap.add_argument("--window", type=int, default=64)
     ap.add_argument("--hop", type=int, default=16)
     # Extraction timing (used for MIDI extraction or CSV fps fallback)
@@ -332,6 +381,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--feat-hop", type=int, default=DEFAULT_HOP, help="feature extraction hop length for librosa")
     # Runtime
     ap.add_argument("--batch", type=int, default=64)
+    ap.add_argument("--num-workers", type=int, default=None, help="DataLoader workers (optional, or set COMPOSER2_NUM_WORKERS)")
     ap.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     # Thresholding / hysteresis
     ap.add_argument("--on-th", type=float, help="fixed ON threshold; if set, overrides auto")
@@ -354,18 +404,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit("either --feat-csv/--csv or --in (MIDI) must be provided")
 
     device = _auto_device(args.device)
+    _nw = _resolve_workers_cli(args.num_workers)
+    _pw = _nw > 0
+    _pf = 2 if _nw > 0 else None
+    print(f"[composer2] num_workers={_nw} (persistent={_pw}, prefetch_factor={_pf or 'n/a'})")
 
     # Stats + model
     try:
-        feat_cols, mean, std, stats_fps = _load_stats(args.ckpt, args.stats_json)
+        feat_cols, mean, std, stats_meta = _load_stats(args.ckpt, args.stats_json)
     except SystemExit as e:
         # If the user provided --stats-json path-like string in the old script style
         # we still bubble up; otherwise show clear message
         raise
+    if isinstance(stats_meta, dict):
+        if args.window == 64 and stats_meta.get("window") is not None:
+            args.window = int(stats_meta["window"])
+        if args.hop == 16 and stats_meta.get("hop") is not None:
+            args.hop = int(stats_meta["hop"])
     model = _load_model(args.ckpt, device)
 
     # Determine frame rate (fps) for time axis
     # Priority: stats.fps -> (sr / feat_hop)
+    stats_fps = stats_meta.get("fps") if isinstance(stats_meta, dict) else None
     fps = stats_fps if stats_fps is not None else (float(args.sr) / float(args.feat_hop))
     step_sec = 1.0 / float(fps)
 
@@ -385,6 +445,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             hop=args.hop,
             device=device,
             batch=args.batch,
+            num_workers=_nw,
+            strict=args.strict_stats,
         )
         # smoothing
         if args.smooth_sigma and args.smooth_sigma > 0:
@@ -428,6 +490,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "off_thr": float(off_thr),
             "cc": int(n_cc),
         })
+        if args.debug_json:
+            dbg = {
+                "frames": int(len(on)),
+                "on_ratio": float(on.mean()),
+                "on_thr": float(on_thr),
+                "off_thr": float(off_thr),
+                "prob_median": float(np.median(prob)),
+                "prob_std": float(np.std(prob)),
+                "cc": int(n_cc),
+                "fps": float(fps),
+                "window": int(args.window),
+                "hop": int(args.hop),
+            }
+            args.debug_json.parent.mkdir(parents=True, exist_ok=True)
+            args.debug_json.write_text(json.dumps(dbg, indent=2))
         return 0
 
     # ------------------ MIDI mode ------------------
@@ -440,6 +517,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     multi = len(paths) > 1 or args.inp.is_dir()
     if multi and not args.out_dir:
         raise SystemExit("--out-dir required for directory mode")
+    if args.debug_json and multi:
+        args.debug_json.mkdir(parents=True, exist_ok=True)
 
     for p in paths:
         df = extract_from_midi(p, sr=args.sr, hop_length=args.feat_hop)
@@ -453,6 +532,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             hop=args.hop,
             device=device,
             batch=args.batch,
+            num_workers=_nw,
+            strict=args.strict_stats,
         )
         # optional smoothing before thresholding
         if args.smooth_sigma and args.smooth_sigma > 0:
@@ -486,6 +567,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         out_mid = args.out_mid if (not multi and args.out_mid) else (args.out_dir / (p.stem + ".pedal.mid"))
         n_cc = write_cc64(out_mid, on, step_sec)
         print(f"[{p.name}] wrote {out_mid} cc={n_cc} frames={len(on)} on_ratio={on.mean():.6f} on_thr={on_thr:.6f} off_thr={off_thr:.6f}")
+        if args.debug_json:
+            dbg_path = args.debug_json / (p.stem + ".json") if multi else args.debug_json
+            if not multi:
+                dbg_path.parent.mkdir(parents=True, exist_ok=True)
+            dbg = {
+                "frames": int(len(on)),
+                "on_ratio": float(on.mean()),
+                "on_thr": float(on_thr),
+                "off_thr": float(off_thr),
+                "prob_median": float(np.median(prob)),
+                "prob_std": float(np.std(prob)),
+                "cc": int(n_cc),
+                "fps": float(fps),
+                "window": int(args.window),
+                "hop": int(args.hop),
+            }
+            dbg_path.write_text(json.dumps(dbg, indent=2))
 
     return 0
 

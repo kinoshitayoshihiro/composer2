@@ -439,3 +439,62 @@ def test_swing_timings() -> None:
     diff2 = pulses[2][0] - pulses[1][0]
     assert round(diff1, 2) == 0.7 and round(diff2, 2) == 0.3
 
+
+def test_phrase_hold_chord_merges_pulses() -> None:
+    pm = _dummy_pm()
+    chords = [sc.ChordSpan(0, 2, 0, 'maj'), sc.ChordSpan(2, 4, 0, 'maj')]
+    mapping = {
+        'phrase_note': 36,
+        'phrase_velocity': 100,
+        'phrase_length_beats': 0.25,
+        'cycle_phrase_notes': [],
+        'cycle_start_bar': 0,
+        'cycle_mode': 'bar'
+    }
+    off = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    mapping_hold = dict(mapping)
+    mapping_hold.update({'phrase_hold': 'chord', 'phrase_merge_gap': 0.03})
+    hold = sc.build_sparkle_midi(pm, chords, mapping_hold, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    assert len(hold.instruments[1].notes) < len(off.instruments[1].notes)
+
+
+def test_phrase_release_and_minlen() -> None:
+    pm = _dummy_pm()
+    chords = [sc.ChordSpan(0, 2, 0, 'maj')]
+    mapping = {
+        'phrase_note': 36,
+        'phrase_velocity': 100,
+        'phrase_length_beats': 0.25,
+        'cycle_phrase_notes': [],
+        'cycle_start_bar': 0,
+        'cycle_mode': 'bar',
+        'phrase_release_ms': 50.0,
+        'min_phrase_len_ms': 100.0
+    }
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    note = out.instruments[1].notes[0]
+    length = note.end - note.start
+    assert length >= 0.1 - sc.EPS and length < 0.125
+
+
+def test_held_vel_mode_max() -> None:
+    pm = _dummy_pm()
+    chords = [sc.ChordSpan(0, 4, 0, 'maj')]
+    mapping_first = {
+        'phrase_note': 36,
+        'phrase_velocity': 100,
+        'phrase_length_beats': 0.25,
+        'cycle_phrase_notes': [],
+        'cycle_start_bar': 0,
+        'cycle_mode': 'bar',
+        'phrase_hold': 'bar'
+    }
+    mapping_max = dict(mapping_first)
+    mapping_max['held_vel_mode'] = 'max'
+    accent = [0.5, 1.0]
+    out_first = sc.build_sparkle_midi(pm, chords, mapping_first, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5, accent=accent)
+    out_max = sc.build_sparkle_midi(pm, chords, mapping_max, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5, accent=accent)
+    v1 = out_first.instruments[1].notes[0].velocity
+    v2 = out_max.instruments[1].notes[0].velocity
+    assert v2 > v1
+

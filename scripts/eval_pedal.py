@@ -134,6 +134,26 @@ def _apply_stats(df: pd.DataFrame, feat_cols: Optional[Sequence[str]], mean: np.
     return arr, cols
 
 
+def load_stats_and_normalize(
+    df: pd.DataFrame,
+    stats: Optional[Tuple[Optional[List[str]], np.ndarray, np.ndarray]],
+    *,
+    strict: bool = False,
+) -> tuple[np.ndarray, List[str]]:
+    """Normalize features using precomputed stats.
+
+    Returns `(X, cols)` where ``X`` is ``float32``. If ``stats`` is ``None``
+    the raw feature columns are returned without normalization.
+    """
+    if stats is not None:
+        return _apply_stats(df, stats[0], stats[1], stats[2], strict=strict)
+    cols = _feature_columns(df, None)
+    if not cols:
+        raise SystemExit("No feature columns (expected chroma_* and optional rel_release)")
+    arr = df[cols].values.astype("float32")
+    return arr, cols
+
+
 # ------------------------------
 # CSV loading (frames & windows)
 # ------------------------------

@@ -106,6 +106,19 @@ def validate_midi_note(v: int) -> int:
     return v
 
 
+def parse_note_token(tok: Union[str, int]) -> Optional[int]:
+    """Normalize note token to MIDI int or None for rests."""
+    if isinstance(tok, str):
+        t = tok.strip()
+        if t.lower() == "rest":
+            return None
+        return parse_midi_note(t)
+    try:
+        return validate_midi_note(int(tok))
+    except Exception as e:  # pragma: no cover - unlikely
+        raise SystemExit(f"Invalid note token: {tok}") from e
+
+
 def clip_note_interval(start_t: float, end_t: float, *, eps: float = 1e-4) -> Tuple[float, float]:
     """Ensure end_t is at least eps after start_t and clamp negatives."""
     if start_t < 0:
@@ -269,6 +282,7 @@ def load_mapping(path: Optional[Path]) -> Dict:
         "phrase_channel": None,
         "chord_channel": None,
         "cycle_stride": 1,
+        "merge_reset_at": "none",
         "accent": None,
         "silent_qualities": [],
         "clone_meta_only": False,
@@ -317,6 +331,10 @@ def load_mapping(path: Optional[Path]) -> Dict:
     if cs_i <= 0:
         raise SystemExit("cycle_stride must be int >=1")
     default["cycle_stride"] = cs_i
+    mra = str(default.get("merge_reset_at", "none")).lower()
+    if mra not in ("none", "bar", "chord"):
+        raise SystemExit("merge_reset_at must be none, bar, or chord")
+    default["merge_reset_at"] = mra
     sq = default.get("silent_qualities")
     if sq is None:
         default["silent_qualities"] = []
@@ -357,6 +375,7 @@ def generate_mapping_template(full: bool) -> str:
             "cycle_start_bar: 0\n"
             "cycle_mode: bar  # or 'chord'\n"
             "cycle_stride: 1  # number of bars/chords before advancing cycle\n"
+            "merge_reset_at: none  # none, bar, chord\n"
             "voicing_mode: stacked  # or 'closed'\n"
             "top_note_max: null  # e.g., 72 to cap highest chord tone\n"
             "phrase_channel: null  # MIDI channel for phrase notes\n"
@@ -379,6 +398,7 @@ def generate_mapping_template(full: bool) -> str:
             "cycle_start_bar: 0\n"
             "cycle_mode: bar  # or 'chord'\n"
             "cycle_stride: 1\n"
+            "merge_reset_at: none\n"
             "voicing_mode: stacked  # or 'closed'\n"
             "top_note_max: null\n"
             "phrase_channel: null\n"
@@ -510,7 +530,8 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
                        skip_phrase_in_rests: bool = False,
                        silent_qualities: Optional[List[str]] = None,
                        clone_meta_only: bool = False,
-                       stats: Optional[Dict] = None) -> 'pretty_midi.PrettyMIDI':
+                       stats: Optional[Dict] = None,
+                       merge_reset_at: str = "none") -> 'pretty_midi.PrettyMIDI':
     if clone_meta_only:
         out = pretty_midi.PrettyMIDI()
         out.time_signature_changes = copy.deepcopy(pm_in.time_signature_changes)
@@ -611,6 +632,16 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
         span = beat_times[idx + 1] - beat_times[idx]
         return idx + (t - beat_times[idx]) / span
 
+    def maybe_merge_gap(inst, pitch, start_t, *, bar_start=None, chord_start=None):
+        mg = phrase_merge_gap
+        if merge_reset_at != 'none' and inst.notes and inst.notes[-1].pitch == pitch \
+                and (start_t - inst.notes[-1].end) <= phrase_merge_gap + EPS:
+            if merge_reset_at == 'bar' and bar_start is not None and abs(start_t - bar_start) <= EPS:
+                return -1.0
+            if merge_reset_at == 'chord' and chord_start is not None and abs(start_t - chord_start) <= EPS:
+                return -1.0
+        return mg
+
     ts_changes = pm_in.time_signature_changes
     meter_map: List[Tuple[float, int, int]] = []
     estimated_4_4 = False
@@ -624,7 +655,7 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
     if ts_changes and len(downbeats) >= 2:
         ts0 = ts_changes[0]
         expected_bar = beat_to_time(ts0.numerator * (4.0 / ts0.denominator))
-        if abs((downbeats[1] - downbeats[0]) - expected_bar) > 1e-6:
+        if abs((downbeats[1] - downbeats[0]) - expected_bar) > EPS:
             downbeats = []
             for i, ts in enumerate(ts_changes):
                 next_t = ts_changes[i + 1].time if i + 1 < len(ts_changes) else pm_in.get_end_time()
@@ -632,7 +663,7 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
                 end_b = time_to_beat(next_t)
                 bar_beats = ts.numerator * (4.0 / ts.denominator)
                 bar = start_b
-                while bar < end_b - 1e-9:
+                while bar < end_b - EPS:
                     downbeats.append(beat_to_time(bar))
                     bar += bar_beats
             downbeats.sort()
@@ -646,7 +677,7 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
                 end_b = time_to_beat(next_t)
                 bar_beats = ts.numerator * (4.0 / ts.denominator)
                 bar = start_b
-                while bar < end_b - 1e-9:
+                while bar < end_b - EPS:
                     downbeats.append(beat_to_time(bar))
                     bar += bar_beats
             downbeats.sort()
@@ -733,7 +764,7 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
                     if strict:
                         raise SystemExit(msg)
                     logging.warning(msg)
-            s_t, e_t = clip_note_interval(span.start, span.end)
+            s_t, e_t = clip_note_interval(span.start, span.end, eps=EPS)
             for p in triad:
                 chord_inst.notes.append(pretty_midi.Note(velocity=chord_vel, pitch=p, start=s_t, end=e_t))
         if stats is not None:
@@ -773,10 +804,12 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
                 else:
                     start_t = max(span.start, start_t)
                 end_t = min(span.end, span.end + delta_e)
-                start_t, end_t = clip_note_interval(start_t, end_t)
-                _append_phrase(phrase_inst, pn, start_t, end_t, base_vel, phrase_merge_gap, release_sec, min_phrase_len_sec)
+                start_t, end_t = clip_note_interval(start_t, end_t, eps=EPS)
+                mg = maybe_merge_gap(phrase_inst, pn, start_t,
+                                     bar_start=downbeats[bar_idx], chord_start=span.start)
+                _append_phrase(phrase_inst, pn, start_t, end_t, base_vel, mg, release_sec, min_phrase_len_sec)
                 if stats is not None:
-                    end_bar = max(0, bisect.bisect_right(downbeats, span.end - 1e-9) - 1)
+                    end_bar = max(0, bisect.bisect_right(downbeats, span.end - EPS) - 1)
                     for bi in range(bar_idx, end_bar + 1):
                         if bi not in stats["bar_phrase_notes"]:
                             stats["bar_phrase_notes"][bi] = pn
@@ -816,8 +849,10 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
                     else:
                         start_t = max(span.start, start_t)
                     end_t = min(end, end + delta_e)
-                    start_t, end_t = clip_note_interval(start_t, end_t)
-                    _append_phrase(phrase_inst, pn, start_t, end_t, base_vel, phrase_merge_gap, release_sec, min_phrase_len_sec)
+                    start_t, end_t = clip_note_interval(start_t, end_t, eps=EPS)
+                    mg = maybe_merge_gap(phrase_inst, pn, start_t,
+                                         bar_start=bar_start, chord_start=span.start)
+                    _append_phrase(phrase_inst, pn, start_t, end_t, base_vel, mg, release_sec, min_phrase_len_sec)
                     if stats is not None and bar_idx not in stats["bar_phrase_notes"]:
                         stats["bar_phrase_notes"][bar_idx] = pn
                     if stats is not None:
@@ -825,7 +860,7 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
                 bar_idx += 1
         else:
             b = sb
-            while b < eb - 1e-9:
+            while b < eb - EPS:
                 t = beat_to_time(b)
                 bar_idx = max(0, bisect.bisect_right(downbeats, t) - 1)
                 total = bar_counts.get(bar_idx, 1)
@@ -858,14 +893,16 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
                     else:
                         start_t = max(span.start, start_t)
                     end_t = min(boundary, boundary + delta_e)
-                    start_t, end_t = clip_note_interval(start_t, end_t)
-                    _append_phrase(phrase_inst, pn, start_t, end_t, base_vel, phrase_merge_gap, release_sec, min_phrase_len_sec)
+                    start_t, end_t = clip_note_interval(start_t, end_t, eps=EPS)
+                    mg = maybe_merge_gap(phrase_inst, pn, start_t,
+                                         bar_start=downbeats[bar_idx], chord_start=span.start)
+                    _append_phrase(phrase_inst, pn, start_t, end_t, base_vel, mg, release_sec, min_phrase_len_sec)
                     if stats is not None and bar_idx not in stats["bar_phrase_notes"]:
                         stats["bar_phrase_notes"][bar_idx] = pn
                     if stats is not None:
                         stats["bar_velocities"].setdefault(bar_idx, []).append(base_vel)
                 interval = pulse_subdiv_beats
-                if swing > 0.0 and abs(pulse_subdiv_beats - swing_unit_beats) < 1e-9:
+                if swing > 0.0 and abs(pulse_subdiv_beats - swing_unit_beats) < EPS:
                     interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
                 b += interval
 
@@ -893,6 +930,8 @@ def main():
                     help="Bar offset for cycling (default 0)")
     ap.add_argument("--cycle-mode", choices=["bar", "chord"], default=None, help="Cycle mode")
     ap.add_argument("--cycle-stride", type=int, default=None, help="Number of bars/chords before advancing cycle")
+    ap.add_argument("--merge-reset-at", choices=["none", "bar", "chord"], default=None,
+                    help="Reset phrase merge at bar or chord boundaries")
     ap.add_argument(
         "--phrase-channel",
         type=int,
@@ -983,9 +1022,10 @@ def main():
     if not (0.0 <= args.swing < 1.0):
         raise SystemExit("--swing must be 0.0<=s<1.0")
     swing = args.swing
-    if swing > 0.0 and abs(swing_unit_beats - pulse_beats) >= 1e-9:
+    if swing > 0.0 and abs(swing_unit_beats - pulse_beats) >= EPS:
         logging.info("swing disabled: swing unit %s != pulse %s", args.swing_unit, args.pulse)
         swing = 0.0
+    swing = max(0.0, min(float(swing), 0.9))
 
     mapping = load_mapping(Path(args.mapping) if args.mapping else None)
     cycle_notes_raw = mapping.get("cycle_phrase_notes", [])
@@ -993,16 +1033,12 @@ def main():
     for tok in cycle_notes_raw:
         if tok is None:
             cycle_notes.append(None)
-        elif isinstance(tok, str):
-            if tok.strip().lower() == 'rest':
-                cycle_notes.append(None)
-            else:
-                cycle_notes.append(parse_midi_note(tok))
         else:
-            cycle_notes.append(validate_midi_note(tok))
+            cycle_notes.append(parse_note_token(tok))
     cycle_start_bar = int(mapping.get("cycle_start_bar", 0))
     cycle_mode = mapping.get("cycle_mode", "bar")
     cycle_stride = int(mapping.get("cycle_stride", 1))
+    merge_reset_at = mapping.get("merge_reset_at", "none")
     phrase_channel = mapping.get("phrase_channel")
     chord_channel = mapping.get("chord_channel")
     accent = validate_accent(mapping.get("accent"))
@@ -1010,13 +1046,7 @@ def main():
     clone_meta_only = bool(mapping.get("clone_meta_only", False))
     if args.cycle_phrase_notes is not None:
         tokens = [t for t in args.cycle_phrase_notes.split(',') if t.strip()]
-        parsed: List[Optional[int]] = []
-        for tok in tokens:
-            if tok.strip().lower() == 'rest':
-                parsed.append(None)
-            else:
-                parsed.append(parse_midi_note(tok))
-        cycle_notes = parsed
+        cycle_notes = [parse_note_token(t) for t in tokens]
     if args.cycle_start_bar is not None:
         cycle_start_bar = args.cycle_start_bar
     if args.cycle_mode is not None:
@@ -1025,6 +1055,8 @@ def main():
         if args.cycle_stride <= 0:
             raise SystemExit("cycle-stride must be >=1")
         cycle_stride = args.cycle_stride
+    if args.merge_reset_at is not None:
+        merge_reset_at = args.merge_reset_at
     for key, val in (("phrase_channel", args.phrase_channel), ("chord_channel", args.chord_channel)):
         if val is not None:
             if not (0 <= val <= 15):
@@ -1039,6 +1071,7 @@ def main():
     mapping["cycle_start_bar"] = cycle_start_bar
     mapping["cycle_mode"] = cycle_mode
     mapping["cycle_stride"] = cycle_stride
+    mapping["merge_reset_at"] = merge_reset_at
     mapping["phrase_channel"] = phrase_channel
     mapping["chord_channel"] = chord_channel
     mapping["accent"] = accent
@@ -1090,7 +1123,8 @@ def main():
                                 cycle_stride=cycle_stride, accent=accent,
                                 skip_phrase_in_rests=args.skip_phrase_in_rests,
                                 silent_qualities=silent_qualities,
-                                clone_meta_only=clone_meta_only, stats=stats)
+                                clone_meta_only=clone_meta_only, stats=stats,
+                                merge_reset_at=merge_reset_at)
     if args.dry_run:
         logging.info("bars=%d pulses=%d", stats.get("bar_count", 0), stats.get("pulse_count", 0))
         logging.info("phrase_hold=%s phrase_merge_gap=%.3f chord_merge_gap=%.3f phrase_release_ms=%.1f min_phrase_len_ms=%.1f",

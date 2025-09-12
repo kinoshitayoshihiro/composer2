@@ -119,7 +119,7 @@ def parse_note_token(tok: Union[str, int]) -> Optional[int]:
         raise SystemExit(f"Invalid note token: {tok}") from e
 
 
-def clip_note_interval(start_t: float, end_t: float, *, eps: float = 1e-4) -> Tuple[float, float]:
+def clip_note_interval(start_t: float, end_t: float, *, eps: float = EPS) -> Tuple[float, float]:
     """Ensure end_t is at least eps after start_t and clamp negatives."""
     if start_t < 0:
         start_t = 0.0
@@ -154,6 +154,48 @@ def parse_accent_arg(s: str) -> Optional[List[float]]:
     except Exception:
         raise SystemExit("--accent must be JSON list of numbers")
     return validate_accent(data)
+
+
+def schedule_phrase_keys(num_bars: int,
+                         cycle_phrase_notes: Optional[List[Optional[int]]],
+                         sections: Optional[List[Dict]],
+                         fill_note: Optional[int],
+                         *,
+                         cycle_start_bar: int = 0,
+                         cycle_stride: int = 1) -> Tuple[List[Optional[int]], Dict[int, int]]:
+    plan: List[Optional[int]] = []
+    if cycle_phrase_notes:
+        L = len(cycle_phrase_notes)
+        start = ((cycle_start_bar % L) + L) % L
+        stride = max(1, cycle_stride)
+        for i in range(num_bars):
+            idx = ((i + start) // stride) % L
+            plan.append(cycle_phrase_notes[idx])
+    else:
+        for i in range(num_bars):
+            note = 36 + i
+            if note > 47:
+                note = 47
+            plan.append(note)
+    prev: Optional[int] = None
+    for i, pn in enumerate(plan):
+        if pn is None:
+            prev = None
+            continue
+        if pn == prev:
+            plan[i] = None
+        else:
+            prev = pn
+    fills: Dict[int, int] = {}
+    if sections:
+        candidates = [fill_note, 34, 35]
+        fn = next((int(x) for x in candidates if x is not None), None)
+        if fn is not None:
+            for sec in sections:
+                end_bar = sec.get('end_bar')
+                if isinstance(end_bar, int) and 0 < end_bar < num_bars:
+                    fills[end_bar - 1] = fn
+    return plan, fills
 
 
 def _append_phrase(inst, pitch: int, start: float, end: float, vel: int,
@@ -707,6 +749,17 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
         eb = time_to_beat(end)
         bar_counts[i] = int(math.ceil((eb - sb) / pulse_subdiv_beats))
 
+    phrase_plan: List[Optional[int]] = []
+    fill_map: Dict[int, int] = {}
+    if cycle_mode == 'bar':
+        sections = mapping.get('sections')
+        num_bars = len(downbeats) - 1
+        if chords:
+            last_idx = max(max(0, bisect.bisect_right(downbeats, c.end - EPS) - 1) for c in chords)
+            num_bars = max(num_bars, last_idx + 1)
+        phrase_plan, fill_map = schedule_phrase_keys(num_bars, cycle_notes, sections, mapping.get('style_fill'),
+                                                    cycle_start_bar=cycle_start_bar, cycle_stride=cycle_stride)
+
     if stats is not None and phrase_hold != 'off':
         for i, start in enumerate(downbeats):
             end = downbeats[i + 1] if i + 1 < len(downbeats) else pm_in.get_end_time()
@@ -740,7 +793,33 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
             return math.sin(math.pi * x)
         return 1.0
 
+    last_bar_idx = -1
+    last_bar_note: Optional[int] = None
+
     def pick_phrase_note(t: float, chord_idx: int) -> Optional[int]:
+        nonlocal last_bar_idx, last_bar_note
+        if phrase_plan:
+            bar_idx = max(0, bisect.bisect_right(downbeats, t) - 1)
+            if bar_idx < len(phrase_plan):
+                pn = phrase_plan[bar_idx]
+            else:
+                if cycle_notes:
+                    idx = ((bar_idx + cycle_start_bar) // max(1, cycle_stride)) % len(cycle_notes)
+                    pn = cycle_notes[idx]
+                else:
+                    pn = 36 + bar_idx
+                phrase_plan.append(pn)
+            if bar_idx != last_bar_idx:
+                last_bar_idx = bar_idx
+                if pn is None:
+                    last_bar_note = None
+                    return None
+                if pn == last_bar_note:
+                    return None
+                last_bar_note = pn
+            if pn is None:
+                return None
+            return pn
         if not cycle_notes:
             return phrase_note
         if cycle_mode == 'bar':
@@ -924,6 +1003,16 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
                     interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
                 b += interval
 
+    for bar_idx, pitch in fill_map.items():
+        if pitch is None or bar_idx + 1 >= len(downbeats):
+            continue
+        start_b = time_to_beat(downbeats[bar_idx + 1]) - pulse_subdiv_beats
+        end_b = time_to_beat(downbeats[bar_idx + 1])
+        start_t = beat_to_time(start_b)
+        end_t = beat_to_time(end_b)
+        _append_phrase(phrase_inst, pitch, start_t, end_t, phrase_vel,
+                       phrase_merge_gap, release_sec, min_phrase_len_sec)
+
     _legato_merge_chords(chord_inst, chord_merge_gap)
     out.instruments.append(chord_inst)
     out.instruments.append(phrase_inst)
@@ -969,6 +1058,7 @@ def main():
     ap.add_argument("--swing", type=float, default=0.0, help="Swing amount 0..1")
     ap.add_argument("--swing-unit", type=str, default="1/8", choices=["1/8", "1/16"], help="Subdivision for swing")
     ap.add_argument("--accent", type=str, default=None, help="JSON velocity multipliers per pulse")
+    ap.add_argument("--sections", type=str, default=None, help="JSON list of sections (start_bar,end_bar,tag)")
     ap.add_argument("--skip-phrase-in-rests", action="store_true", help="Suppress phrase notes in rest spans")
     ap.add_argument("--phrase-hold", choices=["off", "bar", "chord"], default=None,
                     help="Hold phrase keys: off, bar, or chord (default: off)")
@@ -1085,6 +1175,12 @@ def main():
                 chord_channel = val
     if args.accent is not None:
         accent = parse_accent_arg(args.accent)
+    sections = mapping.get("sections")
+    if args.sections is not None:
+        try:
+            sections = json.loads(args.sections)
+        except Exception:
+            raise SystemExit("--sections must be JSON list")
     mapping["cycle_phrase_notes"] = cycle_notes
     mapping["cycle_start_bar"] = cycle_start_bar
     mapping["cycle_mode"] = cycle_mode
@@ -1093,6 +1189,7 @@ def main():
     mapping["phrase_channel"] = phrase_channel
     mapping["chord_channel"] = chord_channel
     mapping["accent"] = accent
+    mapping["sections"] = sections
     mapping["silent_qualities"] = silent_qualities
     phrase_hold = mapping.get("phrase_hold", "off")
     phrase_merge_gap = float(mapping.get("phrase_merge_gap", 0.02))

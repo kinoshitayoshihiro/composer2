@@ -68,6 +68,8 @@ PITCH_CLASS = {
 
 NOTE_RE = re.compile(r'^([A-G][b#]?)(-?\d+)$')
 
+EPS = 1e-9
+
 
 def parse_midi_note(token: str) -> int:
     """Parse a MIDI note from integer or note name like C1 or F#2."""
@@ -139,6 +141,33 @@ def parse_accent_arg(s: str) -> Optional[List[float]]:
     except Exception:
         raise SystemExit("--accent must be JSON list of numbers")
     return validate_accent(data)
+
+
+def _append_phrase(inst, pitch: int, start: float, end: float, vel: int,
+                   merge_gap_sec: float, release_sec: float, min_len_sec: float):
+    if end <= start + EPS:
+        return
+    end -= release_sec
+    start, end = clip_note_interval(start, end, eps=EPS)
+    if min_len_sec > 0.0 and end < start + min_len_sec - EPS:
+        end = start + min_len_sec
+    if inst.notes and inst.notes[-1].pitch == pitch and (start - inst.notes[-1].end) <= merge_gap_sec + EPS:
+        inst.notes[-1].end = max(inst.notes[-1].end, end)
+    else:
+        inst.notes.append(pretty_midi.Note(velocity=vel, pitch=pitch, start=start, end=end))
+
+
+def _legato_merge_chords(inst, merge_gap_sec: float):
+    last_by_pitch = {}
+    merged = []
+    for n in sorted(inst.notes, key=lambda x: (x.pitch, x.start)):
+        prev = last_by_pitch.get(n.pitch)
+        if prev and (n.start - prev.end) <= merge_gap_sec + EPS:
+            prev.end = max(prev.end, n.end)
+        else:
+            merged.append(n)
+            last_by_pitch[n.pitch] = n
+    inst.notes = sorted(merged, key=lambda x: x.start)
 
 @dataclass
 class ChordSpan:
@@ -222,6 +251,9 @@ def load_mapping(path: Optional[Path]) -> Dict:
         "phrase_note": 36,          # Default left-hand "Common" phrase key (C2)
         "phrase_velocity": 96,
         "phrase_length_beats": 0.25,
+        "phrase_hold": "off",
+        "phrase_merge_gap": 0.02,
+        "chord_merge_gap": 0.01,
         "chord_octave": 4,          # Place chord tones around C4-B4 by default
         "chord_velocity": 90,
         "triad_intervals": {
@@ -291,6 +323,18 @@ def load_mapping(path: Optional[Path]) -> Dict:
     elif not isinstance(sq, list):
         raise SystemExit("silent_qualities must be list")
     default["strict"] = bool(default.get("strict", False))
+    ph = default.get("phrase_hold", "off")
+    if ph not in ("off", "bar", "chord"):
+        raise SystemExit("phrase_hold must be off, bar, or chord")
+    default["phrase_hold"] = ph
+    for key in ("phrase_merge_gap", "chord_merge_gap"):
+        try:
+            val = float(default.get(key, 0.0))
+        except Exception:
+            raise SystemExit(f"{key} must be float")
+        if val < 0.0:
+            val = 0.0
+        default[key] = val
     return default
 
 
@@ -301,6 +345,9 @@ def generate_mapping_template(full: bool) -> str:
             "phrase_note: 36\n"
             "phrase_velocity: 96\n"
             "phrase_length_beats: 0.25\n"
+            "phrase_hold: off  # off, bar, chord\n"
+            "phrase_merge_gap: 0.02  # seconds\n"
+            "chord_merge_gap: 0.01  # seconds\n"
             "chord_octave: 4\n"
             "chord_velocity: 90\n"
             "triad_intervals:\n"
@@ -326,6 +373,9 @@ def generate_mapping_template(full: bool) -> str:
         return (
             "phrase_note: 36\n"
             "cycle_phrase_notes: []  # e.g., [24, rest, 26] to alternate per bar (小節ごとに切替)\n"
+            "phrase_hold: off\n"
+            "phrase_merge_gap: 0.02\n"
+            "chord_merge_gap: 0.01\n"
             "cycle_start_bar: 0\n"
             "cycle_mode: bar  # or 'chord'\n"
             "cycle_stride: 1\n"
@@ -523,6 +573,12 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
     phrase_len_beats = float(mapping.get("phrase_length_beats", 0.25))
     if phrase_len_beats <= 0 or pulse_subdiv_beats <= 0:
         raise SystemExit("phrase_length_beats and pulse_subdiv_beats must be positive")
+    phrase_hold = str(mapping.get("phrase_hold", "off"))
+    phrase_merge_gap = max(0.0, float(mapping.get("phrase_merge_gap", 0.02)))
+    chord_merge_gap = max(0.0, float(mapping.get("chord_merge_gap", 0.01)))
+    release_sec = max(0.0, float(mapping.get("phrase_release_ms", 0.0))) / 1000.0
+    min_phrase_len_sec = max(0.0, float(mapping.get("min_phrase_len_ms", 0.0))) / 1000.0
+    held_vel_mode = str(mapping.get("held_vel_mode", "first"))
     cycle_notes: List[Optional[int]] = list(mapping.get("cycle_phrase_notes", []) or [])
     cycle_start_bar = int(mapping.get("cycle_start_bar", 0))
     if cycle_notes:
@@ -645,6 +701,22 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
         idx = ((base + cycle_start_bar) // max(1, cycle_stride)) % len(cycle_notes)
         return cycle_notes[idx]
 
+    def pulses_in_range(start_t: float, end_t: float) -> List[Tuple[int, int]]:
+        indices: List[Tuple[int, int]] = []
+        b = time_to_beat(start_t)
+        eb = time_to_beat(end_t)
+        while b < eb - EPS:
+            t = beat_to_time(b)
+            bar_idx = max(0, bisect.bisect_right(downbeats, t) - 1)
+            bar_start_b = time_to_beat(downbeats[bar_idx])
+            idx = int(math.floor((b - bar_start_b + EPS) / pulse_subdiv_beats))
+            indices.append((bar_idx, idx))
+            interval = pulse_subdiv_beats
+            if swing > 0.0 and abs(pulse_subdiv_beats - swing_unit_beats) < EPS:
+                interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
+            b += interval
+        return indices
+
     silent_qualities = set(silent_qualities or [])
     for c_idx, span in enumerate(chords):
         is_silent = span.quality in silent_qualities or span.quality == 'rest'
@@ -671,51 +743,133 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
 
         sb = time_to_beat(span.start)
         eb = time_to_beat(span.end)
-        b = sb
-        while b < eb - 1e-9:
-            t = beat_to_time(b)
-            bar_idx = max(0, bisect.bisect_right(downbeats, t) - 1)
-            total = bar_counts.get(bar_idx, 1)
-            idx = bar_progress.get(bar_idx, 0)
-            bar_progress[bar_idx] = idx + 1
-            vf = vel_factor(vel_curve, idx, total)
-            af = accent[idx % len(accent)] if accent else 1.0
-            base_vel = max(1, min(127, int(round(phrase_vel * vf * af))))
-            if humanize_vel > 0:
-                base_vel = max(1, min(127, int(round(base_vel + random.uniform(-humanize_vel, humanize_vel)))))
-
-            pn = pick_phrase_note(t, c_idx)
-            end_b = b + phrase_len_beats
-            boundary = beat_to_time(end_b)
-            if cycle_mode == 'bar' and bar_idx + 1 < len(downbeats):
-                boundary = min(boundary, downbeats[bar_idx + 1])
-            boundary = min(boundary, span.end)
-
-            if stats is not None:
-                stats["bar_pulses"].setdefault(bar_idx, []).append((b, t))
+        if phrase_hold == 'chord':
+            pn = pick_phrase_note(span.start, c_idx)
             if pn is not None:
+                bar_idx = max(0, bisect.bisect_right(downbeats, span.start) - 1)
+                total = bar_counts.get(bar_idx, 1)
+                vf = vel_factor(vel_curve, 0, total)
+                pulse_idx = pulses_in_range(span.start, span.end)
+                if accent and pulse_idx:
+                    if held_vel_mode == 'max':
+                        af = max(accent[i % len(accent)] for _, i in pulse_idx)
+                    elif held_vel_mode == 'mean':
+                        af = sum(accent[i % len(accent)] for _, i in pulse_idx) / len(pulse_idx)
+                    else:
+                        af = accent[pulse_idx[0][1] % len(accent)]
+                else:
+                    af = accent[0] if accent else 1.0
+                base_vel = max(1, min(127, int(round(phrase_vel * vf * af))))
+                if humanize_vel > 0:
+                    base_vel = max(1, min(127, int(round(base_vel + random.uniform(-humanize_vel, humanize_vel)))))
                 if humanize_ms > 0.0:
                     delta_s = random.uniform(-humanize_ms, humanize_ms) / 1000.0
                     delta_e = random.uniform(-humanize_ms, humanize_ms) / 1000.0
                 else:
                     delta_s = delta_e = 0.0
-                start_t = t + delta_s
+                start_t = span.start + delta_s
                 if cycle_mode == 'bar':
                     start_t = max(downbeats[bar_idx], span.start, start_t)
                 else:
                     start_t = max(span.start, start_t)
-                end_t = min(boundary, boundary + delta_e)
+                end_t = min(span.end, span.end + delta_e)
                 start_t, end_t = clip_note_interval(start_t, end_t)
-                phrase_inst.notes.append(pretty_midi.Note(velocity=base_vel, pitch=pn, start=start_t, end=end_t))
-                if stats is not None and bar_idx not in stats["bar_phrase_notes"]:
-                    stats["bar_phrase_notes"][bar_idx] = pn
+                _append_phrase(phrase_inst, pn, start_t, end_t, base_vel, phrase_merge_gap, release_sec, min_phrase_len_sec)
                 if stats is not None:
-                    stats["bar_velocities"].setdefault(bar_idx, []).append(base_vel)
-            interval = pulse_subdiv_beats
-            if swing > 0.0 and abs(pulse_subdiv_beats - swing_unit_beats) < 1e-9:
-                interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
-            b += interval
+                    end_bar = max(0, bisect.bisect_right(downbeats, span.end - 1e-9) - 1)
+                    for bi in range(bar_idx, end_bar + 1):
+                        if bi not in stats["bar_phrase_notes"]:
+                            stats["bar_phrase_notes"][bi] = pn
+                        stats["bar_velocities"].setdefault(bi, []).append(base_vel)
+        elif phrase_hold == 'bar':
+            bar_idx = max(0, bisect.bisect_right(downbeats, span.start) - 1)
+            while bar_idx < len(downbeats) and downbeats[bar_idx] < span.end:
+                bar_start = downbeats[bar_idx]
+                bar_end = downbeats[bar_idx + 1] if bar_idx + 1 < len(downbeats) else pm_in.get_end_time()
+                start = max(span.start, bar_start)
+                end = min(span.end, bar_end)
+                pn = pick_phrase_note(start, c_idx)
+                if pn is not None:
+                    total = bar_counts.get(bar_idx, 1)
+                    vf = vel_factor(vel_curve, 0, total)
+                    pulse_idx = pulses_in_range(start, end)
+                    if accent and pulse_idx:
+                        if held_vel_mode == 'max':
+                            af = max(accent[i % len(accent)] for _, i in pulse_idx)
+                        elif held_vel_mode == 'mean':
+                            af = sum(accent[i % len(accent)] for _, i in pulse_idx) / len(pulse_idx)
+                        else:
+                            af = accent[pulse_idx[0][1] % len(accent)]
+                    else:
+                        af = accent[0] if accent else 1.0
+                    base_vel = max(1, min(127, int(round(phrase_vel * vf * af))))
+                    if humanize_vel > 0:
+                        base_vel = max(1, min(127, int(round(base_vel + random.uniform(-humanize_vel, humanize_vel)))))
+                    if humanize_ms > 0.0:
+                        delta_s = random.uniform(-humanize_ms, humanize_ms) / 1000.0
+                        delta_e = random.uniform(-humanize_ms, humanize_ms) / 1000.0
+                    else:
+                        delta_s = delta_e = 0.0
+                    start_t = start + delta_s
+                    if cycle_mode == 'bar':
+                        start_t = max(bar_start, span.start, start_t)
+                    else:
+                        start_t = max(span.start, start_t)
+                    end_t = min(end, end + delta_e)
+                    start_t, end_t = clip_note_interval(start_t, end_t)
+                    _append_phrase(phrase_inst, pn, start_t, end_t, base_vel, phrase_merge_gap, release_sec, min_phrase_len_sec)
+                    if stats is not None and bar_idx not in stats["bar_phrase_notes"]:
+                        stats["bar_phrase_notes"][bar_idx] = pn
+                    if stats is not None:
+                        stats["bar_velocities"].setdefault(bar_idx, []).append(base_vel)
+                bar_idx += 1
+        else:
+            b = sb
+            while b < eb - 1e-9:
+                t = beat_to_time(b)
+                bar_idx = max(0, bisect.bisect_right(downbeats, t) - 1)
+                total = bar_counts.get(bar_idx, 1)
+                idx = bar_progress.get(bar_idx, 0)
+                bar_progress[bar_idx] = idx + 1
+                vf = vel_factor(vel_curve, idx, total)
+                af = accent[idx % len(accent)] if accent else 1.0
+                base_vel = max(1, min(127, int(round(phrase_vel * vf * af))))
+                if humanize_vel > 0:
+                    base_vel = max(1, min(127, int(round(base_vel + random.uniform(-humanize_vel, humanize_vel)))))
 
+                pn = pick_phrase_note(t, c_idx)
+                end_b = b + phrase_len_beats
+                boundary = beat_to_time(end_b)
+                if cycle_mode == 'bar' and bar_idx + 1 < len(downbeats):
+                    boundary = min(boundary, downbeats[bar_idx + 1])
+                boundary = min(boundary, span.end)
+
+                if stats is not None:
+                    stats["bar_pulses"].setdefault(bar_idx, []).append((b, t))
+                if pn is not None:
+                    if humanize_ms > 0.0:
+                        delta_s = random.uniform(-humanize_ms, humanize_ms) / 1000.0
+                        delta_e = random.uniform(-humanize_ms, humanize_ms) / 1000.0
+                    else:
+                        delta_s = delta_e = 0.0
+                    start_t = t + delta_s
+                    if cycle_mode == 'bar':
+                        start_t = max(downbeats[bar_idx], span.start, start_t)
+                    else:
+                        start_t = max(span.start, start_t)
+                    end_t = min(boundary, boundary + delta_e)
+                    start_t, end_t = clip_note_interval(start_t, end_t)
+                    _append_phrase(phrase_inst, pn, start_t, end_t, base_vel, phrase_merge_gap, release_sec, min_phrase_len_sec)
+                    if stats is not None and bar_idx not in stats["bar_phrase_notes"]:
+                        stats["bar_phrase_notes"][bar_idx] = pn
+                    if stats is not None:
+                        stats["bar_velocities"].setdefault(bar_idx, []).append(base_vel)
+                interval = pulse_subdiv_beats
+                if swing > 0.0 and abs(pulse_subdiv_beats - swing_unit_beats) < 1e-9:
+                    interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
+                b += interval
+
+    _legato_merge_chords(chord_inst, chord_merge_gap)
     out.instruments.append(chord_inst)
     out.instruments.append(phrase_inst)
     if clone_meta_only and logging.getLogger().isEnabledFor(logging.INFO):
@@ -759,6 +913,18 @@ def main():
     ap.add_argument("--swing-unit", type=str, default="1/8", choices=["1/8", "1/16"], help="Subdivision for swing")
     ap.add_argument("--accent", type=str, default=None, help="JSON velocity multipliers per pulse")
     ap.add_argument("--skip-phrase-in-rests", action="store_true", help="Suppress phrase notes in rest spans")
+    ap.add_argument("--phrase-hold", choices=["off", "bar", "chord"], default=None,
+                    help="Hold phrase keys: off, bar, or chord (default: off)")
+    ap.add_argument("--phrase-merge-gap", type=float, default=None,
+                    help="Merge same-pitch phrase notes if gap <= seconds (default: 0.02)")
+    ap.add_argument("--chord-merge-gap", type=float, default=None,
+                    help="Merge same-pitch chord notes if gap <= seconds (default: 0.01)")
+    ap.add_argument("--phrase-release-ms", type=float, default=None,
+                    help="Shorten phrase note ends by ms (default: 0.0)")
+    ap.add_argument("--min-phrase-len-ms", type=float, default=None,
+                    help="Minimum phrase note length in ms (default: 0.0)")
+    ap.add_argument("--held-vel-mode", choices=["first", "max", "mean"], default=None,
+                    help="Velocity for held notes: first, max, or mean accent (default: first)")
     ap.add_argument(
         "--clone-meta-only",
         action="store_true",
@@ -877,6 +1043,34 @@ def main():
     mapping["chord_channel"] = chord_channel
     mapping["accent"] = accent
     mapping["silent_qualities"] = silent_qualities
+    phrase_hold = mapping.get("phrase_hold", "off")
+    phrase_merge_gap = float(mapping.get("phrase_merge_gap", 0.02))
+    chord_merge_gap = float(mapping.get("chord_merge_gap", 0.01))
+    phrase_release_ms = float(mapping.get("phrase_release_ms", 0.0))
+    min_phrase_len_ms = float(mapping.get("min_phrase_len_ms", 0.0))
+    held_vel_mode = mapping.get("held_vel_mode", "first")
+    if args.phrase_hold is not None:
+        phrase_hold = args.phrase_hold
+    if args.phrase_merge_gap is not None:
+        phrase_merge_gap = args.phrase_merge_gap
+    if args.chord_merge_gap is not None:
+        chord_merge_gap = args.chord_merge_gap
+    if args.phrase_release_ms is not None:
+        phrase_release_ms = args.phrase_release_ms
+    if args.min_phrase_len_ms is not None:
+        min_phrase_len_ms = args.min_phrase_len_ms
+    if args.held_vel_mode is not None:
+        held_vel_mode = args.held_vel_mode
+    phrase_merge_gap = max(0.0, phrase_merge_gap)
+    chord_merge_gap = max(0.0, chord_merge_gap)
+    phrase_release_ms = max(0.0, phrase_release_ms)
+    min_phrase_len_ms = max(0.0, min_phrase_len_ms)
+    mapping["phrase_hold"] = phrase_hold
+    mapping["phrase_merge_gap"] = phrase_merge_gap
+    mapping["chord_merge_gap"] = chord_merge_gap
+    mapping["phrase_release_ms"] = phrase_release_ms
+    mapping["min_phrase_len_ms"] = min_phrase_len_ms
+    mapping["held_vel_mode"] = held_vel_mode
     clone_meta_only = bool(args.clone_meta_only or clone_meta_only)
 
     if args.chords:
@@ -899,6 +1093,12 @@ def main():
                                 clone_meta_only=clone_meta_only, stats=stats)
     if args.dry_run:
         logging.info("bars=%d pulses=%d", stats.get("bar_count", 0), stats.get("pulse_count", 0))
+        logging.info("phrase_hold=%s phrase_merge_gap=%.3f chord_merge_gap=%.3f phrase_release_ms=%.1f min_phrase_len_ms=%.1f",
+                     mapping.get("phrase_hold"),
+                     mapping.get("phrase_merge_gap"),
+                     mapping.get("chord_merge_gap"),
+                     mapping.get("phrase_release_ms"),
+                     mapping.get("min_phrase_len_ms"))
         if stats.get("cycle_disabled"):
             logging.info("cycle disabled; using fixed phrase_note=%d", mapping.get("phrase_note"))
         if stats.get("meters"):

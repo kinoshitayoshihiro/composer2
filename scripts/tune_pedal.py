@@ -42,6 +42,49 @@ def _load_prob(path: Path) -> tuple[np.ndarray, Optional[np.ndarray], float, int
     return prob, y_true, fps, window, hop
 
 
+def _prob_from_csv(csv_path: Path, ckpt_path: Path, stats_json: Optional[Path]) -> tuple[np.ndarray, Optional[np.ndarray], float, int, int]:
+    try:
+        import pandas as pd
+        import torch
+        from ml_models.pedal_model import PedalModel
+        from .predict_pedal import _load_stats, predict_per_frame  # type: ignore
+    except Exception:  # pragma: no cover - script execution
+        import pandas as pd  # type: ignore
+        import torch  # type: ignore
+        from ml_models.pedal_model import PedalModel  # type: ignore
+        from predict_pedal import _load_stats, predict_per_frame  # type: ignore
+
+    df = pd.read_csv(csv_path, low_memory=False)
+    stats = _load_stats(ckpt_path, stats_json)
+    if stats is None:
+        feat_cols = mean = std = None
+        meta: dict = {}
+    else:
+        feat_cols, mean, std, meta = stats
+    model = PedalModel()
+    state = torch.load(ckpt_path, map_location="cpu")
+    model.load_state_dict(state)
+    model.eval()
+    window = int(meta.get("window", 64))
+    hop = int(meta.get("hop", 16))
+    prob = predict_per_frame(
+        df,
+        feat_cols=feat_cols,
+        mean=mean,
+        std=std,
+        model=model,
+        window=window,
+        hop=hop,
+        device=torch.device("cpu"),
+        batch=64,
+        num_workers=0,
+        strict=False,
+    )
+    y_true = df["pedal_state"].astype("uint8").to_numpy() if "pedal_state" in df.columns else None
+    fps = float(meta.get("fps", 100.0))
+    return prob.astype("float32"), y_true, fps, window, hop
+
+
 def _cc_count(on: np.ndarray) -> int:
     cur = None
     cc = 0
@@ -54,10 +97,10 @@ def _cc_count(on: np.ndarray) -> int:
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--csv", type=Path, required=True)
-    ap.add_argument("--ckpt", type=Path, required=True)
+    ap.add_argument("--csv", type=Path, required=False)
+    ap.add_argument("--ckpt", type=Path, required=False)
     ap.add_argument("--stats-json", type=Path)
-    ap.add_argument("--prob", type=Path)
+    ap.add_argument("--prob", type=Path, default=None)
     ap.add_argument("--make-prob", action="store_true")
     ap.add_argument("--family", choices=["ratio", "kstd"], default="ratio")
     ap.add_argument("--ratios", nargs="+", type=float, default=[0.5])
@@ -81,9 +124,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     if args.prob is None:
-        raise SystemExit("--prob is required (use scripts.predict_pedal --dump-prob)")
-
-    prob, y_true, fps, window, hop = _load_prob(args.prob)
+        if not (args.csv and args.ckpt):
+            raise SystemExit("tune_pedal: --prob を渡さない場合は --csv と --ckpt が必須です")
+        prob, y_true, fps, window, hop = _prob_from_csv(args.csv, args.ckpt, args.stats_json)
+    else:
+        prob, y_true, fps, window, hop = _load_prob(args.prob)
+        if y_true is None and args.csv:
+            try:
+                import pandas as pd
+                df_y = pd.read_csv(args.csv, low_memory=False)
+                if "pedal_state" in df_y.columns:
+                    y_true = df_y["pedal_state"].astype("uint8").to_numpy()
+            except Exception:
+                pass
+        needs_labels = args.family in {"ratio", "kstd"}
+        if needs_labels and y_true is None:
+            print("warning: CSV が無いので F1 は算出できません（on_ratio 等のみ）")
 
     rows: List[dict] = []
     count = 0

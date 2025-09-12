@@ -498,3 +498,51 @@ def test_held_vel_mode_max() -> None:
     v2 = out_max.instruments[1].notes[0].velocity
     assert v2 > v1
 
+
+def test_swing_clip_guard(tmp_path) -> None:
+    out = tmp_path / "o.mid"
+    pm = _dummy_pm()
+    called = {}
+    orig_pm = sc.pretty_midi.PrettyMIDI
+    orig_build = sc.build_sparkle_midi
+
+    sc.pretty_midi.PrettyMIDI = lambda path: pm
+
+    def fake_build(*args, **kwargs):
+        called['swing'] = args[9]
+        return pm
+
+    sc.build_sparkle_midi = fake_build
+    try:
+        with mock.patch.object(sys, 'argv', ['prog', 'in.mid', '--out', str(out), '--dry-run', '--swing', '0.999']):
+            sc.main()
+    finally:
+        sc.build_sparkle_midi = orig_build
+        sc.pretty_midi.PrettyMIDI = orig_pm
+    assert called['swing'] <= 0.9
+
+
+def test_cycle_token_parser() -> None:
+    tokens = ["C2", "D#2", "rest", 36]
+    assert [sc.parse_note_token(t) for t in tokens] == [36, 39, None, 36]
+
+
+def test_merge_reset_at_bar() -> None:
+    pm = _dummy_pm(4.0)
+    chords = [sc.ChordSpan(0, 2, 0, 'maj'), sc.ChordSpan(2, 4, 0, 'maj')]
+    mapping = {
+        'phrase_note': 36,
+        'phrase_velocity': 100,
+        'phrase_length_beats': 1.0,
+        'phrase_merge_gap': 0.1,
+        'merge_reset_at': 'bar',
+        'cycle_phrase_notes': [],
+        'cycle_start_bar': 0,
+        'cycle_mode': 'bar',
+    }
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 1.0, merge_reset_at='bar')
+    notes = out.instruments[1].notes
+    assert len(notes) == 2
+    assert any(abs(n.start - 0.0) < 1e-6 for n in notes)
+    assert any(abs(n.start - 2.0) < 1e-6 for n in notes)
+

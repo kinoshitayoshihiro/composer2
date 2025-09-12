@@ -676,6 +676,24 @@ def build_sparkle_midi(pm_in: 'pretty_midi.PrettyMIDI',
         eb = time_to_beat(end)
         bar_counts[i] = int(math.ceil((eb - sb) / pulse_subdiv_beats))
 
+    if stats is not None and phrase_hold != 'off':
+        for i, start in enumerate(downbeats):
+            end = downbeats[i + 1] if i + 1 < len(downbeats) else pm_in.get_end_time()
+            sb = time_to_beat(start)
+            eb = time_to_beat(end)
+            pulses: List[Tuple[float, float]] = []
+            b = sb
+            idx = 0
+            while b < eb - EPS:
+                t = beat_to_time(b)
+                pulses.append((b, t))
+                interval = pulse_subdiv_beats
+                if swing > 0.0 and abs(pulse_subdiv_beats - swing_unit_beats) < EPS:
+                    interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
+                b += interval
+                idx += 1
+            stats["bar_pulses"][i] = pulses
+
     bar_progress: Dict[int, int] = {}
 
     def vel_factor(mode: str, idx: int, total: int) -> float:
@@ -1092,7 +1110,16 @@ def main():
                                 silent_qualities=silent_qualities,
                                 clone_meta_only=clone_meta_only, stats=stats)
     if args.dry_run:
-        logging.info("bars=%d pulses=%d", stats.get("bar_count", 0), stats.get("pulse_count", 0))
+        phrase_inst = None
+        for inst in out_pm.instruments:
+            if inst.name == "Sparkle Phrase (Common Pulse)":
+                phrase_inst = inst
+                break
+        bar_pulses = stats.get("bar_pulses", {})
+        B = len(bar_pulses)
+        P = sum(len(p) for p in bar_pulses.values())
+        T = len(phrase_inst.notes) if phrase_inst else 0
+        logging.info("bars=%d pulses(theoretical)=%d triggers(emitted)=%d", B, P, T)
         logging.info("phrase_hold=%s phrase_merge_gap=%.3f chord_merge_gap=%.3f phrase_release_ms=%.1f min_phrase_len_ms=%.1f",
                      mapping.get("phrase_hold"),
                      mapping.get("phrase_merge_gap"),
@@ -1102,10 +1129,11 @@ def main():
         if stats.get("cycle_disabled"):
             logging.info("cycle disabled; using fixed phrase_note=%d", mapping.get("phrase_note"))
         if stats.get("meters"):
+            meters = [(float(t), n, d) for t, n, d in stats["meters"]]
             if stats.get("estimated_4_4"):
-                logging.info("meter_map=%s (estimated 4/4 grid)", stats["meters"])
+                logging.info("meter_map=%s (estimated 4/4 grid)", meters)
             else:
-                logging.info("meter_map=%s", stats["meters"])
+                logging.info("meter_map=%s", meters)
         if mapping.get("cycle_phrase_notes"):
             example = [stats["bar_phrase_notes"].get(i) for i in range(min(4, stats.get("bar_count", 0)))]
             logging.info("cycle_mode=%s notes=%s", cycle_mode, example)
@@ -1115,7 +1143,13 @@ def main():
             pn = stats["bar_phrase_notes"].get(i, mapping.get("phrase_note"))
             pulses = stats["bar_pulses"].get(i, [])
             vels = stats["bar_velocities"].get(i, [])
-            logging.info("bar %d | phrase %s | pulses %d | vel %s", i, pn, len(pulses), vels)
+            if str(mapping.get("phrase_hold")) != "off" and phrase_inst is not None:
+                bar_start = stats["downbeats"][i]
+                bar_end = stats["downbeats"][i + 1] if i + 1 < len(stats["downbeats"]) else out_pm.get_end_time()
+                trig = sum(1 for n in phrase_inst.notes if bar_start <= n.start < bar_end)
+                logging.info("bar %d | phrase %s | triggers %d | vel %s", i, pn, trig, vels)
+            else:
+                logging.info("bar %d | phrase %s | pulses %d | vel %s", i, pn, len(pulses), vels)
         if args.verbose:
             for b_idx in sorted(stats["bar_pulses"].keys()):
                 logging.info("bar %d pulses %s", b_idx, stats["bar_pulses"][b_idx])

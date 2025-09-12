@@ -53,6 +53,14 @@ from torch.utils.data import DataLoader, TensorDataset
 import pretty_midi as pm
 
 from ml_models.pedal_model import PedalModel
+try:
+    from sklearn.metrics import roc_auc_score
+except Exception:  # pragma: no cover - optional dependency
+    roc_auc_score = None  # type: ignore
+try:
+    from eval_pedal import load_stats_and_normalize
+except Exception:  # pragma: no cover - package or script execution
+    from scripts.eval_pedal import load_stats_and_normalize  # type: ignore
 
 
 def _resolve_workers_cli(v):
@@ -158,6 +166,8 @@ def read_feature_csv(path: Path) -> pd.DataFrame:
         df[c] = _as_float32(df[c])
     if "rel_release" in df.columns:
         df["rel_release"] = _as_float32(df["rel_release"])
+    if "pedal_state" in df.columns:
+        df["pedal_state"] = pd.to_numeric(df["pedal_state"], errors="coerce").fillna(0).astype("uint8")
     return df
 
 
@@ -197,13 +207,8 @@ def _make_windows(arr: torch.Tensor, win: int, hop: int) -> tuple[torch.Tensor, 
 def predict_per_frame(df: pd.DataFrame, *, feat_cols: Optional[List[str]], mean: Optional[np.ndarray], std: Optional[np.ndarray],
                       model: PedalModel, window: int, hop: int, device: torch.device, batch: int = 64,
                       num_workers: int = 0, strict: bool = False) -> np.ndarray:
-    cols = _feature_columns(df, feat_cols)
-    if not cols:
-        raise SystemExit("no feature columns found (expected chroma_* and optional rel_release)")
-    if mean is not None and std is not None:
-        X, cols = _apply_stats(df, cols, mean, std, strict=strict)
-    else:
-        X = df[cols].values.astype("float32")
+    stats = (feat_cols, mean, std) if (mean is not None and std is not None) else None
+    X, cols = load_stats_and_normalize(df, stats, strict=strict)
     xt = torch.from_numpy(X)
     win, starts = _make_windows(xt, window, hop)
     if len(starts) == 0:
@@ -321,6 +326,32 @@ def postprocess_on(prob: np.ndarray, *, on_thr: float, off_thr: float, fps: floa
     return on
 
 
+def compute_metrics(y_true: np.ndarray, prob: np.ndarray, pred: np.ndarray) -> dict:
+    """Compute F1/precision/recall/accuracy/ROC-AUC with single-class safety."""
+    assert y_true.shape == prob.shape == pred.shape
+    y = y_true.astype(int)
+    p = pred.astype(int)
+    acc = float((p == y).mean()) if y.size else 0.0
+    tp = int(((p == 1) & (y == 1)).sum())
+    fp = int(((p == 1) & (y == 0)).sum())
+    fn = int(((p == 0) & (y == 1)).sum())
+    prec = float(tp / (tp + fp)) if (tp + fp) else 0.0
+    rec = float(tp / (tp + fn)) if (tp + fn) else 0.0
+    if np.unique(y).size > 1:
+        f1 = float(2 * prec * rec / (prec + rec)) if (prec + rec) else 0.0
+        auc = float(roc_auc_score(y, prob)) if roc_auc_score is not None else None
+    else:
+        f1 = None
+        auc = None
+    return {
+        "f1": f1,
+        "precision": prec,
+        "recall": rec,
+        "accuracy": acc,
+        "roc_auc": auc,
+    }
+
+
 # ------------------------------
 # I/O helpers
 # ------------------------------
@@ -378,6 +409,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--out", dest="out_mid_alias", type=Path, help="alias of --out-mid")
     ap.add_argument("--out-dir", type=Path, help="output directory for directory mode")
     ap.add_argument("--debug-json", type=Path, help="write debug metrics JSON")
+    ap.add_argument("--dump-prob", type=Path, help="save per-frame probabilities to NPZ")
+    ap.add_argument("--compute-f1", action="store_true", help="compute F1/precision/recall if labels available")
     # Feature/Model params
     ap.add_argument("--stats-json", type=Path, help="feature stats JSON (defaults to <ckpt>.stats.json)")
     ap.add_argument("--strict-stats", action="store_true", help="enforce stats/CSV column match")
@@ -456,6 +489,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             # default single-file output
             args.out_mid = Path("outputs/pedal_pred.mid")
         df = read_feature_csv(args.feat_csv)
+        y_true = (
+            df["pedal_state"].to_numpy(dtype="uint8", copy=False)
+            if "pedal_state" in df.columns
+            else None
+        )
         prob = predict_per_frame(
             df,
             feat_cols=feat_cols,
@@ -469,6 +507,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             num_workers=_nw,
             strict=args.strict_stats,
         )
+        prob_raw = prob.copy()
         # smoothing
         if args.smooth_sigma and args.smooth_sigma > 0:
             sig = float(args.smooth_sigma)
@@ -507,6 +546,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             eps_on=args.eps_on,
             off_consec_sec=args.off_consec_sec,
         )
+        if args.dump_prob:
+            dump = {"prob": prob_raw.astype("float32"), "fps": fps, "window": int(args.window), "hop": int(args.hop)}
+            if y_true is not None:
+                dump["y_true"] = y_true.astype("uint8")
+            args.dump_prob.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(args.dump_prob, **dump)
+        if args.compute_f1 and y_true is not None:
+            metrics = compute_metrics(y_true.astype(int), prob_raw, on)
+            print(metrics)
         out_mid = args.out_mid or (args.out_dir / (args.feat_csv.stem + ".pedal.mid"))
         n_cc = write_cc64(out_mid, on, step_sec)
         print({

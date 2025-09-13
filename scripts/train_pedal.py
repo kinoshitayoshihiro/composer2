@@ -25,7 +25,7 @@ Hydra config example (configs/pedal_model.yaml):
 import argparse  # not used by Hydra, kept for parity
 from pathlib import Path
 import json
-import os
+import os, sys, platform, random
 
 try:
     import hydra
@@ -186,17 +186,35 @@ def _feature_stats(csv_path: Path) -> dict:
     }
 
 
-def _resolve_workers(cfg) -> int:
-    v = None
-    # prefer Hydra key if present
+_WORKER_BASE_SEED = 0
+
+def _dataloader_worker_init_fn(worker_id: int) -> None:
+    seed = int(_WORKER_BASE_SEED) ^ (worker_id + 1)
+    random.seed(seed)
     try:
-        v = getattr(cfg.data, 'num_workers', None)
+        np.random.seed(seed & 0xFFFFFFFF)
     except Exception:
-        v = None
-    if v is None:
-        env = os.getenv("COMPOSER2_NUM_WORKERS")
-        v = int(env) if (env and env.isdigit()) else 0
-    return max(int(v), 0)
+        pass
+    try:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+    except Exception:
+        pass
+
+
+def _resolve_num_workers(requested: int | None) -> int:
+    if requested is not None:
+        return max(0, int(requested))
+    env = os.getenv("COMPOSER2_NUM_WORKERS")
+    if env:
+        try:
+            return max(0, int(env))
+        except ValueError:
+            pass
+    if platform.system() == "Darwin" and sys.version_info >= (3, 13):
+        return 0
+    return 2
 
 
 # ------------------------------
@@ -213,52 +231,32 @@ def run(cfg: DictConfig) -> int:
     train_ds = load_csv(Path(cfg.data.train), window=window, hop=hop)
     val_ds = load_csv(Path(cfg.data.val), window=window, hop=hop)
 
-    _nw = _resolve_workers(cfg)
-    _pw = _nw > 0
-    try:
-        _pf_cfg = getattr(cfg.data, 'prefetch_factor', None)
-    except Exception:
-        _pf_cfg = None
-    _pf = int(_pf_cfg) if _pf_cfg is not None else (2 if _nw > 0 else None)
-    if _nw == 0:
-        _pf = None
-    print(f"[composer2] num_workers={_nw} (persistent={_pw}, prefetch_factor={_pf or 'n/a'})")
-    base_seed = int(getattr(cfg, "seed", torch.initial_seed()))
-    def _worker_init_fn(worker_id: int) -> None:
-        np.random.seed(base_seed + worker_id)
-        torch.manual_seed(base_seed + worker_id)
+    global _WORKER_BASE_SEED
+    _WORKER_BASE_SEED = int(getattr(cfg, "seed", 0) or 0)
+    requested_nw = getattr(cfg, "num_workers", getattr(getattr(cfg, "data", object()), "num_workers", None))
+    _nw = _resolve_num_workers(requested_nw)
+    pin_memory = torch.cuda.is_available()
+    persistent = _nw > 0
+    prefetch = 2 if _nw > 0 else None
+    print(f"[composer2] num_workers={_nw} (persistent={persistent}, prefetch_factor={prefetch if prefetch is not None else 'n/a'})")
 
-    dl_args_train = dict(batch_size=int(cfg.batch_size), shuffle=True, drop_last=False,
-                        num_workers=_nw, persistent_workers=_pw, worker_init_fn=_worker_init_fn)
-    if _pf is not None and _nw > 0:
-        dl_args_train["prefetch_factor"] = _pf
-    if torch.cuda.is_available():
-        dl_args_train["pin_memory"] = True
+    dl_kwargs = dict(batch_size=int(cfg.batch_size), pin_memory=pin_memory, persistent_workers=persistent)
+    if _nw > 0:
+        dl_kwargs.update(num_workers=_nw, prefetch_factor=2, worker_init_fn=_dataloader_worker_init_fn)
+    else:
+        dl_kwargs.update(num_workers=0)
     try:
-        train_loader = DataLoader(train_ds, **dl_args_train)
-    except Exception:
-        print("[composer2] DataLoader failed with workers, falling back to num_workers=0")
-        fb_kwargs = dict(batch_size=int(cfg.batch_size), shuffle=True, drop_last=False,
-                         num_workers=0, persistent_workers=False, worker_init_fn=_worker_init_fn)
-        if torch.cuda.is_available():
-            fb_kwargs["pin_memory"] = True
-        train_loader = DataLoader(train_ds, **fb_kwargs)
-
-    dl_args_val = dict(batch_size=int(cfg.batch_size), shuffle=False, drop_last=False,
-                       num_workers=_nw, persistent_workers=_pw, worker_init_fn=_worker_init_fn)
-    if _pf is not None and _nw > 0:
-        dl_args_val["prefetch_factor"] = _pf
-    if torch.cuda.is_available():
-        dl_args_val["pin_memory"] = True
-    try:
-        val_loader = DataLoader(val_ds, **dl_args_val)
-    except Exception:
-        print("[composer2] DataLoader failed with workers, falling back to num_workers=0")
-        fb_val = dict(batch_size=int(cfg.batch_size), shuffle=False, drop_last=False,
-                      num_workers=0, persistent_workers=False, worker_init_fn=_worker_init_fn)
-        if torch.cuda.is_available():
-            fb_val["pin_memory"] = True
-        val_loader = DataLoader(val_ds, **fb_val)
+        train_loader = DataLoader(train_ds, shuffle=True, **dl_kwargs)
+        val_loader = DataLoader(val_ds, shuffle=False, **dl_kwargs)
+    except (AttributeError, RuntimeError, BrokenPipeError) as e:
+        if _nw == 0:
+            raise
+        print(f"[composer2] fallback -> num_workers=0 due to '{type(e).__name__}: {e}'")
+        dl_kwargs.update(num_workers=0)
+        dl_kwargs.pop("prefetch_factor", None)
+        dl_kwargs.pop("worker_init_fn", None)
+        train_loader = DataLoader(train_ds, shuffle=True, **dl_kwargs)
+        val_loader = DataLoader(val_ds, shuffle=False, **dl_kwargs)
 
     module = LightningModule(cfg)
     trainer = pl.Trainer(**cfg.trainer)

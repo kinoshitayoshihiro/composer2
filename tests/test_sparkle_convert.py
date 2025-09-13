@@ -7,7 +7,6 @@ from unittest import mock
 import pytest
 import types
 import json
-from pathlib import Path
 
 try:
     import pretty_midi  # type: ignore
@@ -737,6 +736,8 @@ def test_merge_reset_at_bar() -> None:
     assert any(abs(n.start - 2.0) < 1e-6 for n in notes)
 
 
+# --- Guide-based features from codex/add-guide-midi-phrase-selection-and-damping ---
+
 def _guide_pm(pattern):
     class Dummy:
         def __init__(self, pattern):
@@ -1002,3 +1003,48 @@ def test_no_repeat_window_limit() -> None:
     seq = [picker.pick() for _ in range(10)]
     assert all(seq[i] != seq[i - 1] or seq[i] != seq[i - 2] for i in range(2, len(seq)))
 
+
+# --- Scheduler-based features from main ---
+
+def test_scheduler_fill_once_on_section_end() -> None:
+    pm = _dummy_pm(8.0)
+    chords = [sc.ChordSpan(0, 8, 0, 'maj')]
+    mapping = {
+        'phrase_note': 36,
+        'phrase_velocity': 100,
+        'phrase_length_beats': 0.25,
+        'cycle_phrase_notes': [],
+        'cycle_mode': 'bar',
+        'phrase_hold': 'bar',
+        'sections': [
+            {'start_bar': 0, 'end_bar': 2, 'tag': 'Verse'},
+            {'start_bar': 2, 'end_bar': 4, 'tag': 'Chorus'},
+        ],
+        'style_fill': 35,
+    }
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    phrase_notes = out.instruments[1].notes
+    fills = [n for n in phrase_notes if n.pitch == 35]
+    assert len(fills) == 1
+
+
+def test_scheduler_intensity_ramp() -> None:
+    plan, fills = sc.schedule_phrase_keys(4, None, None, None)
+    assert plan == [36, 37, 38, 39]
+    assert fills == {}
+
+
+def test_scheduler_respects_hold_only_changes_on_switch() -> None:
+    pm = _dummy_pm(6.0)
+    chords = [sc.ChordSpan(0, 6, 0, 'maj')]
+    mapping = {
+        'phrase_note': 36,
+        'phrase_velocity': 100,
+        'phrase_length_beats': 0.25,
+        'cycle_phrase_notes': [36, 36, 38],
+        'cycle_mode': 'bar',
+        'phrase_hold': 'bar',
+    }
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    pitches = [n.pitch for n in out.instruments[1].notes]
+    assert pitches == [36, 38]

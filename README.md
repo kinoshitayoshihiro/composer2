@@ -1727,8 +1727,30 @@ Chords and phrase notes are written to separate instruments so DAWs load them on
 | `--voicing-mode` {stacked,closed} | chord voicing style |
 | `--top-note-max` INT | cap highest chord tone (mapping `strict` for errors) |
 | `--swing` FLOAT | swing amount; disabled if `--swing-unit` ≠ `--pulse` |
+| `--section-preset` NAME | apply predefined section pools |
+| `--section-lfo` JSON | periodic velocity/fill arc per bar |
+| `--stable-guard` JSON | suppress retriggers on sustained chords |
+| `--vocal-adapt` JSON | choose phrase density from vocal activity |
+| `--style-inject` JSON | periodic style phrase insertion |
+| `--section-pool-weights` JSON | override per-section phrase pool weights |
+| `--vocal-ducking` FLOAT | reduce phrase velocity when vocals dense |
+| `--fill-policy` MODE | resolve fill conflicts (`section` default) |
+| `--seed` INT | deterministic random seed |
+| `--guide-vocal` PATH.mid | vocal-aware density and style fills |
+| `--damp` SPEC | damping CC: `none`, `fixed:cc=11,value=64`, or `vocal:cc=11` |
+| `--report-json` PATH | dump runtime stats as JSON |
+| `--report-md` PATH | dump concise markdown report |
+| `--debug-md` PATH | write per-bar markdown summary |
 | `--clone-meta-only` | copy tempo/time-signature only |
 | `--dry-run` | log stats without writing output |
+
+Example – vocal-guided chorus fill:
+
+```bash
+python -m ujam.sparkle_convert song.mid --out out.mid \
+  --section-preset acoustic_ballad --guide-vocal vocal.mid \
+  --style-inject '{"period":8,"note":30,"duration_beats":1}' --seed 42
+```
 
 ## License
 This project is licensed under the [MIT License](LICENSE).

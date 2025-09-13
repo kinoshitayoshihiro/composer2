@@ -13,6 +13,8 @@ except Exception:  # pragma: no cover
     from tests._stubs import pretty_midi  # type: ignore
 
 from ujam import sparkle_convert as sc
+from ujam.damping import _append_phrase
+from ujam.consts import DAMP_INST_NAME
 
 
 def _dummy_pm(length: float = 6.0):
@@ -37,7 +39,10 @@ def _dummy_pm(length: float = 6.0):
             return self._length
 
         def get_tempo_changes(self):
-             return [0.0], [120.0]
+            return [0.0], [120.0]
+
+        def write(self, path: str) -> None:  # pragma: no cover
+            Path(path).write_bytes(b"")
 
     return Dummy(length)
 
@@ -54,21 +59,25 @@ def test_place_in_range() -> None:
 
 
 def test_place_in_range_closed() -> None:
-    assert sc.place_in_range([60, 64, 67], 50, 64, voicing_mode='closed') == [55, 60, 64]
+    assert sc.place_in_range([60, 64, 67], 50, 64, voicing_mode="closed") == [55, 60, 64]
 
 
 def test_cycle_mode_bar_rest() -> None:
     pm = _dummy_pm()
-    chords = [sc.ChordSpan(0, 2, 0, 'maj'), sc.ChordSpan(2, 4, 0, 'maj'), sc.ChordSpan(4, 6, 0, 'maj')]
+    chords = [
+        sc.ChordSpan(0, 2, 0, "maj"),
+        sc.ChordSpan(2, 4, 0, "maj"),
+        sc.ChordSpan(4, 6, 0, "maj"),
+    ]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [24, None, 26],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [24, None, 26],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5)
     notes = out.instruments[1].notes
     assert any(n.pitch == 24 for n in notes if n.start < 2)
     assert not any(2 <= n.start < 4 for n in notes)
@@ -77,16 +86,20 @@ def test_cycle_mode_bar_rest() -> None:
 
 def test_cycle_mode_chord() -> None:
     pm = _dummy_pm()
-    chords = [sc.ChordSpan(0, 2, 0, 'maj'), sc.ChordSpan(2, 4, 0, 'maj'), sc.ChordSpan(4, 6, 0, 'maj')]
+    chords = [
+        sc.ChordSpan(0, 2, 0, "maj"),
+        sc.ChordSpan(2, 4, 0, "maj"),
+        sc.ChordSpan(4, 6, 0, "maj"),
+    ]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [24, 26],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'chord'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [24, 26],
+        "cycle_start_bar": 0,
+        "cycle_mode": "chord",
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'chord', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, "chord", 0.0, 0, "flat", 120, 0.0, 0.5)
     notes = out.instruments[1].notes
     assert any(n.pitch == 24 for n in notes if n.start < 2)
     assert any(n.pitch == 26 for n in notes if 2 <= n.start < 4)
@@ -96,27 +109,160 @@ def test_write_template_path() -> None:
     content = sc.generate_mapping_template(True)
     with tempfile.NamedTemporaryFile(delete=False) as fp:
         Path(fp.name).write_text(content)
-        assert 'cycle_mode' in Path(fp.name).read_text()
+        assert "cycle_mode" in Path(fp.name).read_text()
 
 
 def test_humanize_seed_repro() -> None:
     pm = _dummy_pm()
-    chords = [sc.ChordSpan(0, 2, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 2, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
     }
-    random.seed(123)
-    out1 = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 10.0, 4, 'flat', 120, 0.0, 0.5)
-    random.seed(123)
-    out2 = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 10.0, 4, 'flat', 120, 0.0, 0.5)
+    rng1 = random.Random(123)
+    out1 = sc.build_sparkle_midi(
+        pm, chords, mapping, 1.0, "bar", 10.0, 4, "flat", 120, 0.0, 0.5, rng=rng1
+    )
+    rng2 = random.Random(123)
+    out2 = sc.build_sparkle_midi(
+        pm, chords, mapping, 1.0, "bar", 10.0, 4, "flat", 120, 0.0, 0.5, rng=rng2
+    )
     n1 = [(round(n.start, 4), round(n.end, 4), n.velocity) for n in out1.instruments[1].notes]
     n2 = [(round(n.start, 4), round(n.end, 4), n.velocity) for n in out2.instruments[1].notes]
     assert n1 == n2
+
+
+def test_merge_reset_at_no_merge() -> None:
+    inst = pretty_midi.Instrument(0)
+    _append_phrase(inst, 60, 0.0, 1.0, 100, 0.1, 0.0, 0.0)
+    _append_phrase(inst, 60, 1.05, 2.0, 100, -1.0, 0.0, 0.0)
+    assert len(inst.notes) == 2
+
+
+def test_lfo_fill_velocity() -> None:
+    pm = _dummy_pm()
+    chords = [sc.ChordSpan(0, 2, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 80,
+        "phrase_length_beats": 1.0,
+        "cycle_phrase_notes": [],
+        "cycle_mode": "bar",
+        "style_inject": {"period": 1, "note": 40},
+        "lfo_apply": ["fill"],
+    }
+    lfo = sc.SectionLFO(4, vel_range=(0.5, 0.5), fill_range=(0.0, 0.0))
+    out = sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        1.0,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120,
+        0.0,
+        0.5,
+        section_lfo=lfo,
+        lfo_targets=("fill",),
+    )
+    vel = [n.velocity for n in out.instruments[1].notes if n.pitch == 40][0]
+    assert vel == 40
+
+
+def test_vocal_adapt_smoothing() -> None:
+    va0 = sc.VocalAdaptive(5, 1, 2, [10, 0, 10])
+    assert va0.phrase_for_bar(1) == 2
+    va = sc.VocalAdaptive(5, 1, 2, [10, 0, 10], smooth_bars=2)
+    assert va.phrase_for_bar(1) == 1
+
+
+def test_markov_plan_and_fallback() -> None:
+    markov = {"states": [24, 26], "T": [[0, 1], [0, 0]]}
+    plan, _, _ = sc.schedule_phrase_keys(3, None, None, None, markov=markov, rng=random.Random(0))
+    assert plan == [24, 26, None]
+
+
+def test_markov_degenerate_fallback() -> None:
+    T = [[0, 0], [0, 0]]
+    rng = random.Random(0)
+    counts = {0: 0, 1: 0}
+    for _ in range(10):
+        counts[sc.markov_pick(T, 0, rng)] += 1
+    assert counts[0] > 0 and counts[1] > 0
+
+
+def test_harmony_weighting_changes_pool() -> None:
+    plan, _, _ = sc.schedule_phrase_keys(
+        2,
+        None,
+        [{"start_bar": 0, "end_bar": 2, "phrase_pool": [36, 37]}],
+        None,
+        bar_qualities=["maj", "min"],
+        rng=random.Random(0),
+    )
+    assert plan[0] == 36 and plan[1] == 37
+
+
+def test_section_pool_weights_override() -> None:
+    plan, _, _ = sc.schedule_phrase_keys(
+        1,
+        None,
+        [{"start_bar": 0, "end_bar": 1, "phrase_pool": [36, 37, 38], "tag": "verse"}],
+        None,
+        section_pool_weights={"verse": {38: 1.0}},
+        rng=random.Random(0),
+    )
+    assert plan[0] == 38
+
+
+def test_smart_fill_prefers_section_end_and_respects_gap() -> None:
+    _, fills, sources = sc.schedule_phrase_keys(
+        5,
+        None,
+        [{"start_bar": 0, "end_bar": 4}],
+        40,
+        style_inject={"period": 5, "note": 40, "min_gap_beats": 4},
+        pulse_subdiv=1.0,
+        rng=random.Random(0),
+    )
+    assert fills.keys() == {0, 3}
+    assert sources[0] == "style" and sources[3] == "section"
+
+
+def test_vocal_ducking_reduces_velocity_and_prefers_muted() -> None:
+    pm = _dummy_pm(2)
+    chords = [sc.ChordSpan(0, 2, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 1.0,
+        "cycle_phrase_notes": [],
+        "cycle_mode": "bar",
+    }
+    va = sc.VocalAdaptive(1, 40, 36, [10])
+    out = sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        1.0,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120,
+        0.0,
+        0.5,
+        vocal_adapt=va,
+        vocal_ducking=0.5,
+    )
+    note = out.instruments[1].notes[0]
+    assert note.pitch == 40 and note.velocity == 50
 
 
 def _pm_with_ts(num: int, den: int, length: float = 6.0):
@@ -126,6 +272,16 @@ def _pm_with_ts(num: int, den: int, length: float = 6.0):
     inst.notes.append(pretty_midi.Note(velocity=1, pitch=60, start=0.0, end=length))
     pm.instruments.append(inst)
     return pm
+
+
+def _write_midi(tmp_path: Path) -> Path:
+    pm = pretty_midi.PrettyMIDI()
+    inst = pretty_midi.Instrument(0)
+    inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=1.0))
+    pm.instruments.append(inst)
+    path = tmp_path / "in.mid"
+    pm.write(str(path))
+    return path
 
 
 def test_read_chords_yaml_ok(tmp_path) -> None:
@@ -152,21 +308,34 @@ def test_bar_width_12_8() -> None:
     if not hasattr(pretty_midi, "TimeSignature"):
         pytest.skip("pretty_midi stub lacks TimeSignature")
     pm = _pm_with_ts(12, 8, 6.0)
-    chords = [sc.ChordSpan(0, 6, 0, 'maj')]
-    mapping = {'phrase_note': 36, 'phrase_velocity': 100, 'phrase_length_beats': 0.5,
-               'cycle_phrase_notes': [], 'cycle_start_bar': 0, 'cycle_mode': 'bar'}
+    chords = [sc.ChordSpan(0, 6, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+    }
     stats = {}
-    sc.build_sparkle_midi(pm, chords, mapping, 0.5, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5,
-                          stats=stats)
-    assert len(stats['bar_pulses'][0]) == 12
+    sc.build_sparkle_midi(
+        pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats
+    )
+    assert len(stats["bar_pulses"][0]) == 12
 
 
 def test_cycle_start_bar_negative() -> None:
     pm = _dummy_pm()
-    chords = [sc.ChordSpan(0, 2, 0, 'maj'), sc.ChordSpan(2, 4, 0, 'maj')]
-    mapping = {'phrase_note': 36, 'phrase_velocity': 100, 'phrase_length_beats': 0.25,
-               'cycle_phrase_notes': [24, 26], 'cycle_start_bar': -1, 'cycle_mode': 'bar'}
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    chords = [sc.ChordSpan(0, 2, 0, "maj"), sc.ChordSpan(2, 4, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [24, 26],
+        "cycle_start_bar": -1,
+        "cycle_mode": "bar",
+    }
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5)
     notes = out.instruments[1].notes
     assert any(n.pitch == 26 for n in notes if n.start < 2)
     assert any(n.pitch == 24 for n in notes if 2 <= n.start < 4)
@@ -183,26 +352,35 @@ def test_accent_validation() -> None:
 
 def test_top_note_max_strict() -> None:
     pm = _dummy_pm()
-    chords = [sc.ChordSpan(0, 2, 0, 'maj')]
-    mapping = {'phrase_note': 36, 'phrase_velocity': 100, 'phrase_length_beats': 0.25,
-               'cycle_phrase_notes': [], 'cycle_start_bar': 0, 'cycle_mode': 'bar',
-               'top_note_max': 5, 'strict': True}
+    chords = [sc.ChordSpan(0, 2, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+        "top_note_max": 5,
+        "strict": True,
+    }
     with pytest.raises(SystemExit):
-        sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+        sc.build_sparkle_midi(pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5)
 
 
 def test_cycle_stride() -> None:
     pm = _dummy_pm(8.0)
-    chords = [sc.ChordSpan(i * 2, (i + 1) * 2, 0, 'maj') for i in range(4)]
+    chords = [sc.ChordSpan(i * 2, (i + 1) * 2, 0, "maj") for i in range(4)]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [24, 26],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [24, 26],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5, cycle_stride=2)
+    out = sc.build_sparkle_midi(
+        pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, cycle_stride=2
+    )
     notes = out.instruments[1].notes
     assert all(n.pitch == 24 for n in notes if n.start < 4)
     assert all(n.pitch == 26 for n in notes if n.start >= 4)
@@ -210,48 +388,66 @@ def test_cycle_stride() -> None:
 
 def test_accent_profile() -> None:
     pm = _dummy_pm(4.0)
-    chords = [sc.ChordSpan(0, 4, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 4, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5, accent=[1.0, 0.5])
+    out = sc.build_sparkle_midi(
+        pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, accent=[1.0, 0.5]
+    )
     vels = [n.velocity for n in out.instruments[1].notes[:4]]
     assert vels[0] == 100 and vels[1] == 50 and vels[2] == 100 and vels[3] == 50
 
 
 def test_skip_phrase_in_rests() -> None:
     pm = _dummy_pm(4.0)
-    chords = [sc.ChordSpan(0, 2, 0, 'maj'), sc.ChordSpan(2, 4, 0, 'rest')]
+    chords = [sc.ChordSpan(0, 2, 0, "maj"), sc.ChordSpan(2, 4, 0, "rest")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar',
-        'silent_qualities': ['rest']
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+        "silent_qualities": ["rest"],
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5, skip_phrase_in_rests=True)
+    out = sc.build_sparkle_midi(
+        pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, skip_phrase_in_rests=True
+    )
     assert all(n.start < 2 for n in out.instruments[1].notes)
 
 
 def test_phrase_chord_channels() -> None:
     pm = _dummy_pm()
-    chords = [sc.ChordSpan(0, 2, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 2, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5, phrase_channel=1, chord_channel=2)
+    out = sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        1.0,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120,
+        0.0,
+        0.5,
+        phrase_channel=1,
+        chord_channel=2,
+    )
     assert out.instruments[0].midi_channel == 2
     assert out.instruments[1].midi_channel == 1
 
@@ -262,16 +458,30 @@ def test_phrase_chord_channels() -> None:
 )
 def test_channel_roundtrip(tmp_path) -> None:
     pm = _dummy_pm()
-    chords = [sc.ChordSpan(0, 2, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 2, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5, phrase_channel=1, chord_channel=2)
+    out = sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        1.0,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120,
+        0.0,
+        0.5,
+        phrase_channel=1,
+        chord_channel=2,
+    )
     path = tmp_path / "round.mid"
     out.write(str(path))
     pm2 = pretty_midi.PrettyMIDI(str(path))
@@ -291,11 +501,11 @@ def test_dry_run_logging(tmp_path, caplog) -> None:
     orig = sc.pretty_midi.PrettyMIDI
     sc.pretty_midi.PrettyMIDI = lambda path: _dummy_pm()
     try:
-        with mock.patch.object(sys, 'argv', ['prog', 'in.mid', '--out', str(out), '--dry-run']):
+        with mock.patch.object(sys, "argv", ["prog", "in.mid", "--out", str(out), "--dry-run"]):
             with caplog.at_level(logging.INFO):
                 sc.main()
-        assert 'bars=' in caplog.text
-        assert 'meter_map' in caplog.text
+        assert "bars=" in caplog.text
+        assert "meter_map" in caplog.text
         assert not out.exists()
     finally:
         sc.pretty_midi.PrettyMIDI = orig
@@ -305,7 +515,9 @@ def test_pulse_grid_3_4_tempo_change() -> None:
     class Dummy:
         def __init__(self) -> None:
             self.instruments = []
-            self.time_signature_changes = [types.SimpleNamespace(numerator=3, denominator=4, time=0.0)]
+            self.time_signature_changes = [
+                types.SimpleNamespace(numerator=3, denominator=4, time=0.0)
+            ]
 
         def get_beats(self):
             return [0.0, 0.5, 1.0, 1.5, 2.5, 3.5, 4.5]
@@ -320,16 +532,16 @@ def test_pulse_grid_3_4_tempo_change() -> None:
             return [0.0], [120.0]
 
     pm = Dummy()
-    chords = [sc.ChordSpan(0, 1.5, 0, 'maj'), sc.ChordSpan(1.5, 4.5, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 1.5, 0, "maj"), sc.ChordSpan(1.5, 4.5, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5)
     starts = [round(n.start, 3) for n in out.instruments[1].notes]
     assert starts == [0.0, 0.5, 1.0, 1.5, 2.5, 3.5]
 
@@ -338,7 +550,9 @@ def test_bar_width_6_8() -> None:
     class Dummy:
         def __init__(self) -> None:
             self.instruments = []
-            self.time_signature_changes = [types.SimpleNamespace(numerator=6, denominator=8, time=0.0)]
+            self.time_signature_changes = [
+                types.SimpleNamespace(numerator=6, denominator=8, time=0.0)
+            ]
 
         def get_beats(self):
             return [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5]
@@ -353,16 +567,16 @@ def test_bar_width_6_8() -> None:
             return [0.0], [120.0]
 
     pm = Dummy()
-    chords = [sc.ChordSpan(0, 4.5, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 4.5, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5)
     starts = [round(n.start, 3) for n in out.instruments[1].notes]
     assert starts == [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
 
@@ -386,55 +600,59 @@ def test_cycle_disabled_info(caplog) -> None:
             return [0.0], [120.0]
 
     pm = Dummy()
-    chords = [sc.ChordSpan(0, 1.0, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 1.0, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [24, 26],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [24, 26],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
     }
     with caplog.at_level(logging.INFO):
-        sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
-    assert 'cycle disabled; using fixed phrase_note=36' in caplog.text
+        sc.build_sparkle_midi(pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5)
+    assert "cycle disabled; using fixed phrase_note=36" in caplog.text
 
 
 def test_top_note_max() -> None:
     pm = _dummy_pm()
-    chords = [sc.ChordSpan(0, 2, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 2, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar',
-        'chord_octave': 5,
-        'chord_input_range': {'lo': 60, 'hi': 80},
-        'voicing_mode': 'stacked',
-        'top_note_max': 70
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+        "chord_octave": 5,
+        "chord_input_range": {"lo": 60, "hi": 80},
+        "voicing_mode": "stacked",
+        "top_note_max": 70,
     }
     stats = {}
-    sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5, stats=stats)
-    triad = stats['triads'][0]
+    sc.build_sparkle_midi(
+        pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats
+    )
+    triad = stats["triads"][0]
     assert max(triad) <= 70
 
 
 def test_swing_timings() -> None:
     pm = _dummy_pm(3.0)
-    chords = [sc.ChordSpan(0, 3, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 3, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
     }
     stats = {}
-    out = sc.build_sparkle_midi(pm, chords, mapping, 0.5, 'bar', 0.0, 0, 'flat', 120, 0.4, 0.5, stats=stats)
-    pulses = stats['bar_pulses'][0]
+    out = sc.build_sparkle_midi(
+        pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.4, 0.5, stats=stats
+    )
+    pulses = stats["bar_pulses"][0]
     diff1 = pulses[1][0] - pulses[0][0]
     diff2 = pulses[2][0] - pulses[1][0]
     assert round(diff1, 2) == 0.7 and round(diff2, 2) == 0.3
@@ -442,36 +660,38 @@ def test_swing_timings() -> None:
 
 def test_phrase_hold_chord_merges_pulses() -> None:
     pm = _dummy_pm()
-    chords = [sc.ChordSpan(0, 2, 0, 'maj'), sc.ChordSpan(2, 4, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 2, 0, "maj"), sc.ChordSpan(2, 4, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
     }
-    off = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    off = sc.build_sparkle_midi(pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5)
     mapping_hold = dict(mapping)
-    mapping_hold.update({'phrase_hold': 'chord', 'phrase_merge_gap': 0.03})
-    hold = sc.build_sparkle_midi(pm, chords, mapping_hold, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    mapping_hold.update({"phrase_hold": "chord", "phrase_merge_gap": 0.03})
+    hold = sc.build_sparkle_midi(
+        pm, chords, mapping_hold, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5
+    )
     assert len(hold.instruments[1].notes) < len(off.instruments[1].notes)
 
 
 def test_phrase_release_and_minlen() -> None:
     pm = _dummy_pm()
-    chords = [sc.ChordSpan(0, 2, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 2, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar',
-        'phrase_release_ms': 50.0,
-        'min_phrase_len_ms': 100.0
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+        "phrase_release_ms": 50.0,
+        "min_phrase_len_ms": 100.0,
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5)
     note = out.instruments[1].notes[0]
     length = note.end - note.start
     assert length >= 0.1 - sc.EPS and length < 0.125
@@ -479,21 +699,25 @@ def test_phrase_release_and_minlen() -> None:
 
 def test_held_vel_mode_max() -> None:
     pm = _dummy_pm()
-    chords = [sc.ChordSpan(0, 4, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 4, 0, "maj")]
     mapping_first = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar',
-        'phrase_hold': 'bar'
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+        "phrase_hold": "bar",
     }
     mapping_max = dict(mapping_first)
-    mapping_max['held_vel_mode'] = 'max'
+    mapping_max["held_vel_mode"] = "max"
     accent = [0.5, 1.0]
-    out_first = sc.build_sparkle_midi(pm, chords, mapping_first, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5, accent=accent)
-    out_max = sc.build_sparkle_midi(pm, chords, mapping_max, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5, accent=accent)
+    out_first = sc.build_sparkle_midi(
+        pm, chords, mapping_first, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, accent=accent
+    )
+    out_max = sc.build_sparkle_midi(
+        pm, chords, mapping_max, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, accent=accent
+    )
     v1 = out_first.instruments[1].notes[0].velocity
     v2 = out_max.instruments[1].notes[0].velocity
     assert v2 > v1
@@ -509,17 +733,19 @@ def test_swing_clip_guard(tmp_path) -> None:
     sc.pretty_midi.PrettyMIDI = lambda path: pm
 
     def fake_build(*args, **kwargs):
-        called['swing'] = args[9]
+        called["swing"] = args[9]
         return pm
 
     sc.build_sparkle_midi = fake_build
     try:
-        with mock.patch.object(sys, 'argv', ['prog', 'in.mid', '--out', str(out), '--dry-run', '--swing', '0.999']):
+        with mock.patch.object(
+            sys, "argv", ["prog", "in.mid", "--out", str(out), "--dry-run", "--swing", "0.999"]
+        ):
             sc.main()
     finally:
         sc.build_sparkle_midi = orig_build
         sc.pretty_midi.PrettyMIDI = orig_pm
-    assert called['swing'] <= 0.9
+    assert called["swing"] <= 0.9
 
 
 def test_cycle_token_parser() -> None:
@@ -529,18 +755,20 @@ def test_cycle_token_parser() -> None:
 
 def test_merge_reset_at_bar() -> None:
     pm = _dummy_pm(4.0)
-    chords = [sc.ChordSpan(0, 2, 0, 'maj'), sc.ChordSpan(2, 4, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 2, 0, "maj"), sc.ChordSpan(2, 4, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 1.0,
-        'phrase_merge_gap': 0.1,
-        'merge_reset_at': 'bar',
-        'cycle_phrase_notes': [],
-        'cycle_start_bar': 0,
-        'cycle_mode': 'bar',
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 1.0,
+        "phrase_merge_gap": 0.1,
+        "merge_reset_at": "bar",
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 1.0, merge_reset_at='bar')
+    out = sc.build_sparkle_midi(
+        pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 1.0, merge_reset_at="bar"
+    )
     notes = out.instruments[1].notes
     assert len(notes) == 2
     assert any(abs(n.start - 0.0) < 1e-6 for n in notes)
@@ -549,44 +777,798 @@ def test_merge_reset_at_bar() -> None:
 
 def test_scheduler_fill_once_on_section_end() -> None:
     pm = _dummy_pm(8.0)
-    chords = [sc.ChordSpan(0, 8, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 8, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [],
-        'cycle_mode': 'bar',
-        'phrase_hold': 'bar',
-        'sections': [
-            {'start_bar': 0, 'end_bar': 2, 'tag': 'Verse'},
-            {'start_bar': 2, 'end_bar': 4, 'tag': 'Chorus'},
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [],
+        "cycle_mode": "bar",
+        "phrase_hold": "bar",
+        "sections": [
+            {"start_bar": 0, "end_bar": 2, "tag": "Verse"},
+            {"start_bar": 2, "end_bar": 4, "tag": "Chorus"},
         ],
-        'style_fill': 35,
+        "style_fill": 35,
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5)
     phrase_notes = out.instruments[1].notes
     fills = [n for n in phrase_notes if n.pitch == 35]
     assert len(fills) == 1
 
 
 def test_scheduler_intensity_ramp() -> None:
-    plan, fills = sc.schedule_phrase_keys(4, None, None, None)
+    plan, fills, _ = sc.schedule_phrase_keys(4, None, None, None)
     assert plan == [36, 37, 38, 39]
     assert fills == {}
 
 
 def test_scheduler_respects_hold_only_changes_on_switch() -> None:
     pm = _dummy_pm(6.0)
-    chords = [sc.ChordSpan(0, 6, 0, 'maj')]
+    chords = [sc.ChordSpan(0, 6, 0, "maj")]
     mapping = {
-        'phrase_note': 36,
-        'phrase_velocity': 100,
-        'phrase_length_beats': 0.25,
-        'cycle_phrase_notes': [36, 36, 38],
-        'cycle_mode': 'bar',
-        'phrase_hold': 'bar',
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [36, 36, 38],
+        "cycle_mode": "bar",
+        "phrase_hold": "bar",
     }
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5)
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5)
     pitches = [n.pitch for n in out.instruments[1].notes]
     assert pitches == [36, 38]
 
+
+def test_section_lfo_velocity_and_fill_arc() -> None:
+    pm = _dummy_pm(8.0)
+    chords = [sc.ChordSpan(i * 2, (i + 1) * 2, 0, "maj") for i in range(4)]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+        "style_fill": 35,
+    }
+    lfo = sc.SectionLFO(
+        bars_period=4, vel_range=(0.5, 1.0), fill_range=(0.0, 1.0), shape="triangle"
+    )
+    stats = {}
+    sc.build_sparkle_midi(
+        pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats, section_lfo=lfo
+    )
+    assert stats["bar_velocities"][0][0] < stats["bar_velocities"][3][0]
+    assert stats["fill_count"] == 1
+
+
+def test_stable_chord_guard_alternate() -> None:
+    pm = _dummy_pm(8.0)
+    chords = [sc.ChordSpan(0, 8, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "chord",
+        "phrase_merge_gap": 0.0,
+        "phrase_release_ms": 10,
+    }
+    stats_no = {}
+    sc.build_sparkle_midi(
+        pm, chords, mapping, 0.5, "chord", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats_no
+    )
+    guard = sc.StableChordGuard(min_hold_beats=4, strategy="alternate")
+    stats_guard = {}
+    sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        0.5,
+        "chord",
+        0.0,
+        0,
+        "flat",
+        120,
+        0.0,
+        0.5,
+        stable_guard=guard,
+        stats=stats_guard,
+    )
+    assert stats_guard["pulse_count"] < stats_no["pulse_count"]
+
+
+def test_vocal_adapt_density_switch() -> None:
+    pm = _dummy_pm(4.0)
+    chords = [sc.ChordSpan(0, 2, 0, "maj"), sc.ChordSpan(2, 4, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.25,
+        "cycle_phrase_notes": [41],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+    }
+    va = sc.VocalAdaptive(dense_onset=2, dense_phrase=40, sparse_phrase=41, onsets=[3, 0])
+    stats = {}
+    sc.build_sparkle_midi(
+        pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats, vocal_adapt=va
+    )
+    assert stats["bar_phrase_notes"][0] == 40
+
+
+def _pm_with_ts_seq(seq):
+    pm = pretty_midi.PrettyMIDI()
+    t = 0.0
+    inst = pretty_midi.Instrument(0)
+    for num, den, dur in seq:
+        pm.time_signature_changes.append(pretty_midi.TimeSignature(num, den, t))
+        t += dur
+    inst.notes.append(pretty_midi.Note(velocity=1, pitch=60, start=0.0, end=t))
+    pm.instruments.append(inst)
+    return pm
+
+
+def test_meter_change_5_4_and_7_8() -> None:
+    if not hasattr(pretty_midi, "TimeSignature"):
+        pytest.skip("pretty_midi stub lacks TimeSignature")
+    seq = [(5, 4, 2.5), (7, 8, 1.75)]
+    pm = _pm_with_ts_seq(seq)
+    chords = [sc.ChordSpan(0, 2.5, 0, "maj"), sc.ChordSpan(2.5, 4.25, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+    }
+    stats = {}
+    sc.build_sparkle_midi(
+        pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats
+    )
+    assert len(stats["bar_pulses"][0]) == 10
+    assert len(stats["bar_pulses"][1]) == 7
+
+
+def test_meter_change_6_8_to_4_4() -> None:
+    if not hasattr(pretty_midi, "TimeSignature"):
+        pytest.skip("pretty_midi stub lacks TimeSignature")
+    seq = [(6, 8, 1.5), (4, 4, 2.0)]
+    pm = _pm_with_ts_seq(seq)
+    chords = [sc.ChordSpan(0, 1.5, 0, "maj"), sc.ChordSpan(1.5, 3.5, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+    }
+    stats = {}
+    sc.build_sparkle_midi(
+        pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats
+    )
+    assert len(stats["bar_pulses"][0]) == 6
+    assert len(stats["bar_pulses"][1]) == 8
+
+
+def test_section_profile_partial_override() -> None:
+    plan, _, _ = sc.schedule_phrase_keys(
+        4, [24, 26], [{"start_bar": 1, "end_bar": 3, "pool": [30]}], None
+    )
+    assert plan == [24, 30, 30, 26]
+
+
+def test_markov_degenerate_fallback() -> None:
+    T = [[0, 0], [0, 0]]
+    counts = {0: 0, 1: 0}
+    rng = random.Random(0)
+    for _ in range(10):
+        counts[sc.markov_pick(T, 0, rng)] += 1
+    assert counts[0] > 0 and counts[1] > 0
+
+
+def test_guard_hold_beats_variable_intervals() -> None:
+    class TempoPM:
+        def __init__(self):
+            inst = pretty_midi.Instrument(0)
+            inst.notes.append(pretty_midi.Note(velocity=1, pitch=60, start=0.0, end=3.5))
+            inst.is_drum = False
+            self.instruments = [inst]
+            self.time_signature_changes = []
+
+        def get_beats(self):
+            return [0.0, 0.5, 1.0, 1.5, 2.5, 3.5]
+
+        def get_downbeats(self):
+            return [0.0, 2.5]
+
+        def get_end_time(self):
+            return 3.5
+
+        def get_tempo_changes(self):
+            return [0.0], [120.0]
+
+    pm = TempoPM()
+    chords = [sc.ChordSpan(0, 3.5, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+    }
+    guard = sc.StableChordGuard(min_hold_beats=2, strategy="alternate")
+    stats = {}
+    sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        0.5,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120,
+        0.0,
+        0.5,
+        stats=stats,
+        stable_guard=guard,
+    )
+    assert stats["guard_hold_beats"][0] == pytest.approx(4.0, abs=1e-6)
+
+
+def test_lfo_apply_to_chord_velocity() -> None:
+    pm = _dummy_pm(8.0)
+    chords = [sc.ChordSpan(i * 2, (i + 1) * 2, 0, "maj") for i in range(4)]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+    }
+    lfo = sc.SectionLFO(bars_period=4, vel_range=(0.5, 1.0))
+    out1 = sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        0.5,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120,
+        0.0,
+        0.5,
+        section_lfo=lfo,
+        lfo_targets=("phrase",),
+    )
+    out2 = sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        0.5,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120,
+        0.0,
+        0.5,
+        section_lfo=lfo,
+        lfo_targets=("phrase", "chord"),
+    )
+    assert out2.instruments[0].notes[0].velocity < out1.instruments[0].notes[0].velocity
+
+
+def test_vocal_guide_from_midi_density_switch(tmp_path) -> None:
+    pm_v = pretty_midi.PrettyMIDI()
+    inst = pretty_midi.Instrument(0)
+    inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=0.2))
+    inst.notes.append(pretty_midi.Note(velocity=100, pitch=62, start=0.3, end=0.5))
+    pm_v.instruments.append(inst)
+    vocal_path = tmp_path / "v.mid"
+    pm_v.write(str(vocal_path))
+    counts = sc.vocal_onsets_from_midi(str(vocal_path))
+    counts = [2, 0]
+    va = sc.VocalAdaptive(dense_onset=1, dense_phrase=40, sparse_phrase=41, onsets=counts)
+    pm = _dummy_pm(2.0)
+    chords = [sc.ChordSpan(0, 1.0, 0, "maj"), sc.ChordSpan(1.0, 2.0, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+    }
+    stats = {}
+    sc.build_sparkle_midi(
+        pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats, vocal_adapt=va
+    )
+    assert stats["bar_phrase_notes"][0] == 40
+
+
+def test_periodic_style_injection_and_conflict_policy() -> None:
+    plan, fills, src = sc.schedule_phrase_keys(
+        4, None, [{"end_bar": 2}], 35, style_inject={"period": 2, "note": 30}
+    )
+    assert fills[0][0] == 30
+    assert fills[1][0] == 35
+    assert fills[2][0] == 30
+
+
+def test_stats_traceability_keys_present() -> None:
+    pm = _dummy_pm(4.0)
+    chords = [sc.ChordSpan(0, 4.0, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 100,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+    }
+    lfo = sc.SectionLFO(bars_period=2, vel_range=(0.5, 1.0))
+    guard = sc.StableChordGuard(min_hold_beats=1, strategy="alternate")
+    stats = {}
+    sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        0.5,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120,
+        0.0,
+        0.5,
+        stats=stats,
+        section_lfo=lfo,
+        stable_guard=guard,
+    )
+    assert stats["bar_reason"] and stats["lfo_pos"] and stats["guard_hold_beats"]
+
+
+def test_config_validation() -> None:
+    with pytest.raises(SystemExit):
+        sc.validate_section_lfo_cfg({"period": 0})
+    with pytest.raises(SystemExit):
+        sc.validate_section_lfo_cfg({"period": 2, "vel": [1.0]})
+    with pytest.raises(SystemExit):
+        sc.validate_section_lfo_cfg({"period": 2, "fill": [0, 1, 2]})
+    with pytest.raises(SystemExit):
+        sc.validate_style_inject_cfg({"period": 0, "note": 30})
+    with pytest.raises(SystemExit):
+        sc.validate_vocal_adapt_cfg({"dense_onset": 1, "dense_ratio": 2})
+    with pytest.raises(SystemExit):
+        sc.validate_stable_guard_cfg({"min_hold_beats": -1})
+
+
+def test_lfo_shapes_linear_sine_triangle() -> None:
+    lin = sc.SectionLFO(bars_period=4, vel_range=(0.0, 1.0), shape="linear")
+    sine = sc.SectionLFO(bars_period=4, vel_range=(0.0, 1.0), shape="sine")
+    tri = sc.SectionLFO(bars_period=4, vel_range=(0.0, 1.0), shape="triangle")
+    vals_lin = [lin.vel_scale(i) for i in range(4)]
+    vals_sine = [sine.vel_scale(i) for i in range(4)]
+    vals_tri = [tri.vel_scale(i) for i in range(4)]
+    assert vals_lin[1] < vals_lin[2] < vals_lin[3]
+    assert vals_sine[1] > vals_lin[1]
+    assert vals_tri[2] == pytest.approx(1.0)
+
+
+def test_fill_sources_and_policy() -> None:
+    lfo = sc.SectionLFO(bars_period=1, fill_range=(1.0, 1.0))
+    _, _, src = sc.schedule_phrase_keys(
+        2,
+        None,
+        [{"end_bar": 2}],
+        35,
+        lfo=lfo,
+        style_inject={"period": 1, "note": 30},
+        fill_policy="lfo",
+    )
+    assert src[0] == "lfo" and src[1] == "lfo"
+    _, _, src2 = sc.schedule_phrase_keys(
+        2,
+        None,
+        [{"end_bar": 2}],
+        35,
+        lfo=lfo,
+        style_inject={"period": 1, "note": 30},
+        fill_policy="style",
+    )
+    assert src2[0] == "style" and src2[1] == "style"
+
+
+def test_vocal_density_by_ratio(tmp_path) -> None:
+    on, rat = [1], [0.8]
+    va = sc.VocalAdaptive(
+        dense_onset=5, dense_phrase=40, sparse_phrase=41, onsets=on, ratios=rat, dense_ratio=0.5
+    )
+    assert va.phrase_for_bar(0) == 40
+
+
+def test_style_inject_duration_and_velocity() -> None:
+    pm = _dummy_pm(4.0)
+    chords = [sc.ChordSpan(0, 4.0, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 80,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+        "style_inject": {"period": 2, "note": 30, "duration_beats": 2, "vel_scale": 1.5},
+    }
+    out = sc.build_sparkle_midi(
+        pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, fill_policy="style"
+    )
+    fills = [n for n in out.instruments[1].notes if n.pitch == 30]
+    assert fills and (fills[0].end - fills[0].start) == pytest.approx(1.0, abs=1e-3)
+    assert fills[0].velocity > 80
+
+
+def test_section_profiles_basic(tmp_path) -> None:
+    yaml_text = (
+        '{"sections":[{"tag":"verse","bars":[0,2],"phrase_pool":[36,"rest"],"pool_weights":[1,0]}]}'
+    )
+    p = tmp_path / "sections.yaml"
+    p.write_text(yaml_text)
+    secs = sc.read_section_profiles(p)
+    stats = {}
+    plan, fills, _ = sc.schedule_phrase_keys(4, None, secs, None, rng=random.Random(0), stats=stats)
+    assert plan[0] == 36 and plan[1] == 36
+    assert stats["bar_reason"][0]["source"] == "section"
+
+
+def test_section_fill_cadence(tmp_path) -> None:
+    yaml_text = '{"sections":[{"tag":"verse","bars":[0,4],"phrase_pool":[36],"fill_cadence":2}]}'
+    p = tmp_path / "sections.yaml"
+    p.write_text(yaml_text)
+    secs = sc.read_section_profiles(p)
+    plan, fills, src = sc.schedule_phrase_keys(4, None, secs, 35, rng=random.Random(0))
+    assert sorted(fills.keys()) == [1, 3]
+
+
+def test_damping_vocal_envelope() -> None:
+    pm = pretty_midi.PrettyMIDI()
+    sc.emit_damping(
+        pm,
+        "vocal",
+        downbeats=[0.0, 1.0, 2.0],
+        vocal_ratios=[0.0, 1.0, 0.0],
+        cc=11,
+        min_beats=0.0,
+        deadband=0.0,
+        clip=(0, 127),
+    )
+    inst = pm.instruments[-1]
+    vals = [(cc.time, cc.value) for cc in inst.control_changes]
+    assert vals == [(0.0, 0), (1.0, 127), (2.0, 0)]
+
+
+def test_seed_reproducibility() -> None:
+    secs = [
+        {"tag": "v", "start_bar": 0, "end_bar": 4, "phrase_pool": [36, 38], "pool_weights": [1, 1]}
+    ]
+    rng1 = random.Random(42)
+    plan1, fills1, _ = sc.schedule_phrase_keys(4, None, secs, 35, rng=rng1)
+    rng2 = random.Random(42)
+    plan2, fills2, _ = sc.schedule_phrase_keys(4, None, secs, 35, rng=rng2)
+    assert plan1 == plan2 and fills1 == fills2
+
+
+def test_yaml_errors_are_helpful(tmp_path) -> None:
+    bad = '{"sections":[{"tag":"verse","bars":[0],"phrase_pool":[36]}]}'
+    p = tmp_path / "bad.yaml"
+    p.write_text(bad)
+    with pytest.raises(ValueError) as e:
+        sc.read_section_profiles(p)
+    assert "sections[0].bars" in str(e.value)
+
+
+def test_phrase_note_aliases() -> None:
+    sc.NOTE_ALIASES = {"open_1_8": 24}
+    tokens = ["C1", "open_1_8", "rest"]
+    assert [sc.parse_note_token(t) for t in tokens] == [24, 24, None]
+
+
+def test_section_density_presets() -> None:
+    pm = _dummy_pm(4.0)
+    chords = [sc.ChordSpan(0, 2.0, 0, "maj"), sc.ChordSpan(2.0, 4.0, 0, "maj")]
+    mapping = {
+        "phrase_note": 24,
+        "phrase_velocity": 80,
+        "phrase_length_beats": 0.25,
+        "sections": [
+            {"start_bar": 0, "end_bar": 1, "density": "low"},
+            {"start_bar": 1, "end_bar": 2, "density": "high"},
+        ],
+    }
+    stats = {}
+    sc.build_sparkle_midi(
+        pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats
+    )
+    p0 = len(stats["bar_pulses"][0])
+    p1 = len(stats["bar_pulses"][1])
+    v0 = sum(stats["bar_velocities"][0]) / len(stats["bar_velocities"][0])
+    v1 = sum(stats["bar_velocities"][1]) / len(stats["bar_velocities"][1])
+    assert p0 < p1 and v0 < v1
+
+
+def test_pool_by_quality() -> None:
+    sections = [{"start_bar": 0, "end_bar": 2, "pool_by_quality": {"maj": [36], "min": [37]}}]
+    plan, _, _ = sc.schedule_phrase_keys(2, None, sections, None, bar_qualities=["maj", "min"])
+    assert plan == [36, 37]
+
+
+def test_damping_cli_options() -> None:
+    pm = pretty_midi.PrettyMIDI()
+    sc.emit_damping(
+        pm,
+        "vocal",
+        downbeats=[0.0, 1.0, 2.0],
+        vocal_ratios=[0.0, 1.0, 0.0],
+        cc=11,
+        channel=1,
+        smooth=1,
+        deadband=0.0,
+        min_beats=0.0,
+        clip=(0, 100),
+    )
+    inst = pm.instruments[-1]
+    assert inst.midi_channel == 1 and inst.control_changes[1].value <= 100
+
+
+def test_accent_stretching() -> None:
+    pm = _dummy_pm(2.0)
+    chords = [sc.ChordSpan(0, 2.0, 0, "maj")]
+    mapping = {
+        "phrase_note": 24,
+        "phrase_velocity": 80,
+        "phrase_length_beats": 0.5,
+        "accent": [1.0, 0.5],
+    }
+    stats = {}
+    sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        0.5,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120,
+        0.0,
+        0.5,
+        stats=stats,
+        accent=[1.0, 0.5],
+    )
+    vels = stats["bar_velocities"][0]
+    assert len(set(vels)) > 1
+
+
+def test_write_reports(tmp_path) -> None:
+    stats = {"bar_count": 2, "fill_count": 1}
+    jp = tmp_path / "r.json"
+    mp = tmp_path / "r.md"
+    sc.write_reports(stats, jp, mp)
+    assert "bar_count" in jp.read_text()
+    assert "Sparkle Report" in mp.read_text()
+
+
+def test_section_preset_and_override() -> None:
+    sc.NOTE_ALIASES = {"open_1_8": 24, "open_1_16": 26, "muted_1_8": 25}
+    sc.NOTE_ALIAS_INV = {24: "open_1_8", 26: "open_1_16", 25: "muted_1_8"}
+    mapping = {
+        "sections": [
+            {"tag": "verse", "start_bar": 0, "end_bar": 2},
+            {"tag": "chorus", "start_bar": 2, "end_bar": 4, "phrase_pool": [25]},
+        ]
+    }
+    sc.apply_section_preset(mapping, "acoustic_ballad")
+    plan, _, _ = sc.schedule_phrase_keys(4, None, mapping["sections"], None)
+    assert plan[:2] == [24, 24]
+    assert plan[2:4] == [25, 25]
+
+
+def test_vocal_guide_style_fill() -> None:
+    pm = _dummy_pm(8.0)
+    chords = [sc.ChordSpan(0, 8.0, 0, "maj")]
+    mapping = {"phrase_note": 36, "phrase_velocity": 80, "phrase_length_beats": 1.0}
+    onsets = [0, 0, 5, 0]
+    out = sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        1.0,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120,
+        0.0,
+        0.5,
+        guide_onsets=onsets,
+        guide_onset_th=3,
+        guide_style_note=40,
+    )
+    fills = [n for n in out.instruments[1].notes if n.pitch == 40]
+    assert len(fills) == 1 and 2.0 <= fills[0].start < 4.0
+
+
+def test_swing_hold_merge() -> None:
+    pm = _dummy_pm(8.0)
+    chords = [sc.ChordSpan(0, 4.0, 0, "maj"), sc.ChordSpan(4.0, 8.0, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 80,
+        "phrase_length_beats": 0.5,
+        "phrase_hold": "chord",
+        "phrase_merge_gap": 0.1,
+        "cycle_phrase_notes": [],
+        "cycle_mode": "bar",
+    }
+    out = sc.build_sparkle_midi(pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.2, 0.5)
+    notes = out.instruments[1].notes
+    assert len(notes) == 2
+
+
+def test_debug_md_output(tmp_path) -> None:
+    pm = _dummy_pm(4.0)
+    chords = [sc.ChordSpan(0, 4.0, 0, "maj")]
+    mapping = {"phrase_note": 36, "phrase_velocity": 80, "phrase_length_beats": 1.0}
+    stats = {}
+    sc.build_sparkle_midi(
+        pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats
+    )
+    p = tmp_path / "dbg.md"
+    sc.write_debug_md(stats, p)
+    text = p.read_text().splitlines()
+    assert text[0].startswith("|bar|") and len(text) >= 3
+
+
+def test_section_profile_alias_warning(tmp_path, caplog) -> None:
+    pytest.importorskip("yaml")
+    y = "sections:\n- {tag: verse, bars: [0,1], phrase_pool: [unknown_alias]}\n"
+    p = tmp_path / "s.yaml"
+    p.write_text(y)
+    with caplog.at_level(logging.WARNING):
+        secs = sc.read_section_profiles(p, {"open_1_8": 24})
+    assert secs[0]["phrase_pool"][0] is None
+    assert any("unknown note alias" in r.message for r in caplog.records)
+
+
+def test_seed_cli_repro(tmp_path) -> None:
+    inp = _write_midi(tmp_path)
+    out = tmp_path / "o.mid"
+    j1 = tmp_path / "r1.json"
+    j2 = tmp_path / "r2.json"
+    argv = [
+        "sc",
+        str(inp),
+        "--out",
+        str(out),
+        "--pulse",
+        "1/8",
+        "--cycle-phrase-notes",
+        "24,26",
+        "--humanize-vel",
+        "5",
+        "--seed",
+        "7",
+        "--report-json",
+        str(j1),
+        "--dry-run",
+    ]
+
+    def fake_pm(*a, **k):
+        pm = _dummy_pm(2.0)
+        if not a:
+            pm.instruments = []
+        created.append(pm)
+        return pm
+
+    created = []
+    with mock.patch.object(sc.pretty_midi, "PrettyMIDI", side_effect=fake_pm):
+        with mock.patch.object(sys, "argv", argv):
+            sc.main()
+    argv[-2] = str(j2)
+    created = []
+    with mock.patch.object(sc.pretty_midi, "PrettyMIDI", side_effect=fake_pm):
+        with mock.patch.object(sys, "argv", argv):
+            sc.main()
+    assert j1.read_text() == j2.read_text()
+
+
+def test_cli_json_flags(tmp_path) -> None:
+    inp = _write_midi(tmp_path)
+    out = tmp_path / "o.mid"
+    argv = [
+        "sc",
+        str(inp),
+        "--out",
+        str(out),
+        "--pulse",
+        "1/8",
+        "--cycle-phrase-notes",
+        "24",
+        "--dry-run",
+        "--section-lfo",
+        '{"period":4}',
+        "--stable-guard",
+        '{"min_hold_beats":2}',
+        "--vocal-adapt",
+        '{"dense_onset":1,"dense_phrase":24,"sparse_phrase":24,"onsets":[0],"ratios":[0]}',
+    ]
+
+    def fake_pm(*a, **k):
+        pm = _dummy_pm(2.0)
+        if not a:
+            pm.instruments = []
+        return pm
+
+    with mock.patch.object(sc.pretty_midi, "PrettyMIDI", side_effect=fake_pm):
+        with mock.patch.object(sys, "argv", argv):
+            sc.main()
+
+
+def test_debug_md_header(tmp_path) -> None:
+    stats = {
+        "section_tags": {},
+        "bar_phrase_notes_list": [],
+        "fill_bars": [],
+        "bar_reason": {},
+        "lfo_pos": {},
+        "guard_hold_beats": {},
+        "bar_count": 0,
+    }
+    p = tmp_path / "d.md"
+    sc.write_debug_md(stats, p)
+    header = p.read_text().splitlines()[0]
+    assert "lfo_pos" in header and "guard_hold_beats" in header
+
+
+def test_damp_vocal_cli(tmp_path) -> None:
+    inp = _write_midi(tmp_path)
+    out = tmp_path / "out.mid"
+    vcfg = (
+        '{"dense_onset":0,"dense_phrase":24,"sparse_phrase":24,"onsets":[0,0],"ratios":[0.0,1.0]}'
+    )
+    argv = [
+        "sc",
+        str(inp),
+        "--out",
+        str(out),
+        "--pulse",
+        "1/8",
+        "--cycle-phrase-notes",
+        "24",
+        "--vocal-adapt",
+        vcfg,
+        "--damp",
+        "vocal:cc=11,channel=1",
+    ]
+    created = []
+
+    def fake_pm(*a, **k):
+        pm = _dummy_pm(2.0)
+        if not a:
+            pm.instruments = []
+        created.append(pm)
+        return pm
+
+    with mock.patch.object(sc.pretty_midi, "PrettyMIDI", side_effect=fake_pm):
+        with mock.patch.object(sys, "argv", argv):
+            sc.main()
+    out_pm = created[-1]
+    inst = [i for i in out_pm.instruments if i.name == DAMP_INST_NAME]
+    assert inst and inst[0].control_changes

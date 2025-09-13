@@ -17,6 +17,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
+import functools
 
 try:
     import numpy as np
@@ -38,18 +39,34 @@ except Exception:  # pragma: no cover - optional dependency
 
 from ml_models.pedal_model import PedalModel
 
-_worker_init_seed = 0
 
-def _worker_init_fn(worker_id: int) -> None:
-    np.random.seed(_worker_init_seed + worker_id)
-    torch.manual_seed(_worker_init_seed + worker_id)
+def _dataloader_worker_init_fn(worker_id: int, base_seed: int) -> None:
+    """Multiprocessing-safe worker init (picklable).
+    - Ignore Ctrl-C in workers
+    - Seed: numpy/random/torch from base_seed ^ (worker_id+1)
+    """
+    import random, numpy as np, torch, signal
+    try:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except Exception:
+        pass
+    base = base_seed % (2**32)
+    wseed = (base ^ (worker_id + 1)) % (2**32)
+    np.random.seed(wseed)
+    random.seed(wseed)
+    torch.manual_seed(wseed)
 
 
 def _resolve_workers_cli(v):
     if v is not None:
         return max(int(v), 0)
     env = os.getenv("COMPOSER2_NUM_WORKERS")
-    return max(int(env), 0) if (env and env.isdigit()) else 0
+    if env and env.isdigit():
+        return max(int(env), 0)
+    import platform, sys
+    if platform.system() == "Darwin" and sys.version_info >= (3, 13):
+        return 0
+    return 2
 
 # ------------------------------
 # Utilities
@@ -120,17 +137,14 @@ def _apply_stats(df: pd.DataFrame, feat_cols: Optional[Sequence[str]], mean: np.
     have = [c for c in df.columns if c.startswith("chroma_") or c == "rel_release"]
     missing = [c for c in cols if c not in have]
     extra = [c for c in have if c not in cols]
-    if strict and (missing or extra):
-        raise ValueError(f"stats/CSV mismatch: missing={missing}, extra={extra}")
     if missing:
-        sys.stderr.write(f"[composer2] warn: filling missing feat cols with zeros: {missing}\n")
-    arr = df.reindex(columns=cols, fill_value=0).to_numpy(dtype="float32", copy=True)
+        raise ValueError(f"CSV missing feature columns: {missing}")
+    if strict and extra:
+        raise ValueError(f"CSV has extra feature columns: {extra}")
+    arr = df[cols].to_numpy(dtype="float32", copy=True)
     if arr.shape[1] != mean.size:
-        print(f"[composer2] WARNING: stats dimension mismatch: X={arr.shape[1]} mean={mean.size}; skip normalization")
-        return arr, cols
+        raise ValueError(f"stats dimension mismatch: X={arr.shape[1]} mean={mean.size}")
     arr = (arr - mean) / np.maximum(std, 1e-8)
-    if missing:
-        arr[:, [cols.index(c) for c in missing]] = 0.0
     return arr, cols
 
 
@@ -357,6 +371,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     ap.add_argument("--batch", type=int, default=64, help="mini-batch size for evaluation")
     ap.add_argument("--num-workers", type=int, default=None, help="DataLoader workers (optional, or set COMPOSER2_NUM_WORKERS)")
+    ap.add_argument("--seed", type=int, default=0, help="Optional global seed for deterministic runs")
     ap.add_argument("--fail-under-roc", type=float, default=None, help="exit code 2 if ROC-AUC below this")
     ap.add_argument("--stats-json", type=Path, help="feature stats JSON; defaults to <ckpt>.stats.json if present")
     ap.add_argument("--strict-stats", action="store_true", help="enforce stats/CSV column match")
@@ -389,28 +404,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _pw = _nw > 0
     _pf = 2 if _nw > 0 else None
     print(f"[composer2] num_workers={_nw} (persistent={_pw}, prefetch_factor={_pf or 'n/a'})")
-    base_seed = torch.initial_seed()
-    global _worker_init_seed
-    _worker_init_seed = base_seed
+    gen = torch.Generator(device="cpu").manual_seed(int(args.seed)) if getattr(torch, "Generator", None) else None
+    base_seed = int(args.seed) if args.seed is not None else torch.initial_seed()
+    worker_init = functools.partial(_dataloader_worker_init_fn, base_seed=base_seed)
 
     bs = max(1, int(args.batch))
     ds = TensorDataset(X, Y)
+    pin = device.type == "cuda"
     dl_kwargs = dict(batch_size=bs, shuffle=False, drop_last=False,
                     num_workers=_nw, persistent_workers=_pw,
-                    worker_init_fn=_worker_init_fn)
+                    worker_init_fn=worker_init,
+                    generator=gen,
+                    pin_memory=pin)
     if _pf is not None and _nw > 0:
         dl_kwargs["prefetch_factor"] = _pf
-    if device.type == "cuda":
-        dl_kwargs["pin_memory"] = True
     try:
         loader = DataLoader(ds, **dl_kwargs)
-    except Exception:
-        print("[composer2] DataLoader failed with workers, falling back to num_workers=0")
+    except Exception as e:
+        print(f"[composer2] DataLoader failed (num_workers={_nw}): {e} -> falling back to 0")
         fb_kwargs = dict(batch_size=bs, shuffle=False, drop_last=False,
                          num_workers=0, persistent_workers=False,
-                         worker_init_fn=_worker_init_fn)
-        if device.type == "cuda":
-            fb_kwargs["pin_memory"] = True
+                         worker_init_fn=worker_init,
+                         generator=gen,
+                         pin_memory=pin)
         loader = DataLoader(ds, **fb_kwargs)
     probs: List[np.ndarray] = []
     y_true_list: List[np.ndarray] = []

@@ -45,9 +45,11 @@ import logging
 import copy
 import json
 from functools import lru_cache
+import collections
+import itertools
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Union
+from typing import List, Optional, Tuple, Dict, Union, Set, Any
 
 try:
     import pretty_midi  # type: ignore
@@ -59,7 +61,13 @@ try:
 except Exception:
     yaml = None
 
-from .consts import PHRASE_INST_NAME, CHORD_INST_NAME, DAMP_INST_NAME, PITCH_CLASS, SECTION_PRESETS
+from .consts import (
+    PHRASE_INST_NAME,
+    CHORD_INST_NAME,
+    DAMP_INST_NAME,
+    PITCH_CLASS,
+    SECTION_PRESETS,
+)
 from .phrase_schedule import (
     schedule_phrase_keys,
     SectionLFO,
@@ -230,8 +238,16 @@ def parse_accent_arg(s: str) -> Optional[List[float]]:
     return validate_accent(data)
 
 
-def parse_damp_arg(s: str) -> Tuple[str, Dict[str, float]]:
-    """Parse --damp argument into mode and kwargs."""
+# --- RESOLVED MERGE: keep both damp-arg parser and guide summarization utilities ---
+
+def parse_damp_arg(s: str) -> Tuple[str, Dict[str, Any]]:
+    """Parse --damp argument into (mode, kwargs).
+
+    Examples:
+        "none"
+        "cc:cc=11,channel=0,deadband=2,min_beats=0.25,clip_lo=0,clip_hi=96"
+        "follow:cc=1,smooth=4"
+    """
     if not s:
         return "none", {}
     if ":" in s:
@@ -239,7 +255,7 @@ def parse_damp_arg(s: str) -> Tuple[str, Dict[str, float]]:
     else:
         mode, rest = s, ""
     mode = mode.strip()
-    kw: Dict[str, float] = {}
+    kw: Dict[str, Any] = {}
     for token in filter(None, (t.strip() for t in rest.split(","))):
         if "=" not in token:
             continue
@@ -247,12 +263,22 @@ def parse_damp_arg(s: str) -> Tuple[str, Dict[str, float]]:
         k = k.strip()
         v = v.strip()
         if k in {"cc", "channel", "value", "smooth"}:
-            kw[k] = int(v)
+            try:
+                kw[k] = int(v)
+            except ValueError:
+                raise SystemExit(f"--damp invalid int for {k}: {v}")
         elif k in {"deadband", "min_beats"}:
-            kw[k] = float(v)
+            try:
+                kw[k] = float(v)
+            except ValueError:
+                raise SystemExit(f"--damp invalid float for {k}: {v}")
         elif k in {"clip_lo", "clip_hi"}:
-            kw[k] = int(v)
+            try:
+                kw[k] = int(v)
+            except ValueError:
+                raise SystemExit(f"--damp invalid int for {k}: {v}")
         else:
+            # best-effort: numeric if possible, else string
             try:
                 kw[k] = float(v)
             except ValueError:
@@ -262,6 +288,524 @@ def parse_damp_arg(s: str) -> Tuple[str, Dict[str, float]]:
     if lo is not None or hi is not None:
         kw["clip"] = (int(lo) if lo is not None else 0, int(hi) if hi is not None else 127)
     return mode, kw
+
+
+# Resolved merge: combine guide summarization utilities with phrase scheduling
+# NOTE: Assumes the following are defined elsewhere in the module:
+#   - parse_note_token, validate_midi_note, EPS, PHRASE_INST_NAME
+#   - pretty_midi, json, math, bisect, collections, random
+#   - from typing import Any, Optional, Dict, List, Tuple, Union, Set
+
+
+def parse_thresholds_arg(s: str) -> Dict[str, Union[int, List[Tuple[int, float]]]]:
+    try:
+        cfg = json.loads(s)
+    except Exception:
+        raise SystemExit("--guide-thresholds must be JSON")
+    if not isinstance(cfg, dict):
+        raise SystemExit("--guide-thresholds must be JSON object")
+    for k in ("low", "mid", "high"):
+        if k not in cfg:
+            raise SystemExit(f"--guide-thresholds missing key {k}")
+        v = cfg[k]
+        if isinstance(v, list):
+            items: List[Tuple[int, float]] = []
+            for it in v:
+                if isinstance(it, list) and len(it) == 2:
+                    note = parse_note_token(it[0])
+                    weight = float(it[1])
+                else:
+                    note = parse_note_token(it)
+                    weight = 1.0
+                if note is None:
+                    raise SystemExit("--guide-thresholds cannot use 'rest'")
+                items.append((int(note), weight))
+            cfg[k] = items
+        elif isinstance(v, str):
+            p = parse_note_token(v)
+            if p is None:
+                raise SystemExit("--guide-thresholds cannot use 'rest'")
+            cfg[k] = int(p)
+        elif isinstance(v, int):
+            validate_midi_note(v)
+            cfg[k] = int(v)
+        else:
+            raise SystemExit(f"--guide-thresholds {k} must be int, note token, or list")
+    return cfg
+
+
+def parse_onset_th_arg(s: str) -> Dict[str, int]:
+    try:
+        cfg = json.loads(s)
+    except Exception:
+        raise SystemExit("--guide-onset-th must be JSON")
+    if not isinstance(cfg, dict):
+        raise SystemExit("--guide-onset-th must be JSON object")
+    for k in ("mid", "high"):
+        v = cfg.get(k)
+        if not isinstance(v, int):
+            raise SystemExit(f"--guide-onset-th {k} must be int")
+    return cfg
+
+
+def parse_phrase_pool_arg(s: str) -> Dict[str, Any]:
+    try:
+        data = json.loads(s)
+    except Exception:
+        raise SystemExit("--phrase-pool must be JSON")
+    items: List[Tuple[int, float]] = []
+    T = None
+    if isinstance(data, dict) and 'notes' in data:
+        notes = [parse_note_token(n) for n in data['notes']]
+        weights = data.get('weights')
+        if weights is None:
+            weights = [1.0] * len(notes)
+        if len(weights) != len(notes):
+            raise SystemExit("--phrase-pool weights length mismatch")
+        for n, w in zip(notes, weights):
+            if n is not None:
+                items.append((int(n), float(w)))
+        T = data.get('T')
+    else:
+        if isinstance(data, dict):
+            # take first level if mapping provided
+            if data:
+                data = next(iter(data.values()))
+            else:
+                data = []
+        if not isinstance(data, list):
+            raise SystemExit("--phrase-pool must be list or mapping of lists")
+        for it in data:
+            if isinstance(it, list) and len(it) == 2:
+                note = parse_note_token(it[0])
+                weight = float(it[1])
+            else:
+                note = parse_note_token(it)
+                weight = 1.0
+            if note is not None:
+                items.append((int(note), weight))
+    return {'pool': items, 'T': T}
+
+
+class PoolPicker:
+    """Utility to pick notes from a pool using various policies."""
+
+    def __init__(self, pool: List[Tuple[int, float]], mode: str = 'random',
+                 T: Optional[List[List[float]]] = None,
+                 no_repeat_window: int = 1,
+                 rng: Optional[random.Random] = None):
+        self.pool = pool
+        self.mode = mode
+        self.T = T
+        self.no_repeat_window = max(1, no_repeat_window)
+        self.idx = 0
+        self.last_idx: Optional[int] = None
+        self.recent: collections.deque = collections.deque(maxlen=self.no_repeat_window)
+        self.rng = rng or random
+
+    def _choose(self, weights: Optional[List[float]] = None) -> int:
+        notes = [n for n, _ in self.pool]
+        if weights is None:
+            weights = [w for _, w in self.pool]
+        return self.rng.choices(list(range(len(notes))), weights=weights, k=1)[0]
+
+    def pick(self) -> int:
+        if not self.pool:
+            raise RuntimeError("empty pool")
+        idx: int
+        if self.mode == 'roundrobin':
+            idx = self.idx % len(self.pool)
+            self.idx += 1
+        elif self.mode == 'weighted':
+            idx = self._choose()
+        elif self.mode == 'markov' and self.T:
+            if self.last_idx is None:
+                idx = self._choose()
+            else:
+                row = self.T[self.last_idx]
+                idx = self._choose(row)
+        else:  # random or markov without T
+            idx = self._choose()
+        note = self.pool[idx][0]
+        if note in self.recent and len(self.pool) > len(self.recent):
+            candidates = [i for i, (n, _) in enumerate(self.pool) if n not in self.recent]
+            if candidates:
+                idx = self.rng.choice(candidates)
+                note = self.pool[idx][0]
+        self.recent.append(note)
+        self.last_idx = idx
+        return note
+
+
+def thin_cc_events(events: List[Tuple[float, int]], *,
+                   min_interval_beats: float = 0.0,
+                   deadband: int = 0,
+                   clip: Optional[Tuple[int, int]] = None) -> List[Tuple[float, int]]:
+    if not events:
+        return events
+    out: List[Tuple[float, int]] = []
+    last_b = None
+    last_v = None
+    lo = clip[0] if clip else 0
+    hi = clip[1] if clip else 127
+    for b, v in events:
+        v = max(lo, min(hi, v))
+        if last_b is not None:
+            if min_interval_beats > 0.0 and (b - last_b) < min_interval_beats - EPS:
+                continue
+            if deadband > 0 and last_v is not None and abs(v - last_v) <= deadband:
+                continue
+        out.append((b, v))
+        last_b = b
+        last_v = v
+    return out
+
+
+def summarize_guide_midi(pm: 'pretty_midi.PrettyMIDI', quant: str,
+                         thresholds: Dict[str, Union[int, List[Tuple[int, float]]]], *,
+                         rest_silence_th: Optional[float] = None,
+                         onset_th: Optional[Dict[str, int]] = None,
+                         note_tokens_allowed: bool = True,
+                         curve: str = 'linear', gamma: float = 1.6,
+                         smooth_sigma: float = 0.0,
+                         pick_mode: str = 'roundrobin') -> Tuple[Dict[int, int],
+                                                                List[Tuple[float, int]],
+                                                                List[Tuple[float, float]],
+                                                                List[float],
+                                                                List[int],
+                                                                List[str]]:
+    """Summarize guide MIDI into phrase note map and damping CC values.
+
+    cc_events return pairs of (beat, value). Sections return labels per unit."""
+    notes = []
+    for inst in pm.instruments:
+        if not getattr(inst, 'is_drum', False):
+            notes.extend(inst.notes)
+    notes.sort(key=lambda n: n.start)
+    beats = pm.get_beats()
+    if not beats:
+        end = max(pm.get_end_time(), 1.0)
+        n = max(1, int(math.ceil(end)))
+        beats = [float(i) for i in range(n + 1)]
+
+    def time_to_beat(t: float) -> float:
+        idx = bisect.bisect_right(beats, t) - 1
+        if idx < 0:
+            return 0.0
+        if idx >= len(beats) - 1:
+            last = beats[-1] - beats[-2]
+            return (len(beats) - 1) + (t - beats[-1]) / last
+        span = beats[idx + 1] - beats[idx]
+        return idx + (t - beats[idx]) / span
+
+    downs = pm.get_downbeats() if quant == 'bar' else beats
+    if quant == 'bar' and not downs:
+        downs = beats[::4]
+        if not downs:
+            downs = beats
+    units: List[Tuple[float, float]] = []
+    for i, s in enumerate(downs):
+        e = downs[i + 1] if i + 1 < len(downs) else pm.get_end_time()
+        units.append((s, e))
+    onset_list: List[int] = []
+    rest_list: List[float] = []
+    for s, e in units:
+        onset = 0
+        cov: List[Tuple[float, float]] = []
+        for n in notes:
+            if n.end <= s or n.start >= e:
+                continue
+            if s <= n.start < e:
+                onset += 1
+            cov.append((max(s, n.start), min(e, n.end)))
+        cov.sort()
+        covered = 0.0
+        last = s
+        for a, b in cov:
+            if b <= last:
+                continue
+            a = max(a, last)
+            covered += b - a
+            last = b
+        span = e - s if e > s else 1.0
+        rest_ratio = 1.0 - covered / span
+        onset_list.append(onset)
+        rest_list.append(rest_ratio)
+    rr = rest_list[:]
+    if smooth_sigma > 0.0 and len(rr) > 1:
+        radius = max(1, int(smooth_sigma * 3))
+        weights = [math.exp(-0.5 * (i / smooth_sigma) ** 2) for i in range(-radius, radius + 1)]
+        total = sum(weights)
+        weights = [w / total for w in weights]
+        smoothed: List[float] = []
+        for i in range(len(rr)):
+            v = 0.0
+            norm = 0.0
+            for k, w in enumerate(weights):
+                j = i + k - radius
+                if 0 <= j < len(rr):
+                    v += rr[j] * w
+                    norm += w
+            if norm > 0:
+                v /= norm
+            smoothed.append(v)
+        rr = smoothed
+    cc_events: List[Tuple[float, int]] = []
+    for idx, r in enumerate(rr):
+        x = max(0.0, min(1.0, r))
+        if curve == 'exp':
+            x = x ** gamma
+        elif curve == 'inv':
+            x = 1.0 - x
+        val = int(round(x * 127))
+        cc_events.append((time_to_beat(units[idx][0]), val))
+    t_mid = onset_th.get('mid', 1) if onset_th else 1
+    t_high = onset_th.get('high', 3) if onset_th else 3
+    low = thresholds.get('low')
+    mid = thresholds.get('mid')
+    high = thresholds.get('high')
+    if note_tokens_allowed:
+        if not isinstance(low, list):
+            low = parse_note_token(low) if low is not None else None
+        if not isinstance(mid, list):
+            mid = parse_note_token(mid) if mid is not None else None
+        if not isinstance(high, list):
+            high = parse_note_token(high) if high is not None else None
+    def _norm_pool(v: List) -> List[Tuple[int, float]]:
+        items: List[Tuple[int, float]] = []
+        for it in v:
+            if isinstance(it, (list, tuple)) and len(it) == 2:
+                note = parse_note_token(it[0])
+                weight = float(it[1])
+            else:
+                note = parse_note_token(it)
+                weight = 1.0
+            if note is not None:
+                items.append((int(note), weight))
+        return items
+    pickers: Dict[str, Optional[PoolPicker]] = {
+        'low': PoolPicker(_norm_pool(thresholds['low']), pick_mode) if isinstance(thresholds['low'], list) else None,
+        'mid': PoolPicker(_norm_pool(thresholds['mid']), pick_mode) if isinstance(thresholds['mid'], list) else None,
+        'high': PoolPicker(_norm_pool(thresholds['high']), pick_mode) if isinstance(thresholds['high'], list) else None,
+    }
+    note_map: Dict[int, int] = {}
+    sections = ['verse'] * len(onset_list)
+    for idx, onset in enumerate(onset_list):
+        if rest_silence_th is not None and rest_list[idx] >= rest_silence_th:
+            continue
+        if onset >= t_high:
+            pool = high
+            picker = pickers['high']
+            sec = 'chorus'
+        elif onset >= t_mid:
+            pool = mid
+            picker = pickers['mid']
+            sec = 'verse'
+        else:
+            pool = low
+            picker = pickers['low']
+            sec = 'verse'
+        if isinstance(pool, list):
+            note = picker.pick() if picker else None
+        else:
+            note = pool
+        if note is not None:
+            note_map[idx] = int(note)
+            sections[idx] = sec
+    # break detection: long rest spans
+    i = 0
+    while i < len(rest_list):
+        if rest_list[i] >= 0.8:
+            j = i
+            while j < len(rest_list) and rest_list[j] >= 0.8:
+                j += 1
+            if j - i >= 2:
+                for k in range(i, j):
+                    sections[k] = 'break'
+            i = j
+        else:
+            i += 1
+    # simple local maxima for chorus
+    dens = onset_list
+    for i in range(1, len(dens) - 1):
+        if dens[i] > dens[i - 1] and dens[i] > dens[i + 1]:
+            sections[i] = 'chorus'
+    return note_map, cc_events, units, rest_list, onset_list, sections
+
+
+def insert_style_fill(pm_out: 'pretty_midi.PrettyMIDI', mode: str,
+                      units: List[Tuple[float, float]], mapping: Dict,
+                      *, sections: Optional[List[Dict]] = None,
+                      rest_ratio_list: Optional[List[float]] = None,
+                      rest_th: float = 0.75, fill_length_beats: float = 0.25,
+                      bpm: float = 120.0, min_gap_beats: float = 0.0,
+                      avoid_pitches: Optional[Set[int]] = None,
+                      filled_bars: Optional[List[int]] = None) -> int:
+    """Insert style fills based on mode."""
+    phrase_inst = None
+    for inst in pm_out.instruments:
+        if inst.name == PHRASE_INST_NAME:
+            phrase_inst = inst
+            break
+    if phrase_inst is None or not units:
+        return 0
+    pitch = mapping.get("style_fill")
+    if pitch is None:
+        pitch = 34
+        used_notes = {mapping.get("phrase_note")}
+        used_notes.update(n for n in mapping.get("cycle_phrase_notes", []) if n is not None)
+        if pitch in used_notes:
+            pitch = 35
+    pitch = int(pitch)
+    try:
+        beat_times = pm_out.get_beats()
+    except AttributeError:
+        step = 60.0 / bpm
+        end = units[-1][1] if units else step
+        n = int(math.ceil(end / step)) + 1
+        beat_times = [i * step for i in range(n)]
+    if len(beat_times) < 2:
+        step = 60.0 / bpm
+        beat_times = [0.0, step]
+
+    def beat_to_time(b: float) -> float:
+        idx = int(math.floor(b))
+        frac = b - idx
+        if idx >= len(beat_times) - 1:
+            last = beat_times[-1] - beat_times[-2]
+            return beat_times[-1] + (b - (len(beat_times) - 1)) * last
+        return beat_times[idx] + frac * (beat_times[idx + 1] - beat_times[idx])
+
+    def time_to_beat(t: float) -> float:
+        idx = bisect.bisect_right(beat_times, t) - 1
+        if idx < 0:
+            return 0.0
+        if idx >= len(beat_times) - 1:
+            last = beat_times[-1] - beat_times[-2]
+            return (len(beat_times) - 1) + (t - beat_times[-1]) / last
+        span = beat_times[idx + 1] - beat_times[idx]
+        return idx + (t - beat_times[idx]) / span
+
+    count = 0
+    used: set = set()
+    if mode == 'section_end' and sections:
+        for sec in sections:
+            idx = int(sec.get('end_bar', 0)) - 1
+            if 0 <= idx < len(units) and idx not in used:
+                start = units[idx][0]
+                start_b = time_to_beat(start)
+                length = beat_to_time(start_b + fill_length_beats) - start
+                conflict = False
+                if avoid_pitches or min_gap_beats > 0.0:
+                    for n in phrase_inst.notes:
+                        if n.pitch == pitch or (avoid_pitches and n.pitch in avoid_pitches):
+                            if start < n.end + EPS and n.start < start + length - EPS:
+                                conflict = True
+                                break
+                            gap = start_b - time_to_beat(n.start)
+                            if gap < min_gap_beats:
+                                conflict = True
+                                break
+                if conflict:
+                    continue
+                phrase_inst.notes.append(
+                    pretty_midi.Note(velocity=int(mapping.get('phrase_velocity', 96)),
+                                     pitch=pitch, start=start, end=start + length))
+                used.add(idx)
+                count += 1
+                if filled_bars is not None:
+                    filled_bars.append(idx)
+    elif mode == 'long_rest' and rest_ratio_list:
+        i = 0
+        n = len(rest_ratio_list)
+        while i < n:
+            if rest_ratio_list[i] >= rest_th:
+                idx = i - 1 if i > 0 else 0
+                if idx not in used:
+                    start = units[idx][0]
+                    start_b = time_to_beat(start)
+                    length = beat_to_time(start_b + fill_length_beats) - start
+                    conflict = False
+                    if avoid_pitches or min_gap_beats > 0.0:
+                        for n in phrase_inst.notes:
+                            if n.pitch == pitch or (avoid_pitches and n.pitch in avoid_pitches):
+                                if start < n.end + EPS and n.start < start + length - EPS:
+                                    conflict = True
+                                    break
+                                gap = start_b - time_to_beat(n.start)
+                                if gap < min_gap_beats:
+                                    conflict = True
+                                    break
+                    if conflict:
+                        pass
+                    else:
+                        phrase_inst.notes.append(
+                            pretty_midi.Note(velocity=int(mapping.get('phrase_velocity', 96)),
+                                             pitch=pitch, start=start, end=start + length))
+                        used.add(idx)
+                        count += 1
+                        if filled_bars is not None:
+                            filled_bars.append(idx)
+                while i < n and rest_ratio_list[i] >= rest_th:
+                    i += 1
+                continue
+            i += 1
+    return count
+
+
+def insert_style_layer(pm_out: 'pretty_midi.PrettyMIDI', mode: str,
+                       units: List[Tuple[float, float]], picker: Optional[PoolPicker],
+                       *, sections: Optional[List[str]] = None,
+                       every: int = 4, length_beats: float = 0.5,
+                       bpm: float = 120.0) -> int:
+    if mode == 'off' or picker is None or not units:
+        return 0
+    phrase_inst = None
+    for inst in pm_out.instruments:
+        if inst.name == PHRASE_INST_NAME:
+            phrase_inst = inst
+            break
+    if phrase_inst is None:
+        return 0
+    try:
+        beat_times = pm_out.get_beats()
+    except AttributeError:
+        step = 60.0 / bpm
+        end = units[-1][1]
+        n = int(math.ceil(end / step)) + 1
+        beat_times = [i * step for i in range(n)]
+
+    def beat_to_time(b: float) -> float:
+        idx = int(math.floor(b))
+        frac = b - idx
+        if idx >= len(beat_times) - 1:
+            last = beat_times[-1] - beat_times[-2]
+            return beat_times[-1] + (b - (len(beat_times) - 1)) * last
+        return beat_times[idx] + frac * (beat_times[idx + 1] - beat_times[idx])
+
+    bars: List[int]
+    if mode == 'every':
+        bars = list(range(0, len(units), max(1, every)))
+    else:  # transitions
+        bars = []
+        if sections:
+            prev = sections[0]
+            for i, sec in enumerate(sections[1:], 1):
+                if sec != prev:
+                    bars.append(i)
+                prev = sec
+    count = 0
+    for b_idx in bars:
+        if b_idx >= len(units):
+            continue
+        start = units[b_idx][0]
+        start_b = b_idx  # approximate
+        length = beat_to_time(start_b + length_beats) - start
+        pitch = picker.pick()
+        phrase_inst.notes.append(pretty_midi.Note(velocity=100, pitch=pitch,
+                                                  start=start, end=start + length))
+        count += 1
+    return count
 
 
 def validate_section_lfo_cfg(cfg: Dict) -> Dict:
@@ -448,6 +992,24 @@ def place_in_range(
     return res
 
 
+def smooth_triad(prev: Optional[List[int]], curr: List[int], lo: int, hi: int) -> List[int]:
+    if not prev:
+        return curr
+    best = curr
+    prev_sorted = sorted(prev)
+    combos = []
+    for offs in itertools.product([-12, 0, 12], repeat=len(curr)):
+        cand = [p + o for p, o in zip(curr, offs)]
+        if all(lo <= n <= hi for n in cand):
+            combos.append(cand)
+    if not combos:
+        return curr
+    def cost(c: List[int]) -> int:
+        return sum(abs(a - b) for a, b in zip(sorted(c), prev_sorted))
+    best = min(combos, key=cost)
+    return best
+
+
 def load_mapping(path: Optional[Path]) -> Dict:
     default = {
         "phrase_note": 36,  # Default left-hand "Common" phrase key (C2)
@@ -576,56 +1138,103 @@ def generate_mapping_template(full: bool) -> str:
     """Return a YAML mapping template string."""
     if full:
         return (
-            "phrase_note: 36\n"
-            "phrase_velocity: 96\n"
-            "phrase_length_beats: 0.25\n"
-            "phrase_hold: off  # off, bar, chord\n"
-            "phrase_merge_gap: 0.02  # seconds\n"
-            "chord_merge_gap: 0.01  # seconds\n"
-            "chord_octave: 4\n"
-            "chord_velocity: 90\n"
-            "triad_intervals:\n"
-            "  maj: [0,4,7]\n"
-            "  min: [0,3,7]\n"
-            "cycle_phrase_notes: []  # e.g., [24, rest, 26] to alternate per bar (小節ごとに切替)\n"
-            "cycle_start_bar: 0\n"
-            "cycle_mode: bar  # or 'chord'\n"
-            "cycle_stride: 1  # number of bars/chords before advancing cycle\n"
-            "merge_reset_at: none  # none, bar, chord\n"
-            "voicing_mode: stacked  # or 'closed'\n"
-            "top_note_max: null  # e.g., 72 to cap highest chord tone\n"
-            "phrase_channel: null  # MIDI channel for phrase notes\n"
-            "chord_channel: null  # MIDI channel for chord notes\n"
-            "accent: []  # velocity multipliers per pulse\n"
-            "skip_phrase_in_rests: false\n"
-            "clone_meta_only: false\n"
-            "silent_qualities: []\n"
-            "swing: 0.0  # 0..1 swing feel\n"
-            "swing_unit: 1/8  # subdivision for swing\n"
-            "chord_input_range: {lo: 48, hi: 72}\n"
+            "phrase_note: 36
+"
+            "phrase_velocity: 96
+"
+            "phrase_length_beats: 0.25
+"
+            "phrase_hold: off  # off, bar, chord
+"
+            "phrase_merge_gap: 0.02  # seconds
+"
+            "chord_merge_gap: 0.01  # seconds
+"
+            "chord_octave: 4
+"
+            "chord_velocity: 90
+"
+            "triad_intervals:
+"
+            "  maj: [0,4,7]
+"
+            "  min: [0,3,7]
+"
+            "cycle_phrase_notes: []  # e.g., [24, rest, 26] to alternate per bar (小節ごとに切替)
+"
+            "cycle_start_bar: 0
+"
+            "cycle_mode: bar  # or 'chord'
+"
+            "cycle_stride: 1  # number of bars/chords before advancing cycle
+"
+            "merge_reset_at: none  # none, bar, chord
+"
+            "voicing_mode: stacked  # or 'closed'
+"
+            "top_note_max: null  # e.g., 72 to cap highest chord tone
+"
+            "phrase_channel: null  # MIDI channel for phrase notes
+"
+            "chord_channel: null  # MIDI channel for chord notes
+"
+            "accent: []  # velocity multipliers per pulse
+"
+            "skip_phrase_in_rests: false
+"
+            "clone_meta_only: false
+"
+            "silent_qualities: []
+"
+            "swing: 0.0  # 0..1 swing feel
+"
+            "swing_unit: 1/8  # subdivision for swing
+"
+            "chord_input_range: {lo: 48, hi: 72}
+"
         )
     else:
         return (
-            "phrase_note: 36\n"
-            "cycle_phrase_notes: []  # e.g., [24, rest, 26] to alternate per bar (小節ごとに切替)\n"
-            "phrase_hold: off\n"
-            "phrase_merge_gap: 0.02\n"
-            "chord_merge_gap: 0.01\n"
-            "cycle_start_bar: 0\n"
-            "cycle_mode: bar  # or 'chord'\n"
-            "cycle_stride: 1\n"
-            "merge_reset_at: none\n"
-            "voicing_mode: stacked  # or 'closed'\n"
-            "top_note_max: null\n"
-            "phrase_channel: null\n"
-            "chord_channel: null\n"
-            "accent: []\n"
-            "skip_phrase_in_rests: false\n"
-            "clone_meta_only: false\n"
-            "silent_qualities: []\n"
-            "swing: 0.0\n"
-            "swing_unit: 1/8\n"
-            "chord_input_range: {lo: 48, hi: 72}\n"
+            "phrase_note: 36
+"
+            "cycle_phrase_notes: []  # e.g., [24, rest, 26] to alternate per bar (小節ごとに切替)
+"
+            "phrase_hold: off
+"
+            "phrase_merge_gap: 0.02
+"
+            "chord_merge_gap: 0.01
+"
+            "cycle_start_bar: 0
+"
+            "cycle_mode: bar  # or 'chord'
+"
+            "cycle_stride: 1
+"
+            "merge_reset_at: none
+"
+            "voicing_mode: stacked  # or 'closed'
+"
+            "top_note_max: null
+"
+            "phrase_channel: null
+"
+            "chord_channel: null
+"
+            "accent: []
+"
+            "skip_phrase_in_rests: false
+"
+            "clone_meta_only: false
+"
+            "silent_qualities: []
+"
+            "swing: 0.0
+"
+            "swing_unit: 1/8
+"
+            "chord_input_range: {lo: 48, hi: 72}
+"
         )
 
 
@@ -720,11 +1329,13 @@ def build_sparkle_midi(
     chord_channel: Optional[int] = None,
     cycle_stride: int = 1,
     accent: Optional[List[float]] = None,
+    accent_map: Optional[Dict[str, List[float]]] = None,
     skip_phrase_in_rests: bool = False,
     silent_qualities: Optional[List[str]] = None,
     clone_meta_only: bool = False,
     stats: Optional[Dict] = None,
     merge_reset_at: str = "none",
+    # extras from codex branch
     section_lfo: Optional[SectionLFO] = None,
     stable_guard: Optional[StableChordGuard] = None,
     fill_policy: str = "section",
@@ -736,6 +1347,36 @@ def build_sparkle_midi(
     guide_onsets: Optional[List[int]] = None,
     guide_onset_th: int = 0,
     guide_style_note: Optional[int] = None,
+    # extras from main branch
+    guide_notes: Optional[Dict[int, int]] = None,
+    guide_quant: str = "bar",
+    guide_units: Optional[List[Tuple[float, float]]] = None,
+    rest_silence_hold_off: bool = False,
+    phrase_change_lead_beats: float = 0.0,
+    phrase_pool: Optional[Dict[str, Any]] = None,
+    phrase_pick: str = 'roundrobin',
+    no_repeat_window: int = 1,
+    rest_silence_send_stop: bool = False,
+    stop_min_gap_beats: float = 0.0,
+    stop_velocity: int = 64,
+    section_profiles: Optional[Dict[str, Dict]] = None,
+    sections: Optional[List[Dict]] = None,
+    section_default: str = 'verse',
+    section_verbose: bool = False,
+    style_layer_mode: str = 'off',
+    style_layer_every: int = 4,
+    style_layer_len_beats: float = 0.5,
+    style_phrase_pool: Optional[Dict[str, Any]] = None,
+    trend_window: int = 0,
+    trend_th: float = 0.0,
+    quantize_strength: Union[float, List[float]] = 0.0,
+    rng_pool: Optional[random.Random] = None,
+    rng_human: Optional[random.Random] = None,
+    write_markers: bool = False,
+    onset_list: Optional[List[int]] = None,
+    rest_list: Optional[List[float]] = None,
+    density_rules: Optional[List[Dict[str, Any]]] = None,
+    swing_shape: str = 'offbeat',
 ) -> "pretty_midi.PrettyMIDI":
     rng = rng or random.Random()
 
@@ -847,6 +1488,8 @@ def build_sparkle_midi(
         span = beat_times[idx + 1] - beat_times[idx]
         return idx + (t - beat_times[idx]) / span
 
+    unit_starts: List[float] = [u[0] for u in guide_units] if guide_units else []
+
     def maybe_merge_gap(inst, pitch, start_t, *, bar_start=None, chord_start=None):
         """Return merge gap or -1.0 to force new note at reset boundary."""
         mg = phrase_merge_gap
@@ -932,6 +1575,9 @@ def build_sparkle_midi(
         stats["fill_conflicts"] = []
         if estimated_4_4:
             stats["estimated_4_4"] = True
+    if any(den == 8 and num % 3 == 0 for _, num, den in meter_map):
+        if not math.isclose(swing_unit_beats, 1/12, abs_tol=EPS):
+            logging.info("suggest --swing-unit 1/12 for ternary feel")
 
     num_bars = len(downbeats) - 1
     density_map: Dict[int, str] = {}
@@ -989,19 +1635,107 @@ def build_sparkle_midi(
             if len(qs) == 1:
                 bar_qualities[i] = qs[0]
 
+    # From add-guide-midi-phrase-selection-and-damping branch
+    accent_by_bar: Dict[int, List[float]] = {}
+    accent_scale_by_bar: Dict[int, float] = {}
+    if accent_map:
+        def meter_at(t: float) -> Tuple[int, int]:
+            idx = 0
+            for j, (mt, num, den) in enumerate(meter_map):
+                if mt <= t:
+                    idx = j
+                else:
+                    break
+            return meter_map[idx][1], meter_map[idx][2]
+        for i, t in enumerate(downbeats):
+            num, den = meter_at(t)
+            key = f"{num}/{den}"
+            lst = accent_map.get(key)
+            if lst:
+                accent_by_bar[i] = lst
+
+    damp_scale_by_bar: Dict[int, Tuple[int, int]] = {}
+    bar_pool_pickers: Dict[int, PoolPicker] = {}
+    section_labels: List[str] = []
+    if sections:
+        for i in range(len(downbeats)):
+            tag = section_default
+            for sec in sections:
+                if sec.get('start_bar', 0) <= i < sec.get('end_bar', 0):
+                    tag = sec.get('tag', section_default)
+                    break
+            section_labels.append(tag)
+    elif stats is not None and stats.get('sections'):
+        section_labels = stats['sections']
+    else:
+        section_labels = [section_default] * len(downbeats)
+    if section_profiles:
+        for i, tag in enumerate(section_labels):
+            prof = section_profiles.get(tag)
+            if not prof:
+                continue
+            if 'accent' in prof:
+                accent_by_bar[i] = prof['accent']
+            if 'accent_scale' in prof:
+                try:
+                    accent_scale_by_bar[i] = float(prof['accent_scale'])
+                except Exception:
+                    pass
+            if 'damp_scale' in prof:
+                ds = prof['damp_scale']
+                if isinstance(ds, list) and len(ds) == 2:
+                    damp_scale_by_bar[i] = (int(ds[0]), int(ds[1]))
+            if 'phrase_pool' in prof:
+                notes = prof.get('phrase_pool', {}).get('notes', [])
+                weights = prof.get('phrase_pool', {}).get('weights', [1]*len(notes))
+                pool = []
+                for n, w in zip(notes, weights):
+                    nt = parse_note_token(n)
+                    if nt is not None:
+                        pool.append((nt, float(w)))
+                if pool:
+                    bar_pool_pickers[i] = PoolPicker(pool, phrase_pick, rng=rng_pool)
+            if 'phrase_pick' in prof:
+                bar_pool_pickers[i] = PoolPicker(bar_pool_pickers[i].pool if i in bar_pool_pickers else [], prof['phrase_pick'], rng=rng_pool)
+            if prof.get('no_immediate_repeat'):
+                no_repeat_window = max(no_repeat_window, 1)
+    density_override: Dict[int, int] = {}
+    if density_rules is None:
+        density_rules = [
+            {"rest_ratio": 0.5, "note": 24},
+            {"onset_count": 3, "note": 36},
+        ]
+    if rest_list is not None and onset_list is not None:
+        for i, (r, o) in enumerate(zip(rest_list, onset_list)):
+            for rule in density_rules:
+                note = None
+                if "rest_ratio" in rule and r >= rule["rest_ratio"]:
+                    note = parse_note_token(rule["note"])
+                elif "onset_count" in rule and o >= rule["onset_count"]:
+                    note = parse_note_token(rule["note"])
+                if note is not None:
+                    density_override[i] = note
+                    break
+    if section_verbose and section_labels:
+        logging.info("sections: %s", section_labels)
+
+    # From main branch: phrase scheduling support
+    # Build phrase plan and fill map (supports both 2- and 3-value returns)
     phrase_plan: List[Optional[int]] = []
     fill_map: Dict[int, int] = {}
+    fill_src: Dict[int, str] = {}
     if cycle_mode == "bar":
-        sections = mapping.get("sections")
+        sec_list = mapping.get("sections")
+        # ensure num_bars covers any chord tail that may extend last bar
         if chords:
             last_idx = max(max(0, bisect.bisect_right(downbeats, c.end - EPS) - 1) for c in chords)
             num_bars = max(num_bars, last_idx + 1)
             if len(bar_qualities) < num_bars:
                 bar_qualities.extend([None] * (num_bars - len(bar_qualities)))
-        phrase_plan, fill_map, fill_src = schedule_phrase_keys(
+        res = schedule_phrase_keys(
             num_bars,
             cycle_notes,
-            sections,
+            sec_list,
             mapping.get("style_fill"),
             cycle_start_bar=cycle_start_bar,
             cycle_stride=cycle_stride,
@@ -1015,12 +1749,17 @@ def build_sparkle_midi(
             rng=rng,
             stats=stats,
         )
+        if isinstance(res, tuple) and len(res) == 3:
+            phrase_plan, fill_map, fill_src = res  # type: ignore
+        else:
+            phrase_plan, fill_map = res  # type: ignore
+            fill_src = {}
         bar_sources = ["cycle"] * len(phrase_plan)
         if stats is not None:
             stats["bar_phrase_notes_list"] = list(phrase_plan)
             stats["fill_bars"] = list(fill_map.keys())
-        if sections:
-            for sec in sections:
+        if sec_list:
+            for sec in sec_list:
                 pool = sec.get("pool")
                 if pool:
                     start = int(sec.get("start_bar", 0))
@@ -1032,16 +1771,13 @@ def build_sparkle_midi(
                 alt = vocal_adapt.phrase_for_bar(i)
                 if alt is not None:
                     phrase_plan[i] = alt
-                    if bar_sources[i] != "vocal":
-                        bar_sources[i] = f"{bar_sources[i]}+vocal"
-                    else:
-                        bar_sources[i] = "vocal"
+                    bar_sources[i] = (f"{bar_sources[i]}+vocal" if bar_sources[i] != "vocal" else "vocal")
         if guide_onsets and guide_style_note is not None:
             for idx, cnt in enumerate(guide_onsets):
                 if cnt >= guide_onset_th:
                     tgt = idx - 1
                     if tgt >= 0 and tgt not in fill_map:
-                        fill_map[tgt] = (guide_style_note, pulse_subdiv_beats, 1.0)
+                        fill_map[tgt] = (guide_style_note, pulse_subdiv_beats, 1.0)  # type: ignore
                         fill_src[tgt] = "style"
                         if stats is not None:
                             stats["fill_bars"].append(tgt)
@@ -1051,6 +1787,7 @@ def build_sparkle_midi(
                 stats["bar_reason"][i] = {"source": bar_sources[i], "note": pn}
             stats["fill_sources"].update(fill_src)
 
+    # Precompute pulse timestamps per bar for reports (swing-aware)
     if stats is not None and phrase_hold != "off":
         for i, start in enumerate(downbeats):
             end = downbeats[i + 1] if i + 1 < len(downbeats) else pm_in.get_end_time()
@@ -1059,25 +1796,27 @@ def build_sparkle_midi(
             pulses: List[Tuple[float, float]] = []
             b = sb
             idx = 0
-            preset = (
-                DENSITY_PRESETS.get(
-                    stats.get("bar_density", {}).get(i, "med"), DENSITY_PRESETS["med"]
-                )
-                if stats
-                else DENSITY_PRESETS["med"]
-            )
             while b < eb - EPS:
                 t = beat_to_time(b)
                 pulses.append((b, t))
-                interval = pulse_subdiv_beats * preset["stride"]
-                if swing > 0.0 and abs(pulse_subdiv_beats - swing_unit_beats) < EPS:
-                    interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
+                interval = pulse_subdiv_beats
+                if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
+                    if swing_shape == 'offbeat':
+                        interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
+                    elif swing_shape == 'even':
+                        interval *= (1 - swing) if idx % 2 == 0 else (1 + swing)
+                    else:  # triplet-ish
+                        mod = idx % 3
+                        if mod == 0:
+                            interval *= (1 + swing)
+                        elif mod == 1:
+                            interval *= (1 - swing)
                 b += interval
                 idx += 1
             stats["bar_pulses"][i] = pulses
 
+    # Velocity curve helper
     bar_progress: Dict[int, int] = {}
-
     def vel_factor(mode: str, idx: int, total: int) -> float:
         if total <= 1:
             x = 0.0
@@ -1091,13 +1830,63 @@ def build_sparkle_midi(
             return math.sin(math.pi * x)
         return 1.0
 
+    # --- Unified phrase note picking (guide → density → cycle/plan → pool) ---
+    last_guided: Optional[int] = None
+    prev_hold: Optional[int] = None
+
+    pool_picker: Optional[PoolPicker] = None
+    if phrase_pool:
+        if isinstance(phrase_pool, list):
+            phrase_pool = {'pool': phrase_pool}
+        if phrase_pool.get('pool'):
+            pool_picker = PoolPicker(
+                phrase_pool['pool'],
+                phrase_pick,
+                T=phrase_pool.get('T'),
+                no_repeat_window=no_repeat_window,
+                rng=rng_pool,
+            )
+
+    trend_labels: List[int] = []
+    if onset_list is not None:
+        trend_labels = [0] * len(onset_list)
+        if trend_window > 0 and len(onset_list) > trend_window:
+            for i in range(trend_window, len(onset_list)):
+                prev = sum(onset_list[i - trend_window:i]) / trend_window
+                curr = sum(onset_list[i - trend_window + 1:i + 1]) / trend_window
+                slope = curr - prev
+                if slope > trend_th:
+                    trend_labels[i] = 1
+                elif slope < -trend_th:
+                    trend_labels[i] = -1
+
     last_bar_idx = -1
     last_bar_note: Optional[int] = None
 
     def pick_phrase_note(t: float, chord_idx: int) -> Optional[int]:
-        nonlocal last_bar_idx, last_bar_note
-        if phrase_plan:
-            bar_idx = max(0, bisect.bisect_right(downbeats, t) - 1)
+        nonlocal last_guided, last_bar_idx, last_bar_note
+        # 1) explicit guide notes
+        if guide_notes is not None:
+            if guide_quant == 'bar':
+                base = max(0, bisect.bisect_right(downbeats, t) - 1)
+            else:
+                base = max(0, bisect.bisect_right(beat_times, t) - 1)
+            note = guide_notes.get(base)
+            if note is None or last_guided == note:
+                return None
+            last_guided = note
+            return note
+        # 2) density override per bar
+        bar = max(0, bisect.bisect_right(downbeats, t) - 1)
+        if bar in density_override:
+            note = density_override[bar]
+            if last_guided == note:
+                return None
+            last_guided = note
+            return note
+        # 3) cycle / phrase plan
+        if phrase_plan is not None and (phrase_plan or cycle_notes):
+            bar_idx = bar
             if bar_idx < len(phrase_plan):
                 pn = phrase_plan[bar_idx]
             else:
@@ -1105,7 +1894,7 @@ def build_sparkle_midi(
                     idx = ((bar_idx + cycle_start_bar) // max(1, cycle_stride)) % len(cycle_notes)
                     pn = cycle_notes[idx]
                 else:
-                    pn = 36 + bar_idx
+                    pn = None
                 phrase_plan.append(pn)
             if bar_idx != last_bar_idx:
                 last_bar_idx = bar_idx
@@ -1115,17 +1904,16 @@ def build_sparkle_midi(
                 if pn == last_bar_note:
                     return None
                 last_bar_note = pn
-            if pn is None:
-                return None
             return pn
-        if not cycle_notes:
-            return phrase_note
-        if cycle_mode == "bar":
-            base = max(0, bisect.bisect_right(downbeats, t) - 1)
-        else:
-            base = chord_idx
-        idx = ((base + cycle_start_bar) // max(1, cycle_stride)) % len(cycle_notes)
-        return cycle_notes[idx]
+        # 4) section/bar pool pickers
+        if (pool_picker or bar_pool_pickers) and not cycle_notes:
+            picker = bar_pool_pickers.get(bar, pool_picker)
+            if picker:
+                if trend_labels and bar < len(trend_labels) and trend_labels[bar] != 0:
+                    notes = [n for n, _ in picker.pool]
+                    return max(notes) if trend_labels[bar] > 0 else min(notes)
+                return picker.pick()
+        return None
 
     def pulses_in_range(start_t: float, end_t: float) -> List[Tuple[int, int]]:
         indices: List[Tuple[int, int]] = []
@@ -1137,237 +1925,22 @@ def build_sparkle_midi(
             bar_start_b = time_to_beat(downbeats[bar_idx])
             idx = int(math.floor((b - bar_start_b + EPS) / pulse_subdiv_beats))
             indices.append((bar_idx, idx))
-            preset = (
-                DENSITY_PRESETS.get(
-                    stats.get("bar_density", {}).get(bar_idx, "med"), DENSITY_PRESETS["med"]
-                )
-                if stats
-                else DENSITY_PRESETS["med"]
-            )
-            interval = pulse_subdiv_beats * preset["stride"]
-            if swing > 0.0 and abs(pulse_subdiv_beats - swing_unit_beats) < EPS:
-                interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
+            interval = pulse_subdiv_beats
+            if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
+                if swing_shape == 'offbeat':
+                    interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
+                elif swing_shape == 'even':
+                    interval *= (1 - swing) if idx % 2 == 0 else (1 + swing)
+                else:
+                    mod = idx % 3
+                    if mod == 0:
+                        interval *= (1 + swing)
+                    elif mod == 1:
+                        interval *= (1 - swing)
             b += interval
         return indices
 
     silent_qualities = set(silent_qualities or [])
-    for c_idx, span in enumerate(chords):
-        is_silent = span.quality in silent_qualities or span.quality == "rest"
-        triad: List[int] = []
-        if not is_silent:
-            triad = triad_pitches(span.root_pc, span.quality, chord_oct, mapping)
-            if chord_range:
-                triad = place_in_range(
-                    triad, chord_range["lo"], chord_range["hi"], voicing_mode=voicing_mode
-                )
-            if top_note_max is not None:
-                while max(triad) > top_note_max and all(n - 12 >= 0 for n in triad):
-                    triad = [n - 12 for n in triad]
-                if triad and max(triad) > top_note_max:
-                    msg = f"top_note_max={top_note_max} cannot be satisfied for triad {triad}"
-                    if strict:
-                        raise SystemExit(msg)
-                    logging.warning(msg)
-            s_t, e_t = clip_note_interval(span.start, span.end, eps=EPS)
-            c_vel = chord_vel
-            if section_lfo and "chord" in lfo_targets:
-                bar_idx = max(0, bisect.bisect_right(downbeats, span.start) - 1)
-                c_vel = max(1, min(127, int(round(c_vel * section_lfo.vel_scale(bar_idx)))))
-                if stats is not None:
-                    stats["lfo_pos"][bar_idx] = section_lfo._pos(bar_idx)
-            for p in triad:
-                chord_inst.notes.append(
-                    pretty_midi.Note(velocity=c_vel, pitch=p, start=s_t, end=e_t)
-                )
-        if stats is not None:
-            stats["triads"].append(triad)
-        if skip_phrase_in_rests and is_silent:
-            continue
-
-        sb = time_to_beat(span.start)
-        eb = time_to_beat(span.end)
-        if phrase_hold == "chord":
-            pn = pick_phrase_note(span.start, c_idx)
-            if pn is not None:
-                bar_idx = max(0, bisect.bisect_right(downbeats, span.start) - 1)
-                total = bar_counts.get(bar_idx, 1)
-                vf = vel_factor(vel_curve, 0, total)
-                pulse_idx = pulses_in_range(span.start, span.end)
-                preset = (
-                    DENSITY_PRESETS.get(
-                        stats.get("bar_density", {}).get(bar_idx, "med"), DENSITY_PRESETS["med"]
-                    )
-                    if stats
-                    else DENSITY_PRESETS["med"]
-                )
-                acc_arr = accent_for_bar(bar_idx)
-                if acc_arr and pulse_idx:
-                    if held_vel_mode == "max":
-                        af = max(acc_arr[i % len(acc_arr)] for _, i in pulse_idx) * preset["accent"]
-                    elif held_vel_mode == "mean":
-                        af = (
-                            sum(acc_arr[i % len(acc_arr)] for _, i in pulse_idx) / len(pulse_idx)
-                        ) * preset["accent"]
-                    else:
-                        af = acc_arr[pulse_idx[0][1] % len(acc_arr)] * preset["accent"]
-                else:
-                    af = (acc_arr[0] if acc_arr else 1.0) * preset["accent"]
-                base_vel = max(1, min(127, int(round(phrase_vel * vf * af))))
-                base_vel = _duck(bar_idx, base_vel)
-                if section_lfo and "phrase" in lfo_targets:
-                    base_vel = max(
-                        1, min(127, int(round(base_vel * section_lfo.vel_scale(bar_idx))))
-                    )
-                    if stats is not None:
-                        stats["lfo_pos"][bar_idx] = section_lfo._pos(bar_idx)
-                if humanize_vel > 0:
-                    base_vel = max(
-                        1, min(127, int(round(base_vel + rng.uniform(-humanize_vel, humanize_vel))))
-                    )
-                if humanize_ms > 0.0:
-                    delta_s = rng.uniform(-humanize_ms, humanize_ms) / 1000.0
-                    delta_e = rng.uniform(-humanize_ms, humanize_ms) / 1000.0
-                else:
-                    delta_s = delta_e = 0.0
-                start_t = span.start + delta_s
-                if cycle_mode == "bar":
-                    start_t = max(downbeats[bar_idx], span.start, start_t)
-                else:
-                    start_t = max(span.start, start_t)
-                end_t = min(span.end, span.end + delta_e)
-                start_t, end_t = clip_note_interval(start_t, end_t, eps=EPS)
-                mg = maybe_merge_gap(
-                    phrase_inst, pn, start_t, bar_start=downbeats[bar_idx], chord_start=span.start
-                )
-                _append_phrase(
-                    phrase_inst,
-                    pn,
-                    start_t,
-                    end_t,
-                    base_vel,
-                    mg,
-                    release_sec,
-                    min_phrase_len_sec,
-                    stats,
-                )
-                if stats is not None:
-                    end_bar = max(0, bisect.bisect_right(downbeats, span.end - EPS) - 1)
-                    for bi in range(bar_idx, end_bar + 1):
-                        if bi not in stats["bar_phrase_notes"]:
-                            stats["bar_phrase_notes"][bi] = pn
-                        stats["bar_velocities"].setdefault(bi, []).append(base_vel)
-        elif phrase_hold == "bar":
-            bar_idx = max(0, bisect.bisect_right(downbeats, span.start) - 1)
-            while bar_idx < len(downbeats) and downbeats[bar_idx] < span.end:
-                bar_start = downbeats[bar_idx]
-                bar_end = (
-                    downbeats[bar_idx + 1] if bar_idx + 1 < len(downbeats) else pm_in.get_end_time()
-                )
-                start = max(span.start, bar_start)
-                end = min(span.end, bar_end)
-                pn = pick_phrase_note(start, c_idx)
-                if pn is not None:
-                    total = bar_counts.get(bar_idx, 1)
-                    vf = vel_factor(vel_curve, 0, total)
-                    pulse_idx = pulses_in_range(start, end)
-                    preset = (
-                        DENSITY_PRESETS.get(
-                            stats.get("bar_density", {}).get(bar_idx, "med"), DENSITY_PRESETS["med"]
-                        )
-                        if stats
-                        else DENSITY_PRESETS["med"]
-                    )
-                    acc_arr = accent_for_bar(bar_idx)
-                    if acc_arr and pulse_idx:
-                        if held_vel_mode == "max":
-                            af = (
-                                max(acc_arr[i % len(acc_arr)] for _, i in pulse_idx)
-                                * preset["accent"]
-                            )
-                        elif held_vel_mode == "mean":
-                            af = (
-                                sum(acc_arr[i % len(acc_arr)] for _, i in pulse_idx)
-                                / len(pulse_idx)
-                            ) * preset["accent"]
-                        else:
-                            af = acc_arr[pulse_idx[0][1] % len(acc_arr)] * preset["accent"]
-                    else:
-                        af = (acc_arr[0] if acc_arr else 1.0) * preset["accent"]
-                    base_vel = max(1, min(127, int(round(phrase_vel * vf * af))))
-                    base_vel = _duck(bar_idx, base_vel)
-                    if section_lfo:
-                        base_vel = max(
-                            1, min(127, int(round(base_vel * section_lfo.vel_scale(bar_idx))))
-                        )
-                    if humanize_vel > 0:
-                        base_vel = max(
-                            1,
-                            min(
-                                127, int(round(base_vel + rng.uniform(-humanize_vel, humanize_vel)))
-                            ),
-                        )
-                    if humanize_ms > 0.0:
-                        delta_s = rng.uniform(-humanize_ms, humanize_ms) / 1000.0
-                        delta_e = rng.uniform(-humanize_ms, humanize_ms) / 1000.0
-                    else:
-                        delta_s = delta_e = 0.0
-                    start_t = start + delta_s
-                    if cycle_mode == "bar":
-                        start_t = max(bar_start, span.start, start_t)
-                    else:
-                        start_t = max(span.start, start_t)
-                    end_t = min(end, end + delta_e)
-                    start_t, end_t = clip_note_interval(start_t, end_t, eps=EPS)
-                    mg = maybe_merge_gap(
-                        phrase_inst, pn, start_t, bar_start=bar_start, chord_start=span.start
-                    )
-                    _append_phrase(
-                        phrase_inst,
-                        pn,
-                        start_t,
-                        end_t,
-                        base_vel,
-                        mg,
-                        release_sec,
-                        min_phrase_len_sec,
-                        stats,
-                    )
-                    if stats is not None and bar_idx not in stats["bar_phrase_notes"]:
-                        stats["bar_phrase_notes"][bar_idx] = pn
-                    if stats is not None:
-                        stats["bar_velocities"].setdefault(bar_idx, []).append(base_vel)
-                bar_idx += 1
-        else:
-            b = sb
-            while b < eb - EPS:
-                t = beat_to_time(b)
-                bar_idx = max(0, bisect.bisect_right(downbeats, t) - 1)
-                preset = (
-                    DENSITY_PRESETS.get(
-                        stats.get("bar_density", {}).get(bar_idx, "med"), DENSITY_PRESETS["med"]
-                    )
-                    if stats
-                    else DENSITY_PRESETS["med"]
-                )
-                total = bar_counts.get(bar_idx, 1)
-                idx = bar_progress.get(bar_idx, 0)
-                bar_progress[bar_idx] = idx + 1
-                vf = vel_factor(vel_curve, idx, total)
-                acc_arr = accent_for_bar(bar_idx)
-                af = (acc_arr[idx % len(acc_arr)] if acc_arr else 1.0) * preset["accent"]
-                base_vel = max(1, min(127, int(round(phrase_vel * vf * af))))
-                base_vel = _duck(bar_idx, base_vel)
-                if section_lfo and "phrase" in lfo_targets:
-                    base_vel = max(
-                        1, min(127, int(round(base_vel * section_lfo.vel_scale(bar_idx))))
-                    )
-                    if stats is not None:
-                        stats["lfo_pos"][bar_idx] = section_lfo._pos(bar_idx)
-                if humanize_vel > 0:
-                    base_vel = max(
-                        1, min(127, int(round(base_vel + rng.uniform(-humanize_vel, humanize_vel))))
-                    )
-
                 interval = pulse_subdiv_beats * preset["stride"]
                 if swing > 0.0 and abs(pulse_subdiv_beats - swing_unit_beats) < EPS:
                     interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
@@ -1428,18 +2001,235 @@ def build_sparkle_midi(
                         stats["bar_velocities"].setdefault(bar_idx, []).append(base_vel)
                 b += beat_inc
 
-    for bar_idx, (pitch, dur, vscale) in fill_map.items():
+    # --- merged: accents / section profiles / density overrides / phrase plan ---
+    # Accents from meter and explicit accent_map
+    accent_by_bar: Dict[int, List[float]] = {}
+    accent_scale_by_bar: Dict[int, float] = {}
+    if accent_map:
+        def meter_at(t: float) -> Tuple[int, int]:
+            idx = 0
+            for j, (mt, num, den) in enumerate(meter_map):
+                if mt <= t:
+                    idx = j
+                else:
+                    break
+            return meter_map[idx][1], meter_map[idx][2]
+        for i, t in enumerate(downbeats):
+            num, den = meter_at(t)
+            key = f"{num}/{den}"
+            lst = accent_map.get(key)
+            if lst:
+                accent_by_bar[i] = lst
+
+    # Per-bar damp scaling and per-bar phrase pool pickers (from section profiles)
+    damp_scale_by_bar: Dict[int, Tuple[int, int]] = {}
+    bar_pool_pickers: Dict[int, PoolPicker] = {}
+
+    # Determine section labels per bar
+    section_labels: List[str] = []
+    if sections:
+        for i in range(len(downbeats)):
+            tag = section_default
+            for sec in sections:
+                if sec.get('start_bar', 0) <= i < sec.get('end_bar', 0):
+                    tag = sec.get('tag', section_default)
+                    break
+            section_labels.append(tag)
+    elif stats is not None and stats.get('sections'):
+        section_labels = stats['sections']
+    else:
+        section_labels = [section_default] * len(downbeats)
+
+    # Apply section_profiles overrides
+    if section_profiles:
+        for i, tag in enumerate(section_labels):
+            prof = section_profiles.get(tag)
+            if not prof:
+                continue
+            if 'accent' in prof:
+                accent_by_bar[i] = prof['accent']
+            if 'accent_scale' in prof:
+                try:
+                    accent_scale_by_bar[i] = float(prof['accent_scale'])
+                except Exception:
+                    pass
+            if 'damp_scale' in prof:
+                ds = prof['damp_scale']
+                if isinstance(ds, list) and len(ds) == 2:
+                    damp_scale_by_bar[i] = (int(ds[0]), int(ds[1]))
+            # Phrase pool / picker policy
+            if 'phrase_pool' in prof:
+                notes = prof.get('phrase_pool', {}).get('notes', [])
+                weights = prof.get('phrase_pool', {}).get('weights', [1]*len(notes))
+                pool: List[Tuple[int, float]] = []
+                for n, w in zip(notes, weights):
+                    nt = parse_note_token(n)
+                    if nt is not None:
+                        pool.append((int(nt), float(w)))
+                if pool:
+                    bar_pool_pickers[i] = PoolPicker(pool, phrase_pick, rng=rng_pool)
+            if 'phrase_pick' in prof:
+                # Rebuild picker with requested mode, reuse pool if available
+                existing_pool = bar_pool_pickers[i].pool if i in bar_pool_pickers else []
+                bar_pool_pickers[i] = PoolPicker(existing_pool, prof['phrase_pick'], rng=rng_pool)
+            if prof.get('no_immediate_repeat'):
+                no_repeat_window = max(no_repeat_window, 1)
+
+    # Density-driven overrides (e.g., force phrase keys on busy/silent bars)
+    density_override: Dict[int, int] = {}
+    if density_rules is None:
+        density_rules = [
+            {"rest_ratio": 0.5, "note": 24},
+            {"onset_count": 3, "note": 36},
+        ]
+    if rest_list is not None and onset_list is not None:
+        for i, (r, o) in enumerate(zip(rest_list, onset_list)):
+            for rule in density_rules:
+                note = None
+                if "rest_ratio" in rule and r >= rule["rest_ratio"]:
+                    note = parse_note_token(rule["note"])
+                elif "onset_count" in rule and o >= rule["onset_count"]:
+                    note = parse_note_token(rule["note"])
+                if note is not None:
+                    density_override[i] = int(note)
+                    break
+
+    if section_verbose and section_labels:
+        logging.info("sections: %s", section_labels)
+
+    # Phrase plan (cycle) and section-end fill mapping from main branch API
+    phrase_plan: List[Optional[int]] = []
+    fill_map: Dict[int, int] = {}
+    if cycle_mode == 'bar':
+        map_sections = mapping.get('sections') if isinstance(mapping, dict) else None
+        num_bars = max(0, len(downbeats) - 1)
+        if chords:
+            last_idx = max(max(0, bisect.bisect_right(downbeats, c.end - EPS) - 1) for c in chords)
+            num_bars = max(num_bars, last_idx + 1)
+        phrase_plan, fill_map = schedule_phrase_keys(
+            num_bars,
+            cycle_notes,
+            map_sections,
+            mapping.get('style_fill') if isinstance(mapping, dict) else None,
+            cycle_start_bar=cycle_start_bar,
+            cycle_stride=cycle_stride,
+        )
+
+    # --- merged: phrase_pool setup + trend + unified pick_phrase_note ---
+    # State for guide/density and pool picking
+    last_guided: Optional[int] = None
+    prev_hold: Optional[int] = None
+
+    # Optional global pool picker constructed from phrase_pool arg
+    pool_picker: Optional[PoolPicker] = None
+    if phrase_pool:
+        if isinstance(phrase_pool, list):
+            phrase_pool = {'pool': phrase_pool}
+        if phrase_pool.get('pool'):
+            pool_picker = PoolPicker(
+                phrase_pool['pool'],
+                phrase_pick,
+                T=phrase_pool.get('T'),
+                no_repeat_window=no_repeat_window,
+                rng=rng_pool,
+            )
+
+    # Simple trend labels over onset density
+    trend_labels: List[int] = []
+    if onset_list is not None:
+        trend_labels = [0] * len(onset_list)
+        if trend_window > 0 and len(onset_list) > trend_window:
+            for i in range(trend_window, len(onset_list)):
+                prev = sum(onset_list[i - trend_window:i]) / trend_window
+                curr = sum(onset_list[i - trend_window + 1:i + 1]) / trend_window
+                slope = curr - prev
+                if slope > trend_th:
+                    trend_labels[i] = 1
+                elif slope < -trend_th:
+                    trend_labels[i] = -1
+
+    # State for cycle/plan-based picking (from main branch)
+    last_bar_idx = -1
+    last_bar_note: Optional[int] = None
+
+    def pick_phrase_note(t: float, chord_idx: int) -> Optional[int]:
+        nonlocal last_guided, last_bar_idx, last_bar_note
+        # 1) Guide notes (highest priority)
+        if guide_notes is not None:
+            if guide_quant == 'bar':
+                base = max(0, bisect.bisect_right(downbeats, t) - 1)
+            else:
+                base = max(0, bisect.bisect_right(beat_times, t) - 1)
+            note = guide_notes.get(base)
+            if note is None:
+                return None
+            if last_guided == note:
+                return None
+            last_guided = note
+            return note
+
+        # 2) Density override per bar
+        bar = max(0, bisect.bisect_right(downbeats, t) - 1)
+        if bar in density_override:
+            note = density_override[bar]
+            if last_guided == note:
+                return None
+            last_guided = note
+            return note
+
+        # 3) Phrase plan / cycle from main branch if available
+        if phrase_plan is not None and (phrase_plan or cycle_notes):
+            bar_idx = bar
+            if bar_idx < len(phrase_plan):
+                pn = phrase_plan[bar_idx]
+            else:
+                if cycle_notes:
+                    idx = ((bar_idx + cycle_start_bar) // max(1, cycle_stride)) % len(cycle_notes)
+                    pn = cycle_notes[idx]
+                else:
+                    pn = 36 + bar_idx
+                phrase_plan.append(pn)
+            if bar_idx != last_bar_idx:
+                last_bar_idx = bar_idx
+                if pn is None:
+                    last_bar_note = None
+                    return None
+                if pn == last_bar_note:
+                    return None
+                last_bar_note = pn
+            if pn is None:
+                return None
+            return pn
+
+        # 4) Section/Bar pool pickers (with optional trend steering)
+        if (pool_picker or bar_pool_pickers) and not cycle_notes:
+            picker = bar_pool_pickers.get(bar, pool_picker)
+            if picker:
+                if trend_labels and bar < len(trend_labels) and trend_labels[bar] != 0:
+                    notes = [n for n, _ in picker.pool]
+                    return max(notes) if trend_labels[bar] > 0 else min(notes)
+                return picker.pick()
+
+        return None
+
+    # --- merged: section-end fills + stop keys + quantize + markers ---
+
+    # 1) Insert section-end fills from main branch plan (with optional LFO scaling)
+    for bar_idx, pitch in fill_map.items():
         if pitch is None or bar_idx + 1 >= len(downbeats):
             continue
-        end_b = bar_info.get(bar_idx, (0, 0, 0, time_to_beat(downbeats[bar_idx + 1]), 0))[3]
-        start_b = end_b - dur
+        start_b = time_to_beat(downbeats[bar_idx + 1]) - pulse_subdiv_beats
+        end_b = time_to_beat(downbeats[bar_idx + 1])
         start_t = beat_to_time(start_b)
         end_t = beat_to_time(end_b)
-        vel = max(1, min(127, int(round(phrase_vel * vscale))))
-        if section_lfo and "fill" in lfo_targets:
-            vel = max(1, min(127, int(round(vel * section_lfo.vel_scale(bar_idx)))))
-            if stats is not None:
-                stats["lfo_pos"][bar_idx] = section_lfo._pos(bar_idx)
+        vel = phrase_vel
+        if section_lfo and 'fill' in lfo_targets:
+            try:
+                vel = max(1, min(127, int(round(vel * section_lfo.vel_scale(bar_idx)))))
+                if stats is not None:
+                    stats.setdefault("lfo_pos", {})[bar_idx] = section_lfo._pos(bar_idx)
+            except Exception:
+                pass
         _append_phrase(
             phrase_inst,
             pitch,
@@ -1449,8 +2239,53 @@ def build_sparkle_midi(
             phrase_merge_gap,
             release_sec,
             min_phrase_len_sec,
-            stats,
         )
+
+    # 2) Send STOP key on long guide rests
+    if rest_silence_send_stop and guide_units and guide_notes is not None:
+        stop_pitch = mapping.get("style_stop") if isinstance(mapping, dict) else None
+        if stop_pitch is not None:
+            last_b = -1e9
+            for idx, (sb, _) in enumerate(guide_units):
+                if guide_notes.get(idx) is None and (sb - last_b) >= stop_min_gap_beats - EPS:
+                    st = beat_to_time(sb)
+                    en = beat_to_time(sb + min(0.1, pulse_subdiv_beats))
+                    phrase_inst.notes.append(
+                        pretty_midi.Note(
+                            velocity=int(stop_velocity),
+                            pitch=int(stop_pitch),
+                            start=st,
+                            end=en,
+                        )
+                    )
+                    last_b = sb
+
+    # 3) Quantize phrase notes towards the subdivision grid
+    qs_list = quantize_strength if isinstance(quantize_strength, list) else None
+    qs_val = float(quantize_strength) if not isinstance(quantize_strength, list) else 0.0
+    if (qs_list and any(x > 0 for x in qs_list)) or (qs_list is None and qs_val > 0.0):
+        for n in phrase_inst.notes:
+            sb = time_to_beat(n.start)
+            eb = time_to_beat(n.end)
+            gs = round(sb / pulse_subdiv_beats) * pulse_subdiv_beats
+            ge = round(eb / pulse_subdiv_beats) * pulse_subdiv_beats
+            if qs_list:
+                strength = qs_list[int(math.floor(sb)) % len(qs_list)]
+            else:
+                strength = qs_val
+            sb = sb + (gs - sb) * strength
+            eb = eb + (ge - eb) * strength
+            n.start = beat_to_time(sb)
+            n.end = beat_to_time(eb)
+
+    # 4) Write section markers
+    if write_markers and section_labels:
+        for i, t in enumerate(downbeats):
+            label = section_labels[i] if i < len(section_labels) else section_default
+            try:
+                out.markers.append(pretty_midi.Marker(label.upper(), t))
+            except Exception:
+                pass
 
     _legato_merge_chords(chord_inst, chord_merge_gap)
     out.instruments.append(chord_inst)
@@ -1494,95 +2329,126 @@ def main():
         "--cycle-start-bar", type=int, default=None, help="Bar offset for cycling (default 0)"
     )
     ap.add_argument("--cycle-mode", choices=["bar", "chord"], default=None, help="Cycle mode")
-    ap.add_argument(
-        "--cycle-stride",
-        type=int,
-        default=None,
-        help="Number of bars/chords before advancing cycle",
-    )
-    ap.add_argument(
-        "--merge-reset-at",
-        choices=["none", "bar", "chord"],
-        default=None,
-        help="Reset phrase merge at bar or chord boundaries",
-    )
-    ap.add_argument(
-        "--section-lfo",
-        type=str,
-        default=None,
-        help='JSON periodic arc scaling velocities/fill {"period":4,"vel":[0.9,1.1],"fill":[0,1]}',
-    )
-    ap.add_argument(
-        "--lfo-apply",
-        type=str,
-        default=None,
-        help='JSON list of LFO targets e.g. ["phrase","chord","fill"]',
-    )
-    ap.add_argument(
-        "--fill-policy",
-        type=str,
-        default="section",
-        choices=["section", "lfo", "style", "first", "last"],
-        help="Fill conflict resolution policy",
-    )
-    ap.add_argument(
-        "--stable-guard",
-        "--stable-chord-guard",
-        dest="stable_guard",
-        type=str,
-        default=None,
-        help='JSON stable chord guard {"min_hold_beats":4,"strategy":"alternate"}',
-    )
+    ap.add_argument("--cycle-stride", type=int, default=None, help="Number of bars/chords before advancing cycle")
+    ap.add_argument("--merge-reset-at", choices=["none", "bar", "chord"], default=None,
+                    help="Reset phrase merge at bar or chord boundaries")
+
+    # Phrase/guide/density controls
+    ap.add_argument("--phrase-pool", type=str, default=None,
+                    help="JSON list or mapping of phrase notes with optional weights")
+    ap.add_argument("--phrase-pick", choices=["roundrobin", "random", "weighted", "markov"],
+                    default="roundrobin", help="Selection policy for phrase-pool")
+    ap.add_argument("--no-repeat-window", type=int, default=1,
+                    help="Avoid repeating phrase notes within last K picks (default 1)")
+    ap.add_argument("--guide-midi", type=str, default=None, help="Guide MIDI for phrase selection")
+    ap.add_argument("--guide-quant", choices=["bar", "beat"], default="bar",
+                    help="Quantization unit for guide analysis")
+    ap.add_argument("--guide-thresholds", type=str,
+                    default='{"low":24,"mid":26,"high":36}',
+                    help="JSON mapping for density categories to phrase notes")
+    ap.add_argument("--guide-rest-silence-th", type=float, default=None,
+                    help="Rest ratio >=th suppresses phrase trigger")
+    ap.add_argument("--guide-onset-th", type=str,
+                    default='{"mid":1,"high":3}',
+                    help="JSON thresholds for onset counts")
+    ap.add_argument("--guide-pick", choices=["roundrobin", "random", "weighted", "markov"],
+                    default="roundrobin", help="Selection policy when guide thresholds give lists")
+
+    # Auto fill & damping/CC
+    ap.add_argument("--auto-fill", choices=["off", "section_end", "long_rest"], default="off",
+                    help="Insert style fill once")
+    ap.add_argument("--fill-length-beats", type=float, default=0.25,
+                    help="Length of style fill in beats")
+    ap.add_argument("--fill-min-gap-beats", type=float, default=0.0,
+                    help="Minimum gap before inserting another fill")
+    ap.add_argument("--fill-avoid-pitches", type=str, default=None,
+                    help="Comma-separated pitches to avoid when inserting fills")
+    ap.add_argument("--damp-cc", type=int, default=None,
+                    help="Emit CC from guide rest ratio (default 11)")
+    ap.add_argument("--damp-dst", choices=["phrase", "chord", "newtrack"], default="newtrack",
+                    help="Destination track for damping CC")
+    ap.add_argument("--damp-scale", type=int, nargs=2, default=None,
+                    help="Scale damping CC to [lo hi]")
+    ap.add_argument("--damp-curve", choices=["linear", "exp", "inv"], default="linear",
+                    help="Curve for damping CC mapping")
+    ap.add_argument("--damp-gamma", type=float, default=1.6,
+                    help="Gamma for exp damping curve")
+    ap.add_argument("--damp-smooth-sigma", type=float, default=0.0,
+                    help="Gaussian sigma for damping CC smoothing")
+    ap.add_argument("--damp-cc-min-interval-beats", type=float, default=0.0,
+                    help="Minimum beat interval between damping CC events")
+    ap.add_argument("--damp-cc-deadband", type=int, default=0,
+                    help="Drop CC if change within this value")
+    ap.add_argument("--damp-cc-clip", type=int, nargs=2, default=None,
+                    help="Clip damping CC to [lo hi]")
+
+    # Sections & profiles
+    ap.add_argument("--sections", type=str, default=None,
+                    help="JSON list of sections (start_bar,end_bar,tag)")
+    ap.add_argument("--section-profiles", type=str, default=None,
+                    help="YAML file of section profiles")
+    ap.add_argument("--section-default", type=str, default="verse",
+                    help="Default section tag if none")
+    ap.add_argument("--section-verbose", action="store_true", help="Log per-bar section tags")
+
+    # Humanize / groove / accents / swing
+    ap.add_argument("--humanize-timing-ms", type=float, default=0.0, help="Randomize note timing +/- ms")
+    ap.add_argument("--humanize-vel", type=int, default=0, help="Randomize velocity +/- value")
+    ap.add_argument("--vel-curve", choices=["flat", "up", "down", "sine"], default="flat", help="Velocity curve within bar")
+    ap.add_argument("--quantize-strength", type=float, default=0.0, help="Post-humanize quantize strength 0..1")
+    ap.add_argument("--seed", type=int, default=None, help="Random seed for humanization")
+    ap.add_argument("--swing", type=float, default=0.0, help="Swing amount 0..1")
+    ap.add_argument("--swing-unit", type=str, default="1/8", choices=["1/8", "1/12", "1/16"], help="Subdivision for swing")
+    ap.add_argument("--swing-shape", choices=["offbeat", "even", "triplet-emph"], default="offbeat",
+                    help="Swing placement pattern")
+    ap.add_argument("--accent", type=str, default=None, help="JSON velocity multipliers per pulse")
+
+    # Phrase behavior / merging / holds
+    ap.add_argument("--skip-phrase-in-rests", action="store_true", help="Suppress phrase notes in rest spans")
+    ap.add_argument("--rest-silence-hold-off", action="store_true",
+                    help="Release held phrase when rest-silence unit encountered")
+    ap.add_argument("--rest-silence-send-stop", action="store_true",
+                    help="Emit Stop key when entering rest-silence unit")
+    ap.add_argument("--stop-min-gap-beats", type=float, default=0.0,
+                    help="Minimum beats between Stop keys")
+    ap.add_argument("--stop-velocity", type=int, default=64,
+                    help="Velocity for Stop key")
+    ap.add_argument("--phrase-hold", choices=["off", "bar", "chord"], default=None,
+                    help="Hold phrase keys: off, bar, or chord (default: off)")
+    ap.add_argument("--phrase-merge-gap", type=float, default=None,
+                    help="Merge same-pitch phrase notes if gap <= seconds (default: 0.02)")
+    ap.add_argument("--chord-merge-gap", type=float, default=None,
+                    help="Merge same-pitch chord notes if gap <= seconds (default: 0.01)")
+    ap.add_argument("--phrase-release-ms", type=float, default=None,
+                    help="Shorten phrase note ends by ms (default: 0.0)")
+    ap.add_argument("--phrase-change-lead-beats", type=float, default=0.0,
+                    help="Lead time in beats before phrase change")
+    ap.add_argument("--min-phrase-len-ms", type=float, default=None,
+                    help="Minimum phrase note length in ms (default: 0.0)")
+    ap.add_argument("--held-vel-mode", choices=["first", "max", "mean"], default=None,
+                    help="Velocity for held notes: first, max, or mean accent (default: first)")
+
+    # Advanced dynamics/injection/guards
+    ap.add_argument("--section-lfo", type=str, default=None,
+                    help='JSON periodic arc scaling velocities/fill {"period":4,"vel":[0.9,1.1],"fill":[0,1]}')
+    ap.add_argument("--lfo-apply", type=str, default=None,
+                    help='JSON list of LFO targets e.g. ["phrase","chord","fill"]')
+    ap.add_argument("--fill-policy", type=str, default="section", choices=["section", "lfo", "style", "first", "last"],
+                    help="Fill conflict resolution policy")
+    ap.add_argument("--stable-guard", "--stable-chord-guard", dest="stable_guard", type=str, default=None,
+                    help='JSON stable chord guard {"min_hold_beats":4,"strategy":"alternate"}')
     ap.add_argument("--vocal-adapt", type=str, default=None, help="JSON vocal density adapt")
     ap.add_argument("--vocal-guide", type=str, default=None, help="Vocal MIDI guiding density")
     ap.add_argument("--guide-vocal", type=str, default=None, help="Automatic vocal-aware mode")
-    ap.add_argument("--guide-onset-th", type=int, default=4, help="Onset threshold for dense bars")
-    ap.add_argument(
-        "--guide-rest-th", type=float, default=0.5, help="Rest ratio threshold (unused)"
-    )
     ap.add_argument("--guide-style-every", type=int, default=0, help="Style fill period (unused)")
-    ap.add_argument(
-        "--guide-chorus-boost", type=float, default=1.0, help="Chorus fill boost (unused)"
-    )
-    ap.add_argument(
-        "--style-inject", type=str, default=None, help="JSON periodic style phrase injection"
-    )
-    ap.add_argument(
-        "--section-pool-weights",
-        type=str,
-        default=None,
-        help="JSON tag->{note:weight} override for section pools",
-    )
-    ap.add_argument(
-        "--vocal-ducking",
-        type=float,
-        default=0.0,
-        help="Scale phrase velocity in dense vocal bars (0-1)",
-    )
-    ap.add_argument("--debug-json", type=str, default=None, help="Write merged config to PATH")
-    ap.add_argument("--debug-md", type=str, default=None, help="Write debug markdown table")
-    ap.add_argument(
-        "--debug-midi-out", type=str, default=None, help="Write phrase-only MIDI to PATH"
-    )
-    ap.add_argument("--print-plan", action="store_true", help="Print per-bar phrase plan")
-    ap.add_argument(
-        "--report-json",
-        "--report",
-        dest="report_json",
-        type=str,
-        default=None,
-        help="Write stats JSON to PATH",
-    )
-    ap.add_argument("--report-md", type=str, default=None, help="Write stats markdown to PATH")
-    ap.add_argument(
-        "--damp",
-        type=str,
-        default="none",
-        help="Damping spec e.g. 'fixed:cc=11,value=64' or 'vocal:cc=11,channel=1'",
-    )
-    ap.add_argument(
-        "--log-level", type=str, default="info", choices=["debug", "info"], help="Logging level"
-    )
+    ap.add_argument("--guide-chorus-boost", type=float, default=1.0, help="Chorus fill boost (unused)")
+    ap.add_argument("--style-inject", type=str, default=None, help="JSON periodic style phrase injection")
+    ap.add_argument("--section-pool-weights", type=str, default=None,
+                    help="JSON tag->{note:weight} override for section pools")
+    ap.add_argument("--vocal-ducking", type=float, default=0.0,
+                    help="Scale phrase velocity in dense vocal bars (0-1)")
+
+    # Channels & misc
     ap.add_argument(
         "--phrase-channel",
         type=int,
@@ -1596,72 +2462,12 @@ def main():
         help="MIDI channel for chord notes (0-15, best effort; instruments are split regardless)",
     )
     ap.add_argument(
-        "--humanize-timing-ms", type=float, default=0.0, help="Randomize note timing +/- ms"
-    )
-    ap.add_argument("--humanize-vel", type=int, default=0, help="Randomize velocity +/- value")
-    ap.add_argument(
-        "--vel-curve",
-        choices=["flat", "up", "down", "sine"],
-        default="flat",
-        help="Velocity curve within bar",
-    )
-    ap.add_argument("--seed", type=int, default=None, help="Random seed for humanization")
-    ap.add_argument("--swing", type=float, default=0.0, help="Swing amount 0..1")
-    ap.add_argument(
-        "--swing-unit",
-        type=str,
-        default="1/8",
-        choices=["1/8", "1/16"],
-        help="Subdivision for swing",
-    )
-    ap.add_argument("--accent", type=str, default=None, help="JSON velocity multipliers per pulse")
-    ap.add_argument(
-        "--sections", type=str, default=None, help="JSON list of sections (start_bar,end_bar,tag)"
-    )
-    ap.add_argument(
-        "--skip-phrase-in-rests", action="store_true", help="Suppress phrase notes in rest spans"
-    )
-    ap.add_argument(
-        "--phrase-hold",
-        choices=["off", "bar", "chord"],
-        default=None,
-        help="Hold phrase keys: off, bar, or chord (default: off)",
-    )
-    ap.add_argument(
-        "--phrase-merge-gap",
-        type=float,
-        default=None,
-        help="Merge same-pitch phrase notes if gap <= seconds (default: 0.02)",
-    )
-    ap.add_argument(
-        "--chord-merge-gap",
-        type=float,
-        default=None,
-        help="Merge same-pitch chord notes if gap <= seconds (default: 0.01)",
-    )
-    ap.add_argument(
-        "--phrase-release-ms",
-        type=float,
-        default=None,
-        help="Shorten phrase note ends by ms (default: 0.0)",
-    )
-    ap.add_argument(
-        "--min-phrase-len-ms",
-        type=float,
-        default=None,
-        help="Minimum phrase note length in ms (default: 0.0)",
-    )
-    ap.add_argument(
-        "--held-vel-mode",
-        choices=["first", "max", "mean"],
-        default=None,
-        help="Velocity for held notes: first, max, or mean accent (default: first)",
-    )
-    ap.add_argument(
         "--clone-meta-only",
         action="store_true",
         help="Clone only tempo/time-signature from input (best effort across pretty_midi versions)",
     )
+
+    # Templates & debug/reporting
     ap.add_argument(
         "--write-mapping-template",
         action="store_true",
@@ -1679,6 +2485,17 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="Do not write output; log summary")
     ap.add_argument("--quiet", action="store_true", help="Reduce log output")
     ap.add_argument("--verbose", action="store_true", help="Increase log output")
+    ap.add_argument("--log-level", type=str, default="info", choices=["debug", "info"], help="Logging level")
+    ap.add_argument("--debug-json", type=str, default=None, help="Write merged config to PATH")
+    ap.add_argument("--debug-md", type=str, default=None, help="Write debug markdown table")
+    ap.add_argument("--print-plan", action="store_true", help="Print per-bar phrase plan")
+    ap.add_argument("--report-json", "--report", dest="report_json", type=str, default=None,
+                    help="Write stats JSON to PATH")
+    ap.add_argument("--report-md", type=str, default=None, help="Write stats markdown to PATH")
+    ap.add_argument("--debug-midi-out", type=str, default=None, help="Write phrase-only MIDI to PATH")
+    ap.add_argument("--bar-summary", type=str, default=None, help="Write per-bar summary CSV (with --dry-run)")
+    ap.add_argument("--debug-csv", type=str, default=None, help="Write per-bar debug CSV")
+
     args, extras = ap.parse_known_args()
 
     if extras and args.write_mapping_template:
@@ -1693,6 +2510,7 @@ def main():
     if extras:
         ap.error(f"unrecognized arguments: {' '.join(extras)}")
 
+    # Logging
     if args.quiet:
         level = logging.WARNING
     elif args.verbose:
@@ -1700,8 +2518,20 @@ def main():
     else:
         level = getattr(logging, args.log_level.upper(), logging.INFO)
     logging.basicConfig(level=level)
+
+    # Seeding: Python, NumPy (if present), and local RNGs
+    if args.seed is not None:
+        random.seed(args.seed)
+        try:
+            import numpy as np  # type: ignore
+            np.random.seed(args.seed)
+        except Exception:
+            pass
+    rng_pool = random.Random(args.seed) if args.seed is not None else random.Random()
+    rng_human = random.Random(args.seed + 1) if args.seed is not None else random.Random()
     rng = random.Random(args.seed)
 
+    # Mapping template path printing
     if (
         args.write_mapping_template
         or args.write_mapping_template_path
@@ -1731,7 +2561,7 @@ def main():
     if not (0.0 <= args.swing < 1.0):
         raise SystemExit("--swing must be 0.0<=s<1.0")
     swing = args.swing
-    if swing > 0.0 and abs(swing_unit_beats - pulse_beats) >= EPS:
+    if swing > 0.0 and not math.isclose(swing_unit_beats, pulse_beats, abs_tol=EPS):
         logging.info("swing disabled: swing unit %s != pulse %s", args.swing_unit, args.pulse)
         swing = 0.0
     swing = max(0.0, min(float(swing), 0.9))
@@ -1753,9 +2583,19 @@ def main():
     merge_reset_at = mapping.get("merge_reset_at", "none")
     phrase_channel = mapping.get("phrase_channel")
     chord_channel = mapping.get("chord_channel")
-    accent = validate_accent(mapping.get("accent"))
+    accent_map_cfg = mapping.get("accent_map")
+    accent_map = None
+    if accent_map_cfg is not None:
+        if not isinstance(accent_map_cfg, dict):
+            raise SystemExit("accent_map must be mapping meter->list")
+        accent_map = {}
+        for m, v in accent_map_cfg.items():
+            accent_map[str(m)] = validate_accent(v)
+    accent = validate_accent(mapping.get("accent")) if accent_map is None else None
     silent_qualities = mapping.get("silent_qualities", [])
     clone_meta_only = bool(mapping.get("clone_meta_only", False))
+
+    # CLI overrides
     if args.cycle_phrase_notes is not None:
         tokens = [t for t in args.cycle_phrase_notes.split(",") if t.strip()]
         cycle_notes = [parse_note_token(t) for t in tokens]
@@ -1780,8 +2620,9 @@ def main():
                 phrase_channel = val
             else:
                 chord_channel = val
-    if args.accent is not None:
+    if args.accent is not None and accent_map is None:
         accent = parse_accent_arg(args.accent)
+
     sections = mapping.get("sections")
     if args.sections is not None:
         try:
@@ -1802,6 +2643,7 @@ def main():
             density = sec.get("density")
             if density is not None and density not in ("low", "med", "high"):
                 raise SystemExit("sections density must be low|med|high")
+
     mapping["cycle_phrase_notes"] = cycle_notes
     mapping["cycle_start_bar"] = cycle_start_bar
     mapping["cycle_mode"] = cycle_mode
@@ -1811,9 +2653,11 @@ def main():
     mapping["merge_reset_at"] = merge_reset_at
     mapping["phrase_channel"] = phrase_channel
     mapping["chord_channel"] = chord_channel
+    mapping["accent_map"] = accent_map
     mapping["accent"] = accent
     mapping["sections"] = sections
     mapping["silent_qualities"] = silent_qualities
+
     section_lfo_cfg = mapping.get("section_lfo")
     if args.section_lfo is not None:
         try:
@@ -1828,6 +2672,7 @@ def main():
         fill = section_lfo_cfg.get("fill", [0.0, 0.0])
         section_lfo_obj = SectionLFO(period, vel_range=tuple(vel), fill_range=tuple(fill))
         mapping["section_lfo"] = section_lfo_cfg
+
     lfo_apply = mapping.get("lfo_apply", ["phrase"])
     if args.lfo_apply is not None:
         try:
@@ -1836,6 +2681,7 @@ def main():
             raise SystemExit('--lfo-apply must be JSON list e.g. ["phrase","chord","fill"]')
     mapping["lfo_apply"] = lfo_apply
     mapping["fill_policy"] = args.fill_policy
+
     stable_cfg = mapping.get("stable_chord_guard")
     if args.stable_guard is not None:
         try:
@@ -1849,8 +2695,10 @@ def main():
             int(stable_cfg.get("min_hold_beats", 0)), stable_cfg.get("strategy", "skip")
         )
         mapping["stable_chord_guard"] = stable_cfg
+
     guide_onsets = None
     guide_style_note = NOTE_ALIASES.get("style_fill", 40)
+
     vocal_cfg = mapping.get("vocal_adapt")
     if args.vocal_adapt is not None:
         try:
@@ -1890,6 +2738,7 @@ def main():
             int(vocal_cfg.get("smooth_bars", 0)),
         )
         mapping["vocal_adapt"] = vocal_cfg
+
     style_cfg = mapping.get("style_inject")
     if args.style_inject is not None:
         try:
@@ -1899,6 +2748,7 @@ def main():
     if style_cfg:
         style_cfg = validate_style_inject_cfg(style_cfg)
         mapping["style_inject"] = style_cfg
+
     spw = None
     if args.section_pool_weights:
         try:
@@ -1906,6 +2756,7 @@ def main():
             spw = {str(k): {int(n): float(w) for n, w in v.items()} for k, v in raw.items()}
         except Exception:
             raise SystemExit('--section-pool-weights must be JSON like {"verse":{"36":1.0}}')
+
     phrase_hold = mapping.get("phrase_hold", "off")
     phrase_merge_gap = float(mapping.get("phrase_merge_gap", 0.02))
     chord_merge_gap = float(mapping.get("chord_merge_gap", 0.01))
@@ -1924,6 +2775,8 @@ def main():
         min_phrase_len_ms = args.min_phrase_len_ms
     if args.held_vel_mode is not None:
         held_vel_mode = args.held_vel_mode
+
+    phrase_pool = parse_phrase_pool_arg(args.phrase_pool) if args.phrase_pool else None
     phrase_merge_gap = max(0.0, phrase_merge_gap)
     chord_merge_gap = max(0.0, chord_merge_gap)
     phrase_release_ms = max(0.0, phrase_release_ms)
@@ -1940,6 +2793,61 @@ def main():
     if args.debug_json:
         Path(args.debug_json).write_text(json.dumps(mapping, indent=2))
 
+    # Guide MIDI & damping extraction
+    guide_notes = None
+    guide_cc = None
+    guide_units = None
+    rest_ratios = None
+    onset_counts = None
+    damp_cc_num = args.damp_cc if args.damp_cc is not None else None
+    if damp_cc_num is None:
+        damp_cc_num = 11
+    if not (0 <= damp_cc_num <= 127):
+        raise SystemExit("--damp-cc must be 0-127")
+    damp_dst = args.damp_dst
+    if getattr(args, 'damp_on_phrase_track', False):  # hidden/compat
+        damp_dst = 'phrase'
+
+    if args.guide_midi:
+        g_pm = pretty_midi.PrettyMIDI(args.guide_midi)
+        thresholds = parse_thresholds_arg(args.guide_thresholds)
+        onset_cfg = parse_onset_th_arg(args.guide_onset_th)
+        (guide_notes, guide_cc, guide_units_time, rest_ratios, onset_counts, sections
+         ) = summarize_guide_midi(
+            g_pm, args.guide_quant, thresholds,
+            rest_silence_th=args.guide_rest_silence_th,
+            onset_th=onset_cfg,
+            note_tokens_allowed=False,
+            curve=args.damp_curve,
+            gamma=args.damp_gamma,
+            smooth_sigma=args.damp_smooth_sigma,
+            pick_mode=args.guide_pick)
+        guide_cc = thin_cc_events(guide_cc,
+                                  min_interval_beats=args.damp_cc_min_interval_beats,
+                                  deadband=args.damp_cc_deadband,
+                                  clip=tuple(args.damp_cc_clip) if args.damp_cc_clip else None)
+        if args.damp_scale:
+            lo, hi = args.damp_scale
+            scaled: List[Tuple[float, int]] = []
+            for b, v in guide_cc:
+                nv = int(round(lo + (hi - lo) * (v / 127.0)))
+                nv = max(0, min(127, nv))
+                scaled.append((b, nv))
+            guide_cc = scaled
+        g_beats = g_pm.get_beats()
+        def g_time_to_beat(t: float) -> float:
+            idx = bisect.bisect_right(g_beats, t) - 1
+            if idx < 0:
+                return 0.0
+            if idx >= len(g_beats) - 1:
+                last = g_beats[-1] - g_beats[-2]
+                return (len(g_beats) - 1) + (t - g_beats[-1]) / last
+            span = g_beats[idx + 1] - g_beats[idx]
+            return idx + (t - g_beats[idx]) / span
+        guide_units = [(g_time_to_beat(s), g_time_to_beat(e)) for s, e in guide_units_time]
+        stats["sections"] = sections
+
+    # Chords
     if args.chords:
         chord_path = Path(args.chords)
         if chord_path.suffix in {".yaml", ".yml"}:
@@ -1950,61 +2858,183 @@ def main():
         chords = infer_chords_by_bar(pm, ts_num, ts_den)
 
     stats: Dict = {}
-    out_pm = build_sparkle_midi(
-        pm,
-        chords,
-        mapping,
-        pulse_beats,
-        cycle_mode,
-        args.humanize_timing_ms,
-        args.humanize_vel,
-        args.vel_curve,
-        bpm,
-        swing,
-        swing_unit_beats,
-        phrase_channel=phrase_channel,
-        chord_channel=chord_channel,
-        cycle_stride=cycle_stride,
-        accent=accent,
-        skip_phrase_in_rests=args.skip_phrase_in_rests,
-        silent_qualities=silent_qualities,
-        clone_meta_only=clone_meta_only,
-        stats=stats,
-        merge_reset_at=merge_reset_at,
-        section_lfo=section_lfo_obj,
-        stable_guard=stable_obj,
-        fill_policy=args.fill_policy,
-        vocal_adapt=vocal_obj,
-        vocal_ducking=args.vocal_ducking,
-        lfo_targets=tuple(lfo_apply),
-        section_pool_weights=spw,
-        rng=rng,
-        guide_onsets=guide_onsets,
-        guide_onset_th=args.guide_onset_th,
-        guide_style_note=guide_style_note,
-    )
-    stats["seed_used"] = args.seed
-    if args.debug_md:
-        write_debug_md(stats, args.debug_md)
-    if args.print_plan and stats.get("bar_reason"):
-        for i in sorted(stats["bar_reason"]):
-            note = stats["bar_reason"][i]["note"]
-            src = stats["bar_reason"][i]["source"]
-            alias = NOTE_ALIAS_INV.get(note, str(note) if note is not None else "rest")
-            print(f"bar {i}: {alias} | {src}")
-    mode, damp_kw = parse_damp_arg(args.damp)
-    if mode == "vocal" and vocal_cfg:
-        damp_kw.setdefault("vocal_ratios", vocal_cfg.get("ratios"))
-        damp_kw.setdefault("downbeats", stats.get("downbeats"))
-    emit_damping(out_pm, mode, **damp_kw)
-    if args.debug_midi_out:
-        dbg = pretty_midi.PrettyMIDI()
-        for inst in out_pm.instruments:
-            if inst.name == PHRASE_INST_NAME:
-                dbg.instruments.append(inst)
-        dbg.write(args.debug_midi_out)
-    if args.report_json or args.report_md:
-        write_reports(stats, args.report_json, args.report_md)
+
+    section_overrides = None
+    if args.sections:
+        try:
+            section_overrides = json.loads(args.sections)
+        except Exception:
+            raise SystemExit("--sections must be JSON")
+    section_profiles = None
+    if args.section_profiles:
+        if yaml is None:
+            raise SystemExit("PyYAML required for --section-profiles")
+        section_profiles = yaml.safe_load(Path(args.section_profiles).read_text()) or {}
+    density_rules = None
+
+    out_pm = build_sparkle_midi(pm, chords, mapping, pulse_beats, cycle_mode,
+                                args.humanize_timing_ms, args.humanize_vel,
+                                args.vel_curve, bpm, swing, swing_unit_beats,
+                                phrase_channel=phrase_channel, chord_channel=chord_channel,
+                                cycle_stride=cycle_stride, accent=accent, accent_map=mapping.get("accent_map"),
+                                skip_phrase_in_rests=args.skip_phrase_in_rests,
+                                silent_qualities=silent_qualities,
+                                clone_meta_only=clone_meta_only, stats=stats,
+                                merge_reset_at=merge_reset_at,
+                                guide_notes=guide_notes, guide_quant=args.guide_quant,
+                                guide_units=guide_units,
+                                rest_silence_hold_off=args.rest_silence_hold_off,
+                                phrase_change_lead_beats=args.phrase_change_lead_beats,
+                                phrase_pool=phrase_pool,
+                                phrase_pick=args.phrase_pick,
+                                no_repeat_window=args.no_repeat_window,
+                                rest_silence_send_stop=args.rest_silence_send_stop,
+                                stop_min_gap_beats=args.stop_min_gap_beats,
+                                stop_velocity=args.stop_velocity,
+                                section_profiles=section_profiles,
+                                sections=section_overrides,
+                                section_default=args.section_default,
+                                section_verbose=args.section_verbose,
+                                quantize_strength=args.quantize_strength,
+                                rng_pool=rng_pool,
+                                rng_human=rng_human,
+                                write_markers=getattr(args, 'write_markers', False),
+                                onset_list=onset_counts,
+                                rest_list=rest_ratios,
+                                density_rules=density_rules,
+                                swing_shape=args.swing_shape,
+                                section_lfo=section_lfo_obj,
+                                stable_guard=stable_obj,
+                                fill_policy=args.fill_policy,
+                                vocal_adapt=vocal_obj,
+                                vocal_ducking=args.vocal_ducking,
+                                lfo_targets=tuple(lfo_apply),
+                                section_pool_weights=spw,
+                                rng=rng,
+                                guide_onsets=guide_onsets,
+                                guide_onset_th=parse_int_or(args.guide_onset_th, 4),
+                                guide_style_note=guide_style_note,
+                                )
+
+    # Map guide beats to out_pm time for CC and unit reporting
+    if guide_units:
+        out_beats = out_pm.get_beats()
+        def out_beat_to_time(b: float) -> float:
+            idx = int(math.floor(b))
+            frac = b - idx
+            if idx >= len(out_beats) - 1:
+                last = out_beats[-1] - out_beats[-2]
+                return out_beats[-1] + (b - (len(out_beats) - 1)) * last
+            return out_beats[idx] + frac * (out_beats[idx + 1] - out_beats[idx])
+        guide_units_time = [(out_beat_to_time(s), out_beat_to_time(e)) for s, e in guide_units]
+        guide_cc = [(out_beat_to_time(b), v) for b, v in guide_cc]
+    else:
+        guide_units_time = None
+
+    if section_overrides and stats.get("sections"):
+        for sec in section_overrides:
+            s = int(sec.get("start_bar", 0))
+            e = int(sec.get("end_bar", s))
+            tag = sec.get("tag", "section")
+            for b in range(s, e):
+                if 0 <= b < len(stats["sections"]):
+                    stats["sections"][b] = tag
+
+    # Auto fill insertion on guide rests
+    fill_count = 0
+    sections = stats.get("sections")
+    if args.auto_fill != 'off' and guide_units_time:
+        avoid = None
+        if args.fill_avoid_pitches:
+            toks = [t.strip() for t in args.fill_avoid_pitches.split(',') if t.strip()]
+            avoid = set()
+            for tok in toks:
+                val = parse_note_token(tok)
+                if val is None:
+                    raise SystemExit("fill-avoid-pitches cannot include 'rest'")
+                avoid.add(val)
+        fill_count = insert_style_fill(out_pm, args.auto_fill, guide_units_time, mapping,
+                                       sections=sections,
+                                       rest_ratio_list=rest_ratios,
+                                       rest_th=args.guide_rest_silence_th or 0.75,
+                                       fill_length_beats=args.fill_length_beats,
+                                       bpm=bpm,
+                                       min_gap_beats=args.fill_min_gap_beats,
+                                       avoid_pitches=avoid,
+                                       filled_bars=stats.setdefault('fill_bars', []))
+
+    # Emit damping CC to selected destination
+    cc_stats = None
+    if guide_cc:
+        if damp_dst == 'phrase':
+            inst = next((i for i in out_pm.instruments if i.name == PHRASE_INST_NAME), None)
+            if inst is None:
+                inst = pretty_midi.Instrument(program=0, name=PHRASE_INST_NAME)
+                out_pm.instruments.append(inst)
+        elif damp_dst == 'chord':
+            inst = next((i for i in out_pm.instruments if i.name == CHORD_INST_NAME), None)
+            if inst is None:
+                inst = chord_inst
+                if inst not in out_pm.instruments:
+                    out_pm.instruments.append(inst)
+        else:
+            inst = pretty_midi.Instrument(program=0, name=DAMP_INST_NAME)
+            out_pm.instruments.append(inst)
+        for t, v in guide_cc:
+            inst.control_changes.append(pretty_midi.ControlChange(number=damp_cc_num, value=v, time=t))
+        vals = [v for _, v in guide_cc]
+        cc_stats = {"min": min(vals), "max": max(vals), "mean": sum(vals)/len(vals), "count": len(vals)}
+
+    # Reports / debug artifacts
+    if stats is not None and guide_notes is not None:
+        stats["guide_keys"] = [guide_notes.get(i) for i in sorted(guide_notes.keys())]
+        stats["fill_count"] = fill_count
+        if rest_ratios is not None and onset_counts is not None and guide_cc:
+            sample = []
+            for i in range(min(4, len(guide_cc))):
+                sample.append({"bar": i, "onset": onset_counts[i],
+                               "rest": rest_ratios[i], "cc": guide_cc[i][1]})
+            stats["guide_sample"] = sample
+            if args.guide_rest_silence_th is not None:
+                stats["rest_silence"] = sum(1 for r in rest_ratios if r >= args.guide_rest_silence_th)
+        if cc_stats:
+            stats["damp_stats"] = cc_stats
+        stats["auto_fill"] = {"mode": args.auto_fill, "count": fill_count,
+                                "length_beats": args.fill_length_beats}
+
+    if args.debug_csv and rest_ratios is not None and onset_counts is not None:
+        with open(args.debug_csv, 'w', newline='') as fp:
+            writer = csv.writer(fp)
+            writer.writerow(['bar', 'onset_count', 'rest_ratio', 'phrase_note', 'cc_value', 'section'])
+            cc_map = {i: v for i, (_, v) in enumerate(guide_cc)} if guide_cc else {}
+            sect = stats.get('sections') or []
+            for i in range(len(onset_counts)):
+                pn = stats.get("bar_phrase_notes", {}).get(i)
+                writer.writerow([i, onset_counts[i], rest_ratios[i], pn if pn is not None else '', cc_map.get(i, ''), sect[i] if i < len(sect) else ''])
+
+    if args.bar_summary and rest_ratios is not None and onset_counts is not None:
+        with open(args.bar_summary, 'w', newline='') as fp:
+            writer = csv.writer(fp)
+            writer.writerow(['bar','section','phrase_note','pulses_emitted','onsets','rest_ratio','avg_vel','fill_flag','cc_value'])
+            sect = stats.get('sections') or []
+            bar_vel = stats.get('bar_velocities', {})
+            fill_bars = set(stats.get('fill_bars', []))
+            cc_map = {i: v for i, (_, v) in enumerate(guide_cc)} if guide_cc else {}
+            for i in range(len(onset_counts)):
+                pn = stats.get('bar_phrase_notes', {}).get(i)
+                pulses = len(stats.get('bar_pulses', {}).get(i, []))
+                vel_list = bar_vel.get(i, [])
+                avg_vel = sum(vel_list)/len(vel_list) if vel_list else ''
+                writer.writerow([i,
+                                 sect[i] if i < len(sect) else args.section_default,
+                                 pn if pn is not None else '',
+                                 pulses,
+                                 onset_counts[i],
+                                 rest_ratios[i],
+                                 avg_vel,
+                                 1 if i in fill_bars else 0,
+                                 cc_map.get(i, '')])
+
     if args.dry_run:
         phrase_inst = None
         for inst in out_pm.instruments:
@@ -2045,6 +3075,7 @@ def main():
             )
         for i in range(min(4, stats.get("bar_count", 0))):
             pn = stats["bar_phrase_notes"].get(i, mapping.get("phrase_note"))
+            prev = stats["bar_phrase_notes"].get(i - 1) if i > 0 else None
             pulses = stats["bar_pulses"].get(i, [])
             vels = stats["bar_velocities"].get(i, [])
             if str(mapping.get("phrase_hold")) != "off" and phrase_inst is not None:
@@ -2055,13 +3086,26 @@ def main():
                     else out_pm.get_end_time()
                 )
                 trig = sum(1 for n in phrase_inst.notes if bar_start <= n.start < bar_end)
-                logging.info("bar %d | phrase %s | triggers %d | vel %s", i, pn, trig, vels)
+                logging.info("bar %d | phrase %s->%s | triggers %d | vel %s", i, prev, pn, trig, vels)
             else:
-                logging.info("bar %d | phrase %s | pulses %d | vel %s", i, pn, len(pulses), vels)
+                logging.info("bar %d | phrase %s->%s | pulses %d | vel %s", i, prev, pn, len(pulses), vels)
+        if stats.get("guide_keys"):
+            logging.info("guide_keys=%s guide_index=%s",
+                         stats.get("guide_keys"),
+                         'beat' if args.guide_quant == 'beat' else 'bar')
+        if stats.get("guide_sample"):
+            logging.info("guide_sample=%s", stats.get("guide_sample"))
+        if stats.get("auto_fill"):
+            logging.info("auto_fill=%s", stats.get("auto_fill"))
+        if stats.get("rest_silence") is not None:
+            logging.info("rest_silence=%s bars", stats.get("rest_silence"))
+        if stats.get("damp_stats"):
+            logging.info("damp_cc=%s", stats.get("damp_stats"))
         if args.verbose:
             for b_idx in sorted(stats["bar_pulses"].keys()):
                 logging.info("bar %d pulses %s", b_idx, stats["bar_pulses"][b_idx])
         return
+
     out_pm.write(args.out)
     logging.info("Wrote %s", args.out)
 

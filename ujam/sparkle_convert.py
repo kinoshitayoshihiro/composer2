@@ -335,6 +335,38 @@ def parse_note_token(tok: Union[str, int], *, warn_unknown: bool = False) -> Opt
         raise SystemExit(f"Invalid note token: {tok}") from e
 
 
+def _dummy_pm(length: float = 6.0):
+    """Create a minimal PrettyMIDI-like object for tests."""
+
+    class Dummy:
+        def __init__(self, length: float) -> None:
+            self._length = length
+            inst = pretty_midi.Instrument(0)
+            inst.notes.append(pretty_midi.Note(velocity=1, pitch=60, start=0.0, end=length))
+            inst.is_drum = False
+            self.instruments = [inst]
+            self.time_signature_changes = []
+
+        def get_beats(self):
+            step = 0.5  # 120 bpm
+            n = int(self._length / step) + 1
+            return [i * step for i in range(n)]
+
+        def get_downbeats(self):
+            return self.get_beats()[::4]
+
+        def get_end_time(self):
+            return self._length
+
+        def get_tempo_changes(self):
+            return [0.0], [120.0]
+
+        def write(self, path: str) -> None:  # pragma: no cover
+            Path(path).write_bytes(b"")
+
+    return Dummy(length)
+
+
 def clip_note_interval(start_t: float, end_t: float, *, eps: float = EPS) -> Tuple[float, float]:
     """Ensure end_t is at least eps after start_t and clamp negatives."""
     if start_t < 0:

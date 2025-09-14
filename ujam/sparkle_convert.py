@@ -49,7 +49,8 @@ import collections
 import itertools
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Union, Set, Any
+from typing import List, Optional, Tuple, Dict, Union, Set, Any, Callable
+from textwrap import dedent
 
 try:
     import pretty_midi  # type: ignore
@@ -87,6 +88,198 @@ NOTE_ALIAS_INV: Dict[int, str] = {}
 
 EPS = 1e-9
 
+
+@dataclass
+class RuntimeContext:
+    """Container for runtime state used during phrase emission.
+
+    Attributes
+    ----------
+    rng:
+        Random number generator for humanization.
+    section_lfo:
+        Optional low-frequency oscillator scaling velocities per bar.
+    humanize_ms:
+        Timing jitter range in milliseconds.
+    humanize_vel:
+        Velocity jitter range.
+    beat_to_time, time_to_beat:
+        Conversion helpers between beat indices and seconds.
+    clip:
+        Function clamping note intervals.
+    maybe_merge_gap:
+        Function deciding merge gaps for adjacent notes.
+    append_phrase:
+        Callback appending phrase notes to the output instrument.
+    vel_factor:
+        Function computing per-pulse velocity scaling.
+    accent_by_bar, bar_counts, preset_by_bar:
+        Immutable per-bar caches.
+    vel_curve:
+        Velocity curve mode.
+    downbeats:
+        List of bar start times in seconds.
+    cycle_mode:
+        Phrase cycle mode ("bar" or "chord").
+    phrase_len_beats:
+        Nominal phrase length in beats.
+    phrase_inst:
+        Destination instrument for phrase notes.
+    pick_phrase_note:
+        Callback choosing which phrase note to emit.
+    release_sec, min_phrase_len_sec:
+        Timing constants forwarded to ``append_phrase``.
+    phrase_vel:
+        Base phrase velocity before scaling.
+    duck:
+        Function applying vocal ducking to velocities.
+    lfo_targets:
+        Tuple of streams affected by the section LFO.
+    stable_guard:
+        Optional guard suppressing rapid chord changes.
+    stats:
+        Mutable statistics dictionary (updated in place).
+    bar_progress:
+        Mutable pulse counters per bar.
+    pulse_subdiv_beats, swing, swing_unit_beats:
+        Timing parameters for pulse scheduling.
+    EPS:
+        Minimal interval constant.
+    """
+
+    rng: random.Random
+    section_lfo: Optional[SectionLFO]
+    humanize_ms: float
+    humanize_vel: float
+    beat_to_time: Callable[[float], float]
+    time_to_beat: Callable[[float], float]
+    clip: Callable[[float, float], Tuple[float, float]]
+    maybe_merge_gap: Callable[..., float]
+    append_phrase: Callable[..., None]
+    vel_factor: Callable[[str, int, int], float]
+    accent_by_bar: Dict[int, Optional[List[float]]]
+    bar_counts: Dict[int, int]
+    preset_by_bar: Dict[int, Dict[str, float]]
+    vel_curve: str
+    downbeats: List[float]
+    cycle_mode: str
+    phrase_len_beats: float
+    phrase_inst: "pretty_midi.Instrument"
+    pick_phrase_note: Callable[[float, int], Optional[int]]
+    release_sec: float
+    min_phrase_len_sec: float
+    phrase_vel: int
+    duck: Callable[[int, int], int]
+    lfo_targets: Tuple[str, ...]
+    stable_guard: Optional[StableChordGuard]
+    stats: Optional[Dict]
+    bar_progress: Dict[int, int]
+    pulse_subdiv_beats: float
+    swing: float
+    swing_unit_beats: float
+    EPS: float = EPS
+
+
+def _emit_phrases_for_span(span: "ChordSpan", c_idx: int, ctx: RuntimeContext) -> None:
+    """Emit phrase triggers for a single chord span.
+
+    Parameters
+    ----------
+    span:
+        Chord span defining start/end times and quality.
+    c_idx:
+        Index of the span within the chord list.
+    ctx:
+        RuntimeContext carrying helpers and precomputed state.
+
+    Side Effects
+    ------------
+    Appends phrase notes to ``ctx.phrase_inst`` and updates ``ctx.stats`` and
+    ``ctx.bar_progress``. Returns ``None``.
+    """
+
+    sb = ctx.time_to_beat(span.start)
+    eb = ctx.time_to_beat(span.end)
+    b = sb
+    while b < eb - ctx.EPS:
+        t = ctx.beat_to_time(b)
+        bar_idx = max(0, bisect.bisect_right(ctx.downbeats, t) - 1)
+        preset = ctx.preset_by_bar.get(bar_idx, DENSITY_PRESETS["med"])
+        total = ctx.bar_counts.get(bar_idx, 1)
+        idx = ctx.bar_progress.get(bar_idx, 0)
+        ctx.bar_progress[bar_idx] = idx + 1
+        vf = ctx.vel_factor(ctx.vel_curve, idx, total)
+        acc_arr = ctx.accent_by_bar.get(bar_idx)
+        af = (acc_arr[idx % len(acc_arr)] if acc_arr else 1.0) * preset["accent"]
+        base_vel = max(1, min(127, int(round(ctx.phrase_vel * vf * af))))
+        base_vel = ctx.duck(bar_idx, base_vel)
+        if ctx.section_lfo and "phrase" in ctx.lfo_targets:
+            base_vel = max(1, min(127, int(round(base_vel * ctx.section_lfo.vel_scale(bar_idx)))))
+            if ctx.stats is not None:
+                ctx.stats.setdefault("lfo_pos", {})[bar_idx] = ctx.section_lfo._pos(bar_idx)
+        if ctx.humanize_vel > 0:
+            base_vel = max(
+                1,
+                min(127, int(round(base_vel + ctx.rng.uniform(-ctx.humanize_vel, ctx.humanize_vel)))),
+            )
+        interval = ctx.pulse_subdiv_beats * preset["stride"]
+        if ctx.swing > 0.0 and abs(ctx.pulse_subdiv_beats - ctx.swing_unit_beats) < ctx.EPS:
+            interval *= (1 + ctx.swing) if idx % 2 == 0 else (1 - ctx.swing)
+        next_b = b + interval
+        if ctx.cycle_mode == "bar" and bar_idx + 1 < len(ctx.downbeats):
+            next_b = min(next_b, ctx.time_to_beat(ctx.downbeats[bar_idx + 1]))
+        next_b = min(next_b, ctx.time_to_beat(span.end))
+        beat_inc = next_b - b
+        if ctx.stable_guard:
+            ctx.stable_guard.step((span.root_pc, span.quality), beat_inc)
+            if ctx.stats is not None:
+                ctx.stats.setdefault("guard_hold_beats", {})[bar_idx] = ctx.stable_guard.hold
+        pn = ctx.pick_phrase_note(t, c_idx)
+        if ctx.stable_guard:
+            pn = ctx.stable_guard.filter(pn)
+        end_b = b + ctx.phrase_len_beats * preset["len"]
+        boundary = ctx.beat_to_time(end_b)
+        if ctx.cycle_mode == "bar" and bar_idx + 1 < len(ctx.downbeats):
+            boundary = min(boundary, ctx.downbeats[bar_idx + 1])
+        boundary = min(boundary, span.end)
+        if ctx.stats is not None:
+            ctx.stats.setdefault("bar_pulses", {}).setdefault(bar_idx, []).append((b, t))
+        if pn is not None:
+            if ctx.humanize_ms > 0.0:
+                delta_s = ctx.rng.uniform(-ctx.humanize_ms, ctx.humanize_ms) / 1000.0
+                delta_e = ctx.rng.uniform(-ctx.humanize_ms, ctx.humanize_ms) / 1000.0
+            else:
+                delta_s = delta_e = 0.0
+            start_t = t + delta_s
+            if ctx.cycle_mode == "bar":
+                start_t = max(ctx.downbeats[bar_idx], span.start, start_t)
+            else:
+                start_t = max(span.start, start_t)
+            end_t = min(boundary, boundary + delta_e)
+            start_t, end_t = ctx.clip(start_t, end_t, eps=ctx.EPS)
+            mg = ctx.maybe_merge_gap(
+                ctx.phrase_inst,
+                pn,
+                start_t,
+                bar_start=ctx.downbeats[bar_idx],
+                chord_start=span.start,
+            )
+            ctx.append_phrase(
+                ctx.phrase_inst,
+                pn,
+                start_t,
+                end_t,
+                base_vel,
+                mg,
+                ctx.release_sec,
+                ctx.min_phrase_len_sec,
+                ctx.stats,
+            )
+            if ctx.stats is not None and bar_idx not in ctx.stats["bar_phrase_notes"]:
+                ctx.stats["bar_phrase_notes"][bar_idx] = pn
+            if ctx.stats is not None:
+                ctx.stats.setdefault("bar_velocities", {}).setdefault(bar_idx, []).append(base_vel)
+        b += beat_inc
 
 def parse_midi_note(token: str) -> int:
     """Parse a MIDI note from integer or note name like C1 or F#2."""
@@ -1134,108 +1327,63 @@ def apply_section_preset(mapping: Dict, preset_name: Optional[str]) -> None:
                     sec[k] = v
 
 
+
 def generate_mapping_template(full: bool) -> str:
     """Return a YAML mapping template string."""
     if full:
-        return (
-            "phrase_note: 36
-"
-            "phrase_velocity: 96
-"
-            "phrase_length_beats: 0.25
-"
-            "phrase_hold: off  # off, bar, chord
-"
-            "phrase_merge_gap: 0.02  # seconds
-"
-            "chord_merge_gap: 0.01  # seconds
-"
-            "chord_octave: 4
-"
-            "chord_velocity: 90
-"
-            "triad_intervals:
-"
-            "  maj: [0,4,7]
-"
-            "  min: [0,3,7]
-"
-            "cycle_phrase_notes: []  # e.g., [24, rest, 26] to alternate per bar (小節ごとに切替)
-"
-            "cycle_start_bar: 0
-"
-            "cycle_mode: bar  # or 'chord'
-"
-            "cycle_stride: 1  # number of bars/chords before advancing cycle
-"
-            "merge_reset_at: none  # none, bar, chord
-"
-            "voicing_mode: stacked  # or 'closed'
-"
-            "top_note_max: null  # e.g., 72 to cap highest chord tone
-"
-            "phrase_channel: null  # MIDI channel for phrase notes
-"
-            "chord_channel: null  # MIDI channel for chord notes
-"
-            "accent: []  # velocity multipliers per pulse
-"
-            "skip_phrase_in_rests: false
-"
-            "clone_meta_only: false
-"
-            "silent_qualities: []
-"
-            "swing: 0.0  # 0..1 swing feel
-"
-            "swing_unit: 1/8  # subdivision for swing
-"
-            "chord_input_range: {lo: 48, hi: 72}
-"
-        )
+        return dedent("""
+            phrase_note: 36
+            phrase_velocity: 96
+            phrase_length_beats: 0.25
+            phrase_hold: off  # off, bar, chord
+            phrase_merge_gap: 0.02  # seconds
+            chord_merge_gap: 0.01  # seconds
+            chord_octave: 4
+            chord_velocity: 90
+            triad_intervals:
+              maj: [0,4,7]
+              min: [0,3,7]
+            cycle_phrase_notes: []  # e.g., [24, rest, 26] to alternate per bar (小節ごとに切替)
+            cycle_start_bar: 0
+            cycle_mode: bar  # or 'chord'
+            cycle_stride: 1  # number of bars/chords before advancing cycle
+            merge_reset_at: none  # none, bar, chord
+            voicing_mode: stacked  # or 'closed'
+            top_note_max: null  # e.g., 72 to cap highest chord tone
+            phrase_channel: null  # MIDI channel for phrase notes
+            chord_channel: null  # MIDI channel for chord notes
+            accent: []  # velocity multipliers per pulse
+            skip_phrase_in_rests: false
+            clone_meta_only: false
+            silent_qualities: []
+            swing: 0.0  # 0..1 swing feel
+            swing_unit: "1/8"  # subdivision for swing
+            chord_input_range: {lo: 48, hi: 72}
+        """).lstrip().rstrip() + "\n"
     else:
-        return (
-            "phrase_note: 36
-"
-            "cycle_phrase_notes: []  # e.g., [24, rest, 26] to alternate per bar (小節ごとに切替)
-"
-            "phrase_hold: off
-"
-            "phrase_merge_gap: 0.02
-"
-            "chord_merge_gap: 0.01
-"
-            "cycle_start_bar: 0
-"
-            "cycle_mode: bar  # or 'chord'
-"
-            "cycle_stride: 1
-"
-            "merge_reset_at: none
-"
-            "voicing_mode: stacked  # or 'closed'
-"
-            "top_note_max: null
-"
-            "phrase_channel: null
-"
-            "chord_channel: null
-"
-            "accent: []
-"
-            "skip_phrase_in_rests: false
-"
-            "clone_meta_only: false
-"
-            "silent_qualities: []
-"
-            "swing: 0.0
-"
-            "swing_unit: 1/8
-"
-            "chord_input_range: {lo: 48, hi: 72}
-"
-        )
+        return dedent("""
+            phrase_note: 36
+            cycle_phrase_notes: []  # e.g., [24, rest, 26] to alternate per bar (小節ごとに切替)
+            phrase_hold: off
+            phrase_merge_gap: 0.02
+            chord_merge_gap: 0.01
+            cycle_start_bar: 0
+            cycle_mode: bar  # or 'chord'
+            cycle_stride: 1
+            merge_reset_at: none
+            voicing_mode: stacked  # or 'closed'
+            top_note_max: null
+            phrase_channel: null
+            chord_channel: null
+            accent: []
+            skip_phrase_in_rests: false
+            clone_meta_only: false
+            silent_qualities: []
+            swing: 0.0
+            swing_unit: "1/8"
+            chord_input_range: {lo: 48, hi: 72}
+        """).lstrip().rstrip() + "\n"
+
 
 
 def read_chords_csv(path: Path) -> List["ChordSpan"]:
@@ -1940,67 +2088,7 @@ def build_sparkle_midi(
             b += interval
         return indices
 
-    silent_qualities = set(silent_qualities or [])
-                interval = pulse_subdiv_beats * preset["stride"]
-                if swing > 0.0 and abs(pulse_subdiv_beats - swing_unit_beats) < EPS:
-                    interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
-                next_b = b + interval
-                if cycle_mode == "bar" and bar_idx + 1 < len(downbeats):
-                    next_b = min(next_b, time_to_beat(downbeats[bar_idx + 1]))
-                next_b = min(next_b, time_to_beat(span.end))
-                beat_inc = next_b - b
-                if stable_guard:
-                    stable_guard.step((span.root_pc, span.quality), beat_inc)
-                    if stats is not None:
-                        stats["guard_hold_beats"][bar_idx] = stable_guard.hold
-                pn = pick_phrase_note(t, c_idx)
-                if stable_guard:
-                    pn = stable_guard.filter(pn)
-                end_b = b + phrase_len_beats * preset["len"]
-                boundary = beat_to_time(end_b)
-                if cycle_mode == "bar" and bar_idx + 1 < len(downbeats):
-                    boundary = min(boundary, downbeats[bar_idx + 1])
-                boundary = min(boundary, span.end)
-
-                if stats is not None:
-                    stats["bar_pulses"].setdefault(bar_idx, []).append((b, t))
-                if pn is not None:
-                    if humanize_ms > 0.0:
-                        delta_s = rng.uniform(-humanize_ms, humanize_ms) / 1000.0
-                        delta_e = rng.uniform(-humanize_ms, humanize_ms) / 1000.0
-                    else:
-                        delta_s = delta_e = 0.0
-                    start_t = t + delta_s
-                    if cycle_mode == "bar":
-                        start_t = max(downbeats[bar_idx], span.start, start_t)
-                    else:
-                        start_t = max(span.start, start_t)
-                    end_t = min(boundary, boundary + delta_e)
-                    start_t, end_t = clip_note_interval(start_t, end_t, eps=EPS)
-                    mg = maybe_merge_gap(
-                        phrase_inst,
-                        pn,
-                        start_t,
-                        bar_start=downbeats[bar_idx],
-                        chord_start=span.start,
-                    )
-                    _append_phrase(
-                        phrase_inst,
-                        pn,
-                        start_t,
-                        end_t,
-                        base_vel,
-                        mg,
-                        release_sec,
-                        min_phrase_len_sec,
-                        stats,
-                    )
-                    if stats is not None and bar_idx not in stats["bar_phrase_notes"]:
-                        stats["bar_phrase_notes"][bar_idx] = pn
-                    if stats is not None:
-                        stats["bar_velocities"].setdefault(bar_idx, []).append(base_vel)
-                b += beat_inc
-
+    # placeholder removed; phrase emission handled below
     # --- merged: accents / section profiles / density overrides / phrase plan ---
     # Accents from meter and explicit accent_map
     accent_by_bar: Dict[int, List[float]] = {}
@@ -2106,7 +2194,7 @@ def build_sparkle_midi(
         if chords:
             last_idx = max(max(0, bisect.bisect_right(downbeats, c.end - EPS) - 1) for c in chords)
             num_bars = max(num_bars, last_idx + 1)
-        phrase_plan, fill_map = schedule_phrase_keys(
+        res = schedule_phrase_keys(
             num_bars,
             cycle_notes,
             map_sections,
@@ -2114,6 +2202,10 @@ def build_sparkle_midi(
             cycle_start_bar=cycle_start_bar,
             cycle_stride=cycle_stride,
         )
+        if isinstance(res, tuple) and len(res) == 3:
+            phrase_plan, fill_map, _ = res  # type: ignore
+        else:
+            phrase_plan, fill_map = res
 
     # --- merged: phrase_pool setup + trend + unified pick_phrase_note ---
     # State for guide/density and pool picking
@@ -2211,6 +2303,229 @@ def build_sparkle_midi(
                 return picker.pick()
 
         return None
+
+    silent_qualities = set(silent_qualities or [])
+
+    bar_presets = {
+        i: DENSITY_PRESETS.get(stats.get("bar_density", {}).get(i, "med"), DENSITY_PRESETS["med"])
+        if stats
+        else DENSITY_PRESETS["med"]
+        for i in range(len(downbeats))
+    }
+    precomputed_accents = {i: accent_for_bar(i) for i in range(len(downbeats))}
+    vf0_by_bar = {i: vel_factor(vel_curve, 0, bar_counts.get(i, 1)) for i in range(len(downbeats))}
+
+    ctx = RuntimeContext(
+        rng=rng,
+        section_lfo=section_lfo,
+        humanize_ms=humanize_ms,
+        humanize_vel=humanize_vel,
+        beat_to_time=beat_to_time,
+        time_to_beat=time_to_beat,
+        clip=clip_note_interval,
+        maybe_merge_gap=maybe_merge_gap,
+        append_phrase=_append_phrase,
+        vel_factor=vel_factor,
+        accent_by_bar=precomputed_accents,
+        bar_counts=bar_counts,
+        preset_by_bar=bar_presets,
+        vel_curve=vel_curve,
+        downbeats=downbeats,
+        cycle_mode=cycle_mode,
+        phrase_len_beats=phrase_len_beats,
+        phrase_inst=phrase_inst,
+        pick_phrase_note=pick_phrase_note,
+        release_sec=release_sec,
+        min_phrase_len_sec=min_phrase_len_sec,
+        phrase_vel=phrase_vel,
+        duck=_duck,
+        lfo_targets=lfo_targets,
+        stable_guard=stable_guard,
+        stats=stats,
+        bar_progress=bar_progress,
+        pulse_subdiv_beats=pulse_subdiv_beats,
+        swing=swing,
+        swing_unit_beats=swing_unit_beats,
+    )
+
+    for c_idx, span in enumerate(chords):
+        is_silent = span.quality in silent_qualities or span.quality == "rest"
+        triad: List[int] = []
+        if not is_silent:
+            triad = triad_pitches(span.root_pc, span.quality, chord_oct, mapping)
+            if chord_range:
+                triad = place_in_range(
+                    triad, chord_range["lo"], chord_range["hi"], voicing_mode=voicing_mode
+                )
+            if top_note_max is not None:
+                while max(triad) > top_note_max and all(n - 12 >= 0 for n in triad):
+                    triad = [n - 12 for n in triad]
+                if triad and max(triad) > top_note_max:
+                    msg = f"top_note_max={top_note_max} cannot be satisfied for triad {triad}"
+                    if strict:
+                        raise SystemExit(msg)
+                    logging.warning(msg)
+            s_t, e_t = clip_note_interval(span.start, span.end, eps=EPS)
+            c_vel = chord_vel
+            if section_lfo and "chord" in lfo_targets:
+                bar_idx = max(0, bisect.bisect_right(downbeats, span.start) - 1)
+                c_vel = max(1, min(127, int(round(c_vel * section_lfo.vel_scale(bar_idx)))))
+                if stats is not None:
+                    stats["lfo_pos"][bar_idx] = section_lfo._pos(bar_idx)
+            for p in triad:
+                chord_inst.notes.append(
+                    pretty_midi.Note(velocity=c_vel, pitch=p, start=s_t, end=e_t)
+                )
+        if stats is not None:
+            stats["triads"].append(triad)
+        if skip_phrase_in_rests and is_silent:
+            continue
+
+        sb = time_to_beat(span.start)
+        eb = time_to_beat(span.end)
+        if phrase_hold == "chord":
+            pn = pick_phrase_note(span.start, c_idx)
+            if pn is not None:
+                bar_idx = max(0, bisect.bisect_right(downbeats, span.start) - 1)
+                total = bar_counts.get(bar_idx, 1)
+                vf = vf0_by_bar[bar_idx]
+                pulse_idx = pulses_in_range(span.start, span.end)
+                preset = bar_presets[bar_idx]
+                acc_arr = precomputed_accents.get(bar_idx)
+                if acc_arr and pulse_idx:
+                    if held_vel_mode == "max":
+                        af = max(acc_arr[i % len(acc_arr)] for _, i in pulse_idx) * preset["accent"]
+                    elif held_vel_mode == "mean":
+                        af = (
+                            sum(acc_arr[i % len(acc_arr)] for _, i in pulse_idx) / len(pulse_idx)
+                        ) * preset["accent"]
+                    else:
+                        af = acc_arr[pulse_idx[0][1] % len(acc_arr)] * preset["accent"]
+                else:
+                    af = (acc_arr[0] if acc_arr else 1.0) * preset["accent"]
+                base_vel = max(1, min(127, int(round(phrase_vel * vf * af))))
+                base_vel = _duck(bar_idx, base_vel)
+                if section_lfo and "phrase" in lfo_targets:
+                    base_vel = max(
+                        1, min(127, int(round(base_vel * section_lfo.vel_scale(bar_idx))))
+                    )
+                    if stats is not None:
+                        stats["lfo_pos"][bar_idx] = section_lfo._pos(bar_idx)
+                if humanize_vel > 0:
+                    base_vel = max(
+                        1,
+                        min(127, int(round(base_vel + rng.uniform(-humanize_vel, humanize_vel)))),
+                    )
+                if humanize_ms > 0.0:
+                    delta_s = rng.uniform(-humanize_ms, humanize_ms) / 1000.0
+                    delta_e = rng.uniform(-humanize_ms, humanize_ms) / 1000.0
+                else:
+                    delta_s = delta_e = 0.0
+                start_t = span.start + delta_s
+                if cycle_mode == "bar":
+                    start_t = max(downbeats[bar_idx], span.start, start_t)
+                else:
+                    start_t = max(span.start, start_t)
+                end_t = min(span.end, span.end + delta_e)
+                start_t, end_t = clip_note_interval(start_t, end_t, eps=EPS)
+                mg = maybe_merge_gap(
+                    phrase_inst, pn, start_t, bar_start=downbeats[bar_idx], chord_start=span.start
+                )
+                _append_phrase(
+                    phrase_inst,
+                    pn,
+                    start_t,
+                    end_t,
+                    base_vel,
+                    mg,
+                    release_sec,
+                    min_phrase_len_sec,
+                    stats,
+                )
+                if stats is not None:
+                    end_bar = max(0, bisect.bisect_right(downbeats, span.end - EPS) - 1)
+                    for bi in range(bar_idx, end_bar + 1):
+                        if bi not in stats["bar_phrase_notes"]:
+                            stats["bar_phrase_notes"][bi] = pn
+                        stats["bar_velocities"].setdefault(bi, []).append(base_vel)
+        elif phrase_hold == "bar":
+            bar_idx = max(0, bisect.bisect_right(downbeats, span.start) - 1)
+            while bar_idx < len(downbeats) and downbeats[bar_idx] < span.end:
+                bar_start = downbeats[bar_idx]
+                bar_end = (
+                    downbeats[bar_idx + 1] if bar_idx + 1 < len(downbeats) else pm_in.get_end_time()
+                )
+                start = max(span.start, bar_start)
+                end = min(span.end, bar_end)
+                pn = pick_phrase_note(start, c_idx)
+                if pn is not None:
+                    total = bar_counts.get(bar_idx, 1)
+                    vf = vf0_by_bar[bar_idx]
+                    pulse_idx = pulses_in_range(start, end)
+                    preset = bar_presets[bar_idx]
+                    acc_arr = precomputed_accents.get(bar_idx)
+                    if acc_arr and pulse_idx:
+                        if held_vel_mode == "max":
+                            af = (
+                                max(acc_arr[i % len(acc_arr)] for _, i in pulse_idx)
+                                * preset["accent"]
+                            )
+                        elif held_vel_mode == "mean":
+                            af = (
+                                sum(acc_arr[i % len(acc_arr)] for _, i in pulse_idx)
+                                / len(pulse_idx)
+                            ) * preset["accent"]
+                        else:
+                            af = acc_arr[pulse_idx[0][1] % len(acc_arr)] * preset["accent"]
+                    else:
+                        af = (acc_arr[0] if acc_arr else 1.0) * preset["accent"]
+                    base_vel = max(1, min(127, int(round(phrase_vel * vf * af))))
+                    base_vel = _duck(bar_idx, base_vel)
+                    if section_lfo:
+                        base_vel = max(
+                            1, min(127, int(round(base_vel * section_lfo.vel_scale(bar_idx))))
+                        )
+                    if humanize_vel > 0:
+                        base_vel = max(
+                            1,
+                            min(
+                                127,
+                                int(round(base_vel + rng.uniform(-humanize_vel, humanize_vel))),
+                            ),
+                        )
+                    if humanize_ms > 0.0:
+                        delta_s = rng.uniform(-humanize_ms, humanize_ms) / 1000.0
+                        delta_e = rng.uniform(-humanize_ms, humanize_ms) / 1000.0
+                    else:
+                        delta_s = delta_e = 0.0
+                    start_t = start + delta_s
+                    if cycle_mode == "bar":
+                        start_t = max(bar_start, span.start, start_t)
+                    else:
+                        start_t = max(span.start, start_t)
+                    end_t = min(end, end + delta_e)
+                    start_t, end_t = clip_note_interval(start_t, end_t, eps=EPS)
+                    mg = maybe_merge_gap(
+                        phrase_inst, pn, start_t, bar_start=bar_start, chord_start=span.start
+                    )
+                    _append_phrase(
+                        phrase_inst,
+                        pn,
+                        start_t,
+                        end_t,
+                        base_vel,
+                        mg,
+                        release_sec,
+                        min_phrase_len_sec,
+                        stats,
+                    )
+                    if stats is not None and bar_idx not in stats["bar_phrase_notes"]:
+                        stats["bar_phrase_notes"][bar_idx] = pn
+                    if stats is not None:
+                        stats["bar_velocities"].setdefault(bar_idx, []).append(base_vel)
+                bar_idx += 1
+        else:
+            _emit_phrases_for_span(span, c_idx, ctx)
 
     # --- merged: section-end fills + stop keys + quantize + markers ---
 
@@ -3089,6 +3404,13 @@ def main():
                 logging.info("bar %d | phrase %s->%s | triggers %d | vel %s", i, prev, pn, trig, vels)
             else:
                 logging.info("bar %d | phrase %s->%s | pulses %d | vel %s", i, prev, pn, len(pulses), vels)
+        if args.verbose and phrase_inst:
+            logging.debug("bar note len_ms vel")
+            for n in phrase_inst.notes:
+                bar_idx = max(0, bisect.bisect_right(stats["downbeats"], n.start) - 1)
+                if bar_idx >= 10:
+                    break
+                logging.debug("%3d %4d %7.1f %3d", bar_idx, n.pitch, (n.end - n.start) * 1000.0, n.velocity)
         if stats.get("guide_keys"):
             logging.info("guide_keys=%s guide_index=%s",
                          stats.get("guide_keys"),

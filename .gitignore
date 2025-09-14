@@ -23,6 +23,15 @@ checkpoints/
 
 # システムファイル
 .DS_Store
+
+# 認証情報
+*.json
+!package.json
+marutakesyobou-*.json
+*.service-account.json
+*.key
+*.pem
+
 # Python
 __pycache__/
 *.pyc
@@ -42,3 +51,6 @@ checkpoints/
 *.ckpt
 *.onnx
 .DS_Store
+marutakesyobou-*.json
+marutakesyobou-*.json
+*.service-account.json

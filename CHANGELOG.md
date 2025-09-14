@@ -17,9 +17,9 @@
 - Split `--dur-decode`/`--vel-decode` options, separate velocity/duration modes
   for sampling
 - `--best-metric` to select best checkpoint by macro F1 or tag/instrument F1
-- Visualization filenames `run-<timestamp>-epoch-<n>-*.png` and paths recorded
-  in run metadata
-- Fixed CSV column order with always-present `velocity_bucket` and
+ - Visualization filenames `run-<timestamp>-epoch-<n>-*.png` and paths recorded in run metadata
+ - Sparkle converter: CLI flags for section LFO, stable guard, vocal adapt, style injection, damping spec, and enriched debug reports
+ - Fixed CSV column order with always-present `velocity_bucket` and
   `duration_bucket` (missing filled with -1)
 - Temperature schedule for sampling via `--temperature-start/--temperature-end`
 - Duration clamping via `--dur-max-beats` and recorded temperature schedule metadata
@@ -28,6 +28,9 @@
   `guitar_low`/`guitar_lead` pitch presets
 - `tools.corpus_to_phrase_csv --dry-run` smoke testing
 - Strict tag workflow documentation
+- Section presets and vocal-aware guidance for Sparkle converter
+- Debug markdown output for per-bar tracing
+- Harmony-aware phrase weighting, section pool weight overrides, smart style fills with gaps, and vocal ducking control
 ### Fixed
 - Harmonize DUV bucket column names and apply transformer nhead/layer/dropout
   flags while avoiding invalid LSTM kwargs

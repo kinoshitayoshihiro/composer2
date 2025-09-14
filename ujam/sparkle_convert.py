@@ -89,6 +89,47 @@ NOTE_ALIAS_INV: Dict[int, str] = {}
 EPS = 1e-9
 
 
+# Lightweight PrettyMIDI stub for tests and dry runs
+def _dummy_pm(length: float = 6.0):
+    """Return a minimal PrettyMIDI-like object for unit tests.
+
+    Provides instruments, tempo/beat helpers, and write().
+    """
+    try:
+        pm_mod = pretty_midi
+    except Exception:  # pragma: no cover - pretty_midi should exist
+        pm_mod = None  # type: ignore
+
+    class Dummy:
+        def __init__(self, length: float) -> None:
+            self._length = float(length)
+            inst = pm_mod.Instrument(0) if pm_mod else type("I", (), {"notes": [], "is_drum": False})()
+            if pm_mod:
+                inst.notes.append(pm_mod.Note(velocity=1, pitch=60, start=0.0, end=float(length)))
+                inst.is_drum = False
+            self.instruments = [inst]
+            self.time_signature_changes = []
+
+        def get_beats(self):
+            step = 0.5  # 120 bpm
+            n = int(self._length / step) + 1
+            return [i * step for i in range(n)]
+
+        def get_downbeats(self):
+            return self.get_beats()[::4]
+
+        def get_end_time(self):
+            return self._length
+
+        def get_tempo_changes(self):
+            return [0.0], [120.0]
+
+        def write(self, path: str) -> None:  # pragma: no cover
+            Path(path).write_bytes(b"")
+
+    return Dummy(length)
+
+
 @dataclass
 class RuntimeContext:
     """Container for runtime state used during phrase emission.
@@ -429,6 +470,17 @@ def parse_accent_arg(s: str) -> Optional[List[float]]:
     except Exception:
         raise SystemExit("--accent must be JSON list of numbers")
     return validate_accent(data)
+
+
+# Generic, safe int parser used by various CLI/mapping fields
+def parse_int_or(x, default: int) -> int:
+    """Parse int safely (None → default, invalid → default)."""
+    if x is None:
+        return default
+    try:
+        return int(str(x).strip())
+    except Exception:
+        return default
 
 
 # --- RESOLVED MERGE: keep both damp-arg parser and guide summarization utilities ---
@@ -2678,6 +2730,10 @@ def main():
                     help="Minimum gap before inserting another fill")
     ap.add_argument("--fill-avoid-pitches", type=str, default=None,
                     help="Comma-separated pitches to avoid when inserting fills")
+    # Unified --damp option (e.g., "vocal:cc=11,channel=1").
+    # If provided, it will override individual --damp-* flags below.
+    ap.add_argument("--damp", type=str, default=None,
+                    help="Unified damping spec, e.g., 'vocal:cc=11,channel=1'")
     ap.add_argument("--damp-cc", type=int, default=None,
                     help="Emit CC from guide rest ratio (default 11)")
     ap.add_argument("--damp-dst", choices=["phrase", "chord", "newtrack"], default="newtrack",
@@ -2812,6 +2868,24 @@ def main():
     ap.add_argument("--debug-csv", type=str, default=None, help="Write per-bar debug CSV")
 
     args, extras = ap.parse_known_args()
+
+    # Back-compat: parse unified --damp if present
+    if getattr(args, "damp", None):
+        mode, kw = parse_damp_arg(args.damp)
+        # Map into individual args when possible
+        if "cc" in kw and args.damp_cc is None:
+            args.damp_cc = int(kw["cc"])  # type: ignore[attr-defined]
+        # destination
+        if mode in {"phrase", "chord", "newtrack"} and args.damp_dst is None:
+            args.damp_dst = mode  # type: ignore[attr-defined]
+        # scale/clip/curve-related
+        if "clip" in kw and args.damp_cc_clip is None:
+            lo, hi = kw["clip"]
+            args.damp_cc_clip = (int(lo), int(hi))  # type: ignore[attr-defined]
+        if "deadband" in kw and args.damp_cc_deadband == 0:
+            args.damp_cc_deadband = int(kw["deadband"])  # type: ignore[attr-defined]
+        if "smooth" in kw and args.damp_smooth_sigma == 0.0:
+            args.damp_smooth_sigma = float(kw["smooth"])  # type: ignore[attr-defined]
 
     if extras and args.write_mapping_template:
         legacy_tpl_args = []

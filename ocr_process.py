@@ -3,7 +3,7 @@ import json
 
 # 認証ファイルパスを明示的に指定
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = (
-    "/Users/kinoshitayoshihiro/music_21/sakuhin/_03_ore/composer/marutakesyobou-97c9ac6c8f6f.json"
+    "/Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/marutakesyobou-97c9ac6c8f6f.json"
 )
 
 from google.cloud import storage
@@ -74,5 +74,5 @@ def ocr_process_image_files(bucket_name, prefix, batch_size=16):
 
 if __name__ == "__main__":
     bucket_name = "bungo-syousetu"
-    prefix = "２９/"  # 例: "images/pngs/"
+    prefix = "非常の剣/"  # 例: "images/pngs/"
     ocr_process_image_files(bucket_name, prefix)

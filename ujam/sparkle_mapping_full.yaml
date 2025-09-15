@@ -28,7 +28,7 @@ areas:
       long_chord_fill:  15  # D#0
       generic_sustain:  16  # E0
       generic_rhythm:   17  # F0
-      chord_rhythm_1_16:18  # F#0
+      chord_rhythm_1_16: 18  # F#0
       open_1_4:         19  # G0
       open_1_8:         24  # C1 (recommended default for steady comp)
       half_mute_1_8:    25  # C#1

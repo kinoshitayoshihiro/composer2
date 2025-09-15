@@ -987,7 +987,10 @@ def test_swing_clip_guard(tmp_path) -> None:
     sc.pretty_midi.PrettyMIDI = lambda path: pm
 
     def fake_build(*args, **kwargs):
-        called["swing"] = args[9]
+        val = kwargs.get("swing")
+        if val is None and len(args) > 9:
+            val = args[9]
+        called["swing"] = val
         return pm
 
     sc.build_sparkle_midi = fake_build

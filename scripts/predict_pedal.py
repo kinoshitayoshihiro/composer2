@@ -58,11 +58,10 @@ try:
     from sklearn.metrics import roc_auc_score
 except Exception:  # pragma: no cover - optional dependency
     roc_auc_score = None  # type: ignore
-# Prefer the scripts.* module to avoid executing top-level code in a root eval_pedal.py
 try:
+    from eval_pedal import load_stats_and_normalize
+except Exception:  # pragma: no cover - package or script execution
     from scripts.eval_pedal import load_stats_and_normalize  # type: ignore
-except Exception:  # pragma: no cover - fallback if package layout differs
-    from eval_pedal import load_stats_and_normalize  # type: ignore
 
 
 def _dataloader_worker_init_fn(worker_id: int, base_seed: int) -> None:

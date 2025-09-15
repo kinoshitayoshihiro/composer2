@@ -1,15 +1,55 @@
-phrase_note: 24
+# Mapping for UJAM Virtual Guitarist SPARKLE 2 (Player Mode: Chord)
+
+active_area: common   # one of: common, style
+
+# Phrase trigger (default lane)
+phrase_note: 24        # C1
 phrase_velocity: 96
 phrase_length_beats: 0.25
+pulse_subdivision_default: "1/8"
+
+# Chord (long triads) placement
+chord_input_range: { lo: 48, hi: 84 }  # C3..B5
 chord_octave: 4
 chord_velocity: 90
-triad_intervals: {maj: [0,4,7], min: [0,3,7]}
+triad_intervals:
+  maj: [0, 4, 7]
+  min: [0, 3, 7]
+
+# Optional cycling (bar-by-bar). The converter may also accept CLI overrides.
+cycle_phrase_notes: []   # e.g., [24, 26]
+
+# Areas and anchors (adjust per Style)
 areas:
   common:
     anchors:
-      open_1_8: 24
-      muted_1_8: 26
-    special: {silence: 12}
+      open_1_1:         12  # C0
+      offbeat_2and4:    14  # D0
+      long_chord_fill:  15  # D#0
+      generic_sustain:  16  # E0
+      generic_rhythm:   17  # F0
+      chord_rhythm_1_16:18  # F#0
+      open_1_4:         19  # G0
+      open_1_8:         24  # C1 (recommended default for steady comp)
+      half_mute_1_8:    25  # C#1
+      muted_1_8:        26  # D1
+      open_1_16_b:      27  # D#1
+      muted_1_16:       28  # E1
+      build_open_1_8:   29  # F1
+      build_muted_1_8:  30  # F#1
+      slide_down:       31  # G1
+      pick_slide:       32  # G#1
+    special:
+      silence:          12  # far-left common key
   style:
-    anchors: {style_basic: 36}
-chord_input_range: {lo: 48, hi: 84}
+    anchors:
+      style_basic:      36  # C2
+      style_variation1: 37  # C#2
+      style_variation2: 38  # D2
+      style_fill:       39  # D#2
+      style_stop:       41  # F2 (if the Style uses STOP)
+    special:
+      stop:             41
+
+# Fallback tempo if MIDI has no tempo
+fallback_bpm: 120

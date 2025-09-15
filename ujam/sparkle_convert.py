@@ -1894,6 +1894,10 @@ def build_sparkle_midi(
             downbeats.sort()
         else:
             downbeats = beats[::4]
+    # Ensure final bar end is represented for downstream bar counting.
+    end_t = pm_in.get_end_time()
+    if not downbeats or end_t - downbeats[-1] > EPS:
+        downbeats.append(end_t)
     if cycle_notes and len(downbeats) < 2 and cycle_mode == "bar":
         logging.info("cycle disabled; using fixed phrase_note=%d", phrase_note)
         cycle_notes = []

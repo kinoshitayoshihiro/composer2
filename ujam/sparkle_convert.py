@@ -1862,7 +1862,9 @@ def build_sparkle_midi(
     else:
         meter_map.append((0.0, 4, 4))
         estimated_4_4 = True
-    downbeats = pm_in.get_downbeats()
+    if len(meter_map) > 1:
+        meter_map.sort(key=lambda x: x[0])
+    downbeats = list(pm_in.get_downbeats())
     if ts_changes and len(downbeats) >= 2:
         ts0 = ts_changes[0]
         expected_bar = beat_to_time(ts0.numerator * (4.0 / ts0.denominator))
@@ -1893,8 +1895,10 @@ def build_sparkle_midi(
                     bar += bar_beats
             downbeats.sort()
         else:
-            downbeats = beats[::4]
+            downbeats = list(beats[::4])
     # Ensure final bar end is represented for downstream bar counting.
+    if not isinstance(downbeats, list):
+        downbeats = list(downbeats)
     end_t = pm_in.get_end_time()
     if not downbeats or end_t - downbeats[-1] > EPS:
         downbeats.append(end_t)
@@ -2149,22 +2153,26 @@ def build_sparkle_midi(
             stats["fill_sources"].update(fill_src)
 
     # Precompute pulse timestamps per bar (swing shifts timing only)
-    if stats is not None and phrase_hold != "off":
+    meter_times = [mt for mt, _, _ in meter_map]
+
+    if stats is not None:
         for i, start in enumerate(downbeats[:-1]):
-            num, den = 4, 4
-            for mt, n, d in meter_map:
-                if mt <= start + EPS:
-                    num, den = n, d
-                else:
-                    break
+            idx_ts = bisect.bisect_right(meter_times, start + EPS) - 1
+            if idx_ts < 0:
+                idx_ts = 0
+            _, num, den = meter_map[idx_ts]
             bar_beats = num * (4.0 / den)
             sb = time_to_beat(start)
+            bar_end = sb + bar_beats
             pulses: List[Tuple[float, float]] = []
             unit = pulse_subdiv_beats
-            total = max(1, int(round(bar_beats / unit + EPS)))
             use_swing = swing > 0.0 and math.isclose(unit, swing_unit_beats, abs_tol=EPS)
-            for idx in range(total):
-                beat_pos = sb + idx * unit
+            idx = 0
+            while True:
+                base_pos = sb + idx * unit
+                if base_pos > bar_end - EPS:
+                    break
+                beat_pos = base_pos
                 if use_swing:
                     shift = swing * (unit / 2.0)
                     if swing_shape == "even":
@@ -2177,9 +2185,10 @@ def build_sparkle_midi(
                             beat_pos += swing * unit
                         elif mod == 1:
                             beat_pos -= swing * unit
-                if beat_pos > sb + bar_beats - EPS:
-                    beat_pos = sb + bar_beats - EPS
+                if beat_pos > bar_end - EPS:
+                    beat_pos = bar_end - EPS
                 pulses.append((beat_pos, beat_to_time(beat_pos)))
+                idx += 1
             stats["bar_pulses"][i] = pulses
 
     # Velocity curve helper

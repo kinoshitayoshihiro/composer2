@@ -47,6 +47,7 @@ import json
 from functools import lru_cache
 import collections
 import itertools
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Union, Set, Any, Callable
@@ -81,6 +82,18 @@ from .phrase_schedule import (
 from .damping import _append_phrase, _legato_merge_chords, emit_damping
 from .io import read_chords_yaml, read_section_profiles
 
+__all__ = [
+    "ChordSpan",
+    "build_sparkle_midi",
+    "parse_midi_note",
+    "parse_note_token",
+    "apply_section_preset",
+    "schedule_phrase_keys",
+    "vocal_onsets_from_midi",
+    "vocal_features_from_midi",
+    "main",
+]
+
 NOTE_RE = re.compile(r"^([A-G][b#]?)(-?\d+)$")
 
 NOTE_ALIASES: Dict[str, int] = {}
@@ -90,7 +103,7 @@ EPS = 1e-9
 
 
 # Lightweight PrettyMIDI stub for tests and dry runs
-def _dummy_pm(length: float = 6.0):
+def _pm_dummy_for_docs(length: float = 6.0):
     """Return a minimal PrettyMIDI-like object for unit tests.
 
     Provides instruments, tempo/beat helpers, and write().
@@ -359,10 +372,15 @@ def parse_note_token(tok: Union[str, int], *, warn_unknown: bool = False) -> Opt
     """Normalize note token to MIDI int or None for rests."""
     if isinstance(tok, str):
         t = tok.strip()
-        if t.lower() == "rest":
+        if t.lower() in {"rest", "silence", ""}:
             return None
-        if t in NOTE_ALIASES:
-            return NOTE_ALIASES[t]
+        aliases = NOTE_ALIASES or {}
+        if not aliases:
+            root_mod = sys.modules.get("sparkle_convert")
+            if root_mod is not None:
+                aliases = getattr(root_mod, "NOTE_ALIASES", {}) or {}
+        if t in aliases:
+            return int(aliases[t])
         try:
             return parse_midi_note(t)
         except SystemExit:
@@ -370,42 +388,22 @@ def parse_note_token(tok: Union[str, int], *, warn_unknown: bool = False) -> Opt
                 logging.warning("unknown note alias: %s", tok)
                 return None
             raise
+    if tok is None:
+        return None
     try:
         return validate_midi_note(int(tok))
     except Exception as e:  # pragma: no cover - unlikely
         raise SystemExit(f"Invalid note token: {tok}") from e
 
 
-def _dummy_pm(length: float = 6.0):
-    """Create a minimal PrettyMIDI-like object for tests."""
-
-    class Dummy:
-        def __init__(self, length: float) -> None:
-            self._length = length
-            inst = pretty_midi.Instrument(0)
-            inst.notes.append(pretty_midi.Note(velocity=1, pitch=60, start=0.0, end=length))
-            inst.is_drum = False
-            self.instruments = [inst]
-            self.time_signature_changes = []
-
-        def get_beats(self):
-            step = 0.5  # 120 bpm
-            n = int(self._length / step) + 1
-            return [i * step for i in range(n)]
-
-        def get_downbeats(self):
-            return self.get_beats()[::4]
-
-        def get_end_time(self):
-            return self._length
-
-        def get_tempo_changes(self):
-            return [0.0], [120.0]
-
-        def write(self, path: str) -> None:  # pragma: no cover
-            Path(path).write_bytes(b"")
-
-    return Dummy(length)
+def parse_int_or(x, default: int) -> int:
+    """Parse int safely (None → default, invalid → default)."""
+    if x is None:
+        return default
+    try:
+        return int(str(x).strip())
+    except Exception:
+        return default
 
 
 def clip_note_interval(start_t: float, end_t: float, *, eps: float = EPS) -> Tuple[float, float]:
@@ -502,18 +500,6 @@ def parse_accent_arg(s: str) -> Optional[List[float]]:
     except Exception:
         raise SystemExit("--accent must be JSON list of numbers")
     return validate_accent(data)
-
-
-# Generic, safe int parser used by various CLI/mapping fields
-def parse_int_or(x, default: int) -> int:
-    """Parse int safely (None → default, invalid → default)."""
-    if x is None:
-        return default
-    try:
-        return int(str(x).strip())
-    except Exception:
-        return default
-
 
 # --- RESOLVED MERGE: keep both damp-arg parser and guide summarization utilities ---
 
@@ -2019,32 +2005,39 @@ def build_sparkle_midi(
                 stats["bar_reason"][i] = {"source": bar_sources[i], "note": pn}
             stats["fill_sources"].update(fill_src)
 
-    # Precompute pulse timestamps per bar for reports (swing-aware)
+    # Precompute pulse timestamps per bar (swing shifts timing only)
     if stats is not None and phrase_hold != "off":
         for i, start in enumerate(downbeats):
-            end = downbeats[i + 1] if i + 1 < len(downbeats) else pm_in.get_end_time()
+            num, den = 4, 4
+            for mt, n, d in meter_map:
+                if mt <= start + EPS:
+                    num, den = n, d
+                else:
+                    break
+            bar_beats = num * (4.0 / den)
+            n = int(round(bar_beats / pulse_subdiv_beats))
+            n = max(0, n)
             sb = time_to_beat(start)
-            eb = time_to_beat(end)
             pulses: List[Tuple[float, float]] = []
-            b = sb
-            idx = 0
-            while b < eb - EPS:
+            swing_sec = 0.0
+            if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
+                swing_sec = swing * pulse_subdiv_beats * 60.0 / bpm
+            for idx in range(n):
+                b = sb + idx * pulse_subdiv_beats
                 t = beat_to_time(b)
-                pulses.append((b, t))
-                interval = pulse_subdiv_beats
-                if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
+                if swing_sec:
                     if swing_shape == 'offbeat':
-                        interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
+                        if idx % 2 == 1:
+                            t += swing_sec
                     elif swing_shape == 'even':
-                        interval *= (1 - swing) if idx % 2 == 0 else (1 + swing)
+                        t += swing_sec if idx % 2 == 1 else -swing_sec
                     else:  # triplet-ish
                         mod = idx % 3
                         if mod == 0:
-                            interval *= (1 + swing)
+                            t += swing_sec
                         elif mod == 1:
-                            interval *= (1 - swing)
-                b += interval
-                idx += 1
+                            t -= swing_sec
+                pulses.append((b, t))
             stats["bar_pulses"][i] = pulses
 
     # Velocity curve helper

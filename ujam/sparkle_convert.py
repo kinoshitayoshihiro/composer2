@@ -192,6 +192,8 @@ class RuntimeContext:
         Function computing per-pulse velocity scaling.
     accent_by_bar, bar_counts, preset_by_bar:
         Immutable per-bar caches.
+    accent_scale_by_bar:
+        Optional per-bar velocity scaling factors.
     vel_curve:
         Velocity curve mode.
     downbeats:
@@ -237,6 +239,7 @@ class RuntimeContext:
     accent_by_bar: Dict[int, Optional[List[float]]]
     bar_counts: Dict[int, int]
     preset_by_bar: Dict[int, Dict[str, float]]
+    accent_scale_by_bar: Dict[int, float]
     vel_curve: str
     downbeats: List[float]
     cycle_mode: str
@@ -287,7 +290,8 @@ def _emit_phrases_for_span(span: "ChordSpan", c_idx: int, ctx: RuntimeContext) -
         ctx.bar_progress[bar_idx] = idx + 1
         vf = ctx.vel_factor(ctx.vel_curve, idx, total)
         acc_arr = ctx.accent_by_bar.get(bar_idx)
-        af = (acc_arr[idx % len(acc_arr)] if acc_arr else 1.0) * preset["accent"]
+        scale = ctx.accent_scale_by_bar.get(bar_idx, 1.0)
+        af = (acc_arr[idx % len(acc_arr)] if acc_arr else 1.0) * preset["accent"] * scale
         base_vel = max(1, min(127, int(round(ctx.phrase_vel * vf * af))))
         base_vel = ctx.duck(bar_idx, base_vel)
         if ctx.section_lfo and "phrase" in ctx.lfo_targets:
@@ -1901,10 +1905,10 @@ def build_sparkle_midi(
 
     num_bars = len(downbeats) - 1
     density_map: Dict[int, str] = {}
-    sections = mapping.get("sections")
-    if sections:
+    sections_map = mapping.get("sections")
+    if sections_map:
         tag_map: Dict[int, str] = {}
-        for sec in sections:
+        for sec in sections_map:
             dens = sec.get("density")
             start = int(sec.get("start_bar", 0))
             end = int(sec.get("end_bar", num_bars))
@@ -2445,15 +2449,14 @@ def build_sparkle_midi(
             else:
                 base = max(0, bisect.bisect_right(beat_times, t) - 1)
             note = guide_notes.get(base)
-            if note is None:
-                return None
-            if last_guided == note:
+            if note is None or last_guided == note:
                 return None
             last_guided = note
             return note
 
-        # 2) Density override per bar
         bar = max(0, bisect.bisect_right(downbeats, t) - 1)
+
+        # 2) Density override per bar
         if bar in density_override:
             note = density_override[bar]
             if last_guided == note:
@@ -2461,40 +2464,39 @@ def build_sparkle_midi(
             last_guided = note
             return note
 
-        # 3) Phrase plan / cycle from main branch if available
-        if phrase_plan is not None and (phrase_plan or cycle_notes):
-            bar_idx = bar
-            if bar_idx < len(phrase_plan):
-                pn = phrase_plan[bar_idx]
-            else:
-                if cycle_notes:
-                    idx = ((bar_idx + cycle_start_bar) // max(1, cycle_stride)) % len(cycle_notes)
-                    pn = cycle_notes[idx]
-                else:
-                    pn = 36 + bar_idx
-                phrase_plan.append(pn)
-            if bar_idx != last_bar_idx:
-                last_bar_idx = bar_idx
-                if pn is None:
-                    last_bar_note = None
-                    return None
-                if pn == last_bar_note:
-                    return None
-                last_bar_note = pn
-            if pn is None:
-                return None
-            return pn
+        # 3) VocalAdaptive overrides
+        if vocal_adapt is not None:
+            note = vocal_adapt.phrase_for_bar(bar)
+            if note is not None:
+                return note
 
         # 4) Section/Bar pool pickers (with optional trend steering)
-        if (pool_picker or bar_pool_pickers) and not cycle_notes:
-            picker = bar_pool_pickers.get(bar, pool_picker)
-            if picker:
-                if trend_labels and bar < len(trend_labels) and trend_labels[bar] != 0:
-                    notes = [n for n, _ in picker.pool]
-                    return max(notes) if trend_labels[bar] > 0 else min(notes)
-                return picker.pick()
+        picker = bar_pool_pickers.get(bar)
+        if picker:
+            if trend_labels and bar < len(trend_labels) and trend_labels[bar] != 0:
+                notes = [n for n, _ in picker.pool]
+                return max(notes) if trend_labels[bar] > 0 else min(notes)
+            return picker.pick()
+        if pool_picker:
+            if trend_labels and bar < len(trend_labels) and trend_labels[bar] != 0:
+                notes = [n for n, _ in pool_picker.pool]
+                return max(notes) if trend_labels[bar] > 0 else min(notes)
+            return pool_picker.pick()
 
-        return None
+        # 5) Cycle notes
+        pn: Optional[int] = None
+        if cycle_notes:
+            idx = ((bar + cycle_start_bar) // max(1, cycle_stride)) % len(cycle_notes)
+            pn = cycle_notes[idx]
+        if pn is None:
+            pn = phrase_note
+
+        if bar != last_bar_idx:
+            last_bar_idx = bar
+            if pn == last_bar_note:
+                return None
+            last_bar_note = pn
+        return pn
 
     silent_qualities = set(silent_qualities or [])
 
@@ -2523,6 +2525,7 @@ def build_sparkle_midi(
         accent_by_bar=precomputed_accents,
         bar_counts=bar_counts,
         preset_by_bar=bar_presets,
+        accent_scale_by_bar=accent_scale_by_bar,
         vel_curve=vel_curve,
         downbeats=downbeats,
         cycle_mode=cycle_mode,

@@ -41,7 +41,7 @@ from omegaconf import DictConfig
 try:
     import pytorch_lightning as pl
     import torch
-    from torch.utils.data import DataLoader, TensorDataset
+    from torch.utils.data import DataLoader, TensorDataset, get_worker_info
 except Exception:  # pragma: no cover - optional
     pl = None  # type: ignore
     torch = None  # type: ignore
@@ -186,19 +186,13 @@ def _feature_stats(csv_path: Path) -> dict:
     }
 
 
-_WORKER_BASE_SEED = 0
-
-def _dataloader_worker_init_fn(worker_id: int) -> None:
-    seed = int(_WORKER_BASE_SEED) ^ (worker_id + 1)
-    random.seed(seed)
+def seed_worker(worker_id: int) -> None:
+    base_seed = torch.initial_seed() % 2**32
+    np.random.seed(base_seed + worker_id)
+    random.seed(base_seed + worker_id)
+    info = get_worker_info()
     try:
-        np.random.seed(seed & 0xFFFFFFFF)
-    except Exception:
-        pass
-    try:
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
+        torch.set_num_threads(1)
     except Exception:
         pass
 
@@ -231,8 +225,13 @@ def run(cfg: DictConfig) -> int:
     train_ds = load_csv(Path(cfg.data.train), window=window, hop=hop)
     val_ds = load_csv(Path(cfg.data.val), window=window, hop=hop)
 
-    global _WORKER_BASE_SEED
-    _WORKER_BASE_SEED = int(getattr(cfg, "seed", 0) or 0)
+    seed = int(getattr(cfg, "seed", 0) or 0)
+    random.seed(seed)
+    np.random.seed(seed % (2**32))
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
     requested_nw = getattr(cfg, "num_workers", getattr(getattr(cfg, "data", object()), "num_workers", None))
     _nw = _resolve_num_workers(requested_nw)
     pin_memory = torch.cuda.is_available()
@@ -242,7 +241,7 @@ def run(cfg: DictConfig) -> int:
 
     dl_kwargs = dict(batch_size=int(cfg.batch_size), pin_memory=pin_memory, persistent_workers=persistent)
     if _nw > 0:
-        dl_kwargs.update(num_workers=_nw, prefetch_factor=2, worker_init_fn=_dataloader_worker_init_fn)
+        dl_kwargs.update(num_workers=_nw, prefetch_factor=2, worker_init_fn=seed_worker)
     else:
         dl_kwargs.update(num_workers=0)
     try:

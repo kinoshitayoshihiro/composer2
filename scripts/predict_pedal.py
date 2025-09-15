@@ -38,9 +38,9 @@ import argparse
 import json
 import os
 import sys
+import random
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
-import functools
 try:
     import numpy as np
 except Exception as e:  # pragma: no cover - friendlier error
@@ -50,7 +50,7 @@ try:
 except Exception as e:  # pragma: no cover - friendlier error
     raise RuntimeError("pandas is required for predict_pedal. Try: `pip install pandas`") from e
 import torch
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, get_worker_info
 import pretty_midi as pm
 
 from ml_models.pedal_model import PedalModel
@@ -64,21 +64,15 @@ except Exception:  # pragma: no cover - package or script execution
     from scripts.eval_pedal import load_stats_and_normalize  # type: ignore
 
 
-def _dataloader_worker_init_fn(worker_id: int, base_seed: int) -> None:
-    """Multiprocessing-safe worker init (picklable).
-    - Ignore Ctrl-C in workers
-    - Seed: numpy/random/torch from base_seed ^ (worker_id+1)
-    """
-    import random, numpy as np, torch, signal
+def seed_worker(worker_id: int) -> None:
+    base_seed = torch.initial_seed() % 2**32
+    np.random.seed(base_seed + worker_id)
+    random.seed(base_seed + worker_id)
+    info = get_worker_info()
     try:
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        torch.set_num_threads(1)
     except Exception:
         pass
-    base = base_seed % (2**32)
-    wseed = (base ^ (worker_id + 1)) % (2**32)
-    np.random.seed(wseed)
-    random.seed(wseed)
-    torch.manual_seed(wseed)
 
 
 def _collate_windows(batch: List[Tuple["torch.Tensor", "torch.Tensor"]]) -> Tuple["torch.Tensor", "torch.Tensor"]:
@@ -246,17 +240,17 @@ def predict_per_frame(df: pd.DataFrame, *, feat_cols: Optional[List[str]], mean:
     _pw = _nw > 0
     _pf = 2 if _nw > 0 else None
     bs = max(1, int(batch))
-    gen = None
-    if getattr(torch, "Generator", None) and seed is not None:
-        gen = torch.Generator(device="cpu").manual_seed(int(seed))
-    base_seed = int(seed) if seed is not None else torch.initial_seed()
-    worker_init = functools.partial(_dataloader_worker_init_fn, base_seed=base_seed)
+    seed_val = int(seed) if seed is not None else torch.initial_seed()
+    random.seed(seed_val)
+    np.random.seed(seed_val % (2**32))
+    torch.manual_seed(seed_val)
+    gen = torch.Generator(device="cpu").manual_seed(seed_val) if getattr(torch, "Generator", None) else None
     starts_t = torch.tensor(starts, dtype=torch.int64)
     ds = TensorDataset(win, starts_t)
     pin = device.type == "cuda"
     dl_kwargs = dict(batch_size=bs, shuffle=False, drop_last=False,
                     num_workers=_nw, persistent_workers=_pw,
-                    worker_init_fn=worker_init,
+                    worker_init_fn=seed_worker,
                     collate_fn=_collate_windows,
                     generator=gen,
                     pin_memory=pin)
@@ -268,7 +262,7 @@ def predict_per_frame(df: pd.DataFrame, *, feat_cols: Optional[List[str]], mean:
         print(f"[composer2] DataLoader failed (num_workers={_nw}): {e} -> falling back to 0")
         fb_kwargs = dict(batch_size=bs, shuffle=False, drop_last=False,
                          num_workers=0, persistent_workers=False,
-                         worker_init_fn=worker_init,
+                         worker_init_fn=seed_worker,
                          collate_fn=_collate_windows,
                          generator=gen,
                          pin_memory=pin)

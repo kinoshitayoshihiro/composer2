@@ -2134,7 +2134,7 @@ def build_sparkle_midi(
             for idx in range(n):
                 b = sb + idx * pulse_subdiv_beats
                 t = beat_to_time(b)
-pulses.append((b, t))
+                pulses.append((b, t))
                 interval = pulse_subdiv_beats
                 if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
                     if swing_shape == "offbeat":

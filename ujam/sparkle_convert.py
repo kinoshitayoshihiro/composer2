@@ -2464,13 +2464,32 @@ def build_sparkle_midi(
             last_guided = note
             return note
 
-        # 3) VocalAdaptive overrides
+        # 3) Phrase plan / cycle notes
+        if phrase_plan is not None and (phrase_plan or cycle_notes):
+            bar_idx = bar
+            if bar_idx < len(phrase_plan):
+                pn = phrase_plan[bar_idx]
+            else:
+                pn = None
+                if cycle_notes:
+                    idx = ((bar_idx + cycle_start_bar) // max(1, cycle_stride)) % len(cycle_notes)
+                    pn = cycle_notes[idx]
+                phrase_plan.append(pn)
+            if bar_idx != last_bar_idx:
+                last_bar_idx = bar_idx
+                if pn is None or pn == last_bar_note:
+                    last_bar_note = pn
+                    return None
+                last_bar_note = pn
+            return pn
+
+        # 4) VocalAdaptive overrides
         if vocal_adapt is not None:
             note = vocal_adapt.phrase_for_bar(bar)
             if note is not None:
                 return note
 
-        # 4) Section/Bar pool pickers (with optional trend steering)
+        # 5) Section/Bar pool pickers (with optional trend steering)
         picker = bar_pool_pickers.get(bar)
         if picker:
             if trend_labels and bar < len(trend_labels) and trend_labels[bar] != 0:
@@ -2483,20 +2502,7 @@ def build_sparkle_midi(
                 return max(notes) if trend_labels[bar] > 0 else min(notes)
             return pool_picker.pick()
 
-        # 5) Cycle notes
-        pn: Optional[int] = None
-        if cycle_notes:
-            idx = ((bar + cycle_start_bar) // max(1, cycle_stride)) % len(cycle_notes)
-            pn = cycle_notes[idx]
-        if pn is None:
-            pn = phrase_note
-
-        if bar != last_bar_idx:
-            last_bar_idx = bar
-            if pn == last_bar_note:
-                return None
-            last_bar_note = pn
-        return pn
+        return None
 
     silent_qualities = set(silent_qualities or [])
 

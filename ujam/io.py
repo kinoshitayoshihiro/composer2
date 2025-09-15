@@ -39,7 +39,10 @@ def read_chords_yaml(path: Path) -> List["ChordSpan"]:
     if yaml is None:
         raise SystemExit("PyYAML is required to read YAML chord files. pip install pyyaml")
 
-    raw = yaml.safe_load(path.read_text())
+    text = path.read_text()
+    # Allow compact mappings like "start:0" without a space after ':'
+    text = re.sub(r":(?=\S)", ": ", text)
+    raw = yaml.safe_load(text)
     if raw is None:
         return []
 

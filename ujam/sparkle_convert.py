@@ -111,6 +111,7 @@ __all__ = [
     "schedule_phrase_keys",
     "vocal_onsets_from_midi",
     "vocal_features_from_midi",
+    "read_chords_yaml",
     "main",
 ]
 

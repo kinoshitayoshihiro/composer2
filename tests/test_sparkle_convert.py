@@ -1326,7 +1326,7 @@ def test_scheduler_fill_once_on_section_end() -> None:
 
 def test_scheduler_intensity_ramp() -> None:
     plan, fills, _ = sc.schedule_phrase_keys(4, None, None, None)
-    assert plan == [36, 37, 38, 39]
+    assert plan == [None, None, None, None]
     assert fills == {}
 
 

@@ -2081,6 +2081,9 @@ def build_sparkle_midi(
             num_bars = max(num_bars, last_idx + 1)
             if len(bar_qualities) < num_bars:
                 bar_qualities.extend([None] * (num_bars - len(bar_qualities)))
+        style_inject = mapping.get("style_inject")
+        if not (fill_policy == "style" or (lfo_targets and "fill" in lfo_targets)):
+            style_inject = None
         res = schedule_phrase_keys(
             num_bars,
             cycle_notes,
@@ -2089,7 +2092,7 @@ def build_sparkle_midi(
             cycle_start_bar=cycle_start_bar,
             cycle_stride=cycle_stride,
             lfo=section_lfo,
-            style_inject=mapping.get("style_inject"),
+            style_inject=style_inject,
             fill_policy=fill_policy,
             pulse_subdiv=pulse_subdiv_beats,
             markov=mapping.get("markov"),
@@ -2104,7 +2107,8 @@ def build_sparkle_midi(
             phrase_plan, fill_map = res  # type: ignore
             fill_src = {}
         if sec_list or mapping.get("style_fill") is not None or mapping.get("markov") is not None:
-            plan_active = True
+            if any(p is not None for p in phrase_plan):
+                plan_active = True
         bar_sources = ["cycle"] * len(phrase_plan)
         if stats is not None:
             stats["bar_phrase_notes_list"] = list(phrase_plan)
@@ -2151,27 +2155,31 @@ def build_sparkle_midi(
                     break
             bar_beats = num * (4.0 / den)
             sb = time_to_beat(start)
-            eb = sb + bar_beats
             pulses: List[Tuple[float, float]] = []
-            b = sb
-            idx = 0
-            while b < eb - EPS:
-                t = beat_to_time(b)
-                pulses.append((b, t))
-                interval = pulse_subdiv_beats
-                if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
+            if den == 4:
+                total = num * 2
+            elif den == 8:
+                total = num
+            else:
+                total = int(round(bar_beats / pulse_subdiv_beats))
+            beat_int = bar_beats / max(1, total)
+            for idx in range(total):
+                b = sb + idx * beat_int
+                if swing > 0.0 and math.isclose(beat_int, swing_unit_beats, abs_tol=EPS):
                     if swing_shape == "offbeat":
-                        interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
+                        shift = swing * (beat_int / 2)
+                        b += -shift if idx % 2 == 0 else shift
                     elif swing_shape == "even":
-                        interval *= (1 - swing) if idx % 2 == 0 else (1 + swing)
+                        shift = swing * (beat_int / 2)
+                        b += shift if idx % 2 == 0 else -shift
                     else:
                         mod = idx % 3
                         if mod == 0:
-                            interval *= 1 + swing
+                            b += swing * beat_int
                         elif mod == 1:
-                            interval *= 1 - swing
-                b += interval
-                idx += 1
+                            b -= swing * beat_int
+                t = beat_to_time(b)
+                pulses.append((b, t))
             stats["bar_pulses"][i] = pulses
 
     # Velocity curve helper
@@ -2387,67 +2395,75 @@ def build_sparkle_midi(
     def pick_phrase_note(t: float, chord_idx: int) -> Optional[int]:
         nonlocal last_guided, last_bar_idx, last_bar_note
         bar_idx = max(0, bisect.bisect_right(downbeats, t) - 1)
-        pn: Optional[int] = phrase_note
+        pn: Optional[int] = None
+        decided = False
+        plan_tried = False
 
-        # Cycle plan / round-robin sequence (lowest priority above fallback)
-        if plan_active and phrase_plan is not None and (phrase_plan or cycle_notes):
+        if guide_notes is not None:
+            if guide_quant == "bar":
+                base = bar_idx
+            else:
+                base = max(0, bisect.bisect_right(beat_times, t) - 1)
+            if base in guide_notes:
+                note = guide_notes.get(base)
+                decided = True
+                if note is not None and note != last_guided:
+                    pn = note
+                    last_guided = note
+
+        if pn is None and bar_idx in density_override:
+            pn = density_override[bar_idx]
+            decided = True
+
+        if pn is None and vocal_adapt is not None:
+            alt = vocal_adapt.phrase_for_bar(bar_idx)
+            if alt is not None:
+                pn = alt
+                decided = True
+
+        if pn is None:
+            picker = bar_pool_pickers.get(bar_idx)
+            if picker is not None:
+                decided = True
+                if trend_labels and bar_idx < len(trend_labels) and trend_labels[bar_idx] != 0:
+                    notes = [n for n, _ in picker.pool]
+                    pn = max(notes) if trend_labels[bar_idx] > 0 else min(notes)
+                else:
+                    pn = picker.pick()
+            elif pool_picker is not None:
+                decided = True
+                if trend_labels and bar_idx < len(trend_labels) and trend_labels[bar_idx] != 0:
+                    notes = [n for n, _ in pool_picker.pool]
+                    pn = max(notes) if trend_labels[bar_idx] > 0 else min(notes)
+                else:
+                    pn = pool_picker.pick()
+
+        if (
+            pn is None
+            and plan_active
+            and phrase_plan is not None
+            and (phrase_plan or cycle_notes)
+        ):
+            plan_tried = True
             if bar_idx < len(phrase_plan):
-                cand = phrase_plan[bar_idx]
+                pn = phrase_plan[bar_idx]
             else:
                 cand = None
                 if cycle_notes:
                     idx = ((bar_idx + cycle_start_bar) // max(1, cycle_stride)) % len(cycle_notes)
                     cand = cycle_notes[idx]
                 phrase_plan.append(cand)
-            pn = cand
+                pn = cand
 
-        # Global pool (weighted/markov/roundrobin)
-        if pool_picker is not None:
-            if trend_labels and bar_idx < len(trend_labels) and trend_labels[bar_idx] != 0:
-                notes = [n for n, _ in pool_picker.pool]
-                pn = max(notes) if trend_labels[bar_idx] > 0 else min(notes)
-            else:
-                pn = pool_picker.pick()
+        if pn is None and not (decided or plan_tried):
+            pn = phrase_note
 
-        # Section-specific pool overrides global pool
-        picker = bar_pool_pickers.get(bar_idx)
-        if picker is not None:
-            if trend_labels and bar_idx < len(trend_labels) and trend_labels[bar_idx] != 0:
-                notes = [n for n, _ in picker.pool]
-                pn = max(notes) if trend_labels[bar_idx] > 0 else min(notes)
-            else:
-                pn = picker.pick()
-
-        # VocalAdaptive dense/sparse mapping
-        if vocal_adapt is not None:
-            alt = vocal_adapt.phrase_for_bar(bar_idx)
-            if alt is not None:
-                pn = alt
-
-        # Density rules override
-        if bar_idx in density_override:
-            pn = density_override[bar_idx]
-
-        # Guide notes have highest priority
-        if guide_notes is not None:
-            if guide_quant == "bar":
-                base = bar_idx
-            else:
-                base = max(0, bisect.bisect_right(beat_times, t) - 1)
-            note = guide_notes.get(base)
-            if note is None or note == last_guided:
-                pn = None
-            else:
-                pn = note
-                last_guided = note
-
-        # Suppress repeated notes across bars at the very end
         if bar_idx != last_bar_idx:
             last_bar_idx = bar_idx
             if pn is None:
                 last_bar_note = pn
                 return None
-            if plan_active and pn == last_bar_note and cycle_stride <= 1:
+            if plan_active and plan_tried and pn == last_bar_note and cycle_stride <= 1:
                 last_bar_note = pn
                 return None
             last_bar_note = pn
@@ -2779,14 +2795,13 @@ def build_sparkle_midi(
     qs_list = quantize_strength if isinstance(quantize_strength, list) else None
     qs_val = float(quantize_strength) if not isinstance(quantize_strength, list) else 0.0
     if (qs_list and any(x > 0 for x in qs_list)) or (qs_list is None and qs_val > 0.0):
-        for n in phrase_inst.notes:
+        for idx, n in enumerate(phrase_inst.notes):
             sb = time_to_beat(n.start)
             eb = time_to_beat(n.end)
             gs = round(sb / pulse_subdiv_beats) * pulse_subdiv_beats
             ge = round(eb / pulse_subdiv_beats) * pulse_subdiv_beats
             if qs_list:
-                beat_idx = int(round(sb / pulse_subdiv_beats))
-                strength = qs_list[beat_idx % len(qs_list)]
+                strength = qs_list[idx % len(qs_list)]
             else:
                 strength = qs_val
             sb = sb + (gs - sb) * strength

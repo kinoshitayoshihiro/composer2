@@ -1898,7 +1898,7 @@ def build_sparkle_midi(
     end_t = pm_in.get_end_time()
     if not downbeats or end_t - downbeats[-1] > EPS:
         downbeats.append(end_t)
-    if cycle_notes and len(downbeats) < 2 and cycle_mode == "bar":
+    if cycle_notes and (len(downbeats) - 1) < 2 and cycle_mode == "bar":
         logging.info("cycle disabled; using fixed phrase_note=%d", phrase_note)
         cycle_notes = []
         if stats is not None:
@@ -2150,7 +2150,7 @@ def build_sparkle_midi(
 
     # Precompute pulse timestamps per bar (swing shifts timing only)
     if stats is not None and phrase_hold != "off":
-        for i, start in enumerate(downbeats):
+        for i, start in enumerate(downbeats[:-1]):
             num, den = 4, 4
             for mt, n, d in meter_map:
                 if mt <= start + EPS:
@@ -2160,30 +2160,26 @@ def build_sparkle_midi(
             bar_beats = num * (4.0 / den)
             sb = time_to_beat(start)
             pulses: List[Tuple[float, float]] = []
-            if den == 4:
-                total = num * 2
-            elif den == 8:
-                total = num
-            else:
-                total = int(round(bar_beats / pulse_subdiv_beats))
-            beat_int = bar_beats / max(1, total)
+            unit = pulse_subdiv_beats
+            total = max(1, int(round(bar_beats / unit + EPS)))
+            use_swing = swing > 0.0 and math.isclose(unit, swing_unit_beats, abs_tol=EPS)
             for idx in range(total):
-                b = sb + idx * beat_int
-                if swing > 0.0 and math.isclose(beat_int, swing_unit_beats, abs_tol=EPS):
-                    if swing_shape == "offbeat":
-                        shift = swing * (beat_int / 2)
-                        b += -shift if idx % 2 == 0 else shift
-                    elif swing_shape == "even":
-                        shift = swing * (beat_int / 2)
-                        b += shift if idx % 2 == 0 else -shift
+                beat_pos = sb + idx * unit
+                if use_swing:
+                    shift = swing * (unit / 2.0)
+                    if swing_shape == "even":
+                        beat_pos += shift if idx % 2 == 0 else -shift
+                    elif swing_shape == "offbeat":
+                        beat_pos += -shift if idx % 2 == 0 else shift
                     else:
                         mod = idx % 3
                         if mod == 0:
-                            b += swing * beat_int
+                            beat_pos += swing * unit
                         elif mod == 1:
-                            b -= swing * beat_int
-                t = beat_to_time(b)
-                pulses.append((b, t))
+                            beat_pos -= swing * unit
+                if beat_pos > sb + bar_beats - EPS:
+                    beat_pos = sb + bar_beats - EPS
+                pulses.append((beat_pos, beat_to_time(beat_pos)))
             stats["bar_pulses"][i] = pulses
 
     # Velocity curve helper

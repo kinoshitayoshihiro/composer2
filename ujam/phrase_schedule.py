@@ -66,11 +66,7 @@ def schedule_phrase_keys(
                 idx = ((i + start) // stride) % L
                 plan.append(cycle_phrase_notes[idx])
         else:
-            for i in range(num_bars):
-                note = 36 + i
-                if note > 47:
-                    note = 47
-                plan.append(note)
+            plan = [None] * num_bars
     prev: Optional[int] = None
     for i, pn in enumerate(plan):
         if pn is None:

@@ -3274,11 +3274,10 @@ def main():
     swing_unit_beats = parse_pulse(args.swing_unit)
     if not (0.0 <= args.swing < 1.0):
         raise SystemExit("--swing must be 0.0<=s<1.0")
-    swing = args.swing
+    swing = min(float(args.swing or 0.0), 0.9)
     if swing > 0.0 and not math.isclose(swing_unit_beats, pulse_beats, abs_tol=EPS):
         logging.info("swing disabled: swing unit %s != pulse %s", args.swing_unit, args.pulse)
         swing = 0.0
-    swing = max(0.0, min(float(swing), 0.9))
 
     mapping = load_mapping(Path(args.mapping) if args.mapping else None)
     global NOTE_ALIASES, NOTE_ALIAS_INV
@@ -3605,7 +3604,7 @@ def main():
         args.vel_curve,
         bpm,
         swing,
-        swing_unit_beats,
+        swing_unit_beats=swing_unit_beats,
         phrase_channel=phrase_channel,
         chord_channel=chord_channel,
         cycle_stride=cycle_stride,
@@ -3651,6 +3650,22 @@ def main():
         guide_onset_th=parse_int_or(args.guide_onset_th, 4),
         guide_style_note=guide_style_note,
     )
+
+    # Emit vocal-based damping CC if requested via unified --damp option.
+    if getattr(args, "damp", None):
+        try:
+            mode, kw = parse_damp_arg(args.damp)
+        except Exception:
+            mode, kw = "none", {}
+        if mode == "vocal":
+            emit_damping(
+                out_pm,
+                mode="vocal",
+                cc=max(0, min(int(kw.get("cc", 11)), 127)),
+                channel=max(0, min(int(kw.get("channel", 0)), 15)),
+                vocal_ratios=(vocal_cfg or {}).get("ratios", []),
+                downbeats=stats.get("downbeats") or out_pm.get_downbeats(),
+            )
 
     # Map guide beats to out_pm time for CC and unit reporting
     if guide_units:
@@ -3822,6 +3837,11 @@ def main():
                         cc_map.get(i, ""),
                     ]
                 )
+
+    if args.report_json:
+        p = Path(args.report_json)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(stats, indent=2, sort_keys=True))
 
     if args.dry_run:
         phrase_inst = None

@@ -123,6 +123,127 @@ NOTE_ALIAS_INV: Dict[int, str] = {}
 EPS = 1e-9
 
 
+# Helper utilities ---------------------------------------------------------
+
+def pulses_per_bar(num: int, den: int, unit: float) -> int:
+    """Return the pulse count implied by a time signature and subdivision."""
+
+    if unit <= 0.0:
+        raise ValueError("pulse subdivision must be positive")
+    bar_beats = num * (4.0 / den)
+    total = bar_beats / unit
+    # Round to the closest integer and guard against zero so compound meters
+    # such as 12/8 still surface 12 pulses when unit==0.5.
+    return max(1, int(round(total)))
+
+
+def clip_to_bar(beat_pos: float, bar_start: float, bar_end: float) -> float:
+    """Clamp ``beat_pos`` into the inclusive start / exclusive end of a bar."""
+
+    upper = bar_end - EPS
+    if beat_pos < bar_start:
+        return bar_start
+    if beat_pos > upper:
+        return upper
+    return beat_pos
+
+
+def resolve_downbeats(
+    pm: "pretty_midi.PrettyMIDI",
+    meter_map: List[Tuple[float, int, int]],
+    beat_times: List[float],
+    beat_to_time: Callable[[float], float],
+    time_to_beat: Callable[[float], float],
+) -> List[float]:
+    """Return sorted downbeat times including the final track end.
+
+    PrettyMIDI sometimes yields downbeats derived from tempo only; when the
+    spacing disagrees with the time-signature map we rebuild the list from the
+    meter changes so downstream logic sees a consistent, duplicate-free grid.
+    """
+
+    if not meter_map:
+        raise ValueError("meter_map must contain at least one entry")
+
+    end_t = pm.get_end_time()
+    downbeats = list(pm.get_downbeats())
+    if len(downbeats) >= 2:
+        num0, den0 = meter_map[0][1], meter_map[0][2]
+        expected = beat_to_time(num0 * (4.0 / den0))
+        actual = downbeats[1] - downbeats[0]
+        if not math.isclose(actual, expected, abs_tol=EPS):
+            downbeats = []
+
+    if len(downbeats) < 2:
+        downbeats = []
+        for idx, (mt, num, den) in enumerate(meter_map):
+            next_t = meter_map[idx + 1][0] if idx + 1 < len(meter_map) else end_t
+            start_b = time_to_beat(mt)
+            end_b = time_to_beat(next_t)
+            bar_beats = num * (4.0 / den)
+            bar = start_b
+            while bar < end_b - EPS:
+                downbeats.append(beat_to_time(bar))
+        if not downbeats:
+            downbeats = list(beat_times[::4])
+
+    downbeats.sort()
+    unique: List[float] = []
+    for t in downbeats:
+        ft = float(t)
+        if not unique or abs(ft - unique[-1]) > EPS:
+            unique.append(ft)
+    if not unique:
+        unique.append(0.0)
+    last = unique[-1]
+    if last < end_t - EPS:
+        unique.append(float(end_t))
+    else:
+        unique[-1] = float(end_t)
+    assert abs(end_t - unique[-1]) <= 1e-6
+    return unique
+
+
+@lru_cache(None)
+def _cached_meter_entry(
+    meter_key: Tuple[Tuple[float, int, int], ...],
+    idx: int,
+) -> Tuple[int, int]:
+    """Return ``(numerator, denominator)`` for ``meter_key[idx]`` with clamping."""
+
+    if not meter_key:
+        raise ValueError("meter_map must contain at least one entry")
+    if idx < 0:
+        idx = 0
+    elif idx >= len(meter_key):
+        idx = len(meter_key) - 1
+    _, num, den = meter_key[idx]
+    return num, den
+
+
+def get_meter_at(
+    meter_map: List[Tuple[float, int, int]],
+    t: float,
+    *,
+    times: Optional[List[float]] = None,
+) -> Tuple[int, int]:
+    """Return the meter active at time ``t`` using bisect over change times."""
+
+    if not meter_map:
+        raise ValueError("meter_map must contain at least one entry")
+    use_times_seq: Union[List[float], Tuple[float, ...]]
+    if times is not None:
+        use_times_seq = times
+    else:
+        use_times_seq = [mt for mt, _, _ in meter_map]
+    if len(use_times_seq) >= 2:
+        assert all(
+            earlier <= later + EPS for earlier, later in zip(use_times_seq, use_times_seq[1:])
+        ), "meter change times must be non-decreasing"
+    idx = bisect.bisect_right(use_times_seq, t + EPS) - 1
+    return _cached_meter_entry(tuple(meter_map), idx)
+
+
 # Lightweight PrettyMIDI stub for tests and dry runs
 def _pm_dummy_for_docs(length: float = 6.0):
     """Return a minimal PrettyMIDI-like object for unit tests.
@@ -1864,44 +1985,14 @@ def build_sparkle_midi(
         estimated_4_4 = True
     if len(meter_map) > 1:
         meter_map.sort(key=lambda x: x[0])
-    downbeats = list(pm_in.get_downbeats())
-    if ts_changes and len(downbeats) >= 2:
-        ts0 = ts_changes[0]
-        expected_bar = beat_to_time(ts0.numerator * (4.0 / ts0.denominator))
-        if abs((downbeats[1] - downbeats[0]) - expected_bar) > EPS:
-            downbeats = []
-            for i, ts in enumerate(ts_changes):
-                next_t = ts_changes[i + 1].time if i + 1 < len(ts_changes) else pm_in.get_end_time()
-                start_b = time_to_beat(ts.time)
-                end_b = time_to_beat(next_t)
-                bar_beats = ts.numerator * (4.0 / ts.denominator)
-                bar = start_b
-                while bar < end_b - EPS:
-                    downbeats.append(beat_to_time(bar))
-                    bar += bar_beats
-            downbeats.sort()
-    if len(downbeats) < 2:
-        beats = beat_times
-        if ts_changes:
-            downbeats = []
-            for i, ts in enumerate(ts_changes):
-                next_t = ts_changes[i + 1].time if i + 1 < len(ts_changes) else pm_in.get_end_time()
-                start_b = time_to_beat(ts.time)
-                end_b = time_to_beat(next_t)
-                bar_beats = ts.numerator * (4.0 / ts.denominator)
-                bar = start_b
-                while bar < end_b - EPS:
-                    downbeats.append(beat_to_time(bar))
-                    bar += bar_beats
-            downbeats.sort()
-        else:
-            downbeats = list(beats[::4])
-    # Ensure final bar end is represented for downstream bar counting.
-    if not isinstance(downbeats, list):
-        downbeats = list(downbeats)
-    end_t = pm_in.get_end_time()
-    if not downbeats or end_t - downbeats[-1] > EPS:
-        downbeats.append(end_t)
+    downbeats = resolve_downbeats(
+        pm_in,
+        meter_map,
+        beat_times,
+        beat_to_time,
+        time_to_beat,
+    )
+    meter_times = [mt for mt, _, _ in meter_map]
     if cycle_notes and (len(downbeats) - 1) < 2 and cycle_mode == "bar":
         logging.info("cycle disabled; using fixed phrase_note=%d", phrase_note)
         cycle_notes = []
@@ -1910,6 +2001,9 @@ def build_sparkle_midi(
 
     if stats is not None:
         stats["downbeats"] = downbeats
+        # Dict[bar_index, List[(beat_position_in_beats, absolute_time_seconds)]]
+        # representing the pulse grid emitted for that bar.
+        # Stored as floats to ease JSON export without further casting.
         stats["bar_pulses"] = {}
         stats["bar_phrase_notes"] = {}
         stats["bar_velocities"] = {}
@@ -1989,18 +2083,8 @@ def build_sparkle_midi(
     accent_by_bar: Dict[int, List[float]] = {}
     accent_scale_by_bar: Dict[int, float] = {}
     if accent_map:
-
-        def meter_at(t: float) -> Tuple[int, int]:
-            idx = 0
-            for j, (mt, num, den) in enumerate(meter_map):
-                if mt <= t:
-                    idx = j
-                else:
-                    break
-            return meter_map[idx][1], meter_map[idx][2]
-
         for i, t in enumerate(downbeats):
-            num, den = meter_at(t)
+            num, den = get_meter_at(meter_map, t, times=meter_times)
             key = f"{num}/{den}"
             lst = accent_map.get(key)
             if lst:
@@ -2152,29 +2236,21 @@ def build_sparkle_midi(
                 stats["bar_reason"][i] = {"source": bar_sources[i], "note": pn}
             stats["fill_sources"].update(fill_src)
 
-    # Precompute pulse timestamps per bar (swing shifts timing only)
-    meter_times = [mt for mt, _, _ in meter_map]
-
+    # Precompute pulse timestamps per bar (count derived from meter; swing shifts timing only)
     if stats is not None:
         for i, start in enumerate(downbeats[:-1]):
-            idx_ts = bisect.bisect_right(meter_times, start + EPS) - 1
-            if idx_ts < 0:
-                idx_ts = 0
-            _, num, den = meter_map[idx_ts]
+            num, den = get_meter_at(meter_map, start, times=meter_times)
             bar_beats = num * (4.0 / den)
             sb = time_to_beat(start)
             bar_end = sb + bar_beats
             pulses: List[Tuple[float, float]] = []
-            unit = pulse_subdiv_beats
-            use_swing = swing > 0.0 and math.isclose(unit, swing_unit_beats, abs_tol=EPS)
-            idx = 0
-            while True:
-                base_pos = sb + idx * unit
-                if base_pos > bar_end - EPS:
-                    break
-                beat_pos = base_pos
+            total = pulses_per_bar(num, den, pulse_subdiv_beats)
+            step = bar_beats / total
+            use_swing = swing > 0.0 and math.isclose(step, swing_unit_beats, abs_tol=EPS)
+            for idx in range(total):
+                beat_pos = sb + idx * step
                 if use_swing:
-                    shift = swing * (unit / 2.0)
+                    shift = swing * (step / 2.0)
                     if swing_shape == "even":
                         beat_pos += shift if idx % 2 == 0 else -shift
                     elif swing_shape == "offbeat":
@@ -2182,13 +2258,12 @@ def build_sparkle_midi(
                     else:
                         mod = idx % 3
                         if mod == 0:
-                            beat_pos += swing * unit
+                            beat_pos += swing * step
                         elif mod == 1:
-                            beat_pos -= swing * unit
-                if beat_pos > bar_end - EPS:
-                    beat_pos = bar_end - EPS
-                pulses.append((beat_pos, beat_to_time(beat_pos)))
-                idx += 1
+                            beat_pos -= swing * step
+                        # The third pulse (mod == 2) remains centered to maintain triplet feel.
+                beat_pos = clip_to_bar(beat_pos, sb, bar_end)
+                pulses.append((float(beat_pos), float(beat_to_time(beat_pos))))
             stats["bar_pulses"][i] = pulses
 
     # Velocity curve helper

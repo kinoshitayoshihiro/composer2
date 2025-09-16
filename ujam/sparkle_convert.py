@@ -121,6 +121,7 @@ NOTE_ALIASES: Dict[str, int] = {}
 NOTE_ALIAS_INV: Dict[int, str] = {}
 
 EPS = 1e-9
+MAX_ITERS = 1024
 
 
 # Helper utilities ---------------------------------------------------------
@@ -1440,38 +1441,101 @@ def place_in_range(
     prev: Optional[int] = None
     if voicing_mode == "closed":
         for p in pitches:
+            guard = MAX_ITERS
             while p < lo:
+                if guard == 0:
+                    logging.warning(
+                        "place_in_range: max iterations while raising closed voicing note"
+                    )
+                    break
+                guard -= 1
                 p += 12
+            guard = MAX_ITERS
             while p > hi:
+                if guard == 0:
+                    logging.warning(
+                        "place_in_range: max iterations while lowering closed voicing note"
+                    )
+                    break
+                guard -= 1
                 p -= 12
             res.append(p)
         res.sort()
         changed = True
+        change_guard = MAX_ITERS
         while changed:
+            if change_guard == 0:
+                logging.warning(
+                    "place_in_range: max iterations while normalizing closed voicing"
+                )
+                break
+            change_guard -= 1
             changed = False
             res.sort()
             for i in range(1, len(res)):
+                gap_guard = MAX_ITERS
                 while res[i] - res[i - 1] > 12 and res[i] - 12 >= lo:
+                    if gap_guard == 0:
+                        logging.warning(
+                            "place_in_range: max iterations while tightening closed gaps"
+                        )
+                        break
+                    gap_guard -= 1
                     res[i] -= 12
                     changed = True
         for i in range(len(res)):
+            lower_guard = MAX_ITERS
             while res[i] > hi and res[i] - 12 >= lo:
+                if lower_guard == 0:
+                    logging.warning(
+                        "place_in_range: max iterations while lowering closed note into range"
+                    )
+                    break
+                lower_guard -= 1
                 res[i] -= 12
         res.sort()
         return res
 
     for p in pitches:
+        guard = MAX_ITERS
         while p < lo:
+            if guard == 0:
+                logging.warning(
+                    "place_in_range: max iterations while raising stacked voicing note"
+                )
+                break
+            guard -= 1
             p += 12
+        guard = MAX_ITERS
         while p > hi:
+            if guard == 0:
+                logging.warning(
+                    "place_in_range: max iterations while lowering stacked voicing note"
+                )
+                break
+            guard -= 1
             p -= 12
         if prev is not None:
+            order_guard = MAX_ITERS
             while p <= prev:
+                if order_guard == 0:
+                    logging.warning(
+                        "place_in_range: max iterations while enforcing ascending order"
+                    )
+                    break
+                order_guard -= 1
                 p += 12
         prev = p
         res.append(p)
     if res and res[-1] > hi:
+        adjust_guard = MAX_ITERS
         while any(p > hi for p in res) and all(p - 12 >= lo for p in res):
+            if adjust_guard == 0:
+                logging.warning(
+                    "place_in_range: max iterations while lowering stacked chord into range"
+                )
+                break
+            adjust_guard -= 1
             res = [p - 12 for p in res]
         if any(p > hi for p in res):
             logging.warning("place_in_range: notes fall outside range %s-%s", lo, hi)

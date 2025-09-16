@@ -125,6 +125,7 @@ EPS = 1e-9
 MAX_ITERS = 1024
 
 # Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
+# Opt-in keeps normal randomness intact while letting tests pin results.
 _SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
 
 
@@ -186,8 +187,14 @@ def resolve_downbeats(
             start_b = time_to_beat(mt)
             end_b = time_to_beat(next_t)
             bar_beats = num * (4.0 / den)
-            bar = start_b
-            while bar < end_b - EPS:
+            if bar_beats <= 0:
+                continue
+            total_beats = max(0.0, end_b - start_b)
+            steps = int(math.ceil(total_beats / bar_beats))
+            for step in range(steps):
+                bar = start_b + step * bar_beats
+                if bar >= end_b - EPS:
+                    break
                 downbeats.append(beat_to_time(bar))
         if not downbeats:
             downbeats = list(beat_times[::4])
@@ -408,6 +415,8 @@ def _emit_phrases_for_span(span: "ChordSpan", c_idx: int, ctx: RuntimeContext) -
     sb = ctx.time_to_beat(span.start)
     eb = ctx.time_to_beat(span.end)
     b = sb
+    iter_guard = MAX_ITERS
+    # Guard to avoid pathological zero-advance loops when phrasing math collapses.
     while b < eb - ctx.EPS:
         t = ctx.beat_to_time(b)
         bar_idx = max(0, bisect.bisect_right(ctx.downbeats, t) - 1)
@@ -498,7 +507,18 @@ def _emit_phrases_for_span(span: "ChordSpan", c_idx: int, ctx: RuntimeContext) -
                 ctx.stats["bar_phrase_notes"][bar_idx] = pn
             if ctx.stats is not None:
                 ctx.stats.setdefault("bar_velocities", {}).setdefault(bar_idx, []).append(base_vel)
+        if beat_inc <= ctx.EPS:
+            logging.warning(
+                "emit_phrases_for_span: non-positive beat increment; aborting span"
+            )
+            break
         b += beat_inc
+        iter_guard -= 1
+        if iter_guard <= 0:
+            logging.warning(
+                "emit_phrases_for_span: max iterations reached; aborting span"
+            )
+            break
 
 
 def parse_midi_note(token: str) -> int:
@@ -844,7 +864,10 @@ class PoolPicker:
         self.idx = 0
         self.last_idx: Optional[int] = None
         self.recent: collections.deque = collections.deque(maxlen=self.no_repeat_window)
-        self.rng = rng or random
+        if rng is None:
+            # Honor opt-in deterministic mode while preserving override priority.
+            rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random
+        self.rng = rng
 
     def _choose(self, weights: Optional[List[float]] = None) -> int:
         notes = [n for n, _ in self.pool]
@@ -2364,23 +2387,24 @@ def build_sparkle_midi(
             total = pulses_per_bar(num, den, pulse_subdiv_beats)
             step = bar_beats / total
             use_swing = swing > 0.0 and math.isclose(step, swing_unit_beats, abs_tol=EPS)
-            for idx in range(total):
-                beat_pos = sb + idx * step
+            cur = sb
+            pulses.append((float(cur), float(beat_to_time(cur))))
+            for idx in range(1, total):
+                interval = step
                 if use_swing:
-                    shift = swing * (step / 2.0)
-                    if swing_shape == "even":
-                        beat_pos += shift if idx % 2 == 0 else -shift
-                    elif swing_shape == "offbeat":
-                        beat_pos += -shift if idx % 2 == 0 else shift
+                    if swing_shape == "offbeat":
+                        interval *= (1 + swing) if (idx - 1) % 2 == 0 else (1 - swing)
+                    elif swing_shape == "even":
+                        interval *= (1 - swing) if (idx - 1) % 2 == 0 else (1 + swing)
                     else:
-                        mod = idx % 3
+                        mod = (idx - 1) % 3
                         if mod == 0:
-                            beat_pos += swing * step
+                            interval *= 1 + swing
                         elif mod == 1:
-                            beat_pos -= swing * step
+                            interval *= 1 - swing
                         # The third pulse (mod == 2) remains centered to maintain triplet feel.
-                beat_pos = clip_to_bar(beat_pos, sb, bar_end)
-                pulses.append((float(beat_pos), float(beat_to_time(beat_pos))))
+                cur = clip_to_bar(cur + interval, sb, bar_end)
+                pulses.append((float(cur), float(beat_to_time(cur))))
             stats["bar_pulses"][i] = pulses
 
     # Velocity curve helper
@@ -2433,6 +2457,8 @@ def build_sparkle_midi(
         indices: List[Tuple[int, int]] = []
         b = time_to_beat(start_t)
         eb = time_to_beat(end_t)
+        iter_guard = MAX_ITERS
+        # Guard to avoid pathological zero-interval loops when swing math stalls.
         while b < eb - EPS:
             t = beat_to_time(b)
             bar_idx = max(0, bisect.bisect_right(downbeats, t) - 1)
@@ -2451,7 +2477,18 @@ def build_sparkle_midi(
                         interval *= 1 + swing
                     elif mod == 1:
                         interval *= 1 - swing
+            if interval <= EPS:
+                logging.warning(
+                    "pulses_in_range: non-positive interval; aborting pulse walk"
+                )
+                break
             b += interval
+            iter_guard -= 1
+            if iter_guard <= 0:
+                logging.warning(
+                    "pulses_in_range: max iterations reached; aborting pulse walk"
+                )
+                break
         return indices
 
     # placeholder removed; phrase emission handled below

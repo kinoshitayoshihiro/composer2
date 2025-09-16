@@ -3,12 +3,16 @@ import random
 from dataclasses import dataclass
 import math
 from typing import Dict, List, Optional, Tuple
+import os
 
 DENSITY_PRESETS = {
     "low": {"stride": 2, "len": 1.25, "accent": 0.8},
     "med": {"stride": 1, "len": 1.0, "accent": 1.0},
     "high": {"stride": 1, "len": 0.75, "accent": 1.2},
 }
+
+# Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
+_SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
 
 
 def select_phrase_by_harmony(
@@ -42,7 +46,8 @@ def schedule_phrase_keys(
     rng: Optional[random.Random] = None,
     stats: Optional[Dict] = None,
 ) -> Tuple[List[Optional[int]], Dict[int, Tuple[int, float, float]], Dict[int, str]]:
-    rng = rng or random.Random()
+    if rng is None:
+        rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
     plan: List[Optional[int]] = []
     if markov:
         states = markov.get("states") or []

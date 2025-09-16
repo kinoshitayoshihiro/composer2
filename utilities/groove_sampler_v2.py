@@ -4,6 +4,9 @@ This module implements a memory efficient n-gram model for drum loop
 generation. Contexts are hashed using 64-bit Blake2b and frequency counts are
 stored in ``numpy`` arrays.  A coarse resolution option groups intra-bar
 positions into four buckets.
+
+Set ``SPARKLE_DETERMINISTIC=1`` to force deterministic RNG defaults when
+sampling without an explicit seed.
 """
 
 from __future__ import annotations
@@ -49,7 +52,8 @@ import numpy as np
 NDArray = np.ndarray
 
 # Process-wide RNG for deterministic sampling
-_RNG: random.Random = random.Random()
+_SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
+_RNG: random.Random = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
 
 
 def set_random_state(seed: int | None) -> None:

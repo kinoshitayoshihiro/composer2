@@ -52,6 +52,9 @@ _WARNED_LUT_PATHS: set[Path] = set()
 
 __drum_gen_version__ = "0.3.0"
 
+# Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
+_SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
+
 # Default LUT mapping intensity to fill density
 DEFAULT_FILL_DENSITY_LUT: dict[float, float] = {
     0.0: 0.05,  # whisper
@@ -194,7 +197,9 @@ class FillInserter:
         base_velocity: int = 80,
     ) -> None:
         self.pattern_lib = pattern_lib
-        self.rng = rng or random.Random()
+        if rng is None:
+            rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
+        self.rng = rng
         self.drum_map: dict[str, tuple[str, int]] = {}
         self.base_velocity = base_velocity
 
@@ -679,7 +684,7 @@ class DrumGenerator(BasePartGenerator):
         self.heatmap_threshold = self.main_cfg.get("heatmap_threshold", 1)
         # Velocity below this value triggers use of the HH edge articulation
         self.hh_edge_threshold = int(self.main_cfg.get("hh_edge_threshold", 50))
-        self.rng = random.Random()
+        self.rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
         if self.main_cfg.get("rng_seed") is not None:
             self.rng.seed(self.main_cfg["rng_seed"])
 

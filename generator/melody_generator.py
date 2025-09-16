@@ -75,6 +75,9 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
+# Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
+_SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
+
 
 class MelodyGenerator(BasePartGenerator):
     def __init__(
@@ -137,7 +140,9 @@ class MelodyGenerator(BasePartGenerator):
         )
         self.global_key_tonic = global_key_signature_tonic
         self.global_key_mode = global_key_signature_mode
-        self.rng = rng or random.Random()
+        if rng is None:
+            rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
+        self.rng = rng
 
         # ここで親クラスの初期化（global_settingsを渡す）
         super().__init__(

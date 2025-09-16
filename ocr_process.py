@@ -74,5 +74,5 @@ def ocr_process_image_files(bucket_name, prefix, batch_size=16):
 
 if __name__ == "__main__":
     bucket_name = "bungo-syousetu"
-    prefix = "1./"  # 例: "images/pngs/"
+    prefix = "３０/"  # 例: "images/pngs/"
     ocr_process_image_files(bucket_name, prefix)

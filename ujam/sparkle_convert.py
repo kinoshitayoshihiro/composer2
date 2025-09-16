@@ -139,16 +139,18 @@ def pulses_per_bar(num: int, den: int, unit: float) -> int:
     if den == 0:
         raise ValueError("time signature denominator must be non-zero")
     if den == 8:
-        return max(1, num)
+        return max(1, int(num))
     if den == 4:
-        return max(1, num * 2)
+        return max(1, int(num * 2))
     bar_beats = num * (4.0 / den)
-    total = int(round(bar_beats / unit + EPS))
+    total = int(math.floor(bar_beats / unit + EPS))
     return max(1, total)
 
 
-def _ensure_tempo_and_ticks(pm: "pretty_midi.PrettyMIDI", seed_bpm: float) -> None:
-    """Seed tempo metadata and tick tables if PrettyMIDI lacks them."""
+def _ensure_tempo_and_ticks(
+    pm: "pretty_midi.PrettyMIDI", seed_bpm: float, ts_changes: Optional[List] = None
+) -> None:
+    """Ensure tempo/tick tables exist before writing PrettyMIDI outputs."""
 
     try:
         bpm = float(seed_bpm)
@@ -156,44 +158,153 @@ def _ensure_tempo_and_ticks(pm: "pretty_midi.PrettyMIDI", seed_bpm: float) -> No
         bpm = 120.0
     if not math.isfinite(bpm) or bpm <= 0.0:
         bpm = 120.0
+
+    ts_seq = ts_changes
+    if ts_seq is None:
+        ts_seq = getattr(pm, "time_signature_changes", None)
+    if ts_seq and not getattr(pm, "_sparkle_ts_seeded", False):
+        seq_list = list(ts_seq)
+        first = seq_list[0]
+        try:
+            first_time = float(getattr(first, "time", 0.0))
+        except Exception:
+            first_time = 0.0
+        num = getattr(first, "numerator", 4)
+        den = getattr(first, "denominator", 4)
+        if first_time > EPS:
+            exists_at_zero = False
+            for ts in seq_list:
+                try:
+                    ts_time = float(getattr(ts, "time", 0.0))
+                except Exception:
+                    ts_time = 0.0
+                if abs(ts_time) <= EPS and getattr(ts, "numerator", num) == num and getattr(
+                    ts, "denominator", den
+                ) == den:
+                    exists_at_zero = True
+                    break
+            if not exists_at_zero:
+                ts_cls = getattr(pretty_midi, "TimeSignature", None)
+                if ts_cls is not None:
+                    try:
+                        pm.time_signature_changes.insert(0, ts_cls(int(num), int(den), 0.0))
+                    except Exception:
+                        pass
+        setattr(pm, "_sparkle_ts_seeded", True)
+
     try:
-        tempi = pm.get_tempo_changes()[1]
+        tempo_times, tempi_seq = pm.get_tempo_changes()
     except Exception:
-        tempi = []
+        tempo_times, tempi_seq = [], []
+    try:
+        tempi_list = list(tempi_seq)
+    except Exception:
+        tempi_list = []
+    try:
+        time_list = list(tempo_times)
+    except Exception:
+        time_list = []
     current_initial = getattr(pm, "initial_tempo", None)
     has_initial = (
         current_initial is not None and math.isfinite(current_initial) and current_initial > 0.0
     )
-    if len(tempi) > 0 or (has_initial and getattr(pm, "_sparkle_seeded_meta", False)):
-        return
+    if len(tempi_list) == 0 and not has_initial:
+        seeded = False
+        if hasattr(pm, "_add_tempo_change"):
+            try:
+                pm._add_tempo_change(bpm, 0.0)  # type: ignore[attr-defined]
+                seeded = True
+            except Exception:
+                seeded = False
+        if not seeded:
+            pm.initial_tempo = bpm
+    elif len(tempi_list) > 0:
+        first_time = float(time_list[0]) if time_list else 0.0
+        first_tempo = float(tempi_list[0])
+        if first_time > EPS:
+            if hasattr(pm, "_add_tempo_change"):
+                try:
+                    pm._add_tempo_change(first_tempo, 0.0)  # type: ignore[attr-defined]
+                except Exception:
+                    if not has_initial:
+                        pm.initial_tempo = first_tempo
+            elif not has_initial:
+                pm.initial_tempo = first_tempo
 
-    seeded = False
-    if hasattr(pm, "_add_tempo_change"):
-        try:
-            pm._add_tempo_change(bpm, 0.0)  # type: ignore[attr-defined]
-            seeded = True
-        except Exception:
-            seeded = False
-    if not seeded:
-        pm.initial_tempo = bpm
+    setattr(pm, "_sparkle_meta_seed_fallback", False)
+
+    def _seed_private_tick_tables(pm_obj: "pretty_midi.PrettyMIDI") -> bool:
+        used_private = False
+        if hasattr(pm_obj, "_tick_scales"):
+            try:
+                current = pm_obj._tick_scales  # type: ignore[attr-defined]
+            except Exception:
+                current = None
+            need_scale = False
+            if current is None:
+                need_scale = True
+            else:
+                try:
+                    need_scale = len(current) == 0
+                except Exception:
+                    need_scale = True
+            if need_scale:
+                try:
+                    pm_obj._tick_scales = [(0, 1.0)]  # type: ignore[attr-defined]
+                    used_private = True
+                except Exception:
+                    pass
+        tick_to_time = getattr(pm_obj, "_PrettyMIDI__tick_to_time", None)
+        need_tick = False
+        if tick_to_time is None:
+            need_tick = True
+        else:
+            try:
+                need_tick = len(tick_to_time) == 0
+            except Exception:
+                need_tick = True
+        if need_tick:
+            try:
+                setattr(pm_obj, "_PrettyMIDI__tick_to_time", [0.0])
+                used_private = True
+            except Exception:
+                pass
+        return used_private
 
     try:
         pm.get_beats()
     except Exception:
         pass
 
-    try:
-        pm.time_to_tick(0.0)
-    except Exception:
-        if hasattr(pm, "_tick_scales") and not getattr(pm, "_tick_scales"):
-            pm._tick_scales = [(0, 1.0)]  # type: ignore[attr-defined]
-        if hasattr(pm, "_tick_to_time") and not getattr(pm, "_tick_to_time"):
-            pm._tick_to_time = [0.0]  # type: ignore[attr-defined]
+    private_used = False
+
+    def _probe_time(value: float) -> None:
+        nonlocal private_used
         try:
-            pm.time_to_tick(0.0)
+            pm.time_to_tick(value)
         except Exception:
-            pass
-    setattr(pm, "_sparkle_seeded_meta", True)
+            if _seed_private_tick_tables(pm):
+                private_used = True
+            try:
+                pm.time_to_tick(value)
+            except Exception:
+                pass
+
+    _probe_time(0.0)
+    end_probe = 0.0
+    if hasattr(pm, "get_end_time"):
+        try:
+            end_probe = float(pm.get_end_time())
+        except Exception:
+            end_probe = 0.0
+    if end_probe > EPS:
+        _probe_time(end_probe)
+
+    if not private_used and _seed_private_tick_tables(pm):
+        private_used = True
+
+    if private_used:
+        setattr(pm, "_sparkle_meta_seed_fallback", True)
 
 
 def clip_to_bar(beat_pos: float, bar_start: float, bar_end: float) -> float:
@@ -226,14 +337,17 @@ def resolve_downbeats(
 
     end_t = pm.get_end_time()
     downbeats = list(pm.get_downbeats())
-    if len(downbeats) >= 2:
+    rebuild = len(downbeats) < 2
+    if not rebuild:
         num0, den0 = meter_map[0][1], meter_map[0][2]
-        expected = beat_to_time(num0 * (4.0 / den0))
-        actual = downbeats[1] - downbeats[0]
-        if not math.isclose(actual, expected, abs_tol=EPS):
-            downbeats = []
+        bar_beats = num0 * (4.0 / den0)
+        start_b = time_to_beat(downbeats[0])
+        next_b = time_to_beat(downbeats[1])
+        actual_beats = next_b - start_b
+        if abs(actual_beats - bar_beats) > 1e-3:
+            rebuild = True
 
-    if len(downbeats) < 2:
+    if rebuild:
         downbeats = []
         for idx, (mt, num, den) in enumerate(meter_map):
             next_t = meter_map[idx + 1][0] if idx + 1 < len(meter_map) else end_t
@@ -242,13 +356,10 @@ def resolve_downbeats(
             bar_beats = num * (4.0 / den)
             if bar_beats <= 0:
                 continue
-            total_beats = max(0.0, end_b - start_b)
-            steps = int(math.ceil(total_beats / bar_beats))
-            for step in range(steps):
-                bar = start_b + step * bar_beats
-                if bar >= end_b - EPS:
-                    break
+            bar = start_b
+            while bar < end_b - EPS:
                 downbeats.append(beat_to_time(bar))
+                bar += bar_beats
         if not downbeats:
             downbeats = list(beat_times[::4])
 
@@ -524,8 +635,7 @@ def _emit_phrases_for_span(span: "ChordSpan", c_idx: int, ctx: RuntimeContext) -
             boundary = min(boundary, ctx.downbeats[bar_idx + 1])
         boundary = min(boundary, span.end)
         if ctx.stats is not None:
-            store = ctx.stats.setdefault("bar_pulses", {})
-            store.setdefault(bar_idx, []).append((b, t))
+            ctx.stats.setdefault("bar_trigger_pulses", {}).setdefault(bar_idx, []).append((b, t))
         if pn is not None:
             if ctx.humanize_ms > 0.0:
                 delta_s = ctx.rng.uniform(-ctx.humanize_ms, ctx.humanize_ms) / 1000.0
@@ -1211,14 +1321,24 @@ def insert_style_fill(
     seed_bpm = float(bpm) if bpm is not None else 120.0
     if not math.isfinite(seed_bpm) or seed_bpm <= 0.0:
         seed_bpm = 120.0
-    _ensure_tempo_and_ticks(pm_out, seed_bpm)
-    try:
-        beat_times = pm_out.get_beats()
-    except (AttributeError, IndexError, ValueError):
-        step = 60.0 / seed_bpm
-        end = units[-1][1] if units else step
-        n = int(math.ceil(end / step)) + 1
-        beat_times = [i * step for i in range(n)]
+    _ensure_tempo_and_ticks(pm_out, seed_bpm, pm_out.time_signature_changes)
+    stats_ref = getattr(pm_out, "_sparkle_stats", None)
+    beat_times: List[float]
+    cached_beats: Optional[List[float]] = None
+    if stats_ref:
+        raw = stats_ref.get("beat_times")
+        if raw:
+            cached_beats = [float(bt) for bt in raw]
+    if cached_beats:
+        beat_times = cached_beats
+    else:
+        try:
+            beat_times = pm_out.get_beats()
+        except (AttributeError, IndexError, ValueError):
+            step = 60.0 / seed_bpm
+            end = units[-1][1] if units else step
+            n = int(math.ceil(end / step)) + 1
+            beat_times = [i * step for i in range(n)]
     if len(beat_times) < 2:
         step = 60.0 / seed_bpm
         beat_times = [0.0, step]
@@ -1341,14 +1461,24 @@ def insert_style_layer(
     seed_bpm = float(bpm) if bpm is not None else 120.0
     if not math.isfinite(seed_bpm) or seed_bpm <= 0.0:
         seed_bpm = 120.0
-    _ensure_tempo_and_ticks(pm_out, seed_bpm)
-    try:
-        beat_times = pm_out.get_beats()
-    except (AttributeError, IndexError, ValueError):
-        step = 60.0 / seed_bpm
-        end = units[-1][1]
-        n = int(math.ceil(end / step)) + 1
-        beat_times = [i * step for i in range(n)]
+    _ensure_tempo_and_ticks(pm_out, seed_bpm, pm_out.time_signature_changes)
+    stats_ref = getattr(pm_out, "_sparkle_stats", None)
+    beat_times: List[float]
+    cached_beats: Optional[List[float]] = None
+    if stats_ref:
+        raw = stats_ref.get("beat_times")
+        if raw:
+            cached_beats = [float(bt) for bt in raw]
+    if cached_beats:
+        beat_times = cached_beats
+    else:
+        try:
+            beat_times = pm_out.get_beats()
+        except (AttributeError, IndexError, ValueError):
+            step = 60.0 / seed_bpm
+            end = units[-1][1]
+            n = int(math.ceil(end / step)) + 1
+            beat_times = [i * step for i in range(n)]
 
     def beat_to_time(b: float) -> float:
         idx = int(math.floor(b))
@@ -1986,6 +2116,13 @@ def build_sparkle_midi(
     density_rules: Optional[List[Dict[str, Any]]] = None,
     swing_shape: str = "offbeat",
 ) -> "pretty_midi.PrettyMIDI":
+    """Render Sparkle-compatible MIDI with optional statistics payload.
+
+    When ``stats`` is supplied a schema version of ``2`` is recorded alongside:
+    ``bar_pulses`` (density-aware meter grid for backward compatibility) and
+    ``bar_trigger_pulses`` (actual emitted trigger pulses, also mirrored to
+    ``bar_trigger_pulses_compat`` for transitionary consumers).
+    """
     rng = rng_human or rng
     if rng is None:
         rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
@@ -2092,7 +2229,12 @@ def build_sparkle_midi(
     seed_bpm = float(bpm) if bpm is not None else 120.0
     if not math.isfinite(seed_bpm) or seed_bpm <= 0.0:
         seed_bpm = 120.0
-    _ensure_tempo_and_ticks(out, seed_bpm)
+    _ensure_tempo_and_ticks(out, seed_bpm, out.time_signature_changes)
+    meta_private = getattr(out, "_sparkle_meta_seed_fallback", False)
+    if stats is not None:
+        setattr(out, "_sparkle_stats", stats)
+        if meta_private:
+            stats["meta_seeded"] = "private_fallback"
 
     chord_inst = pretty_midi.Instrument(program=0, name=CHORD_INST_NAME)
     phrase_inst = pretty_midi.Instrument(program=0, name=PHRASE_INST_NAME)
@@ -2129,6 +2271,8 @@ def build_sparkle_midi(
     beat_times = pm_in.get_beats()
     if len(beat_times) < 2:
         raise SystemExit("Could not determine beats from MIDI")
+    if stats is not None:
+        stats["beat_times"] = [float(bt) for bt in beat_times]
 
     @lru_cache(maxsize=None)
     def beat_to_time(b: float) -> float:
@@ -2205,13 +2349,16 @@ def build_sparkle_midi(
             stats["cycle_disabled"] = True
 
     if stats is not None:
+        stats["schema_version"] = 2
         stats["downbeats"] = downbeats
         # Dict[bar_index, List[(beat_position_in_beats, absolute_time_seconds)]]
-        # capturing the emitted pulse timeline per bar. Stored as floats to
-        # ease JSON export without further casting. ``bar_pulse_grid`` keeps the
-        # meter-derived reference grid for analysis routines.
-        # ``bar_pulses`` will mirror ``bar_pulse_grid`` until the former is retired.
+        # capturing the meter-derived reference grid per bar. Stored as floats to
+        # ease JSON export without further casting. ``bar_trigger_pulses`` records
+        # the actual trigger placements when phrases are emitted so analytics can
+        # distinguish between the theoretical grid and realised pulses.
         stats["bar_pulses"] = {}
+        stats["bar_trigger_pulses"] = {}
+        stats["bar_trigger_pulses_compat"] = stats["bar_trigger_pulses"]
         stats["bar_pulse_grid"] = {}
         stats["bar_phrase_notes"] = {}
         stats["bar_velocities"] = {}
@@ -2446,39 +2593,64 @@ def build_sparkle_midi(
                 stats["bar_reason"][i] = {"source": bar_sources[i], "note": pn}
             stats["fill_sources"].update(fill_src)
 
-    # Precompute pulse timestamps per bar (count derived from meter; swing shifts timing only)
+    # Precompute pulse timestamps per bar (meter-derived grid; swing shifts timing only)
     if stats is not None:
-        grid = stats.setdefault("bar_pulse_grid", {})
+        bar_grid = stats["bar_pulses"]
+        bar_full = stats.get("bar_pulse_grid")
+        bar_grid.clear()
+        if bar_full is not None:
+            bar_full.clear()
         for i, start in enumerate(downbeats[:-1]):
             num, den = get_meter_at(meter_map, start, times=meter_times)
             bar_beats = num * (4.0 / den)
             sb = time_to_beat(start)
-            bar_end = sb + bar_beats
-            pulses: List[Tuple[float, float]] = []
-            total = pulses_per_bar(num, den, pulse_subdiv_beats)
-            step = bar_beats / total
-            use_swing = swing > 0.0 and math.isclose(step, swing_unit_beats, abs_tol=EPS)
+            if bar_beats <= 0.0:
+                pulse = (float(sb), float(start))
+                bar_grid[i] = [pulse]
+                if bar_full is not None:
+                    bar_full[i] = [pulse]
+                continue
+            base_total = max(1, pulses_per_bar(num, den, pulse_subdiv_beats))
+            next_start = downbeats[i + 1]
+            bar_end = time_to_beat(next_start)
+            if bar_end <= sb:
+                bar_end = sb + bar_beats
+            base_step = bar_beats / base_total
+            full_pulses: List[Tuple[float, float]] = []
             cur = sb
-            pulses.append((float(cur), float(beat_to_time(cur))))
-            for idx in range(1, total):
-                interval = step
-                if use_swing:
+            for base_idx in range(base_total):
+                full_pulses.append((float(cur), float(beat_to_time(cur))))
+                if base_idx + 1 >= base_total:
+                    break
+                interval = base_step
+                if swing > 0.0 and math.isclose(base_step, swing_unit_beats, abs_tol=EPS):
                     if swing_shape == "offbeat":
-                        interval *= (1 + swing) if (idx - 1) % 2 == 0 else (1 - swing)
+                        interval *= (1 + swing) if base_idx % 2 == 0 else (1 - swing)
                     elif swing_shape == "even":
-                        interval *= (1 - swing) if (idx - 1) % 2 == 0 else (1 + swing)
+                        interval *= (1 - swing) if base_idx % 2 == 0 else (1 + swing)
                     else:
-                        mod = (idx - 1) % 3
+                        mod = base_idx % 3
                         if mod == 0:
                             interval *= 1 + swing
                         elif mod == 1:
                             interval *= 1 - swing
-                        # The third pulse (mod == 2) remains centered to maintain triplet feel.
                 cur = clip_to_bar(cur + interval, sb, bar_end)
-                pulses.append((float(cur), float(beat_to_time(cur))))
-            grid[i] = pulses
-            # Back-compat: mirror into ``bar_pulses`` until consumers migrate.
-            stats["bar_pulses"][i] = list(pulses)
+            if not full_pulses:
+                full_pulses = [(float(sb), float(beat_to_time(sb)))]
+            stride = 1
+            if density_map is not None:
+                label = density_map.get(i)
+                if label in DENSITY_PRESETS:
+                    try:
+                        stride = max(1, int(DENSITY_PRESETS[label].get("stride", 1)))
+                    except Exception:
+                        stride = 1
+            pulses = [full_pulses[idx] for idx in range(0, len(full_pulses), stride)]
+            if not pulses:
+                pulses = [full_pulses[0]]
+            if bar_full is not None:
+                bar_full[i] = full_pulses
+            bar_grid[i] = pulses
 
     # Velocity curve helper
     bar_progress: Dict[int, int] = {}

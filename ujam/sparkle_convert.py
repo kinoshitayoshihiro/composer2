@@ -2131,25 +2131,27 @@ def build_sparkle_midi(
             logging.info("suggest --swing-unit 1/12 for ternary feel")
 
     num_bars = len(downbeats) - 1
-    density_map: Dict[int, str] = {}
+    density_map: Optional[Dict[int, str]] = {} if stats is not None else None
     sections_map = mapping.get("sections")
     if sections_map:
-        tag_map: Dict[int, str] = {}
+        tag_map: Optional[Dict[int, str]] = {} if stats is not None else None
         for sec in sections_map:
             dens = sec.get("density")
             start = int(sec.get("start_bar", 0))
             end = int(sec.get("end_bar", num_bars))
             if dens in ("low", "med", "high"):
                 for b in range(max(0, start), min(num_bars, end)):
-                    density_map[b] = dens
+                    if density_map is not None:
+                        density_map[b] = dens
             tag = sec.get("tag")
             if tag:
                 for b in range(max(0, start), min(num_bars, end)):
-                    tag_map[b] = tag
-        if stats is not None:
+                    if tag_map is not None:
+                        tag_map[b] = tag
+        if stats is not None and tag_map is not None:
             stats["section_tags"] = tag_map
     if stats is not None:
-        stats["bar_density"] = density_map
+        stats["bar_density"] = density_map or {}
         stats["bar_count"] = num_bars
         stats["swing_unit"] = swing_unit_beats
         if section_lfo:
@@ -2310,11 +2312,11 @@ def build_sparkle_midi(
         if sec_list or mapping.get("style_fill") is not None or mapping.get("markov") is not None:
             if any(p is not None for p in phrase_plan):
                 plan_active = True
-        bar_sources = ["cycle"] * len(phrase_plan)
+        bar_sources: Optional[List[str]] = ["cycle"] * len(phrase_plan) if stats is not None else None
         if stats is not None:
             stats["bar_phrase_notes_list"] = list(phrase_plan)
             stats["fill_bars"] = list(fill_map.keys())
-        if sec_list:
+        if sec_list and bar_sources is not None:
             for sec in sec_list:
                 pool = sec.get("pool")
                 if pool:
@@ -2322,7 +2324,7 @@ def build_sparkle_midi(
                     end = int(sec.get("end_bar", num_bars))
                     for b in range(max(0, start), min(num_bars, end)):
                         bar_sources[b] = "section"
-        if vocal_adapt and phrase_plan:
+        if vocal_adapt and phrase_plan and bar_sources is not None:
             for i in range(len(phrase_plan)):
                 alt = vocal_adapt.phrase_for_bar(i)
                 if alt is not None:
@@ -2340,7 +2342,7 @@ def build_sparkle_midi(
                         if stats is not None:
                             stats["fill_bars"].append(tgt)
                     break
-        if stats is not None:
+        if stats is not None and bar_sources is not None:
             for i, pn in enumerate(phrase_plan):
                 stats["bar_reason"][i] = {"source": bar_sources[i], "note": pn}
             stats["fill_sources"].update(fill_src)
@@ -3948,13 +3950,14 @@ def main():
             inst.control_changes.append(
                 pretty_midi.ControlChange(number=damp_cc_num, value=v, time=t)
             )
-        vals = [v for _, v in guide_cc]
-        cc_stats = {
-            "min": min(vals),
-            "max": max(vals),
-            "mean": sum(vals) / len(vals),
-            "count": len(vals),
-        }
+        if stats is not None:
+            vals = [v for _, v in guide_cc]
+            cc_stats = {
+                "min": min(vals),
+                "max": max(vals),
+                "mean": sum(vals) / len(vals),
+                "count": len(vals),
+            }
 
     # Reports / debug artifacts
     if stats is not None and guide_notes is not None:

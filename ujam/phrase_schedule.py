@@ -76,9 +76,12 @@ def schedule_phrase_keys(
             plan[i] = None
         else:
             prev = pn
-    density_map: Dict[int, str] = {}
+    density_map: Optional[Dict[int, str]]
     if stats is not None:
+        density_map = {}
         stats.setdefault("bar_density", density_map)
+    else:
+        density_map = None
     if sections:
         for sec in sections:
             mcfg = sec.get("markov")
@@ -87,7 +90,8 @@ def schedule_phrase_keys(
             dens = sec.get("density")
             if dens in DENSITY_PRESETS:
                 for b in range(max(0, start), min(num_bars, end)):
-                    density_map[b] = dens
+                    if density_map is not None:
+                        density_map[b] = dens
             if mcfg:
                 states = mcfg.get("states") or []
                 T = mcfg.get("T") or []

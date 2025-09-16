@@ -43,6 +43,7 @@ import math
 import random
 import logging
 import json
+import os
 from functools import lru_cache
 import collections
 import itertools
@@ -122,6 +123,9 @@ NOTE_ALIAS_INV: Dict[int, str] = {}
 
 EPS = 1e-9
 MAX_ITERS = 1024
+
+# Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
+_SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
 
 
 # Helper utilities ---------------------------------------------------------
@@ -1897,7 +1901,9 @@ def build_sparkle_midi(
     density_rules: Optional[List[Dict[str, Any]]] = None,
     swing_shape: str = "offbeat",
 ) -> "pretty_midi.PrettyMIDI":
-    rng = rng_human or rng or random.Random()
+    rng = rng_human or rng
+    if rng is None:
+        rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
 
     def _duck(bar_idx: int, vel: int) -> int:
         if vocal_ducking > 0 and vocal_adapt and vocal_adapt.dense_phrase is not None:
@@ -3449,9 +3455,21 @@ def main():
             np.random.seed(args.seed)
         except Exception:
             pass
-    rng_pool = random.Random(args.seed) if args.seed is not None else random.Random()
-    rng_human = random.Random(args.seed + 1) if args.seed is not None else random.Random()
-    rng = random.Random(args.seed)
+    rng_pool = (
+        random.Random(args.seed)
+        if args.seed is not None
+        else (random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random())
+    )
+    rng_human = (
+        random.Random(args.seed + 1)
+        if args.seed is not None
+        else (random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random())
+    )
+    rng = (
+        random.Random(args.seed)
+        if args.seed is not None
+        else (random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random())
+    )
 
     # Mapping template path printing
     if (

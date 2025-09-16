@@ -7,6 +7,10 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Iterable
 import random
 import time
+import os
+
+# Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
+_SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
 
 
 class LiveBuffer:
@@ -67,7 +71,8 @@ def apply_late_humanization(
 ) -> None:
     """Jitter note offsets right before playback."""
 
-    rng = rng or random.Random()
+    if rng is None:
+        rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
     lower, upper = jitter_ms
     scale = bpm / 60000.0
     for n in notes:

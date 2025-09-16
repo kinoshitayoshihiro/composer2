@@ -4,11 +4,15 @@ from collections.abc import Iterable
 from typing import List, Dict
 import random
 import bisect
+import os
 
 import pretty_midi
 
 from utilities.live_buffer import apply_late_humanization
 import groove_profile as gp
+
+# Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
+_SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
 
 
 def _tick_to_time(pm: pretty_midi.PrettyMIDI, tick: float) -> float:
@@ -165,7 +169,8 @@ def humanize(pm: pretty_midi.PrettyMIDI, amount: float, *, rng: random.Random | 
     """
     if amount <= 0.0:
         return
-    rng = rng or random.Random()
+    if rng is None:
+        rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
     tempo_times, tempo_bpm = pm.get_tempo_changes()
     bpm = float(tempo_bpm[0]) if len(tempo_bpm) else 120.0
     jitter = (5.0 * amount, 10.0 * amount)

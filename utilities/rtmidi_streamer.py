@@ -1,4 +1,8 @@
-"""Legacy import path retained via rt_midi_streamer shim."""
+"""Legacy import path retained via rt_midi_streamer shim.
+
+Set ``SPARKLE_DETERMINISTIC=1`` to force deterministic RNG defaults when
+applying late humanization.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +11,7 @@ import logging
 import statistics
 from collections.abc import Callable
 import random
+import os
 
 from music21 import stream
 
@@ -17,6 +22,9 @@ except Exception:  # pragma: no cover - optional
 
 from .live_buffer import LiveBuffer, apply_late_humanization
 from .tempo_utils import TempoMap, beat_to_seconds
+
+# Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
+_SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
 
 
 class RtMidiStreamer:
@@ -89,7 +97,11 @@ class RtMidiStreamer:
         loop = asyncio.get_running_loop()
         start_time = loop.time()
         if late_humanize:
-            apply_late_humanization(part.flatten().notes, rng=random.Random(), bpm=self.tempo.events[0]["bpm"] if self.tempo.events else 120.0)
+            apply_late_humanization(
+                part.flatten().notes,
+                rng=random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random(),
+                bpm=self.tempo.events[0]["bpm"] if self.tempo.events else 120.0,
+            )
         tasks = []
         for n in part.flatten().notes:
             start = start_time + beat_to_seconds(float(n.offset), self.tempo.events)

@@ -4,6 +4,7 @@ import math
 import random
 import re
 import statistics
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -126,6 +127,9 @@ def apply_controls(inst, cfg: ControlConfig) -> None:
 class BasePartGenerator(ABC):
     """全楽器ジェネレーターが継承する共通基底クラス。"""
 
+    # Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
+    _SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
+
     def __init__(
         self,
         *,
@@ -195,7 +199,9 @@ class BasePartGenerator(ABC):
             self.key = f"{self.global_key_signature_tonic} {self.global_key_signature_mode}".strip()
         else:
             self.key = None
-        self.rng = rng or random.Random()
+        if rng is None:
+            rng = random.Random(0) if self._SPARKLE_DETERMINISTIC else random.Random()
+        self.rng = rng
         self.ml_velocity_model_path = ml_velocity_model_path
         self.velocity_model = velocity_model
         self.duration_model = duration_model

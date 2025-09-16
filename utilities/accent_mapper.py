@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import random
+import os
 from typing import Dict
 
 from .velocity_smoother import EMASmoother
+
+# Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
+_SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
 
 
 class AccentMapper:
@@ -41,7 +45,8 @@ class AccentMapper:
             ``"mid"``.
         """
 
-        rng = rng or random.Random()
+        if rng is None:
+            rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
         bounds = AccentMapper.VELOCITY_LAYERS.get(layer.lower(), AccentMapper.VELOCITY_LAYERS["mid"])
         lo, hi = bounds
         if lo > hi:
@@ -69,7 +74,9 @@ class AccentMapper:
         else:
             self.ghost_density_min = 0.3
             self.ghost_density_max = 0.8
-        self.rng = rng or random.Random()
+        if rng is None:
+            rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
+        self.rng = rng
         self._rw_state: int = 0
         self._step_range = int(gs.get("random_walk_step", 8))
         if "walk_after_ema" in gs and walk_after_ema is not None and bool(gs["walk_after_ema"]) != bool(walk_after_ema):
@@ -138,7 +145,9 @@ class AccentMapper:
         rng : random.Random | None
             Optional RNG for the random range selection.
         """
-        r = rng or random.Random()
+        if rng is None:
+            rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
+        r = rng
         if isinstance(layer, int):
             return max(1, min(127, layer))
         s = str(layer).strip().lower()

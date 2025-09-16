@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import os
 
 from music21 import note, volume
 
@@ -12,8 +13,13 @@ CC_AFTERTOUCH = 74
 class ArticulationEngine:
     """Utility to generate simple glissando and trill note patterns."""
 
+    # Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
+    _SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
+
     def __init__(self, rng: random.Random | None = None) -> None:
-        self.rng = rng or random.Random()
+        if rng is None:
+            rng = random.Random(0) if self._SPARKLE_DETERMINISTIC else random.Random()
+        self.rng = rng
         self._cc_events: list[tuple[float, int, int]] = []
 
     @property

@@ -2356,6 +2356,7 @@ def build_sparkle_midi(
         # ease JSON export without further casting. ``bar_trigger_pulses`` records
         # the actual trigger placements when phrases are emitted so analytics can
         # distinguish between the theoretical grid and realised pulses.
+
         stats["bar_pulses"] = {}
         stats["bar_trigger_pulses"] = {}
         stats["bar_trigger_pulses_compat"] = stats["bar_trigger_pulses"]

@@ -42,12 +42,12 @@ import bisect
 import math
 import random
 import logging
-import copy
 import json
 from functools import lru_cache
 import collections
 import itertools
 import sys
+import types
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Union, Set, Any, Callable
@@ -1841,53 +1841,98 @@ def build_sparkle_midi(
                 return max(1, int(round(vel * (1.0 - vocal_ducking))))
         return vel
 
-    if clone_meta_only:
-        out = pretty_midi.PrettyMIDI()
-        out.time_signature_changes = copy.deepcopy(pm_in.time_signature_changes)
-        if hasattr(pm_in, "_tempo_changes") and hasattr(out, "_tempo_changes"):
-            out._tempo_changes = copy.deepcopy(pm_in._tempo_changes)
-            out._tick_scales = copy.deepcopy(pm_in._tick_scales)
-            out._tick_to_time = copy.deepcopy(pm_in._tick_to_time)
-            meta_src = "private"
-        else:
-            times, tempos = pm_in.get_tempo_changes()
-            if hasattr(out, "_add_tempo_change"):
-                for t, tempo in zip(times, tempos):
-                    try:
-                        out._add_tempo_change(tempo, t)
-                    except Exception:
-                        pass
-            elif tempos:
-                out.initial_tempo = tempos[0]
-            meta_src = "public"
-    else:
-        pm_cls = getattr(pretty_midi, "PrettyMIDI", None)
-        if isinstance(pm_cls, type) and isinstance(pm_in, pm_cls):
-            out = copy.deepcopy(pm_in)
-            out.instruments = []
-        else:
-            try:
-                out = pretty_midi.PrettyMIDI()
-            except TypeError:
-                out = pretty_midi.PrettyMIDI(None)
-            out.time_signature_changes = copy.deepcopy(getattr(pm_in, "time_signature_changes", []))
-            if hasattr(pm_in, "_tempo_changes") and hasattr(out, "_tempo_changes"):
-                out._tempo_changes = copy.deepcopy(getattr(pm_in, "_tempo_changes", []))
-                out._tick_scales = copy.deepcopy(getattr(pm_in, "_tick_scales", []))
-                out._tick_to_time = copy.deepcopy(getattr(pm_in, "_tick_to_time", []))
-            else:
+    def _copy_time_signatures_meta(
+        src_pm: "pretty_midi.PrettyMIDI", dest_pm: "pretty_midi.PrettyMIDI"
+    ) -> None:
+        ts_src = getattr(src_pm, "time_signature_changes", []) or []
+        dest_pm.time_signature_changes = []
+        ts_cls = getattr(pretty_midi, "TimeSignature", None)
+        for ts in ts_src:
+            clone = None
+            if ts_cls is not None:
                 try:
-                    times, tempos = pm_in.get_tempo_changes()
+                    clone = ts_cls(ts.numerator, ts.denominator, ts.time)
                 except Exception:
-                    times, tempos = [], []
-                if hasattr(out, "_add_tempo_change"):
-                    for t, tempo in zip(times, tempos):
-                        try:
-                            out._add_tempo_change(tempo, t)
-                        except Exception:
-                            pass
-                elif tempos:
-                    out.initial_tempo = tempos[0]
+                    clone = None
+            if clone is None:
+                try:
+                    clone = ts.__class__(ts.numerator, ts.denominator, ts.time)
+                except Exception:
+                    clone = types.SimpleNamespace(
+                        numerator=getattr(ts, "numerator", 4),
+                        denominator=getattr(ts, "denominator", 4),
+                        time=getattr(ts, "time", 0.0),
+                    )
+            dest_pm.time_signature_changes.append(clone)
+
+    def _copy_tempi_meta(
+        src_pm: "pretty_midi.PrettyMIDI", dest_pm: "pretty_midi.PrettyMIDI"
+    ) -> str:
+        used_private = False
+        try:
+            times, tempos = src_pm.get_tempo_changes()
+        except Exception:
+            times, tempos = [], []
+        if hasattr(dest_pm, "_tempo_changes"):
+            dest_pm._tempo_changes = []  # type: ignore[attr-defined]
+        if hasattr(dest_pm, "_tick_scales"):
+            dest_pm._tick_scales = []  # type: ignore[attr-defined]
+        if hasattr(dest_pm, "_tick_to_time"):
+            dest_pm._tick_to_time = []  # type: ignore[attr-defined]
+        if hasattr(dest_pm, "_add_tempo_change"):
+            for t, tempo in zip(times, tempos):
+                try:
+                    dest_pm._add_tempo_change(tempo, t)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+        elif tempos:
+            dest_pm.initial_tempo = tempos[0]
+
+        tempo_changes = getattr(src_pm, "_tempo_changes", None)
+        if tempo_changes is not None and hasattr(dest_pm, "_tempo_changes"):
+            used_private = True
+            try:
+                tempo_cls = pretty_midi.containers.TempoChange  # type: ignore[attr-defined]
+            except Exception:
+                tempo_cls = None
+            if tempo_cls is not None:
+                dest_pm._tempo_changes = [  # type: ignore[attr-defined]
+                    tempo_cls(tc.tempo, tc.time) for tc in tempo_changes
+                ]
+            else:
+                dest_pm._tempo_changes = [  # type: ignore[attr-defined]
+                    type(tc)(tc.tempo, tc.time) if hasattr(tc, "tempo") else tc
+                    for tc in tempo_changes
+                ]
+
+        tick_scales = getattr(src_pm, "_tick_scales", None)
+        if tick_scales is not None and hasattr(dest_pm, "_tick_scales"):
+            used_private = True
+            dest_pm._tick_scales = list(tick_scales)  # type: ignore[attr-defined]
+
+        tick_to_time = getattr(src_pm, "_tick_to_time", None)
+        if tick_to_time is not None and hasattr(dest_pm, "_tick_to_time"):
+            used_private = True
+            dest_pm._tick_to_time = list(tick_to_time)  # type: ignore[attr-defined]
+
+        return "private" if used_private else "public"
+
+    def _new_pretty_midi_with_meta(
+        src_pm: "pretty_midi.PrettyMIDI",
+    ) -> Tuple["pretty_midi.PrettyMIDI", str]:
+        try:
+            dest_pm = pretty_midi.PrettyMIDI()
+        except TypeError:
+            dest_pm = pretty_midi.PrettyMIDI(None)
+        _copy_time_signatures_meta(src_pm, dest_pm)
+        meta_kind = _copy_tempi_meta(src_pm, dest_pm)
+        return dest_pm, meta_kind
+
+    if clone_meta_only:
+        # Deep copies of PrettyMIDI were removed for memory savings; rebuild metadata instead.
+        out, meta_src = _new_pretty_midi_with_meta(pm_in)
+    else:
+        out, meta_src = _new_pretty_midi_with_meta(pm_in)
 
     chord_inst = pretty_midi.Instrument(program=0, name=CHORD_INST_NAME)
     phrase_inst = pretty_midi.Instrument(program=0, name=PHRASE_INST_NAME)

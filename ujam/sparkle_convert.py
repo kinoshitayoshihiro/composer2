@@ -44,6 +44,7 @@ import random
 import logging
 import json
 import os
+import unicodedata
 from functools import lru_cache
 import collections
 import itertools
@@ -1100,15 +1101,8 @@ def parse_damp_arg(s: str) -> Tuple[str, Dict[str, Any]]:
 
 
 def parse_thresholds_arg(s: str) -> Dict[str, Union[int, List[Tuple[int, float]]]]:
-    try:
-        cfg = json.loads(s)
-    except Exception:
-        raise SystemExit("--guide-thresholds must be JSON")
-    if not isinstance(cfg, dict):
-        raise SystemExit("--guide-thresholds must be JSON object")
+    cfg = parse_json_arg("--guide-thresholds", s, GUIDE_THRESHOLDS_SCHEMA)
     for k in ("low", "mid", "high"):
-        if k not in cfg:
-            raise SystemExit(f"--guide-thresholds missing key {k}")
         v = cfg[k]
         if isinstance(v, list):
             items: List[Tuple[int, float]] = []
@@ -1132,8 +1126,286 @@ def parse_thresholds_arg(s: str) -> Dict[str, Union[int, List[Tuple[int, float]]
             validate_midi_note(v)
             cfg[k] = int(v)
         else:
-            raise SystemExit(f"--guide-thresholds {k} must be int, note token, or list")
+            raise SystemExit(
+                f"--guide-thresholds {k} must be int, MIDI note token, or list of tokens"
+            )
     return cfg
+
+
+GUIDE_THRESHOLDS_SCHEMA: Dict[str, Any] = {
+    "__type__": dict,
+    "__description__": '{"low": int|list, "mid": int|list, "high": int|list}',
+    "low": {"type": (int, str, list)},
+    "mid": {"type": (int, str, list)},
+    "high": {"type": (int, str, list)},
+}
+
+
+STYLE_INJECT_SCHEMA: Dict[str, Any] = {
+    "__type__": dict,
+    "__description__": '{"period": int, "note": int, "duration_beats": >0}',
+    "period": {"type": int, "min": 1},
+    "note": {"type": int, "min": 0, "max": 127},
+    "duration_beats": {"type": (int, float), "min_exclusive": 0.0},
+    "min_gap_beats": {"type": (int, float), "min": 0.0, "optional": True},
+    "avoid_pitches": {"type": list, "optional": True},
+}
+
+
+SECTIONS_SCHEMA: Dict[str, Any] = {
+    "__type__": list,
+    "__description__": '[{"start_bar": int, "tag": str, ...}]',
+    "__item__": {
+        "__type__": dict,
+        "start_bar": {"type": int, "min": 0, "optional": True},
+        "end_bar": {"type": int, "min": 0, "optional": True},
+        "tag": {"type": str, "optional": True},
+        "density": {"type": str, "optional": True},
+        "phrase_pool": {"type": list, "optional": True},
+        "pool": {"type": list, "optional": True},
+        "pool_by_quality": {"type": dict, "optional": True},
+    },
+}
+
+
+def parse_json_arg(name: str, raw: str, schema: Dict[str, Any]) -> Any:
+    label = name if name.startswith("--") else f"--{name}"
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"{label} expects JSON ({exc.msg} at line {exc.lineno} column {exc.colno})"
+        ) from exc
+    except Exception as exc:
+        raise SystemExit(f"{label} expects JSON ({exc})") from exc
+
+    def _type_name(tp: Union[type, Tuple[type, ...]]) -> str:
+        if isinstance(tp, tuple):
+            return "|".join(sorted(t.__name__ for t in tp))
+        return tp.__name__
+
+    def _ensure_type(value: Any, expected: Union[type, Tuple[type, ...]], path: str) -> None:
+        types = expected if isinstance(expected, tuple) else (expected,)
+        if not isinstance(value, types):
+            raise SystemExit(
+                f"{label} field '{path}' must be {_type_name(types)}; got {type(value).__name__}"
+            )
+
+    def _validate(obj: Any, spec: Dict[str, Any], path: str) -> None:
+        description = spec.get("__description__")
+        expected_type = spec.get("__type__")
+        if expected_type is not None:
+            _ensure_type(obj, expected_type, path or "root")
+        if isinstance(obj, list) and "__item__" in spec:
+            item_spec = spec["__item__"]
+            for idx, item in enumerate(obj):
+                _validate(item, item_spec, f"{path}[{idx}]" if path else f"[{idx}]")
+        if not isinstance(obj, dict):
+            return
+        for key, rule in spec.items():
+            if key.startswith("__"):
+                continue
+            field_path = f"{path}.{key}" if path else key
+            if not isinstance(rule, dict):
+                expected = rule
+                rule = {"type": expected}
+            optional = bool(rule.get("optional", False))
+            if key not in obj:
+                if optional:
+                    continue
+                desc = description or "see documentation"
+                raise SystemExit(
+                    f"{label} missing required key '{field_path}' (expects {desc})"
+                )
+            value = obj[key]
+            if "type" in rule and rule["type"] is not None:
+                _ensure_type(value, rule["type"], field_path)
+            if "choices" in rule and value not in rule["choices"]:
+                raise SystemExit(
+                    f"{label} field '{field_path}' must be one of {sorted(rule['choices'])}"
+                )
+            if "min" in rule and value < rule["min"]:
+                raise SystemExit(
+                    f"{label} field '{field_path}' must be >= {rule['min']}"
+                )
+            if "min_exclusive" in rule and value <= rule["min_exclusive"]:
+                raise SystemExit(
+                    f"{label} field '{field_path}' must be > {rule['min_exclusive']}"
+                )
+            if "max" in rule and value > rule["max"]:
+                raise SystemExit(
+                    f"{label} field '{field_path}' must be <= {rule['max']}"
+                )
+            if "max_exclusive" in rule and value >= rule["max_exclusive"]:
+                raise SystemExit(
+                    f"{label} field '{field_path}' must be < {rule['max_exclusive']}"
+                )
+            if "schema" in rule and isinstance(value, (dict, list)):
+                _validate(value, rule["schema"], field_path)
+
+    _validate(data, schema, "")
+    return data
+
+
+@dataclass
+class InlineChordEvent:
+    chord: str
+    start_beats: Optional[float] = None
+    start_time: Optional[float] = None
+    bar: Optional[int] = None
+
+
+def parse_inline_chords(raw: str) -> Optional[List[InlineChordEvent]]:
+    if raw is None:
+        return None
+    normalized = unicodedata.normalize("NFKC", raw)
+    normalized = (
+        normalized.replace("♯", "#")
+        .replace("＃", "#")
+        .replace("♭", "b")
+        .replace("ｂ", "b")
+    )
+    trimmed = normalized.strip()
+    if not trimmed:
+        return []
+
+    if trimmed[0] in "[{":
+        data: Any = None
+        try:
+            data = json.loads(trimmed)
+        except Exception:
+            if yaml is not None:
+                try:
+                    data = yaml.safe_load(trimmed)
+                except Exception:
+                    data = None
+        if isinstance(data, dict):
+            data = [data]
+        if isinstance(data, list):
+            events: List[InlineChordEvent] = []
+            for idx, item in enumerate(data):
+                if not isinstance(item, dict):
+                    raise SystemExit(
+                        f"--chords inline JSON element at index {idx} must be an object"
+                    )
+                chord_token = item.get("chord")
+                if not isinstance(chord_token, str) or not chord_token.strip():
+                    raise SystemExit(
+                        f"--chords inline JSON element at index {idx} must provide 'chord' string"
+                    )
+                start_beats: Optional[float] = None
+                start_time: Optional[float] = None
+                bar_idx: Optional[int] = None
+                if "start_beats" in item:
+                    try:
+                        start_beats = float(item["start_beats"])
+                    except Exception as exc:
+                        raise SystemExit(
+                            f"--chords inline JSON element at index {idx} has invalid start_beats"
+                        ) from exc
+                elif "start" in item:
+                    try:
+                        start_time = float(item["start"])
+                    except Exception as exc:
+                        raise SystemExit(
+                            f"--chords inline JSON element at index {idx} has invalid start"
+                        ) from exc
+                elif "bar" in item or "start_bar" in item:
+                    key = "bar" if "bar" in item else "start_bar"
+                    try:
+                        bar_idx = int(item[key])
+                    except Exception as exc:
+                        raise SystemExit(
+                            f"--chords inline JSON element at index {idx} has invalid bar index"
+                        ) from exc
+                    if bar_idx < 0:
+                        raise SystemExit(
+                            f"--chords inline JSON element at index {idx} must have non-negative bar"
+                        )
+                else:
+                    raise SystemExit(
+                        f"--chords inline JSON element at index {idx} requires 'bar', 'start', or 'start_beats'"
+                    )
+                events.append(
+                    InlineChordEvent(
+                        chord=chord_token.strip(),
+                        start_beats=start_beats,
+                        start_time=start_time,
+                        bar=bar_idx,
+                    )
+                )
+            return events
+
+    ascii_spec = normalized.replace("，", ",").replace("：", ":")
+
+    def _looks_like_inline_token(token: str) -> bool:
+        if ":" not in token:
+            return False
+        head = token.split(":", 1)[0].strip()
+        try:
+            float(head)
+        except ValueError:
+            return False
+        return True
+
+    tokens = [tok.strip() for tok in ascii_spec.split(",") if tok.strip()]
+    if not tokens:
+        return []
+    if not any(_looks_like_inline_token(tok) for tok in tokens):
+        return None
+
+    events: List[InlineChordEvent] = []
+    for idx, raw_token in enumerate(tokens):
+        parts = raw_token.split(":", 2)
+        if len(parts) == 3:
+            start_txt, root_txt, qual_txt = parts
+            chord_symbol = f"{root_txt.strip()}:{qual_txt.strip()}"
+        elif len(parts) == 2:
+            start_txt, chord_txt = parts
+            chord_txt = chord_txt.strip()
+            if not chord_txt:
+                raise SystemExit(
+                    f"--chords inline token {idx} ('{raw_token}') missing chord descriptor"
+                )
+            if ":" in chord_txt:
+                chord_symbol = chord_txt
+            else:
+                body = chord_txt
+                quality_guess = "maj"
+                lowered = body.lower()
+                if lowered.endswith("minor"):
+                    body = body[:-5]
+                    quality_guess = "min"
+                elif lowered.endswith("major"):
+                    body = body[:-5]
+                    quality_guess = "maj"
+                elif lowered.endswith("min"):
+                    body = body[:-3]
+                    quality_guess = "min"
+                elif lowered.endswith("maj"):
+                    body = body[:-3]
+                    quality_guess = "maj"
+                elif lowered.endswith("m"):
+                    body = body[:-1]
+                    quality_guess = "min"
+                body = body.strip()
+                if not body:
+                    raise SystemExit(
+                        f"--chords inline token {idx} ('{raw_token}') cannot infer root from '{chord_txt}'"
+                    )
+                chord_symbol = f"{body}:{quality_guess}"
+        else:
+            raise SystemExit(
+                f"--chords inline token {idx} ('{raw_token}') must be start:Root[:Quality]"
+            )
+        try:
+            start_beats_val = float(start_txt)
+        except ValueError as exc:
+            raise SystemExit(
+                f"--chords inline token {idx} ('{raw_token}') has invalid beat value"
+            ) from exc
+        events.append(InlineChordEvent(chord=chord_symbol.strip(), start_beats=start_beats_val))
+    return events
 
 
 def parse_onset_th_arg(s: str) -> Dict[str, int]:
@@ -1704,6 +1976,259 @@ def insert_style_layer(
     return count
 
 
+def finalize_phrase_track(
+    out_pm: "pretty_midi.PrettyMIDI",
+    args: Optional[argparse.Namespace],
+    stats: Optional[Dict],
+    mapping: Dict,
+    *,
+    section_lfo: Optional[SectionLFO] = None,
+    lfo_targets: Tuple[str, ...] = (),
+    downbeats: Optional[List[float]] = None,
+    guide_units: Optional[List[Tuple[float, float]]] = None,
+    guide_units_time: Optional[List[Tuple[float, float]]] = None,
+    guide_notes: Optional[Dict[int, int]] = None,
+    rest_ratios: Optional[List[float]] = None,
+    onset_counts: Optional[List[int]] = None,
+    chord_inst: Optional["pretty_midi.Instrument"] = None,
+    phrase_inst: Optional["pretty_midi.Instrument"] = None,
+    beat_to_time: Optional[Callable[[float], float]] = None,
+    time_to_beat: Optional[Callable[[float], float]] = None,
+    pulse_subdiv_beats: float = 1.0,
+    phrase_vel: int = 0,
+    phrase_merge_gap: float = 0.0,
+    release_sec: float = 0.0,
+    min_phrase_len_sec: float = 0.0,
+    stop_min_gap_beats: float = 0.0,
+    stop_velocity: int = 64,
+    damp_dst: Optional[str] = None,
+    damp_cc_num: int = 11,
+    guide_cc: Optional[List[Tuple[float, int]]] = None,
+    bpm: Optional[float] = None,
+    section_overrides: Optional[List[Dict]] = None,
+    fill_map: Optional[Dict[int, Tuple[int, float, float]]] = None,
+    rest_silence_send_stop: bool = False,
+    quantize_strength: Union[float, List[float]] = 0.0,
+    write_markers: bool = False,
+    marker_encoding: str = "raw",
+    section_labels: Optional[List[str]] = None,
+    section_default: str = "verse",
+    chord_merge_gap: float = 0.01,
+    clone_meta_only: bool = False,
+    meta_src: str = "input",
+    chords: Optional[List[ChordSpan]] = None,
+) -> Dict[str, Any]:
+    """Finalize phrase output by applying fills, STOPs, quantization, and reports.
+
+    ``marker_encoding`` controls how section marker labels are sanitised before they
+    are written to the MIDI file.
+    """
+
+    stats_enabled = stats is not None
+    fill_count = stats.get("fill_count", 0) if stats_enabled else 0
+    fill_count += _apply_fills(
+        phrase_inst,
+        fill_map,
+        beat_to_time,
+        time_to_beat,
+        downbeats,
+        pulse_subdiv_beats,
+        phrase_vel,
+        phrase_merge_gap,
+        release_sec,
+        min_phrase_len_sec,
+        section_lfo,
+        lfo_targets,
+        stats,
+    )
+
+    _inject_stops(
+        phrase_inst,
+        rest_silence_send_stop,
+        guide_units,
+        guide_notes,
+        beat_to_time,
+        mapping,
+        pulse_subdiv_beats,
+        stop_min_gap_beats,
+        stop_velocity,
+    )
+
+    _apply_quantize_safe(
+        out_pm,
+        phrase_inst,
+        quantize_strength,
+        beat_to_time,
+        time_to_beat,
+        pulse_subdiv_beats,
+        downbeats,
+        chords,
+    )
+
+    _write_markers(
+        out_pm,
+        write_markers,
+        section_labels,
+        section_default,
+        downbeats,
+        marker_encoding,
+    )
+
+    auto_fill_mode = getattr(args, "auto_fill", "off") if args else "off"
+    if auto_fill_mode != "off" and guide_units_time:
+        avoid: Optional[Set[int]] = None
+        if getattr(args, "fill_avoid_pitches", None):
+            toks = [t.strip() for t in args.fill_avoid_pitches.split(",") if t.strip()]
+            avoid = set()
+            for tok in toks:
+                val = parse_note_token(tok)
+                if val is None:
+                    raise SystemExit("fill-avoid-pitches cannot include 'rest'")
+                avoid.add(val)
+        filled_bars = stats.setdefault("fill_bars", []) if stats_enabled else None
+        sections = stats.get("sections") if stats_enabled else None
+        inserted = insert_style_fill(
+            out_pm,
+            auto_fill_mode,
+            guide_units_time,
+            mapping,
+            sections=sections,
+            rest_ratio_list=rest_ratios,
+            rest_th=getattr(args, "guide_rest_silence_th", None) or 0.75,
+            fill_length_beats=getattr(args, "fill_length_beats", 0.25),
+            bpm=bpm if bpm is not None else 120.0,
+            min_gap_beats=getattr(args, "fill_min_gap_beats", 0.0),
+            avoid_pitches=avoid,
+            filled_bars=filled_bars,
+        )
+        fill_count += inserted
+
+    cc_stats = _emit_damp_cc(out_pm, guide_cc, damp_dst, damp_cc_num, chord_inst, phrase_inst)
+
+    if stats_enabled:
+        stats["fill_count"] = fill_count
+
+    if stats_enabled and guide_notes is not None:
+        stats["guide_keys"] = [guide_notes.get(i) for i in sorted(guide_notes.keys())]
+        if rest_ratios is not None and onset_counts is not None and guide_cc:
+            sample: List[Dict[str, Any]] = []
+            for i in range(min(4, len(guide_cc))):
+                sample.append(
+                    {
+                        "bar": i,
+                        "onset": onset_counts[i] if i < len(onset_counts) else 0,
+                        "rest": rest_ratios[i] if i < len(rest_ratios) else 0.0,
+                        "cc": guide_cc[i][1],
+                    }
+                )
+            stats["guide_sample"] = sample
+            th = getattr(args, "guide_rest_silence_th", None) if args else None
+            if th is not None:
+                stats["rest_silence"] = sum(1 for r in rest_ratios if r >= th)
+        if cc_stats:
+            stats["damp_stats"] = cc_stats
+        stats["auto_fill"] = {
+            "mode": auto_fill_mode,
+            "count": fill_count,
+            "length_beats": getattr(args, "fill_length_beats", 0.25) if args else 0.25,
+        }
+        density_hist: Dict[str, int] = {}
+        for label in (stats.get("bar_density") or {}).values():
+            if label:
+                density_hist[str(label)] = density_hist.get(str(label), 0) + 1
+        section_sample: List[str] = []
+        if isinstance(stats.get("sections"), list):
+            section_sample = [str(s) for s in stats["sections"][:4]]
+        bar_total = int(stats.get("bar_count", len(downbeats or [])))
+        quicklook = {
+            "bpm": float(bpm) if bpm is not None and math.isfinite(bpm) else None,
+            "bar_count": bar_total,
+            "fill_count": fill_count,
+            "density_hist": density_hist,
+            "sections": section_sample,
+        }
+        stats["quicklook"] = quicklook
+
+    if (
+        stats_enabled
+        and args is not None
+        and getattr(args, "debug_csv", None)
+        and rest_ratios is not None
+        and onset_counts is not None
+    ):
+        with open(args.debug_csv, "w", newline="") as fp:
+            writer = csv.writer(fp)
+            writer.writerow(
+                ["bar", "onset_count", "rest_ratio", "phrase_note", "cc_value", "section"]
+            )
+            cc_map = {i: v for i, (_, v) in enumerate(guide_cc)} if guide_cc else {}
+            sect = stats.get("sections") or []
+            for i in range(len(onset_counts)):
+                pn = stats.get("bar_phrase_notes", {}).get(i)
+                writer.writerow(
+                    [
+                        i,
+                        onset_counts[i],
+                        rest_ratios[i],
+                        pn if pn is not None else "",
+                        cc_map.get(i, ""),
+                        sect[i] if i < len(sect) else getattr(args, "section_default", section_default),
+                    ]
+                )
+
+    if (
+        stats_enabled
+        and args is not None
+        and getattr(args, "bar_summary", None)
+        and rest_ratios is not None
+        and onset_counts is not None
+    ):
+        with open(args.bar_summary, "w", newline="") as fp:
+            writer = csv.writer(fp)
+            writer.writerow(
+                [
+                    "bar",
+                    "section",
+                    "phrase_note",
+                    "pulses_emitted",
+                    "onsets",
+                    "rest_ratio",
+                    "avg_vel",
+                    "fill_flag",
+                    "cc_value",
+                ]
+            )
+            sect = stats.get("sections") or []
+            bar_vel = stats.get("bar_velocities", {})
+            fill_bars = set(stats.get("fill_bars", []))
+            cc_map = {i: v for i, (_, v) in enumerate(guide_cc)} if guide_cc else {}
+            for i in range(len(onset_counts)):
+                pn = stats.get("bar_phrase_notes", {}).get(i)
+                pulses = len(stats.get("bar_pulses", {}).get(i, []))
+                vel_list = bar_vel.get(i, [])
+                avg_vel = sum(vel_list) / len(vel_list) if vel_list else ""
+                writer.writerow(
+                    [
+                        i,
+                        sect[i] if i < len(sect) else getattr(args, "section_default", section_default),
+                        pn if pn is not None else "",
+                        pulses,
+                        onset_counts[i],
+                        rest_ratios[i],
+                        avg_vel,
+                        1 if i in fill_bars else 0,
+                        cc_map.get(i, ""),
+                    ]
+                )
+
+    if stats_enabled and args is not None and getattr(args, "report_json", None):
+        p = Path(args.report_json)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(stats, indent=2, sort_keys=True))
+
+    return {"fill_count": fill_count, "cc_stats": cc_stats}
+
+
 def validate_section_lfo_cfg(cfg: Dict) -> Dict:
     if not isinstance(cfg, dict):
         raise SystemExit("section_lfo must be object")
@@ -1810,6 +2335,333 @@ class ChordSpan:
     end: float
     root_pc: int  # 0-11
     quality: str  # 'maj' or 'min' (extendable)
+
+
+def _apply_fills(
+    phrase_inst: Optional["pretty_midi.Instrument"],
+    fill_map: Optional[Dict[int, Tuple[int, float, float]]],
+    beat_to_time: Optional[Callable[[float], float]],
+    time_to_beat: Optional[Callable[[float], float]],
+    downbeats: Optional[List[float]],
+    pulse_subdiv_beats: float,
+    phrase_vel: int,
+    phrase_merge_gap: float,
+    release_sec: float,
+    min_phrase_len_sec: float,
+    section_lfo: Optional[SectionLFO],
+    lfo_targets: Tuple[str, ...],
+    stats: Optional[Dict[str, Any]],
+) -> int:
+    """Insert configured fill hits at section ends and return the added count."""
+
+    if (
+        not fill_map
+        or phrase_inst is None
+        or beat_to_time is None
+        or time_to_beat is None
+        or downbeats is None
+    ):
+        return 0
+
+    stats_enabled = stats is not None
+    fill_count = 0
+    for bar_idx, pitch in sorted(fill_map.items()):
+        if pitch is None or bar_idx + 1 >= len(downbeats):
+            continue
+        dur_beats = pulse_subdiv_beats
+        vscale = 1.0
+        note = pitch
+        if isinstance(pitch, tuple):
+            note = pitch[0]
+            if len(pitch) > 1 and pitch[1] is not None:
+                dur_beats = float(pitch[1])
+            if len(pitch) > 2 and pitch[2] is not None:
+                vscale = float(pitch[2])
+        start_b = time_to_beat(downbeats[bar_idx + 1]) - dur_beats
+        end_b = time_to_beat(downbeats[bar_idx + 1])
+        start_t = beat_to_time(start_b)
+        end_t = beat_to_time(end_b)
+        vel = phrase_vel
+        if section_lfo and "fill" in lfo_targets:
+            try:
+                vel = max(1, min(127, int(round(vel * section_lfo.vel_scale(bar_idx)))))
+                if stats_enabled:
+                    stats.setdefault("lfo_pos", {})[bar_idx] = section_lfo._pos(bar_idx)
+            except Exception:
+                pass
+        vel = max(1, min(127, int(round(vel * vscale))))
+        _append_phrase(
+            phrase_inst,
+            int(note),
+            start_t,
+            end_t,
+            vel,
+            phrase_merge_gap,
+            release_sec,
+            min_phrase_len_sec,
+        )
+        fill_count += 1
+    return fill_count
+
+
+def _inject_stops(
+    phrase_inst: Optional["pretty_midi.Instrument"],
+    rest_silence_send_stop: bool,
+    guide_units: Optional[List[Tuple[float, float]]],
+    guide_notes: Optional[Dict[int, int]],
+    beat_to_time: Optional[Callable[[float], float]],
+    mapping: Dict,
+    pulse_subdiv_beats: float,
+    stop_min_gap_beats: float,
+    stop_velocity: int,
+) -> None:
+    """Inject STOP key hits after long guide rests when enabled."""
+
+    if (
+        not rest_silence_send_stop
+        or not guide_units
+        or guide_notes is None
+        or beat_to_time is None
+        or phrase_inst is None
+    ):
+        return
+
+    stop_pitch = mapping.get("style_stop") if isinstance(mapping, dict) else None
+    if stop_pitch is None:
+        return
+
+    last_b = -1e9
+    for idx, (sb, _) in enumerate(guide_units):
+        if guide_notes.get(idx) is None and (sb - last_b) >= stop_min_gap_beats - EPS:
+            st = beat_to_time(sb)
+            en = beat_to_time(sb + min(0.1, pulse_subdiv_beats))
+            phrase_inst.notes.append(
+                pretty_midi.Note(
+                    velocity=int(stop_velocity),
+                    pitch=int(stop_pitch),
+                    start=st,
+                    end=en,
+                )
+            )
+            last_b = sb
+
+
+def _apply_quantize_safe(
+    out_pm: "pretty_midi.PrettyMIDI",
+    phrase_inst: Optional["pretty_midi.Instrument"],
+    quantize_strength: Union[float, List[float]],
+    beat_to_time: Optional[Callable[[float], float]],
+    time_to_beat: Optional[Callable[[float], float]],
+    pulse_subdiv_beats: float,
+    downbeats: Optional[List[float]],
+    chords: Optional[List[ChordSpan]],
+) -> None:
+    """Apply quantisation and clip notes back to bar/chord bounds."""
+
+    if (
+        phrase_inst is None
+        or beat_to_time is None
+        or time_to_beat is None
+        or downbeats is None
+        or not phrase_inst.notes
+    ):
+        return
+
+    qs_list = quantize_strength if isinstance(quantize_strength, list) else None
+    qs_val = float(quantize_strength) if not isinstance(quantize_strength, list) else 0.0
+    do_quant = (qs_list and any(x > 0 for x in qs_list)) or (
+        qs_list is None and qs_val > 0.0
+    )
+    if do_quant:
+        for idx, note in enumerate(phrase_inst.notes):
+            sb = time_to_beat(note.start)
+            eb = time_to_beat(note.end)
+            grid_s = round(sb / pulse_subdiv_beats) * pulse_subdiv_beats
+            grid_e = round(eb / pulse_subdiv_beats) * pulse_subdiv_beats
+            if qs_list:
+                if pulse_subdiv_beats > 0:
+                    start_idx = int(round(sb / pulse_subdiv_beats))
+                    end_idx = int(round(eb / pulse_subdiv_beats))
+                else:
+                    start_idx = end_idx = 0
+                strength_s = qs_list[start_idx % len(qs_list)]
+                strength_e = qs_list[end_idx % len(qs_list)]
+            else:
+                strength_s = strength_e = qs_val
+            sb = sb + (grid_s - sb) * strength_s
+            eb = eb + (grid_e - eb) * strength_e
+            note.start = beat_to_time(sb)
+            note.end = beat_to_time(eb)
+
+    chord_spans = chords or []
+    chord_starts = [span.start for span in chord_spans]
+    try:
+        end_time = float(out_pm.get_end_time())
+    except Exception:
+        end_time = downbeats[-1] if downbeats else 0.0
+    for note in phrase_inst.notes:
+        bar_idx = max(0, bisect.bisect_right(downbeats, note.start) - 1)
+        bar_start = downbeats[bar_idx] if bar_idx < len(downbeats) else 0.0
+        if bar_idx + 1 < len(downbeats):
+            bar_end = downbeats[bar_idx + 1]
+        else:
+            bar_end = end_time
+        clip_start = bar_start
+        clip_end = bar_end
+        if chord_starts:
+            c_idx = bisect.bisect_right(chord_starts, note.start) - 1
+            if 0 <= c_idx < len(chord_spans):
+                span = chord_spans[c_idx]
+                clip_start = max(clip_start, span.start)
+                clip_end = min(clip_end, span.end)
+        note.start = max(note.start, clip_start)
+        note.end = min(note.end, clip_end)
+        if note.end <= note.start + EPS:
+            note.end = min(clip_end, max(note.start + EPS, clip_start + EPS))
+
+
+def _encode_marker_label(label: str, mode: str) -> str:
+    label_up = label.upper()
+    if mode == "ascii":
+        return label_up.encode("ascii", "ignore").decode("ascii")
+    if mode == "escape":
+        encoded: List[str] = []
+        for ch in label_up:
+            code = ord(ch)
+            if 32 <= code < 127:
+                encoded.append(ch)
+            else:
+                encoded.append(f"\\u{code:04x}")
+        return "".join(encoded)
+    return label_up
+
+
+def _write_markers(
+    out_pm: "pretty_midi.PrettyMIDI",
+    write_markers: bool,
+    section_labels: Optional[List[str]],
+    section_default: str,
+    downbeats: Optional[List[float]],
+    marker_encoding: str,
+) -> None:
+    """Emit section markers when requested via CLI flags."""
+
+    if not write_markers or section_labels is None or downbeats is None:
+        return
+    for i, t in enumerate(downbeats):
+        label = section_labels[i] if i < len(section_labels) else section_default
+        encoded = _encode_marker_label(label, marker_encoding)
+        try:
+            out_pm.markers.append(pretty_midi.Marker(encoded, t))
+        except Exception:
+            pass
+
+
+def _emit_damp_cc(
+    out_pm: "pretty_midi.PrettyMIDI",
+    guide_cc: Optional[List[Tuple[float, int]]],
+    damp_dst: Optional[str],
+    damp_cc_num: int,
+    chord_inst: Optional["pretty_midi.Instrument"],
+    phrase_inst: Optional["pretty_midi.Instrument"],
+) -> Optional[Dict[str, Any]]:
+    """Emit damping CC automation and return simple statistics."""
+
+    if not guide_cc or damp_dst is None:
+        return None
+
+    if damp_dst == "phrase":
+        inst = next((i for i in out_pm.instruments if i.name == PHRASE_INST_NAME), None)
+        if inst is None:
+            inst = pretty_midi.Instrument(program=0, name=PHRASE_INST_NAME)
+            out_pm.instruments.append(inst)
+    elif damp_dst == "chord":
+        inst = next((i for i in out_pm.instruments if i.name == CHORD_INST_NAME), None)
+        if inst is None:
+            inst = chord_inst
+            if inst is not None and inst not in out_pm.instruments:
+                out_pm.instruments.append(inst)
+    else:
+        inst = pretty_midi.Instrument(program=0, name=DAMP_INST_NAME)
+        out_pm.instruments.append(inst)
+
+    if inst is None:
+        return None
+
+    for t, v in guide_cc:
+        inst.control_changes.append(
+            pretty_midi.ControlChange(number=int(damp_cc_num), value=int(v), time=t)
+        )
+    vals = [v for _, v in guide_cc]
+    if not vals:
+        return None
+    return {
+        "min": min(vals),
+        "max": max(vals),
+        "mean": sum(vals) / len(vals),
+        "count": len(vals),
+    }
+
+
+def parse_chord_symbol(symbol: str) -> Tuple[int, str]:
+    """Parse a chord symbol like ``G:maj`` -> ``(7, "maj")``.
+
+    Normalises common quality aliases (maj/M/major, min/m/minor) and supports
+    mixed-width accidentals for the root token.
+    """
+
+    if not symbol:
+        raise ValueError("Chord symbol cannot be empty")
+    parts = symbol.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"Chord symbol '{symbol}' must be in Root:Quality format")
+    raw_root, raw_quality = parts
+    root = (
+        raw_root.strip()
+        .replace("＃", "#")
+        .replace("♯", "#")
+        .replace("♭", "b")
+        .replace("ｂ", "b")
+    )
+    quality_raw = raw_quality.strip()
+    if not root:
+        raise ValueError(f"Chord symbol '{symbol}' missing root")
+    if not quality_raw:
+        raise ValueError(f"Chord symbol '{symbol}' missing quality")
+
+    # Normalise casing while preserving accidentals (e.g., Bb, C#)
+    if len(root) >= 1:
+        leading = root[0].upper()
+        trailing = root[1:]
+        if trailing:
+            trailing = trailing.replace("＃", "#").replace("♯", "#").replace("♭", "b").replace("ｂ", "b")
+            trailing = trailing.lower()
+        root = leading + trailing
+
+    quality_map = {
+        "maj": {"maj", "M", "major"},
+        "min": {"min", "m", "minor"},
+    }
+
+    quality_key = quality_raw.lower()
+    canonical_quality = quality_key
+    for canonical, aliases in quality_map.items():
+        if quality_raw in aliases or quality_key in aliases:
+            canonical_quality = canonical
+            break
+
+    # Accept shorthand like "Em" (root token includes trailing 'm').
+    if root not in PITCH_CLASS and canonical_quality == "min" and root.endswith("m"):
+        candidate = root[:-1]
+        if candidate:
+            candidate = candidate[0].upper() + candidate[1:]
+        if candidate in PITCH_CLASS:
+            root = candidate
+
+    pc = PITCH_CLASS.get(root)
+    if pc is None:
+        raise ValueError(f"Unknown chord root '{root}' in symbol '{symbol}'")
+    return pc, canonical_quality
 
 
 def parse_time_sig(default_num=4, default_den=4) -> Tuple[int, int]:
@@ -2301,6 +3153,7 @@ def build_sparkle_midi(
     rng_pool: Optional[random.Random] = None,
     rng_human: Optional[random.Random] = None,
     write_markers: bool = False,
+    marker_encoding: str = "raw",
     onset_list: Optional[List[int]] = None,
     rest_list: Optional[List[float]] = None,
     density_rules: Optional[List[Dict[str, Any]]] = None,
@@ -2308,11 +3161,10 @@ def build_sparkle_midi(
 ) -> "pretty_midi.PrettyMIDI":
     """Render Sparkle-compatible MIDI with optional statistics payload.
 
-    When ``stats`` is supplied a schema version of ``2`` is recorded alongside
-    ``bar_pulse_grid`` (meter-derived reference grid), ``bar_pulses`` (same grid
-    for compatibility), and ``bar_triggers`` (actual emitted trigger pulses,
-    also mirrored to ``bar_trigger_pulses`` and ``bar_trigger_pulses_compat`` for
-    legacy consumers).
+    When ``stats`` is supplied a schema version of ``1.1`` is recorded alongside
+    ``bar_pulse_grid`` (meter-derived reference grid), ``bar_pulses`` (grid mirror
+    for legacy consumers), and ``bar_triggers`` (actual emitted trigger pulses,
+    also mirrored to ``bar_trigger_pulses``/``bar_trigger_pulses_compat``).
     """
     rng = rng_human or rng
     if rng is None:
@@ -2438,6 +3290,8 @@ def build_sparkle_midi(
             dest_pm._tick_to_time = list(tick_to_time)  # type: ignore[attr-defined]
 
         if used_private:
+            # Normalise tempo caches after copying private metadata so later tick
+            # reseeding works from a consistent baseline.
             _sanitize_tempi(dest_pm)
 
         return "private" if used_private else "public"
@@ -2450,6 +3304,8 @@ def build_sparkle_midi(
         except TypeError:
             dest_pm = pretty_midi.PrettyMIDI(None)
         _copy_time_signatures_meta(src_pm, dest_pm)
+        # _copy_tempi_meta sanitises tempo caches before we reseed tick tables with
+        # _ensure_tempo_and_ticks, keeping legacy PrettyMIDI internals in sync.
         meta_kind = _copy_tempi_meta(src_pm, dest_pm)
         return dest_pm, meta_kind
 
@@ -2582,19 +3438,25 @@ def build_sparkle_midi(
             stats["cycle_disabled"] = True
 
     if stats is not None:
-        stats["schema_version"] = 2
+        legacy_pulses_grid = bool(stats.get("_legacy_bar_pulses_grid", False))
+        stats["schema_version"] = "1.1"
         stats["downbeats"] = downbeats
         # Dict[bar_index, List[(beat_position_in_beats, absolute_time_seconds)]]
         # capturing the meter-derived reference grid per bar. Stored as floats to
-        # ease JSON export without further casting. ``bar_trigger_pulses`` records
-        # the actual trigger placements when phrases are emitted so analytics can
+        # ease JSON export without further casting. ``bar_triggers`` records the
+        # actual trigger placements when phrases are emitted so analytics can
         # distinguish between the theoretical grid and realised pulses.
 
-        stats["bar_pulses"] = {}
-        stats["bar_pulse_grid"] = {}
-        stats["bar_triggers"] = {}
-        stats["bar_trigger_pulses"] = stats["bar_triggers"]
-        stats["bar_trigger_pulses_compat"] = stats["bar_triggers"]
+        bar_triggers: Dict[int, List[Tuple[float, float]]] = {}
+        stats["bar_triggers"] = bar_triggers
+        bar_pulse_grid: Dict[int, List[Tuple[float, float]]] = {}
+        stats["bar_pulse_grid"] = bar_pulse_grid
+        if legacy_pulses_grid:
+            stats["bar_pulses"] = bar_pulse_grid
+        else:
+            stats["bar_pulses"] = {}
+        stats["bar_trigger_pulses"] = bar_triggers
+        stats["bar_trigger_pulses_compat"] = bar_triggers
         stats["bar_phrase_notes"] = {}
         stats["bar_velocities"] = {}
         stats["triads"] = []
@@ -2830,9 +3692,11 @@ def build_sparkle_midi(
 
     # Precompute pulse timestamps per bar (meter-derived grid; swing shifts timing only)
     if stats is not None:
-        bar_pulses_dict = stats["bar_pulses"]
+        legacy_pulses_grid = bool(stats.get("_legacy_bar_pulses_grid", False))
+        bar_pulses_dict = stats.setdefault("bar_pulses", {})
         bar_grid = stats.setdefault("bar_pulse_grid", {})
         bar_triggers = stats.setdefault("bar_triggers", {})
+        pulses_share_grid = bar_pulses_dict is bar_grid
         bar_pulses_dict.clear()
         bar_grid.clear()
         bar_triggers.clear()
@@ -2844,13 +3708,17 @@ def build_sparkle_midi(
             total = max(1, pulses_per_bar(num, den, pulse_subdiv_beats))
             if bar_beats <= 0.0 or total <= 0:
                 pulse = (float(sb), float(beat_to_time(sb)))
-                bar_grid[i] = [pulse]
-                bar_pulses_dict[i] = [pulse]
+                grid_list = [pulse]
+                bar_grid[i] = grid_list
+                if not pulses_share_grid:
+                    bar_pulses_dict[i] = list(grid_list)
                 continue
             step = bar_beats / total
             grid: List[Tuple[float, float]] = []
             for k in range(total):
                 pos = sb + k * step
+                # Grid swing offsets the theoretical meter grid; actual trigger swing is
+                # applied later during phrase emission when stride-aware intervals occur.
                 if swing > 0.0 and math.isclose(step, swing_unit_beats, abs_tol=EPS):
                     shift = 0.0
                     swing_step = swing * step
@@ -2868,8 +3736,10 @@ def build_sparkle_midi(
                 grid.append((float(pos), float(beat_to_time(pos))))
             if not grid:
                 grid = [(float(sb), float(beat_to_time(sb)))]
-            bar_grid[i] = grid
-            bar_pulses_dict[i] = list(grid)
+            grid_list = list(grid)
+            bar_grid[i] = grid_list
+            if not pulses_share_grid:
+                bar_pulses_dict[i] = list(grid_list)
 
     # Velocity curve helper
     bar_progress: Dict[int, int] = {}
@@ -2930,6 +3800,8 @@ def build_sparkle_midi(
             idx = int(math.floor((b - bar_start_b + EPS) / pulse_subdiv_beats))
             indices.append((bar_idx, idx))
             interval = pulse_subdiv_beats
+            # Trigger swing adjusts stride spacing for emitted notes, complementing the
+            # earlier grid swing so both analytics and playback share the same feel.
             if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
                 if swing_shape == "offbeat":
                     interval *= (1 + swing) if idx % 2 == 0 else (1 - swing)
@@ -3435,90 +4307,47 @@ def build_sparkle_midi(
 
     # --- merged: section-end fills + stop keys + quantize + markers ---
 
-    # 1) Insert section-end fills from main branch plan (with optional LFO scaling)
-    fill_inserted = 0
-    for bar_idx, pitch in fill_map.items():
-        if pitch is None or bar_idx + 1 >= len(downbeats):
-            continue
-        dur_beats = pulse_subdiv_beats
-        vscale = 1.0
-        note = pitch
-        if isinstance(pitch, tuple):
-            note = pitch[0]
-            if len(pitch) > 1 and pitch[1] is not None:
-                dur_beats = float(pitch[1])
-            if len(pitch) > 2 and pitch[2] is not None:
-                vscale = float(pitch[2])
-        start_b = time_to_beat(downbeats[bar_idx + 1]) - dur_beats
-        end_b = time_to_beat(downbeats[bar_idx + 1])
-        start_t = beat_to_time(start_b)
-        end_t = beat_to_time(end_b)
-        vel = phrase_vel
-        if section_lfo and "fill" in lfo_targets:
-            try:
-                vel = max(1, min(127, int(round(vel * section_lfo.vel_scale(bar_idx)))))
-                if stats is not None:
-                    stats.setdefault("lfo_pos", {})[bar_idx] = section_lfo._pos(bar_idx)
-            except Exception:
-                pass
-        vel = max(1, min(127, int(round(vel * vscale))))
-        _append_phrase(
-            phrase_inst,
-            int(note),
-            start_t,
-            end_t,
-            vel,
-            phrase_merge_gap,
-            release_sec,
-            min_phrase_len_sec,
-        )
-        fill_inserted += 1
-
-    # 2) Send STOP key on long guide rests
-    if rest_silence_send_stop and guide_units and guide_notes is not None:
-        stop_pitch = mapping.get("style_stop") if isinstance(mapping, dict) else None
-        if stop_pitch is not None:
-            last_b = -1e9
-            for idx, (sb, _) in enumerate(guide_units):
-                if guide_notes.get(idx) is None and (sb - last_b) >= stop_min_gap_beats - EPS:
-                    st = beat_to_time(sb)
-                    en = beat_to_time(sb + min(0.1, pulse_subdiv_beats))
-                    phrase_inst.notes.append(
-                        pretty_midi.Note(
-                            velocity=int(stop_velocity),
-                            pitch=int(stop_pitch),
-                            start=st,
-                            end=en,
-                        )
-                    )
-                    last_b = sb
-
-    # 3) Quantize phrase notes towards the subdivision grid
-    qs_list = quantize_strength if isinstance(quantize_strength, list) else None
-    qs_val = float(quantize_strength) if not isinstance(quantize_strength, list) else 0.0
-    if (qs_list and any(x > 0 for x in qs_list)) or (qs_list is None and qs_val > 0.0):
-        for idx, n in enumerate(phrase_inst.notes):
-            sb = time_to_beat(n.start)
-            eb = time_to_beat(n.end)
-            gs = round(sb / pulse_subdiv_beats) * pulse_subdiv_beats
-            ge = round(eb / pulse_subdiv_beats) * pulse_subdiv_beats
-            if qs_list:
-                strength = qs_list[idx % len(qs_list)]
-            else:
-                strength = qs_val
-            sb = sb + (gs - sb) * strength
-            eb = eb + (ge - eb) * strength
-            n.start = beat_to_time(sb)
-            n.end = beat_to_time(eb)
-
-    # 4) Write section markers
-    if write_markers and section_labels:
-        for i, t in enumerate(downbeats):
-            label = section_labels[i] if i < len(section_labels) else section_default
-            try:
-                out.markers.append(pretty_midi.Marker(label.upper(), t))
-            except Exception:
-                pass
+    finalize_phrase_track(
+        out,
+        None,
+        stats,
+        mapping,
+        section_lfo=section_lfo,
+        lfo_targets=lfo_targets,
+        downbeats=downbeats,
+        guide_units=guide_units,
+        guide_units_time=None,
+        guide_notes=guide_notes,
+        rest_ratios=None,
+        onset_counts=None,
+        chord_inst=chord_inst,
+        phrase_inst=phrase_inst,
+        beat_to_time=beat_to_time,
+        time_to_beat=time_to_beat,
+        pulse_subdiv_beats=pulse_subdiv_beats,
+        phrase_vel=phrase_vel,
+        phrase_merge_gap=phrase_merge_gap,
+        release_sec=release_sec,
+        min_phrase_len_sec=min_phrase_len_sec,
+        stop_min_gap_beats=stop_min_gap_beats,
+        stop_velocity=stop_velocity,
+        damp_dst=None,
+        damp_cc_num=0,
+        guide_cc=None,
+        bpm=bpm,
+        section_overrides=sections,
+        fill_map=fill_map,
+        rest_silence_send_stop=rest_silence_send_stop,
+        quantize_strength=quantize_strength,
+        write_markers=write_markers,
+        marker_encoding=marker_encoding,
+        section_labels=section_labels,
+        section_default=section_default,
+        chord_merge_gap=chord_merge_gap,
+        clone_meta_only=clone_meta_only,
+        meta_src=meta_src,
+        chords=chords,
+    )
 
     _legato_merge_chords(chord_inst, chord_merge_gap)
     out.instruments.append(chord_inst)
@@ -3528,7 +4357,6 @@ def build_sparkle_midi(
     if stats is not None:
         stats["pulse_count"] = len(phrase_inst.notes)
         stats["bar_count"] = len(downbeats)
-        stats["fill_count"] = fill_inserted
     _sanitize_tempi(out)
     _ensure_tempo_and_ticks(out, seed_bpm, out.time_signature_changes)
     return out
@@ -3545,7 +4373,10 @@ def main():
     )
     ap.add_argument("--bpm", type=float, default=None, help="Fallback BPM if input has no tempo")
     ap.add_argument(
-        "--chords", type=str, default=None, help="Chord CSV/YAML file. If omitted, infer per bar."
+        "--chords",
+        type=str,
+        default=None,
+        help="Chord CSV/YAML path or inline spec (e.g. 0:G:maj,2:D:maj or JSON list).",
     )
     ap.add_argument(
         "--mapping",
@@ -3907,10 +4738,22 @@ def main():
         "--bar-summary", type=str, default=None, help="Write per-bar summary CSV (with --dry-run)"
     )
     ap.add_argument("--debug-csv", type=str, default=None, help="Write per-bar debug CSV")
+    ap.add_argument(
+        "--legacy-bar-pulses-grid",
+        action="store_true",
+        help="Mirror meter grid into stats['bar_pulses'] for backward compatibility",
+    )
+    ap.add_argument(
+        "--marker-encoding",
+        choices=["raw", "ascii", "escape"],
+        default="raw",
+        help="Marker label encoding: raw keeps input, ascii strips non-ASCII, escape uses \\uXXXX",
+    )
 
     args, extras = ap.parse_known_args()
 
     stats: Dict[str, Any] = {}
+    legacy_bar_pulses_grid = bool(args.legacy_bar_pulses_grid)
     stats_enabled = bool(
         args.debug_json
         or args.report_md
@@ -3921,6 +4764,8 @@ def main():
         or args.report_json
         or args.dry_run
     )
+    if legacy_bar_pulses_grid:
+        stats_enabled = True
 
     # Back-compat: parse unified --damp if present
     if getattr(args, "damp", None):
@@ -4079,10 +4924,7 @@ def main():
 
     sections = mapping.get("sections")
     if args.sections is not None:
-        try:
-            sections = json.loads(args.sections)
-        except Exception:
-            raise SystemExit('--sections must be JSON list, e.g. {"start_bar":0}')
+        sections = parse_json_arg("--sections", args.sections, SECTIONS_SCHEMA)
     if sections:
         for sec in sections:
             pool = sec.get("phrase_pool") or sec.get("pool")
@@ -4195,10 +5037,7 @@ def main():
 
     style_cfg = mapping.get("style_inject")
     if args.style_inject is not None:
-        try:
-            style_cfg = json.loads(args.style_inject)
-        except Exception:
-            raise SystemExit('--style-inject must be JSON e.g. {"period":8,"note":30}')
+        style_cfg = parse_json_arg("--style-inject", args.style_inject, STYLE_INJECT_SCHEMA)
     if style_cfg:
         style_cfg = validate_style_inject_cfg(style_cfg)
         mapping["style_inject"] = style_cfg
@@ -4243,6 +5082,9 @@ def main():
     mapping["held_vel_mode"] = held_vel_mode
     mapping["seed"] = args.seed
     clone_meta_only = bool(args.clone_meta_only or clone_meta_only)
+
+    if stats_enabled:
+        stats["_legacy_bar_pulses_grid"] = legacy_bar_pulses_grid
 
     if args.debug_json:
         Path(args.debug_json).write_text(json.dumps(mapping, indent=2))
@@ -4311,14 +5153,107 @@ def main():
             stats["sections"] = sections
 
     # Chords
+    inline_chord_events: Optional[List[InlineChordEvent]] = None
     if args.chords:
-        chord_path = Path(args.chords)
-        if chord_path.suffix in {".yaml", ".yml"}:
-            chords = read_chords_yaml(chord_path)
+        parsed_inline = parse_inline_chords(args.chords)
+        if parsed_inline is None:
+            chord_path = Path(args.chords)
+            if chord_path.exists():
+                if chord_path.suffix in {".yaml", ".yml"}:
+                    chords = read_chords_yaml(chord_path)
+                else:
+                    chords = read_chords_csv(chord_path)
+            else:
+                raise SystemExit(f"--chords path not found or unsupported inline spec: {args.chords}")
         else:
-            chords = read_chords_csv(chord_path)
+            inline_chord_events = parsed_inline
+            chords = []
     else:
         chords = infer_chords_by_bar(pm, ts_num, ts_den)
+
+    if inline_chord_events is not None:
+        beat_times = list(pm.get_beats())
+        if len(beat_times) < 2:
+            fallback_bpm = bpm if bpm and math.isfinite(bpm) and bpm > 0 else 120.0
+            step = 60.0 / fallback_bpm
+            beat_times = [0.0, step]
+
+        def beat_to_time_local(b: float) -> float:
+            idx = int(math.floor(b))
+            frac = b - idx
+            if idx >= len(beat_times) - 1:
+                last = beat_times[-1] - beat_times[-2]
+                if last <= 0.0:
+                    return beat_times[-1]
+                return beat_times[-1] + (b - (len(beat_times) - 1)) * last
+            return beat_times[idx] + frac * (beat_times[idx + 1] - beat_times[idx])
+
+        def time_to_beat_local(t: float) -> float:
+            idx = bisect.bisect_right(beat_times, t) - 1
+            if idx < 0:
+                return 0.0
+            if idx >= len(beat_times) - 1:
+                last = beat_times[-1] - beat_times[-2]
+                if last <= 0.0:
+                    return float(len(beat_times) - 1)
+                return (len(beat_times) - 1) + (t - beat_times[-1]) / last
+            span = beat_times[idx + 1] - beat_times[idx]
+            if span <= 0.0:
+                return float(idx)
+            return idx + (t - beat_times[idx]) / span
+
+        beats_per_bar = ts_num * (4.0 / ts_den)
+        downbeats = list(pm.get_downbeats())
+        events: List[Tuple[float, str]] = []
+        for idx, ev in enumerate(inline_chord_events):
+            start_beats = ev.start_beats
+            if start_beats is None:
+                if ev.start_time is not None:
+                    start_beats = time_to_beat_local(ev.start_time)
+                elif ev.bar is not None:
+                    bar_idx = ev.bar
+                    if downbeats and bar_idx < len(downbeats):
+                        start_beats = time_to_beat_local(downbeats[bar_idx])
+                    elif downbeats and len(downbeats) >= 2:
+                        step = downbeats[-1] - downbeats[-2]
+                        if step <= 0.0:
+                            step = beats_per_bar
+                        start_time = downbeats[-1] + step * (bar_idx - (len(downbeats) - 1))
+                        start_beats = time_to_beat_local(start_time)
+                    else:
+                        start_beats = bar_idx * beats_per_bar
+                else:
+                    raise SystemExit(
+                        f"--chords inline element {idx} missing timing (start_beats/start/bar)"
+                    )
+            events.append((start_beats, ev.chord.strip()))
+
+        if not events:
+            raise SystemExit("--chords inline: no valid tokens")
+
+        events.sort(key=lambda item: item[0])
+
+        midi_end_beats = time_to_beat_local(pm.get_end_time())
+        if not math.isfinite(midi_end_beats):
+            midi_end_beats = events[-1][0]
+
+        for idx, (start_beats, symbol) in enumerate(events):
+            end_beats = events[idx + 1][0] if idx + 1 < len(events) else midi_end_beats
+            if end_beats <= start_beats + EPS:
+                raise SystemExit(
+                    f"--chords inline events must be strictly increasing (index {idx})"
+                )
+            start_t = beat_to_time_local(start_beats)
+            end_t = beat_to_time_local(end_beats)
+            if end_t <= start_t + EPS:
+                raise SystemExit(
+                    f"--chords inline produced non-positive duration near index {idx}; check beat grid"
+                )
+            try:
+                root_pc, quality = parse_chord_symbol(symbol)
+            except ValueError as exc:
+                raise SystemExit(f"--chords inline index {idx}: {exc}") from exc
+            chords.append(ChordSpan(start_t, end_t, root_pc, quality))
 
     section_overrides = None
     if args.sections:
@@ -4438,6 +5373,7 @@ def main():
         rng_pool=rng_pool,
         rng_human=rng_human,
         write_markers=getattr(args, "write_markers", False),
+        marker_encoding=getattr(args, "marker_encoding", "raw"),
         onset_list=onset_counts,
         rest_list=rest_ratios,
         density_rules=density_rules,
@@ -4497,157 +5433,57 @@ def main():
                 if 0 <= b < len(stats["sections"]):
                     stats["sections"][b] = tag
 
-    # Auto fill insertion on guide rests
-    fill_count = 0
-    sections = stats.get("sections")
-    if args.auto_fill != "off" and guide_units_time:
-        avoid = None
-        if args.fill_avoid_pitches:
-            toks = [t.strip() for t in args.fill_avoid_pitches.split(",") if t.strip()]
-            avoid = set()
-            for tok in toks:
-                val = parse_note_token(tok)
-                if val is None:
-                    raise SystemExit("fill-avoid-pitches cannot include 'rest'")
-                avoid.add(val)
-        filled_bars = stats.setdefault("fill_bars", []) if stats_enabled else None
-        fill_count = insert_style_fill(
-            out_pm,
-            args.auto_fill,
-            guide_units_time,
-            mapping,
-            sections=sections,
-            rest_ratio_list=rest_ratios,
-            rest_th=args.guide_rest_silence_th or 0.75,
-            fill_length_beats=args.fill_length_beats,
-            bpm=bpm,
-            min_gap_beats=args.fill_min_gap_beats,
-            avoid_pitches=avoid,
-            filled_bars=filled_bars,
-        )
+    chord_inst = next((i for i in out_pm.instruments if i.name == CHORD_INST_NAME), None)
+    phrase_inst = next((i for i in out_pm.instruments if i.name == PHRASE_INST_NAME), None)
+    downbeats_ref: Optional[List[float]]
+    if stats_enabled and stats.get("downbeats"):
+        downbeats_ref = stats["downbeats"]
+    else:
+        try:
+            downbeats_ref = out_pm.get_downbeats()
+        except Exception:
+            downbeats_ref = None
 
-    # Emit damping CC to selected destination
-    cc_stats = None
-    if guide_cc:
-        if damp_dst == "phrase":
-            inst = next((i for i in out_pm.instruments if i.name == PHRASE_INST_NAME), None)
-            if inst is None:
-                inst = pretty_midi.Instrument(program=0, name=PHRASE_INST_NAME)
-                out_pm.instruments.append(inst)
-        elif damp_dst == "chord":
-            inst = next((i for i in out_pm.instruments if i.name == CHORD_INST_NAME), None)
-            if inst is None:
-                inst = chord_inst
-                if inst not in out_pm.instruments:
-                    out_pm.instruments.append(inst)
-        else:
-            inst = pretty_midi.Instrument(program=0, name=DAMP_INST_NAME)
-            out_pm.instruments.append(inst)
-        for t, v in guide_cc:
-            inst.control_changes.append(
-                pretty_midi.ControlChange(number=damp_cc_num, value=v, time=t)
-            )
-        if stats_enabled:
-            vals = [v for _, v in guide_cc]
-            cc_stats = {
-                "min": min(vals),
-                "max": max(vals),
-                "mean": sum(vals) / len(vals),
-                "count": len(vals),
-            }
-
-    # Reports / debug artifacts
-    if stats_enabled and guide_notes is not None:
-        stats["guide_keys"] = [guide_notes.get(i) for i in sorted(guide_notes.keys())]
-        stats["fill_count"] = fill_count
-        if rest_ratios is not None and onset_counts is not None and guide_cc:
-            sample = []
-            for i in range(min(4, len(guide_cc))):
-                sample.append(
-                    {
-                        "bar": i,
-                        "onset": onset_counts[i],
-                        "rest": rest_ratios[i],
-                        "cc": guide_cc[i][1],
-                    }
-                )
-            stats["guide_sample"] = sample
-            if args.guide_rest_silence_th is not None:
-                stats["rest_silence"] = sum(
-                    1 for r in rest_ratios if r >= args.guide_rest_silence_th
-                )
-        if cc_stats:
-            stats["damp_stats"] = cc_stats
-        stats["auto_fill"] = {
-            "mode": args.auto_fill,
-            "count": fill_count,
-            "length_beats": args.fill_length_beats,
-        }
-
-    if stats_enabled and args.debug_csv and rest_ratios is not None and onset_counts is not None:
-        with open(args.debug_csv, "w", newline="") as fp:
-            writer = csv.writer(fp)
-            writer.writerow(
-                ["bar", "onset_count", "rest_ratio", "phrase_note", "cc_value", "section"]
-            )
-            cc_map = {i: v for i, (_, v) in enumerate(guide_cc)} if guide_cc else {}
-            sect = stats.get("sections") or []
-            for i in range(len(onset_counts)):
-                pn = stats.get("bar_phrase_notes", {}).get(i)
-                writer.writerow(
-                    [
-                        i,
-                        onset_counts[i],
-                        rest_ratios[i],
-                        pn if pn is not None else "",
-                        cc_map.get(i, ""),
-                        sect[i] if i < len(sect) else "",
-                    ]
-                )
-
-    if stats_enabled and args.bar_summary and rest_ratios is not None and onset_counts is not None:
-        with open(args.bar_summary, "w", newline="") as fp:
-            writer = csv.writer(fp)
-            writer.writerow(
-                [
-                    "bar",
-                    "section",
-                    "phrase_note",
-                    "pulses_emitted",
-                    "onsets",
-                    "rest_ratio",
-                    "avg_vel",
-                    "fill_flag",
-                    "cc_value",
-                ]
-            )
-            sect = stats.get("sections") or []
-            bar_vel = stats.get("bar_velocities", {})
-            fill_bars = set(stats.get("fill_bars", []))
-            cc_map = {i: v for i, (_, v) in enumerate(guide_cc)} if guide_cc else {}
-            for i in range(len(onset_counts)):
-                pn = stats.get("bar_phrase_notes", {}).get(i)
-                pulses = len(stats.get("bar_pulses", {}).get(i, []))
-                vel_list = bar_vel.get(i, [])
-                avg_vel = sum(vel_list) / len(vel_list) if vel_list else ""
-                writer.writerow(
-                    [
-                        i,
-                        sect[i] if i < len(sect) else args.section_default,
-                        pn if pn is not None else "",
-                        pulses,
-                        onset_counts[i],
-                        rest_ratios[i],
-                        avg_vel,
-                        1 if i in fill_bars else 0,
-                        cc_map.get(i, ""),
-                    ]
-                )
-
-    if stats_enabled and args.report_json:
-        p = Path(args.report_json)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(stats, indent=2, sort_keys=True))
+    finalize_phrase_track(
+        out_pm,
+        args,
+        stats if stats_enabled else None,
+        mapping,
+        section_lfo=section_lfo_obj,
+        lfo_targets=tuple(lfo_apply),
+        downbeats=downbeats_ref,
+        guide_units=guide_units,
+        guide_units_time=guide_units_time,
+        guide_notes=guide_notes,
+        rest_ratios=rest_ratios,
+        onset_counts=onset_counts,
+        chord_inst=chord_inst,
+        phrase_inst=phrase_inst,
+        beat_to_time=None,
+        time_to_beat=None,
+        pulse_subdiv_beats=pulse_beats,
+        phrase_vel=int(mapping.get("phrase_velocity", 96)),
+        phrase_merge_gap=phrase_merge_gap,
+        release_sec=phrase_release_ms / 1000.0,
+        min_phrase_len_sec=min_phrase_len_ms / 1000.0,
+        stop_min_gap_beats=args.stop_min_gap_beats,
+        stop_velocity=args.stop_velocity,
+        damp_dst=damp_dst,
+        damp_cc_num=damp_cc_num,
+        guide_cc=guide_cc,
+        bpm=bpm,
+        section_overrides=section_overrides,
+        fill_map=None,
+        rest_silence_send_stop=False,
+        quantize_strength=0.0,
+        write_markers=False,
+        section_labels=stats.get("sections") if stats_enabled else None,
+        section_default=args.section_default,
+        chord_merge_gap=mapping.get("chord_merge_gap", 0.01),
+        clone_meta_only=clone_meta_only,
+        meta_src="cli",
+        chords=chords,
+    )
 
     if args.dry_run:
         phrase_inst = None

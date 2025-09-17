@@ -259,26 +259,55 @@ def _ensure_tempo_and_ticks(
         tempo_times, tempi_seq = pm.get_tempo_changes()
     except Exception:
         tempo_times, tempi_seq = [], []
+
+    def _has_items(obj: Any) -> bool:
+        if obj is None:
+            return False
+        length = getattr(obj, "__len__", None)
+        if callable(length):
+            try:
+                return length() > 0
+            except Exception:
+                pass
+        size = getattr(obj, "size", None)
+        if size is not None:
+            try:
+                return int(size) > 0
+            except Exception:
+                pass
+        try:
+            return bool(obj)
+        except Exception:
+            return False
+
+    has_tempi = _has_items(tempi_seq)
     try:
         tempi_list = [float(t) for t in tempi_seq]
     except Exception:
         tempi_list = []
+        has_tempi = False
     current_initial = getattr(pm, "initial_tempo", None)
+    has_initial = False
+    init_candidate = bpm
+    if current_initial is not None:
+        try:
+            init_candidate = float(current_initial)
+            has_initial = math.isfinite(init_candidate) and init_candidate > 0.0
+        except Exception:
+            init_candidate = bpm
+            has_initial = False
     first_qpm: Optional[float] = None
-    if tempi_list:
+    if has_tempi and tempi_list:
         qpm0 = tempi_list[0]
         if not math.isfinite(qpm0) or qpm0 <= 0.0:
             qpm0 = bpm
         first_qpm = max(MIN_QPM, min(qpm0, MAX_QPM))
     else:
-        init = current_initial if current_initial is not None else bpm
-        try:
-            init = float(init)
-        except Exception:
-            init = bpm
-        if not math.isfinite(init) or init <= 0.0:
-            init = bpm
-        first_qpm = max(MIN_QPM, min(init, MAX_QPM))
+        if not has_initial:
+            init_candidate = bpm
+        if not math.isfinite(init_candidate) or init_candidate <= 0.0:
+            init_candidate = bpm
+        first_qpm = max(MIN_QPM, min(init_candidate, MAX_QPM))
     pm.initial_tempo = float(first_qpm)
 
     setattr(pm, "_sparkle_meta_seed_fallback", False)
@@ -3438,7 +3467,9 @@ def build_sparkle_midi(
             stats["cycle_disabled"] = True
 
     if stats is not None:
-        legacy_pulses_grid = bool(stats.get("_legacy_bar_pulses_grid", False))
+        stats.setdefault("bar_triggers", {})
+        stats.setdefault("bar_pulse_grid", {})
+        stats.setdefault("bar_pulses", stats.get("bar_pulse_grid", {}))
         stats["schema_version"] = "1.1"
         stats["downbeats"] = downbeats
         # Dict[bar_index, List[(beat_position_in_beats, absolute_time_seconds)]]
@@ -3447,16 +3478,21 @@ def build_sparkle_midi(
         # actual trigger placements when phrases are emitted so analytics can
         # distinguish between the theoretical grid and realised pulses.
 
-        bar_triggers: Dict[int, List[Tuple[float, float]]] = {}
-        stats["bar_triggers"] = bar_triggers
-        bar_pulse_grid: Dict[int, List[Tuple[float, float]]] = {}
-        stats["bar_pulse_grid"] = bar_pulse_grid
-        if legacy_pulses_grid:
-            stats["bar_pulses"] = bar_pulse_grid
+        bar_triggers_obj = stats.get("bar_triggers")
+        if isinstance(bar_triggers_obj, dict):
+            bar_triggers_obj.clear()
         else:
-            stats["bar_pulses"] = {}
-        stats["bar_trigger_pulses"] = bar_triggers
-        stats["bar_trigger_pulses_compat"] = bar_triggers
+            bar_triggers_obj = {}
+        stats["bar_triggers"] = bar_triggers_obj
+        bar_pulse_grid_obj = stats.get("bar_pulse_grid")
+        if isinstance(bar_pulse_grid_obj, dict):
+            bar_pulse_grid_obj.clear()
+        else:
+            bar_pulse_grid_obj = {}
+        stats["bar_pulse_grid"] = bar_pulse_grid_obj
+        stats["bar_pulses"] = bar_pulse_grid_obj
+        stats["bar_trigger_pulses"] = bar_triggers_obj
+        stats["bar_trigger_pulses_compat"] = bar_triggers_obj
         stats["bar_phrase_notes"] = {}
         stats["bar_velocities"] = {}
         stats["triads"] = []
@@ -4304,9 +4340,6 @@ def build_sparkle_midi(
                     release_sec,
                     min_phrase_len_sec,
                 )
-
-    # --- merged: section-end fills + stop keys + quantize + markers ---
-
     finalize_phrase_track(
         out,
         None,
@@ -4719,7 +4752,12 @@ def main():
     ap.add_argument(
         "--log-level", type=str, default="info", choices=["debug", "info"], help="Logging level"
     )
-    ap.add_argument("--debug-json", type=str, default=None, help="Write merged config to PATH")
+    ap.add_argument(
+        "--debug-json",
+        type=str,
+        default=None,
+        help="Write merged config to PATH (stats: bar_pulse_grid=grid, bar_triggers=hits)",
+    )
     ap.add_argument("--debug-md", type=str, default=None, help="Write debug markdown table")
     ap.add_argument("--print-plan", action="store_true", help="Print per-bar phrase plan")
     ap.add_argument(
@@ -5331,6 +5369,23 @@ def main():
             computed_end_sec,
         )
         _seed_input_grid(pm, seed_bpm, computed_end_sec)
+
+    has_phrase_pool = bool(phrase_pool and phrase_pool.get("pool"))
+    has_cycle_notes = bool(cycle_notes)
+    has_markov = bool(mapping.get("markov"))
+    if (
+        not has_phrase_pool
+        and not has_markov
+        and not has_cycle_notes
+        and args.phrase_pool is None
+        and args.cycle_phrase_notes is None
+    ):
+        fallback_note = int(mapping.get("phrase_note", 36))
+        phrase_pool = {"pool": [(fallback_note, 1.0)]}
+        logging.info(
+            "No phrase plan supplied; defaulting to steady phrase_note=%d via CLI failsafe",
+            fallback_note,
+        )
 
     out_pm = build_sparkle_midi(
         pm,

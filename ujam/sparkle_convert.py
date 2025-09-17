@@ -1301,8 +1301,11 @@ def summarize_guide_midi(
         if not getattr(inst, "is_drum", False):
             notes.extend(inst.notes)
     notes.sort(key=lambda n: n.start)
-    beats = pm.get_beats()
-    if not beats:
+    try:
+        beats = list(pm.get_beats())
+    except Exception:
+        beats = []
+    if len(beats) == 0:
         end = max(pm.get_end_time(), 1.0)
         n = max(1, int(math.ceil(end)))
         beats = [float(i) for i in range(n + 1)]
@@ -1317,11 +1320,17 @@ def summarize_guide_midi(
         span = beats[idx + 1] - beats[idx]
         return idx + (t - beats[idx]) / span
 
-    downs = pm.get_downbeats() if quant == "bar" else beats
-    if quant == "bar" and not downs:
-        downs = beats[::4]
-        if not downs:
-            downs = beats
+    if quant == "bar":
+        try:
+            downs = list(pm.get_downbeats())
+        except Exception:
+            downs = []
+        if len(downs) == 0:
+            downs = beats[::4]
+            if len(downs) == 0:
+                downs = beats
+    else:
+        downs = beats
     units: List[Tuple[float, float]] = []
     for i, s in enumerate(downs):
         e = downs[i + 1] if i + 1 < len(downs) else pm.get_end_time()

@@ -1823,8 +1823,9 @@ def test_section_density_presets() -> None:
     sc.build_sparkle_midi(
         pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats
     )
-    p0 = len(stats["bar_pulses"][0])
-    p1 = len(stats["bar_pulses"][1])
+    triggers = stats.get("bar_triggers", {})
+    p0 = len(triggers.get(0, []))
+    p1 = len(triggers.get(1, []))
     v0 = sum(stats["bar_velocities"][0]) / len(stats["bar_velocities"][0])
     v1 = sum(stats["bar_velocities"][1]) / len(stats["bar_velocities"][1])
     assert p0 < p1 and v0 < v1

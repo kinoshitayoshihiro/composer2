@@ -72,15 +72,17 @@ def schedule_phrase_keys(
                 plan.append(cycle_phrase_notes[idx])
         else:
             plan = [None] * num_bars
-    prev: Optional[int] = None
-    for i, pn in enumerate(plan):
-        if pn is None:
-            prev = None
-            continue
-        if pn == prev:
-            plan[i] = None
-        else:
-            prev = pn
+    suppress_duplicates = bool(markov) or bool(cycle_phrase_notes)
+    if suppress_duplicates:
+        prev: Optional[int] = None
+        for i, pn in enumerate(plan):
+            if pn is None:
+                prev = None
+                continue
+            if pn == prev:
+                plan[i] = None
+            else:
+                prev = pn
     density_map: Optional[Dict[int, str]]
     if stats is not None:
         density_map = {}

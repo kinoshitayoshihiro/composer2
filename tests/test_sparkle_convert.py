@@ -7,11 +7,14 @@ from unittest import mock
 import pytest
 import types
 import json
+from typing import Any, Dict, List
 
 try:
     import pretty_midi  # type: ignore
 except Exception:  # pragma: no cover
     from tests._stubs import pretty_midi  # type: ignore
+
+import argparse
 
 from ujam import sparkle_convert as sc
 from ujam.damping import _append_phrase
@@ -504,6 +507,141 @@ def test_sections_without_guide() -> None:
     high = [n.pitch for n in out.instruments[1].notes if n.start>=4.0]
     assert 36 in high
 
+
+
+def test_finalize_not_duplicated() -> None:
+    pm = pretty_midi.PrettyMIDI()
+    chord_inst = pretty_midi.Instrument(program=0, name=sc.CHORD_INST_NAME)
+    phrase_inst = pretty_midi.Instrument(program=0, name=sc.PHRASE_INST_NAME)
+    pm.instruments.extend([chord_inst, phrase_inst])
+    stats = {
+        "fill_bars": [],
+        "sections": ["verse"],
+        "bar_pulses": {0: []},
+        "bar_pulse_grid": {0: []},
+        "bar_triggers": {},
+        "bar_phrase_notes": {},
+        "bar_velocities": {},
+        "downbeats": [0.0, 2.0],
+        "bar_count": 1,
+    }
+    mapping = {"style_stop": 95}
+    args = argparse.Namespace(
+        auto_fill="off",
+        fill_length_beats=0.25,
+        fill_min_gap_beats=0.0,
+        guide_rest_silence_th=None,
+        debug_csv=None,
+        bar_summary=None,
+        report_json=None,
+        section_default="verse",
+    )
+    sc.finalize_phrase_track(
+        pm,
+        args,
+        stats,
+        mapping,
+        section_lfo=None,
+        lfo_targets=(),
+        downbeats=[0.0, 2.0],
+        guide_units=[(0.0, 1.0), (1.0, 2.0)],
+        guide_units_time=[(0.0, 1.0), (1.0, 2.0)],
+        guide_notes={0: 60, 1: None},
+        rest_ratios=[0.0, 1.0],
+        onset_counts=[1, 0],
+        chord_inst=chord_inst,
+        phrase_inst=phrase_inst,
+        beat_to_time=lambda b: b,
+        time_to_beat=lambda t: t,
+        pulse_subdiv_beats=1.0,
+        phrase_vel=80,
+        phrase_merge_gap=0.0,
+        release_sec=0.0,
+        min_phrase_len_sec=0.0,
+        stop_min_gap_beats=0.0,
+        stop_velocity=70,
+        damp_dst=None,
+        damp_cc_num=11,
+        guide_cc=None,
+        bpm=120.0,
+        section_overrides=None,
+        fill_map={0: (40, 0.5, 1.0)},
+        rest_silence_send_stop=True,
+        quantize_strength=1.0,
+        write_markers=False,
+        section_labels=["verse"],
+        section_default="verse",
+        chord_merge_gap=0.01,
+        clone_meta_only=False,
+        meta_src="test",
+        chords=[sc.ChordSpan(0.0, 2.0, 0, "maj")],
+    )
+    assert stats["fill_count"] == 1
+    stop_pitch = mapping["style_stop"]
+    stop_notes = [n for n in phrase_inst.notes if n.pitch == stop_pitch]
+    assert len(stop_notes) == 1
+    fill_notes = [n for n in phrase_inst.notes if n.pitch == 40]
+    assert len(fill_notes) == 1
+    assert fill_notes[0].velocity == 80
+
+
+def test_no_suppress_without_plan() -> None:
+    plan, _, _ = sc.schedule_phrase_keys(
+        3,
+        [],
+        sections=[{"start_bar": 0, "end_bar": 3, "phrase_pool": [36]}],
+        fill_note=None,
+        pulse_subdiv=1.0,
+    )
+    assert plan == [36, 36, 36]
+
+
+def test_stats_triggers_vs_grid() -> None:
+    if not hasattr(pretty_midi, "TimeSignature"):
+        pytest.skip("pretty_midi stub lacks TimeSignature")
+    pm = pretty_midi.PrettyMIDI()
+    pm.time_signature_changes = [
+        sc.pretty_midi.TimeSignature(6, 8, 0.0),
+        sc.pretty_midi.TimeSignature(4, 4, 3.0),
+    ]
+    inst = pretty_midi.Instrument(program=0)
+    inst.notes.append(pretty_midi.Note(velocity=80, pitch=60, start=0.0, end=7.0))
+    pm.instruments.append(inst)
+    chords = [
+        sc.ChordSpan(0.0, 3.0, 0, "maj"),
+        sc.ChordSpan(3.0, 7.0, 0, "maj"),
+    ]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 90,
+        "phrase_length_beats": 1.0,
+        "cycle_phrase_notes": [36],
+        "cycle_mode": "bar",
+    }
+    stats: Dict[str, Any] = {}
+    out = sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        0.5,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120.0,
+        0.0,
+        0.5,
+        stats=stats,
+    )
+    assert len(stats["bar_pulse_grid"][0]) == len(stats["bar_pulses"][0]) == 6
+    assert len(stats["bar_pulse_grid"][1]) == len(stats["bar_pulses"][1]) == 8
+    phrase_inst = next(i for i in out.instruments if i.name == sc.PHRASE_INST_NAME)
+    actual_counts = {0: 0, 1: 0}
+    for note in phrase_inst.notes:
+        bar_idx = 0 if note.start < stats["downbeats"][1] else 1
+        actual_counts[bar_idx] += 1
+    for bar_idx, triggers in stats["bar_triggers"].items():
+        assert len(triggers) == actual_counts.get(bar_idx, 0)
 
 
 def _pm_with_ts(num: int, den: int, length: float = 6.0):
@@ -1425,6 +1563,66 @@ def test_vocal_adapt_density_switch() -> None:
     assert stats["bar_phrase_notes"][0] == 40
 
 
+
+def test_no_suppress_without_plan() -> None:
+    plan, _, _ = sc.schedule_phrase_keys(
+        3,
+        [],
+        sections=[{"start_bar": 0, "end_bar": 3, "phrase_pool": [36]}],
+        fill_note=None,
+        pulse_subdiv=1.0,
+    )
+    assert plan == [36, 36, 36]
+
+
+def test_stats_triggers_vs_grid() -> None:
+    if not hasattr(pretty_midi, "TimeSignature"):
+        pytest.skip("pretty_midi stub lacks TimeSignature")
+    pm = pretty_midi.PrettyMIDI()
+    pm.time_signature_changes = [
+        sc.pretty_midi.TimeSignature(6, 8, 0.0),
+        sc.pretty_midi.TimeSignature(4, 4, 3.0),
+    ]
+    inst = pretty_midi.Instrument(program=0)
+    inst.notes.append(pretty_midi.Note(velocity=80, pitch=60, start=0.0, end=7.0))
+    pm.instruments.append(inst)
+    chords = [
+        sc.ChordSpan(0.0, 3.0, 0, "maj"),
+        sc.ChordSpan(3.0, 7.0, 0, "maj"),
+    ]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 90,
+        "phrase_length_beats": 1.0,
+        "cycle_phrase_notes": [36],
+        "cycle_mode": "bar",
+    }
+    stats: Dict[str, Any] = {}
+    out = sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        0.5,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120.0,
+        0.0,
+        0.5,
+        stats=stats,
+    )
+    assert len(stats["bar_pulse_grid"][0]) == len(stats["bar_pulses"][0]) == 6
+    assert len(stats["bar_pulse_grid"][1]) == len(stats["bar_pulses"][1]) == 8
+    phrase_inst = next(i for i in out.instruments if i.name == sc.PHRASE_INST_NAME)
+    actual_counts = {0: 0, 1: 0}
+    for note in phrase_inst.notes:
+        bar_idx = 0 if note.start < stats["downbeats"][1] else 1
+        actual_counts[bar_idx] += 1
+    for bar_idx, triggers in stats["bar_triggers"].items():
+        assert len(triggers) == actual_counts.get(bar_idx, 0)
+
+
 def _pm_with_ts_seq(seq):
     pm = pretty_midi.PrettyMIDI()
     t = 0.0
@@ -2100,3 +2298,222 @@ def test_damp_vocal_cli(tmp_path) -> None:
     out_pm = created[-1]
     inst = [i for i in out_pm.instruments if i.name == DAMP_INST_NAME]
     assert inst and inst[0].control_changes
+
+
+def test_parse_json_arg_style_inject_error() -> None:
+    with pytest.raises(SystemExit) as exc:
+        sc.parse_json_arg(
+            "--style-inject",
+            "{\"period\":4,\"note\":\"A\",\"duration_beats\":0.5}",
+            sc.STYLE_INJECT_SCHEMA,
+        )
+    assert "field 'note' must be int" in str(exc.value)
+
+
+def test_parse_thresholds_missing_key() -> None:
+    with pytest.raises(SystemExit) as exc:
+        sc.parse_thresholds_arg("{\"low\":60,\"mid\":62}")
+    assert "missing required key 'high'" in str(exc.value)
+
+
+def test_parse_sections_invalid_json() -> None:
+    with pytest.raises(SystemExit) as exc:
+        sc.parse_json_arg("--sections", "{", sc.SECTIONS_SCHEMA)
+    assert "expects JSON" in str(exc.value)
+
+
+def test_parse_inline_chords_japanese_tokens() -> None:
+    events = sc.parse_inline_chords("０：Ｃ♯：maj，２：Ｄ♭：min")
+    assert events is not None
+    assert len(events) == 2
+    first = events[0]
+    assert pytest.approx(first.start_beats or 0.0) == 0.0
+    root_pc, quality = sc.parse_chord_symbol(first.chord)
+    assert root_pc == sc.PITCH_CLASS["C#"]
+    assert quality == "maj"
+
+
+def test_inline_long_string_no_path_detection() -> None:
+    spec = ",".join(f"{i}:C:maj" for i in range(0, 20, 2))
+    events = sc.parse_inline_chords(spec)
+    assert events is not None
+    assert len(events) == 10
+
+
+def test_marker_encoding_modes() -> None:
+    class DummyPM:
+        def __init__(self) -> None:
+            self.markers = []
+
+    def capture_markers(labels: List[str], mode: str) -> List[str]:
+        dummy = DummyPM()
+        with mock.patch.object(
+            pretty_midi,
+            "Marker",
+            side_effect=lambda text, time: types.SimpleNamespace(text=text, time=time),
+            create=True,
+        ):
+            sc._write_markers(dummy, True, labels, "intro", [0.0], mode)
+        return [m.text for m in dummy.markers]
+
+    assert capture_markers(["Intro🎵"], "ascii")[0] == "INTRO"
+    assert capture_markers(["✨"], "escape")[0] == "\\u2728"
+    assert capture_markers(["サビ"], "raw")[0] == "サビ"
+
+
+def test_stop_injection_requires_style_and_guides() -> None:
+    inst = pretty_midi.Instrument(0)
+    sc._inject_stops(inst, True, [(0.0, 1.0)], {0: None}, lambda b: b, {}, 0.5, 1.0, 90)
+    assert len(inst.notes) == 0
+
+    inst2 = pretty_midi.Instrument(0)
+    sc._inject_stops(
+        inst2,
+        True,
+        None,
+        {},
+        lambda b: b,
+        {"style_stop": 32},
+        0.5,
+        1.0,
+        90,
+    )
+    assert len(inst2.notes) == 0
+
+
+def test_quantize_strength_pattern_across_bars() -> None:
+    inst = pretty_midi.Instrument(0)
+    notes = [
+        pretty_midi.Note(velocity=90, pitch=60, start=0.12, end=0.4),
+        pretty_midi.Note(velocity=90, pitch=60, start=0.63, end=0.9),
+        pretty_midi.Note(velocity=90, pitch=60, start=1.12, end=1.4),
+        pretty_midi.Note(velocity=90, pitch=60, start=1.63, end=1.9),
+    ]
+    inst.notes.extend(notes)
+    sc._apply_quantize_safe(
+        pretty_midi.PrettyMIDI(),
+        inst,
+        [1.0, 0.0],
+        lambda b: b,
+        lambda t: t,
+        0.5,
+        [0.0, 1.0, 2.0],
+        None,
+    )
+    starts = [round(n.start, 2) for n in inst.notes]
+    assert starts == [0.0, pytest.approx(0.63, rel=0.01), 1.0, pytest.approx(1.63, rel=0.01)]
+
+
+def test_quicklook_summary_present() -> None:
+    stats: Dict[str, Any] = {"bar_density": {0: "low"}, "sections": ["intro"], "bar_count": 1}
+    sc.finalize_phrase_track(
+        pretty_midi.PrettyMIDI(),
+        None,
+        stats,
+        {},
+        section_lfo=None,
+        lfo_targets=(),
+        downbeats=[0.0, 1.0],
+        guide_units=None,
+        guide_units_time=None,
+        guide_notes={},
+        rest_ratios=None,
+        onset_counts=None,
+        chord_inst=None,
+        phrase_inst=pretty_midi.Instrument(0),
+        beat_to_time=lambda b: b,
+        time_to_beat=lambda t: t,
+        pulse_subdiv_beats=0.5,
+        phrase_vel=90,
+        phrase_merge_gap=0.0,
+        release_sec=0.0,
+        min_phrase_len_sec=0.0,
+        stop_min_gap_beats=1.0,
+        stop_velocity=90,
+        damp_dst=None,
+        damp_cc_num=0,
+        guide_cc=None,
+        bpm=120.0,
+        section_overrides=None,
+        fill_map=None,
+        rest_silence_send_stop=False,
+        quantize_strength=0.0,
+        write_markers=False,
+        marker_encoding="raw",
+        section_labels=["intro"],
+        section_default="intro",
+        chord_merge_gap=0.01,
+        clone_meta_only=False,
+        meta_src="test",
+        chords=None,
+    )
+    assert "quicklook" in stats
+    quick = stats["quicklook"]
+    assert quick["bar_count"] == 1
+    assert quick["fill_count"] == 0
+    assert quick["sections"] == ["intro"]
+
+
+def test_meter_change_stats_consistency() -> None:
+    class MeterPM:
+        def __init__(self) -> None:
+            self.instruments = [pretty_midi.Instrument(0)]
+            self.time_signature_changes = [
+                types.SimpleNamespace(numerator=6, denominator=8, time=0.0),
+                types.SimpleNamespace(numerator=4, denominator=4, time=3.0),
+            ]
+
+        def get_beats(self):
+            step = 0.5
+            count = int(9.0 / step) + 1
+            return [i * step for i in range(count)]
+
+        def get_downbeats(self):
+            return [0.0, 1.5, 3.0, 5.0, 7.0, 9.0]
+
+        def get_end_time(self):
+            return 9.0
+
+        def get_tempo_changes(self):
+            return [0.0], [120.0]
+
+    pm = MeterPM()
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 96,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [36],
+        "cycle_mode": "bar",
+    }
+    stats: Dict[str, Any] = {"_legacy_bar_pulses_grid": False}
+    chords = [sc.ChordSpan(0.0, 9.0, 0, "maj")]
+    sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        0.5,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120.0,
+        0.0,
+        0.5,
+        stats=stats,
+    )
+    assert stats["schema_version"] == "1.1"
+    pulses = stats["bar_pulses"]
+    grid = stats["bar_pulse_grid"]
+    expected = [
+        sc.pulses_per_bar(6, 8, 0.5),
+        sc.pulses_per_bar(6, 8, 0.5),
+        sc.pulses_per_bar(4, 4, 0.5),
+        sc.pulses_per_bar(4, 4, 0.5),
+        sc.pulses_per_bar(4, 4, 0.5),
+    ]
+    for i, count in enumerate(expected):
+        assert len(grid[i]) == count
+        assert len(pulses[i]) == count
+    triggers = stats["bar_triggers"]
+    actual_hits = sum(len(v) for v in triggers.values())
+    assert actual_hits > 0

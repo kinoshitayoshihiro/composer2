@@ -124,6 +124,9 @@ NOTE_ALIAS_INV: Dict[int, str] = {}
 EPS = 1e-9
 MAX_ITERS = 1024
 
+MIN_QPM = 60_000_000.0 / 0xFFFFFF + 1e-6
+MAX_QPM = 1000.0
+
 # Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
 # Opt-in keeps normal randomness intact while letting tests pin results.
 _SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
@@ -143,8 +146,67 @@ def pulses_per_bar(num: int, den: int, unit: float) -> int:
     if den == 4:
         return max(1, int(num * 2))
     bar_beats = num * (4.0 / den)
-    total = int(math.floor(bar_beats / unit + EPS))
+    total = int(math.floor(bar_beats / unit + 1e-9))
     return max(1, total)
+
+
+def _seed_tick_tables(pm: "pretty_midi.PrettyMIDI", qpm: float) -> bool:
+    """Seed PrettyMIDI tick tables using a sanitized tempo; return True if privates touched."""
+
+    try:
+        safe_qpm = float(qpm)
+    except Exception:
+        safe_qpm = 120.0
+    if not math.isfinite(safe_qpm) or safe_qpm <= 0.0:
+        safe_qpm = 120.0
+    safe_qpm = max(MIN_QPM, min(safe_qpm, MAX_QPM))
+
+    resolution = getattr(pm, "resolution", 220)
+    try:
+        resolution = float(resolution)
+    except Exception:
+        resolution = 220.0
+    if not math.isfinite(resolution) or resolution <= 0.0:
+        resolution = 220.0
+
+    seconds_per_tick = 60.0 / (safe_qpm * resolution)
+    if not math.isfinite(seconds_per_tick) or seconds_per_tick <= 0.0:
+        seconds_per_tick = 60.0 / (120.0 * resolution)
+
+    used_private = False
+    if hasattr(pm, "_tick_scales"):
+        try:
+            pm._tick_scales = [(0, float(seconds_per_tick))]  # type: ignore[attr-defined]
+            used_private = True
+        except Exception:
+            pass
+
+    tick_attrs = ("_PrettyMIDI__tick_to_time", "_tick_to_time")
+    for attr in tick_attrs:
+        if hasattr(pm, attr):
+            try:
+                setattr(pm, attr, [0.0])
+                used_private = True
+            except Exception:
+                pass
+            break
+
+    end_time = 0.0
+    if hasattr(pm, "get_end_time"):
+        try:
+            end_time = float(pm.get_end_time())
+        except Exception:
+            end_time = 0.0
+    target = max(0.0, end_time)
+    try:
+        pm.time_to_tick(target)
+    except Exception:
+        try:
+            pm.time_to_tick(0.0)
+        except Exception:
+            pass
+
+    return used_private
 
 
 def _ensure_tempo_and_ticks(
@@ -197,121 +259,35 @@ def _ensure_tempo_and_ticks(
     except Exception:
         tempo_times, tempi_seq = [], []
     try:
-        tempi_list = list(tempi_seq)
+        tempi_list = [float(t) for t in tempi_seq]
     except Exception:
         tempi_list = []
-    try:
-        time_list = list(tempo_times)
-    except Exception:
-        time_list = []
     current_initial = getattr(pm, "initial_tempo", None)
-    has_initial = (
-        current_initial is not None and math.isfinite(current_initial) and current_initial > 0.0
-    )
-    if len(tempi_list) == 0 and not has_initial:
-        seeded = False
-        if hasattr(pm, "_add_tempo_change"):
-            try:
-                pm._add_tempo_change(bpm, 0.0)  # type: ignore[attr-defined]
-                seeded = True
-            except Exception:
-                seeded = False
-        if not seeded:
-            pm.initial_tempo = bpm
-    elif len(tempi_list) > 0:
-        first_time = float(time_list[0]) if time_list else 0.0
-        first_tempo = float(tempi_list[0])
-        if first_time > EPS:
-            if hasattr(pm, "_add_tempo_change"):
-                try:
-                    pm._add_tempo_change(first_tempo, 0.0)  # type: ignore[attr-defined]
-                except Exception:
-                    if not has_initial:
-                        pm.initial_tempo = first_tempo
-            elif not has_initial:
-                pm.initial_tempo = first_tempo
+    first_qpm: Optional[float] = None
+    if tempi_list:
+        qpm0 = tempi_list[0]
+        if not math.isfinite(qpm0) or qpm0 <= 0.0:
+            qpm0 = bpm
+        first_qpm = max(MIN_QPM, min(qpm0, MAX_QPM))
+    else:
+        init = current_initial if current_initial is not None else bpm
+        try:
+            init = float(init)
+        except Exception:
+            init = bpm
+        if not math.isfinite(init) or init <= 0.0:
+            init = bpm
+        first_qpm = max(MIN_QPM, min(init, MAX_QPM))
+    pm.initial_tempo = float(first_qpm)
 
     setattr(pm, "_sparkle_meta_seed_fallback", False)
-
-    def _seed_private_tick_tables(pm_obj: "pretty_midi.PrettyMIDI") -> bool:
-        used_private = False
-        if hasattr(pm_obj, "_tick_scales"):
-            try:
-                current = pm_obj._tick_scales  # type: ignore[attr-defined]
-            except Exception:
-                current = None
-            need_scale = False
-            if current is None:
-                need_scale = True
-            else:
-                try:
-                    need_scale = len(current) == 0
-                except Exception:
-                    need_scale = True
-            if need_scale:
-                try:
-                    pm_obj._tick_scales = [(0, 1.0)]  # type: ignore[attr-defined]
-                    used_private = True
-                except Exception:
-                    pass
-        tick_to_time = getattr(pm_obj, "_PrettyMIDI__tick_to_time", None)
-        need_tick = False
-        if tick_to_time is None:
-            need_tick = True
-        else:
-            try:
-                need_tick = len(tick_to_time) == 0
-            except Exception:
-                need_tick = True
-        if need_tick:
-            try:
-                setattr(pm_obj, "_PrettyMIDI__tick_to_time", [0.0])
-                used_private = True
-            except Exception:
-                pass
-        return used_private
-
-    try:
-        pm.get_beats()
-    except Exception:
-        pass
-
-    private_used = False
-
-    def _probe_time(value: float) -> None:
-        nonlocal private_used
-        try:
-            pm.time_to_tick(value)
-        except Exception:
-            if _seed_private_tick_tables(pm):
-                private_used = True
-            try:
-                pm.time_to_tick(value)
-            except Exception:
-                pass
-
-    _probe_time(0.0)
-    end_probe = 0.0
-    if hasattr(pm, "get_end_time"):
-        try:
-            end_probe = float(pm.get_end_time())
-        except Exception:
-            end_probe = 0.0
-    if end_probe > EPS:
-        _probe_time(end_probe)
-
-    if not private_used and _seed_private_tick_tables(pm):
-        private_used = True
-
-    if private_used:
+    used_private = _seed_tick_tables(pm, first_qpm)
+    if used_private:
         setattr(pm, "_sparkle_meta_seed_fallback", True)
 
 
 def _sanitize_tempi(pm: "pretty_midi.PrettyMIDI") -> None:
     """Clamp PrettyMIDI tempi so PrettyMIDI.write() never exceeds mido's MPQN range."""
-
-    MIN_QPM = 60_000_000.0 / 0xFFFFFF + 1e-6
-    MAX_QPM = 1000.0
 
     def _as_list(seq: Any) -> List[Any]:
         if seq is None:
@@ -334,205 +310,150 @@ def _sanitize_tempi(pm: "pretty_midi.PrettyMIDI") -> None:
     except Exception:
         raw_times, raw_tempi = [], []
 
-    time_list = []
+    raw_time_list: List[float] = []
     for item in _as_list(raw_times):
         try:
-            time_list.append(float(item))
+            raw_time_list.append(float(item))
         except Exception:
-            time_list.append(0.0)
+            raw_time_list.append(0.0)
 
-    tempi_list = []
+    raw_tempo_list: List[float] = []
     for item in _as_list(raw_tempi):
         try:
-            tempi_list.append(float(item))
+            raw_tempo_list.append(float(item))
         except Exception:
-            tempi_list.append(float("nan"))
+            raw_tempo_list.append(float("nan"))
 
-    def _seed_private_tick_tables(pm_obj: "pretty_midi.PrettyMIDI") -> bool:
-        used = False
-        if hasattr(pm_obj, "_tick_scales"):
-            try:
-                current = pm_obj._tick_scales  # type: ignore[attr-defined]
-            except Exception:
-                current = None
-            need_seed = False
-            if current is None:
-                need_seed = True
-            else:
-                try:
-                    need_seed = len(current) == 0
-                except Exception:
-                    need_seed = True
-            if need_seed:
-                try:
-                    pm_obj._tick_scales = [(0, 1.0)]  # type: ignore[attr-defined]
-                    used = True
-                except Exception:
-                    pass
-        tick_attr = "_PrettyMIDI__tick_to_time"
-        tick_to_time = getattr(pm_obj, tick_attr, None)
-        if tick_to_time is None:
-            alt_attr = "_tick_to_time"
-            tick_to_time = getattr(pm_obj, alt_attr, None)
-            if tick_to_time is not None:
-                tick_attr = alt_attr
-        need_tick = False
-        if tick_to_time is None:
-            need_tick = True
-        else:
-            try:
-                need_tick = len(tick_to_time) == 0
-            except Exception:
-                need_tick = True
-        if need_tick:
-            try:
-                setattr(pm_obj, tick_attr, [0.0])
-                used = True
-            except Exception:
-                if tick_attr != "_tick_to_time":
-                    try:
-                        setattr(pm_obj, "_tick_to_time", [0.0])
-                        used = True
-                    except Exception:
-                        pass
-        return used
-
-    if len(tempi_list) == 0:
+    if not raw_tempo_list:
         try:
             init = float(getattr(pm, "initial_tempo", 120.0))
         except Exception:
             init = 120.0
-        if not math.isfinite(init):
-            safe_init = 120.0
-        else:
-            safe_init = max(MIN_QPM, min(init, MAX_QPM))
-        if not math.isfinite(init) or abs(safe_init - init) > EPS:
-            pm.initial_tempo = safe_init
-        # Warm timing tables even when only initial tempo exists.
-        try:
-            pm.get_beats()
-        except Exception:
-            pass
-        end_time = 0.0
-        if hasattr(pm, "get_end_time"):
-            try:
-                end_time = float(pm.get_end_time())
-            except Exception:
-                end_time = 0.0
-        target_time = max(0.0, end_time)
-        try:
-            pm.time_to_tick(target_time)
-        except Exception:
-            _seed_private_tick_tables(pm)
-            try:
-                pm.time_to_tick(target_time)
-            except Exception:
-                pass
+        if not math.isfinite(init) or init <= 0.0:
+            init = 120.0
+        safe_init = max(MIN_QPM, min(init, MAX_QPM))
+        pm.initial_tempo = safe_init
+        _seed_tick_tables(pm, safe_init)
         return
 
     safe_changes: List[Tuple[float, float]] = []
     changed = False
-    for idx, qpm in enumerate(tempi_list):
-        t = time_list[idx] if idx < len(time_list) else 0.0
-        if not math.isfinite(qpm):
+    last_time = 0.0
+    have_time = False
+
+    for idx, raw_qpm in enumerate(raw_tempo_list):
+        safe_qpm = raw_qpm
+        invalid_qpm = False
+        if not math.isfinite(safe_qpm) or safe_qpm <= 0.0:
             safe_qpm = 120.0
-        else:
-            safe_qpm = max(MIN_QPM, min(qpm, MAX_QPM))
-        if not math.isfinite(safe_qpm):
-            safe_qpm = 120.0
-        safe_changes.append((float(t), float(safe_qpm)))
-        if not changed:
-            if not math.isfinite(qpm) or abs(safe_qpm - qpm) > EPS:
+            invalid_qpm = True
+        safe_qpm = max(MIN_QPM, min(safe_qpm, MAX_QPM))
+        if invalid_qpm or not math.isfinite(raw_qpm) or raw_qpm <= 0.0:
+            changed = True
+        elif abs(safe_qpm - raw_qpm) > EPS:
+            changed = True
+
+        try:
+            t_val = raw_time_list[idx]
+        except IndexError:
+            t_val = last_time if have_time else 0.0
+        try:
+            safe_t = float(t_val)
+        except Exception:
+            safe_t = last_time if have_time else 0.0
+        if safe_t < 0.0:
+            safe_t = 0.0
+        if have_time and safe_t < last_time - EPS:
+            safe_t = last_time
+            changed = True
+
+        if have_time and abs(safe_t - last_time) <= EPS:
+            prev_time, prev_qpm = safe_changes[-1]
+            if abs(prev_qpm - safe_qpm) > EPS:
+                safe_changes[-1] = (prev_time, float(safe_qpm))
                 changed = True
+            elif invalid_qpm:
+                safe_changes[-1] = (prev_time, float(safe_qpm))
+            continue
+
+        if abs(safe_t - t_val) > EPS:
+            changed = True
+
+        safe_changes.append((float(safe_t), float(safe_qpm)))
+        last_time = safe_t
+        have_time = True
 
     if not safe_changes:
-        pm.initial_tempo = 120.0
+        safe_init = max(MIN_QPM, min(120.0, MAX_QPM))
+        pm.initial_tempo = safe_init
+        _seed_tick_tables(pm, safe_init)
         return
 
+    remover = getattr(pm, "remove_tempo_changes", None)
+    adder_public = getattr(pm, "add_tempo_change", None)
     applied = False
-    if changed:
-        remover = getattr(pm, "remove_tempo_changes", None)
-        adder_public = getattr(pm, "add_tempo_change", None)
-        if callable(remover) and callable(adder_public):
+    if changed and callable(remover) and callable(adder_public):
+        try:
+            remover()
+            for tt, qq in safe_changes:
+                adder_public(qq, tt)
+            applied = True
+        except Exception:
+            applied = False
+    if not applied:
+        adder_private = getattr(pm, "_add_tempo_change", None)
+        if callable(adder_private):
             try:
-                remover()
+                if callable(remover):
+                    try:
+                        remover()
+                    except Exception:
+                        pass
+                elif hasattr(pm, "_tempo_changes"):
+                    try:
+                        pm._tempo_changes = []  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
                 for tt, qq in safe_changes:
-                    adder_public(qq, tt)
+                    adder_private(qq, tt)
                 applied = True
             except Exception:
                 applied = False
-        if not applied:
-            adder_private = getattr(pm, "_add_tempo_change", None)
-            if callable(adder_private):
-                try:
-                    if callable(remover):
-                        try:
-                            remover()
-                        except Exception:
-                            pass
-                    elif hasattr(pm, "_tempo_changes"):
-                        try:
-                            pm._tempo_changes = []  # type: ignore[attr-defined]
-                        except Exception:
-                            pass
-                    for tt, qq in safe_changes:
-                        adder_private(qq, tt)
-                    applied = True
-                except Exception:
-                    applied = False
-        if not applied and hasattr(pm, "_tempo_changes"):
-            try:
-                tempo_cls = None
-                if hasattr(pretty_midi, "TempoChange"):
-                    tempo_cls = pretty_midi.TempoChange  # type: ignore[attr-defined]
-                else:
-                    containers = getattr(pretty_midi, "containers", None)
-                    if containers is not None:
-                        tempo_cls = getattr(containers, "TempoChange", None)
-                if tempo_cls is not None:
-                    pm._tempo_changes = [  # type: ignore[attr-defined]
-                        tempo_cls(qq, tt) for tt, qq in safe_changes
-                    ]
-                else:
-                    pm._tempo_changes = list(safe_changes)  # type: ignore[attr-defined]
-                applied = True
-            except Exception:
-                applied = False
-        if not applied:
-            pm.initial_tempo = safe_changes[0][1]
+    if not applied and hasattr(pm, "_tempo_changes"):
+        try:
+            tempo_cls = None
+            if hasattr(pretty_midi, "TempoChange"):
+                tempo_cls = pretty_midi.TempoChange  # type: ignore[attr-defined]
+            else:
+                containers = getattr(pretty_midi, "containers", None)
+                if containers is not None:
+                    tempo_cls = getattr(containers, "TempoChange", None)
+            if tempo_cls is not None:
+                pm._tempo_changes = [  # type: ignore[attr-defined]
+                    tempo_cls(qq, tt) for tt, qq in safe_changes
+                ]
+            else:
+                pm._tempo_changes = [  # type: ignore[attr-defined]
+                    (qq, tt) for tt, qq in safe_changes
+                ]
+            applied = True
+        except Exception:
+            applied = False
+    if not applied and changed:
+        pm.initial_tempo = safe_changes[0][1]
 
     try:
         current_initial = float(getattr(pm, "initial_tempo", safe_changes[0][1]))
     except Exception:
         current_initial = safe_changes[0][1]
-    if not math.isfinite(current_initial):
+    if not math.isfinite(current_initial) or current_initial <= 0.0:
         pm.initial_tempo = safe_changes[0][1]
     else:
         clamped_initial = max(MIN_QPM, min(current_initial, MAX_QPM))
         if abs(clamped_initial - current_initial) > EPS:
             pm.initial_tempo = clamped_initial
 
-    try:
-        pm.get_beats()
-    except Exception:
-        pass
-
-    end_time = 0.0
-    if hasattr(pm, "get_end_time"):
-        try:
-            end_time = float(pm.get_end_time())
-        except Exception:
-            end_time = 0.0
-    target_time = max(0.0, end_time)
-
-    try:
-        pm.time_to_tick(target_time)
-    except Exception:
-        _seed_private_tick_tables(pm)
-        try:
-            pm.time_to_tick(target_time)
-        except Exception:
-            pass
+    _seed_tick_tables(pm, safe_changes[0][1])
 
 
 def clip_to_bar(beat_pos: float, bar_start: float, bar_end: float) -> float:
@@ -572,7 +493,9 @@ def resolve_downbeats(
         start_b = time_to_beat(downbeats[0])
         next_b = time_to_beat(downbeats[1])
         actual_beats = next_b - start_b
-        if abs(actual_beats - bar_beats) > 1e-3:
+        if not math.isclose(
+            actual_beats, bar_beats, rel_tol=1e-6, abs_tol=1e-9
+        ):
             rebuild = True
 
     if rebuild:
@@ -863,7 +786,7 @@ def _emit_phrases_for_span(span: "ChordSpan", c_idx: int, ctx: RuntimeContext) -
             boundary = min(boundary, ctx.downbeats[bar_idx + 1])
         boundary = min(boundary, span.end)
         if ctx.stats is not None:
-            ctx.stats.setdefault("bar_trigger_pulses", {}).setdefault(bar_idx, []).append((b, t))
+            ctx.stats.setdefault("bar_pulses", {}).setdefault(bar_idx, []).append((b, t))
         if pn is not None:
             if ctx.humanize_ms > 0.0:
                 delta_s = ctx.rng.uniform(-ctx.humanize_ms, ctx.humanize_ms) / 1000.0
@@ -1549,8 +1472,8 @@ def insert_style_fill(
     seed_bpm = float(bpm) if bpm is not None else 120.0
     if not math.isfinite(seed_bpm) or seed_bpm <= 0.0:
         seed_bpm = 120.0
-    _ensure_tempo_and_ticks(pm_out, seed_bpm, pm_out.time_signature_changes)
     _sanitize_tempi(pm_out)
+    _ensure_tempo_and_ticks(pm_out, seed_bpm, pm_out.time_signature_changes)
     stats_ref = getattr(pm_out, "_sparkle_stats", None)
     beat_times: List[float]
     cached_beats: Optional[List[float]] = None
@@ -1690,8 +1613,8 @@ def insert_style_layer(
     seed_bpm = float(bpm) if bpm is not None else 120.0
     if not math.isfinite(seed_bpm) or seed_bpm <= 0.0:
         seed_bpm = 120.0
-    _ensure_tempo_and_ticks(pm_out, seed_bpm, pm_out.time_signature_changes)
     _sanitize_tempi(pm_out)
+    _ensure_tempo_and_ticks(pm_out, seed_bpm, pm_out.time_signature_changes)
     stats_ref = getattr(pm_out, "_sparkle_stats", None)
     beat_times: List[float]
     cached_beats: Optional[List[float]] = None
@@ -2348,10 +2271,10 @@ def build_sparkle_midi(
 ) -> "pretty_midi.PrettyMIDI":
     """Render Sparkle-compatible MIDI with optional statistics payload.
 
-    When ``stats`` is supplied a schema version of ``2`` is recorded alongside:
-    ``bar_pulses`` (density-aware meter grid for backward compatibility) and
-    ``bar_trigger_pulses`` (actual emitted trigger pulses, also mirrored to
-    ``bar_trigger_pulses_compat`` for transitionary consumers).
+    When ``stats`` is supplied a schema version of ``2`` is recorded alongside
+    ``bar_pulse_grid`` (meter-derived reference grid) and ``bar_pulses`` (actual
+    emitted trigger pulses, also mirrored to ``bar_trigger_pulses`` and
+    ``bar_trigger_pulses_compat`` for legacy consumers).
     """
     rng = rng_human or rng
     if rng is None:
@@ -2432,18 +2355,38 @@ def build_sparkle_midi(
         tempo_changes = getattr(src_pm, "_tempo_changes", None)
         if tempo_changes is not None and hasattr(dest_pm, "_tempo_changes"):
             used_private = True
+            normalized: List[Tuple[float, float]] = []
+            for tc in tempo_changes:
+                tempo_val: Optional[float] = None
+                time_val: Optional[float] = None
+                if hasattr(tc, "tempo") and hasattr(tc, "time"):
+                    tempo_val = getattr(tc, "tempo", None)
+                    time_val = getattr(tc, "time", None)
+                elif isinstance(tc, (list, tuple)) and len(tc) >= 2:
+                    tempo_val = tc[0]
+                    time_val = tc[1]
+                if tempo_val is None or time_val is None:
+                    continue
+                try:
+                    tempo_val = float(tempo_val)
+                except Exception:
+                    tempo_val = float("nan")
+                try:
+                    time_val = float(time_val)
+                except Exception:
+                    time_val = 0.0
+                normalized.append((tempo_val, time_val))
             try:
                 tempo_cls = pretty_midi.containers.TempoChange  # type: ignore[attr-defined]
             except Exception:
                 tempo_cls = None
             if tempo_cls is not None:
                 dest_pm._tempo_changes = [  # type: ignore[attr-defined]
-                    tempo_cls(tc.tempo, tc.time) for tc in tempo_changes
+                    tempo_cls(tempo, time) for tempo, time in normalized
                 ]
             else:
                 dest_pm._tempo_changes = [  # type: ignore[attr-defined]
-                    type(tc)(tc.tempo, tc.time) if hasattr(tc, "tempo") else tc
-                    for tc in tempo_changes
+                    (tempo, time) for tempo, time in normalized
                 ]
 
         tick_scales = getattr(src_pm, "_tick_scales", None)
@@ -2455,6 +2398,9 @@ def build_sparkle_midi(
         if tick_to_time is not None and hasattr(dest_pm, "_tick_to_time"):
             used_private = True
             dest_pm._tick_to_time = list(tick_to_time)  # type: ignore[attr-defined]
+
+        if used_private:
+            _sanitize_tempi(dest_pm)
 
         return "private" if used_private else "public"
 
@@ -2479,7 +2425,6 @@ def build_sparkle_midi(
     if not math.isfinite(seed_bpm) or seed_bpm <= 0.0:
         seed_bpm = 120.0
     _ensure_tempo_and_ticks(out, seed_bpm, out.time_signature_changes)
-    _sanitize_tempi(out)
     meta_private = getattr(out, "_sparkle_meta_seed_fallback", False)
     if stats is not None:
         setattr(out, "_sparkle_stats", stats)
@@ -2608,8 +2553,8 @@ def build_sparkle_midi(
         # distinguish between the theoretical grid and realised pulses.
 
         stats["bar_pulses"] = {}
-        stats["bar_trigger_pulses"] = {}
-        stats["bar_trigger_pulses_compat"] = stats["bar_trigger_pulses"]
+        stats["bar_trigger_pulses"] = stats["bar_pulses"]
+        stats["bar_trigger_pulses_compat"] = stats["bar_pulses"]
         stats["bar_pulse_grid"] = {}
         stats["bar_phrase_notes"] = {}
         stats["bar_velocities"] = {}
@@ -2846,11 +2791,10 @@ def build_sparkle_midi(
 
     # Precompute pulse timestamps per bar (meter-derived grid; swing shifts timing only)
     if stats is not None:
-        bar_grid = stats["bar_pulses"]
-        bar_full = stats.get("bar_pulse_grid")
+        bar_pulses_dict = stats["bar_pulses"]
+        bar_grid = stats.setdefault("bar_pulse_grid", {})
+        bar_pulses_dict.clear()
         bar_grid.clear()
-        if bar_full is not None:
-            bar_full.clear()
         for i, start in enumerate(downbeats[:-1]):
             num, den = get_meter_at(meter_map, start, times=meter_times)
             bar_beats = num * (4.0 / den)
@@ -2858,8 +2802,6 @@ def build_sparkle_midi(
             if bar_beats <= 0.0:
                 pulse = (float(sb), float(start))
                 bar_grid[i] = [pulse]
-                if bar_full is not None:
-                    bar_full[i] = [pulse]
                 continue
             base_total = max(1, pulses_per_bar(num, den, pulse_subdiv_beats))
             next_start = downbeats[i + 1]
@@ -2899,9 +2841,7 @@ def build_sparkle_midi(
             pulses = [full_pulses[idx] for idx in range(0, len(full_pulses), stride)]
             if not pulses:
                 pulses = [full_pulses[0]]
-            if bar_full is not None:
-                bar_full[i] = full_pulses
-            bar_grid[i] = pulses
+            bar_grid[i] = list(pulses)
 
     # Velocity curve helper
     bar_progress: Dict[int, int] = {}
@@ -3562,6 +3502,7 @@ def build_sparkle_midi(
         stats["bar_count"] = len(downbeats)
         stats["fill_count"] = fill_inserted
     _sanitize_tempi(out)
+    _ensure_tempo_and_ticks(out, seed_bpm, out.time_signature_changes)
     return out
 
 

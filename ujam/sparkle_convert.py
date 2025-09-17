@@ -456,6 +456,34 @@ def _sanitize_tempi(pm: "pretty_midi.PrettyMIDI") -> None:
     _seed_tick_tables(pm, safe_changes[0][1])
 
 
+def _seed_input_grid(pm: "pretty_midi.PrettyMIDI", bpm: float, end_sec: float) -> None:
+    """Seed *pm* with a tempo + silent note so ``get_beats`` succeeds."""
+
+    tempo = float(bpm) if math.isfinite(bpm) and bpm > 0.0 else 120.0
+    end = max(1.0, float(end_sec))
+
+    if hasattr(pm, "_add_tempo_change"):
+        pm._add_tempo_change(tempo, 0.0)
+    else:  # pragma: no cover - legacy pretty_midi fallback
+        pm.initial_tempo = tempo
+
+    seed_inst = None
+    for inst in pm.instruments:
+        if getattr(inst, "name", "") == "__seed_input_grid__":
+            seed_inst = inst
+            break
+    if seed_inst is None:
+        seed_inst = pretty_midi.Instrument(program=0, name="__seed_input_grid__")
+        pm.instruments.append(seed_inst)
+
+    for note in seed_inst.notes:
+        if note.pitch == 0 and note.velocity == 1 and abs(note.start) < 1e-9:
+            note.end = max(note.end, end)
+            break
+    else:
+        seed_inst.notes.append(pretty_midi.Note(velocity=1, pitch=0, start=0.0, end=end))
+
+
 def clip_to_bar(beat_pos: float, bar_start: float, bar_end: float) -> float:
     """Clamp ``beat_pos`` into the inclusive start / exclusive end of a bar."""
 
@@ -4284,6 +4312,70 @@ def main():
             raise SystemExit("PyYAML required for --section-profiles")
         section_profiles = yaml.safe_load(Path(args.section_profiles).read_text()) or {}
     density_rules = None
+
+    seed_beats_exc = False
+    try:
+        beats_hint = list(pm.get_beats())
+    except ValueError:
+        beats_hint = []
+        seed_beats_exc = True
+    except Exception:
+        beats_hint = []
+        seed_beats_exc = True
+    try:
+        pm_end_time = float(pm.get_end_time())
+    except Exception:
+        pm_end_time = 0.0
+
+    seed_needed = pm_end_time <= 0.0 or seed_beats_exc or len(beats_hint) < 2
+    if seed_needed:
+        try:
+            seed_bpm = float(bpm)
+        except Exception:
+            seed_bpm = 120.0
+        if not math.isfinite(seed_bpm) or seed_bpm <= 0.0:
+            seed_bpm = 120.0
+        seconds_per_bar = 0.0
+        if math.isfinite(seed_bpm) and seed_bpm > 0.0 and ts_num > 0:
+            seconds_per_bar = (60.0 / seed_bpm) * ts_num
+
+        candidates: List[float] = []
+        if pm_end_time > 0.0:
+            candidates.append(pm_end_time)
+
+        chord_end = 0.0
+        if chords:
+            try:
+                chord_end = max(float(getattr(ch, "end", 0.0)) for ch in chords)
+            except Exception:
+                chord_end = 0.0
+            if chord_end > 0.0:
+                candidates.append(chord_end)
+
+        if seconds_per_bar > 0.0:
+            if chord_end > 0.0:
+                bars_est = int(math.ceil(chord_end / seconds_per_bar))
+                if bars_est > 0:
+                    candidates.append(bars_est * seconds_per_bar)
+            elif chords:
+                candidates.append(len(chords) * seconds_per_bar)
+            elif not candidates:
+                candidates.append(seconds_per_bar)
+
+        computed_end_sec = max((c for c in candidates if c > 0.0), default=0.0)
+        if computed_end_sec <= 0.0:
+            computed_end_sec = 4.0
+            logging.warning(
+                "Seeding input grid fallback with default duration %.1fs",
+                computed_end_sec,
+            )
+
+        logging.info(
+            "Seeding input grid fallback: tempo=%.2f BPM, end_sec=%.2f",
+            seed_bpm,
+            computed_end_sec,
+        )
+        _seed_input_grid(pm, seed_bpm, computed_end_sec)
 
     out_pm = build_sparkle_midi(
         pm,

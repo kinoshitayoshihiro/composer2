@@ -146,7 +146,7 @@ def pulses_per_bar(num: int, den: int, unit: float) -> int:
     if den == 4:
         return max(1, int(num * 2))
     bar_beats = num * (4.0 / den)
-    total = int(math.floor(bar_beats / unit + 1e-9))
+    total = int(round(bar_beats / unit))
     return max(1, total)
 
 
@@ -786,7 +786,7 @@ def _emit_phrases_for_span(span: "ChordSpan", c_idx: int, ctx: RuntimeContext) -
             boundary = min(boundary, ctx.downbeats[bar_idx + 1])
         boundary = min(boundary, span.end)
         if ctx.stats is not None:
-            ctx.stats.setdefault("bar_pulses", {}).setdefault(bar_idx, []).append((b, t))
+            ctx.stats.setdefault("bar_triggers", {}).setdefault(bar_idx, []).append((b, t))
         if pn is not None:
             if ctx.humanize_ms > 0.0:
                 delta_s = ctx.rng.uniform(-ctx.humanize_ms, ctx.humanize_ms) / 1000.0
@@ -2272,9 +2272,10 @@ def build_sparkle_midi(
     """Render Sparkle-compatible MIDI with optional statistics payload.
 
     When ``stats`` is supplied a schema version of ``2`` is recorded alongside
-    ``bar_pulse_grid`` (meter-derived reference grid) and ``bar_pulses`` (actual
-    emitted trigger pulses, also mirrored to ``bar_trigger_pulses`` and
-    ``bar_trigger_pulses_compat`` for legacy consumers).
+    ``bar_pulse_grid`` (meter-derived reference grid), ``bar_pulses`` (same grid
+    for compatibility), and ``bar_triggers`` (actual emitted trigger pulses,
+    also mirrored to ``bar_trigger_pulses`` and ``bar_trigger_pulses_compat`` for
+    legacy consumers).
     """
     rng = rng_human or rng
     if rng is None:
@@ -2553,9 +2554,10 @@ def build_sparkle_midi(
         # distinguish between the theoretical grid and realised pulses.
 
         stats["bar_pulses"] = {}
-        stats["bar_trigger_pulses"] = stats["bar_pulses"]
-        stats["bar_trigger_pulses_compat"] = stats["bar_pulses"]
         stats["bar_pulse_grid"] = {}
+        stats["bar_triggers"] = {}
+        stats["bar_trigger_pulses"] = stats["bar_triggers"]
+        stats["bar_trigger_pulses_compat"] = stats["bar_triggers"]
         stats["bar_phrase_notes"] = {}
         stats["bar_velocities"] = {}
         stats["triads"] = []
@@ -2793,55 +2795,44 @@ def build_sparkle_midi(
     if stats is not None:
         bar_pulses_dict = stats["bar_pulses"]
         bar_grid = stats.setdefault("bar_pulse_grid", {})
+        bar_triggers = stats.setdefault("bar_triggers", {})
         bar_pulses_dict.clear()
         bar_grid.clear()
-        for i, start in enumerate(downbeats[:-1]):
+        bar_triggers.clear()
+        for i, (start, next_start) in enumerate(zip(downbeats[:-1], downbeats[1:])):
             num, den = get_meter_at(meter_map, start, times=meter_times)
-            bar_beats = num * (4.0 / den)
             sb = time_to_beat(start)
-            if bar_beats <= 0.0:
-                pulse = (float(sb), float(start))
+            eb = time_to_beat(next_start)
+            bar_beats = eb - sb
+            total = max(1, pulses_per_bar(num, den, pulse_subdiv_beats))
+            if bar_beats <= 0.0 or total <= 0:
+                pulse = (float(sb), float(beat_to_time(sb)))
                 bar_grid[i] = [pulse]
+                bar_pulses_dict[i] = [pulse]
                 continue
-            base_total = max(1, pulses_per_bar(num, den, pulse_subdiv_beats))
-            next_start = downbeats[i + 1]
-            bar_end = time_to_beat(next_start)
-            if bar_end <= sb:
-                bar_end = sb + bar_beats
-            base_step = bar_beats / base_total
-            full_pulses: List[Tuple[float, float]] = []
-            cur = sb
-            for base_idx in range(base_total):
-                full_pulses.append((float(cur), float(beat_to_time(cur))))
-                if base_idx + 1 >= base_total:
-                    break
-                interval = base_step
-                if swing > 0.0 and math.isclose(base_step, swing_unit_beats, abs_tol=EPS):
+            step = bar_beats / total
+            grid: List[Tuple[float, float]] = []
+            for k in range(total):
+                pos = sb + k * step
+                if swing > 0.0 and math.isclose(step, swing_unit_beats, abs_tol=EPS):
+                    shift = 0.0
+                    swing_step = swing * step
                     if swing_shape == "offbeat":
-                        interval *= (1 + swing) if base_idx % 2 == 0 else (1 - swing)
+                        if k % 2 == 1:
+                            shift = swing_step
                     elif swing_shape == "even":
-                        interval *= (1 - swing) if base_idx % 2 == 0 else (1 + swing)
+                        if k % 2 == 1:
+                            shift = -swing_step
                     else:
-                        mod = base_idx % 3
-                        if mod == 0:
-                            interval *= 1 + swing
-                        elif mod == 1:
-                            interval *= 1 - swing
-                cur = clip_to_bar(cur + interval, sb, bar_end)
-            if not full_pulses:
-                full_pulses = [(float(sb), float(beat_to_time(sb)))]
-            stride = 1
-            if density_map is not None:
-                label = density_map.get(i)
-                if label in DENSITY_PRESETS:
-                    try:
-                        stride = max(1, int(DENSITY_PRESETS[label].get("stride", 1)))
-                    except Exception:
-                        stride = 1
-            pulses = [full_pulses[idx] for idx in range(0, len(full_pulses), stride)]
-            if not pulses:
-                pulses = [full_pulses[0]]
-            bar_grid[i] = list(pulses)
+                        if k % 3 == 1:
+                            shift = swing_step
+                    pos += shift
+                pos = clip_to_bar(pos, sb, eb)
+                grid.append((float(pos), float(beat_to_time(pos))))
+            if not grid:
+                grid = [(float(sb), float(beat_to_time(sb)))]
+            bar_grid[i] = grid
+            bar_pulses_dict[i] = list(grid)
 
     # Velocity curve helper
     bar_progress: Dict[int, int] = {}

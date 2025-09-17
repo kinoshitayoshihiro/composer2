@@ -1,7 +1,11 @@
 import argparse
 from pathlib import Path
-
+import sys
 import torch
+
+# Run as a script without installing the package:
+# add repo root so "utilities" can be imported.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utilities.ml_duration import DurationTransformer
 

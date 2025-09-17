@@ -140,6 +140,78 @@ def test_humanize_seed_repro() -> None:
     assert n1 == n2
 
 
+def test_read_chords_csv_start_chord(tmp_path: Path) -> None:
+    path = tmp_path / "start_chords.csv"
+    path.write_text("start,chord\n0.0,C:maj\n1.5,G:min\n", encoding="utf-8")
+    spans = sc.read_chords_csv(path, bpm_hint=120.0)
+    assert len(spans) == 2
+    assert spans[0].start == pytest.approx(0.0)
+    assert spans[0].end == pytest.approx(1.5)
+    assert spans[0].root_pc == sc.PITCH_CLASS["C"]
+    assert spans[0].quality == "maj"
+    assert spans[1].start == pytest.approx(1.5)
+    assert spans[1].end == pytest.approx(3.5)  # final span extends by one bar
+    assert spans[1].quality == "min"
+
+
+def test_read_chords_csv_bar_chord(tmp_path: Path) -> None:
+    path = tmp_path / "bar_chords.csv"
+    path.write_text("bar,chord\n0,C:maj\n2,D:maj\n", encoding="utf-8")
+    spans = sc.read_chords_csv(path, bpm_hint=120.0, default_ts=(4, 4))
+    assert [round(s.start, 3) for s in spans] == [0.0, 4.0]
+    assert [round(s.end, 3) for s in spans] == [4.0, 6.0]
+    assert [s.root_pc for s in spans] == [sc.PITCH_CLASS["C"], sc.PITCH_CLASS["D"]]
+
+
+def test_read_chords_csv_headerless_bars(tmp_path: Path) -> None:
+    path = tmp_path / "headerless_bars.csv"
+    path.write_text("0,C:maj\n2,D:maj\n", encoding="utf-8")
+    spans = sc.read_chords_csv(path, bpm_hint=110.0, default_ts=(4, 4))
+    sec_per_bar = (60.0 / 110.0) * 4.0
+    assert [round(s.start, 4) for s in spans] == [0.0, round(2 * sec_per_bar, 4)]
+    assert [round(s.end, 4) for s in spans] == [round(2 * sec_per_bar, 4), round(2 * sec_per_bar + sec_per_bar, 4)]
+
+
+def test_read_chords_csv_headerless_seconds(tmp_path: Path) -> None:
+    path = tmp_path / "headerless_secs.csv"
+    path.write_text("0.5,G:maj\n1.25,A:min\n", encoding="utf-8")
+    spans = sc.read_chords_csv(path, bpm_hint=90.0, default_ts=(4, 4))
+    sec_per_bar = (60.0 / 90.0) * 4.0
+    assert spans[0].start == pytest.approx(0.5)
+    assert spans[0].end == pytest.approx(1.25)
+    assert spans[1].start == pytest.approx(1.25)
+    assert spans[1].end == pytest.approx(1.25 + sec_per_bar)
+    assert [s.quality for s in spans] == ["maj", "min"]
+
+
+def test_read_chords_csv_full_header(tmp_path: Path) -> None:
+    path = tmp_path / "full_header.csv"
+    path.write_text(
+        "start,end,root,quality\n0.0,1.5,C,maj\n1.5,3.0,G,min\n",
+        encoding="utf-8",
+    )
+    spans = sc.read_chords_csv(path, bpm_hint=100.0)
+    assert [(s.start, s.end) for s in spans] == [(0.0, 1.5), (1.5, 3.0)]
+    assert [s.root_pc for s in spans] == [sc.PITCH_CLASS["C"], sc.PITCH_CLASS["G"]]
+    assert [s.quality for s in spans] == ["maj", "min"]
+
+
+def test_read_chords_csv_meter_map(tmp_path: Path) -> None:
+    path = tmp_path / "meter_map.csv"
+    path.write_text("bar,chord\n0,C:maj\n1,G:maj\n2,F:maj\n", encoding="utf-8")
+    meter_map = [(0.0, 3, 4), (3.0, 4, 4)]
+    spans = sc.read_chords_csv(path, meter_map=meter_map, bpm_hint=120.0)
+    assert [s.start for s in spans] == pytest.approx([0.0, 1.5, 3.0], rel=1e-6)
+    assert [s.end for s in spans] == pytest.approx([1.5, 3.0, 5.0], rel=1e-6)
+
+
+def test_read_chords_csv_invalid_symbol(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.csv"
+    path.write_text("start,chord\n0.0,X\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        sc.read_chords_csv(path)
+
+
 # --- Tests (conflict resolved): merge both branches with compatibility/skip guards ---
 # Place the following into your test module (e.g., tests/test_sparkle_convert.py).
 # It merges tests from both branches and uses introspection to skip when a feature

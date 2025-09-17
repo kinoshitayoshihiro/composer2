@@ -8,10 +8,11 @@ statistics saved alongside the checkpoint.  The resulting MIDI will have
 predicted velocities and durations applied.
 """
 
-from pathlib import Path
 import argparse
 import json
 import os
+import sys
+from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -33,30 +34,22 @@ from .eval_duv import (  # reuse helpers
     _worker_init_fn,
     load_stats_and_normalize,
     _duration_predict,
+    _duv_sequence_predict,
+    _parse_quant,
 )
 
 
 def _median_smooth(x: np.ndarray, k: int) -> np.ndarray:
     if k <= 1:
         return x
-    k = 3 if k < 3 else 3  # only support median-3 for simplicity
+    if k % 2 == 0:
+        raise ValueError("median window must be odd")
     pad = k // 2
     x_pad = np.pad(x, (pad, pad), mode="edge")
     out = np.empty_like(x)
     for i in range(out.size):
         out[i] = np.median(x_pad[i : i + k])
     return out
-
-
-def _parse_quant(step_str: Optional[str], meta: dict) -> float:
-    if step_str:
-        if "_" in step_str:
-            step_str = step_str.split("_", 1)[1]
-        num, denom = step_str.split("/")
-        return float(num) / float(denom)
-    fps = float(meta.get("fps") or 0)
-    hop = float(meta.get("hop") or 0)
-    return hop / fps if fps > 0 and hop > 0 else 0.0
 
 
 def run(args: argparse.Namespace) -> int:
@@ -91,21 +84,43 @@ def run(args: argparse.Namespace) -> int:
     device = _get_device(args.device)
     vel_model = MLVelocityModel.load(str(args.ckpt))
     vel_model = vel_model.to(device).eval()
-    preds: List[np.ndarray] = []
-    with torch.no_grad():
-        for (xb,) in loader:
-            out = vel_model(xb.to(device))
-            preds.append(out.cpu().numpy())
-    vel_pred = np.concatenate(preds, axis=0).astype("float32")
+    duv_preds = _duv_sequence_predict(df, vel_model, device)
+
+    vel_pred: Optional[np.ndarray]
+    if duv_preds is not None and duv_preds["velocity_mask"].any():
+        base = df.get("velocity")
+        if base is not None:
+            vel_pred = base.to_numpy(dtype="float32", copy=False).copy()
+        else:
+            vel_pred = np.zeros(len(df), dtype=np.float32)
+        mask = duv_preds["velocity_mask"]
+        vel_pred[mask] = duv_preds["velocity"].astype("float32", copy=False)[mask]
+    else:
+        preds: List[np.ndarray] = []
+        with torch.no_grad():
+            for (xb,) in loader:
+                out = vel_model(xb.to(device))
+                preds.append(out.cpu().numpy())
+        vel_pred = np.concatenate(preds, axis=0).astype("float32")
     vel_pred = np.clip(_median_smooth(vel_pred, args.vel_smooth), 1, 127)
 
-    dur_pred = None
-    if "duration" in df.columns and "bar" in df.columns and "position" in df.columns and "pitch" in df.columns:
+    dur_pred: Optional[np.ndarray] = None
+    if duv_preds is not None and duv_preds["duration_mask"].any():
+        base = df.get("duration")
+        if base is not None:
+            dur_pred = base.to_numpy(dtype="float32", copy=False).copy()
+        else:
+            dur_pred = np.zeros(len(df), dtype=np.float32)
+        mask = duv_preds["duration_mask"]
+        dur_pred[mask] = duv_preds["duration"].astype("float32", copy=False)[mask]
+    elif "duration" in df.columns and "bar" in df.columns and "position" in df.columns and "pitch" in df.columns:
         dmodel = _load_duration_model(args.ckpt).to(device)
         dur_pred, _ = _duration_predict(df, dmodel)
-        grid = _parse_quant(args.dur_quant, stats[3])
-        if grid > 0:
-            dur_pred = np.maximum(grid, np.round(dur_pred / grid) * grid)
+    grid = _parse_quant(args.dur_quant, stats[3])
+    if grid > 0 and dur_pred is not None:
+        dur_pred = np.maximum(grid, np.round(dur_pred / grid) * grid)
+    elif grid <= 0:
+        print({"dur_quant": "skipped", "grid": float(grid)}, file=sys.stderr)
 
     pm_obj = pm.PrettyMIDI()
     inst = pm.Instrument(program=0)
@@ -127,13 +142,25 @@ def run(args: argparse.Namespace) -> int:
 def main(argv: Optional[Sequence[str]] = None) -> int:  # pragma: no cover - CLI
     p = argparse.ArgumentParser(prog="predict_duv.py")
     p.add_argument("--csv", type=Path, required=True)
-    p.add_argument("--ckpt", type=Path, required=True)
+    p.add_argument(
+        "--ckpt",
+        type=Path,
+        required=True,
+        help="Checkpoint (.ckpt state_dict or .ts TorchScript)",
+    )
     p.add_argument("--out", type=Path, required=True, help="Output MIDI path")
     p.add_argument("--batch", type=int, default=64)
     p.add_argument("--device", default="cpu")
     p.add_argument("--stats-json", type=Path)
     p.add_argument("--num-workers", dest="num_workers", type=int)
-    p.add_argument("--vel-smooth", type=int, default=1, dest="vel_smooth")
+    p.add_argument(
+        "--vel-smooth",
+        type=int,
+        default=1,
+        dest="vel_smooth",
+        choices=(1, 3, 5),
+        help="Velocity median smoothing window; 1 disables, 3/5 apply a median filter",
+    )
     p.add_argument("--dur-quant", type=str, dest="dur_quant")
     args = p.parse_args(argv)
     return run(args)

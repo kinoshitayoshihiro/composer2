@@ -25,6 +25,8 @@
 #     python sparkle_convert.py IN.mid --out OUT.mid --pulse 1/8 \
 #         --chords chords.csv
 #
+
+
 # Chord timeline formats:
 #   A) Explicit seconds with headers: ``start,end,root,quality``.
 #   B) Compact bars with headers: ``bar,chord`` (e.g., ``8,G:maj``).
@@ -33,6 +35,18 @@
 # Compact rows expand to ``Root:Quality`` symbols (quality defaults to ``maj``) and
 # convert bars to seconds using existing downbeats/meter maps where possible, falling
 # back to the provided BPM hint (or 120 BPM) under a 4/4 assumption.
+
+
+# Chord CSV formats:
+#   (A) start,end,root,quality              # explicit timings (seconds)
+#   (B) start,chord                         # timings (seconds) + chord symbols
+#   (C) bar,chord                           # bar indices; converted via --bpm & default TS (4/4)
+#   (D) headerless two columns               # auto-detect: integer -> bar,chord; otherwise start,chord
+#
+# For (B)-(D) the end time is inferred from the next start (or one bar past the final row).
+# Supported chord qualities remain open-ended; common aliases normalise to "maj"/"min".
+
+
 #
 # Mapping YAML example is created alongside this script as 'sparkle_mapping.example.yaml'.
 #
@@ -3603,182 +3617,284 @@ def read_chords_csv(
         header_lower[0] = header_lower[0].lstrip("\ufeff")
     header_set = {cell for cell in header_lower if cell}
 
-    spans: List[ChordSpan] = []
+def read_chords_csv(
+    path: Path,
+    *,
+    bar_times: Optional[List[float]] = None,
+    meter_map: Optional[List[Tuple[float, int, int]]] = None,
+    bpm_hint: Optional[float] = None,
+    default_ts: Tuple[int, int] = (4, 4),
+) -> List["ChordSpan"]:
+    """Load chord CSV in multiple common layouts.
 
-    explicit_schema = False
-    if "start" in header_set and "end" in header_set:
-        if "chord" in header_set or ("root" in header_set and "quality" in header_set):
-            explicit_schema = True
+    Supported headers:
+      (A) start,end,root,quality           # explicit span in seconds
+      (B) start,end,chord                  # explicit span with chord symbol
+      (C) start,chord                      # start sec + symbol, end is next start or +1 bar
+      (D) start,root,quality               # start sec + (root, quality)
+      (E) bar,chord                        # bar index (can be float) + symbol
+      (F) bar,beat,chord                   # bar index + beat offset within bar + symbol
+      (G) bar_start,bar_end,chord          # span by bar indices
 
-    if explicit_schema:
-        stream.seek(0)
-        reader = csv.DictReader(stream)
-        fieldnames = [fn or "" for fn in (reader.fieldnames or [])]
-        normalized_headers = {name.strip().lower() for name in fieldnames}
-        if "start" not in normalized_headers or "end" not in normalized_headers:
-            raise ChordCsvError(
-                f"{path}: explicit CSV must include start and end columns (got {reader.fieldnames})"
-            )
-        if "chord" not in normalized_headers and not {"root", "quality"}.issubset(
-            normalized_headers
-        ):
-            raise ChordCsvError(
-                f"{path}: explicit CSV must include either chord or root+quality columns"
-            )
-        prev_end: Optional[float] = None
-        for line_idx, row in enumerate(reader, start=2):
-            norm_row = { (key or "").strip().lower(): value for key, value in row.items() }
-            start_txt = (norm_row.get("start") or "").strip()
-            end_txt = (norm_row.get("end") or "").strip()
-            if not start_txt or not end_txt:
-                raise ChordCsvError(
-                    f"{path} line {line_idx}: start/end columns must be present"
-                )
-            try:
-                start = float(start_txt)
-                end = float(end_txt)
-            except ValueError as exc:
-                raise ChordCsvError(
-                    f"{path} line {line_idx}: start/end must be numeric"
-                ) from exc
-            if end <= start + EPS:
-                raise ChordCsvError(
-                    f"{path} line {line_idx}: non-positive chord duration; check timings"
-                )
-            if prev_end is not None and start < prev_end - EPS:
-                raise ChordCsvError(
-                    f"{path} line {line_idx}: start time overlaps previous chord"
-                )
+    Headerless (no names):
+      - 2 cols: if col0 looks integer → (bar,chord), else → (start,chord)
+    """
+    # --- read all rows -----------------------------------------------------
+    rows: List[List[str]] = []
+    with path.open(newline="", encoding="utf-8") as fh:
+        for raw in csv.reader(fh):
+            if not raw:
+                continue
+            if all(not (c or "").strip() for c in raw):
+                continue
+            rows.append([c.strip() for c in raw])
 
-            chord_token = (norm_row.get("chord") or "").strip()
-            if chord_token:
-                try:
-                    normalized_symbol = _normalize_compact_chord(chord_token)
-                except ChordCsvError as exc:
-                    raise ChordCsvError(f"{path} line {line_idx}: {exc}") from exc
-                try:
-                    root_pc, quality = parse_chord_symbol(normalized_symbol)
-                except ValueError as exc:
-                    raise ChordCsvError(f"{path} line {line_idx}: {exc}") from exc
-                root_display = _guess_root_display(
-                    chord_token, normalized_symbol.split(":", 1)[0]
-                )
-            else:
-                root_txt = (norm_row.get("root") or "").strip()
-                quality_txt = (norm_row.get("quality") or "").strip()
-                if not root_txt:
-                    raise ChordCsvError(f"{path} line {line_idx}: root column cannot be empty")
-                if not quality_txt:
-                    raise ChordCsvError(
-                        f"{path} line {line_idx}: quality column cannot be empty"
-                    )
-                quality_norm = _canonicalize_quality(quality_txt, error_type=ChordCsvError)
-                try:
-                    root_pc, quality = parse_chord_symbol(f"{root_txt}:{quality_norm}")
-                except ValueError as exc:
-                    raise ChordCsvError(f"{path} line {line_idx}: {exc}") from exc
-                root_display = root_txt.strip()
-
-            span = ChordSpan(start, end, root_pc, quality)
-            setattr(span, "root_name", root_display)
-            setattr(span, "symbol", chord_token or f"{root_display}:{quality}")
-            spans.append(span)
-            prev_end = end
-        return spans
-
-    recognised_headers = {
-        ("bar", "chord"),
-        ("bar_start", "bar_end", "chord"),
-        ("bar", "beat", "chord"),
-        ("bar_start", "bar_end", "beat", "chord"),
-    }
-    compact_has_header = tuple(header_lower) in recognised_headers if header_lower else False
-
-    stream.seek(0)
-    reader2 = csv.reader(stream)
-    if compact_has_header:
-        next(reader2, None)
-        bar_rows = _parse_bar_chord_rows(
-            reader2,
-            start_line=2,
-            path=path,
-            header=header_lower,
-        )
-    else:
-        bar_rows = _parse_bar_chord_rows(
-            reader2,
-            start_line=1,
-            path=path,
-            header=None,
-        )
-
-    if not bar_rows:
+    if not rows:
         return []
 
-    timeline = _BarTimeline(
-        path=path,
-        bar_times=bar_times,
-        beat_times=beat_times,
-        meter_map=meter_map,
-        meter_hints=meter_hints,
-        bpm_hint=bpm_hint,
-        default_meter=default_meter,
-    )
+    header = [c.lower() for c in rows[0]]
+    header_set = {h for h in header if h}
+    is_header = bool(header_set & {"start", "end", "root", "quality", "chord", "bar", "beat", "bar_start", "bar_end"})
 
-    for row in bar_rows:
-        timeline.ensure(row.start_bar + 1)
-        if row.end_bar is not None:
-            timeline.ensure(row.end_bar)
-
-    start_info: List[Tuple[_CompactChordRow, float]] = []
-    for row in bar_rows:
-        start_boundary = timeline.start_time(row.start_bar)
-        next_boundary = timeline.end_time(row.start_bar)
-        num, _ = timeline.meter_for(row.start_bar, start_boundary)
-        if num <= 0:
-            raise ChordCsvError(f"{path}: invalid meter numerator {num}")
-        if row.start_beat >= num:
-            raise ChordCsvError(
-                f"{path} line {row.line_no}: beat {row.start_beat} must be < meter numerator {num}"
-            )
-        beat_ratio = float(row.start_beat) / float(num)
-        start_time = start_boundary + (next_boundary - start_boundary) * beat_ratio
-        start_info.append((row, start_time))
-
-    spans_out: List[ChordSpan] = []
-    prev_end_time: Optional[float] = None
-    for idx, (row, start_time) in enumerate(start_info):
-        if prev_end_time is not None and start_time < prev_end_time - EPS:
-            raise ChordCsvError(
-                f"{path} line {row.line_no}: overlaps previous chord; check bar ordering"
-            )
-
-        if row.end_bar is not None:
-            end_time = timeline.start_time(row.end_bar)
-        elif idx + 1 < len(start_info):
-            end_time = start_info[idx + 1][1]
-        else:
-            end_time = timeline.end_time(row.start_bar)
-
-        if end_time <= start_time + EPS:
-            raise ChordCsvError(
-                f"{path} line {row.line_no}: non-positive chord duration; check timings"
-            )
-
+    # --- helpers -----------------------------------------------------------
+    def _safe_float(x: str, msg: str) -> float:
         try:
-            root_pc, quality = parse_chord_symbol(row.symbol)
-        except ValueError as exc:
-            raise ChordCsvError(f"{path} line {row.line_no}: {exc}") from exc
-        span = ChordSpan(start_time, end_time, root_pc, quality)
-        root_display = _guess_root_display(
-            row.raw_symbol or row.symbol, row.symbol.split(":", 1)[0]
-        )
-        setattr(span, "root_name", root_display)
-        setattr(span, "symbol", row.raw_symbol or row.symbol)
-        spans_out.append(span)
-        prev_end_time = end_time
+            v = float(x)
+        except Exception as exc:
+            raise SystemExit(f"{msg}: '{x}'") from exc
+        if not math.isfinite(v):
+            raise SystemExit(f"{msg}: '{x}'")
+        return v
 
-    return spans_out
+    def _sanitise_bpm(value: Optional[float]) -> float:
+        try:
+            bpm_val = float(value) if value is not None else 120.0
+        except Exception:
+            bpm_val = 120.0
+        if not math.isfinite(bpm_val) or bpm_val <= 0.0:
+            bpm_val = 120.0
+        return bpm_val
+
+    def _beats_per_bar(num: int, den: int) -> float:
+        if den == 0:
+            den = 4
+        if num <= 0:
+            num = 4
+        return num * (4.0 / den)
+
+    bpm_val = _sanitise_bpm(bpm_hint)
+    sec_per_beat = 60.0 / bpm_val
+
+    meter_seq: Optional[List[Tuple[float, int, int]]] = None
+    meter_times: Optional[List[float]] = None
+    if meter_map:
+        meter_seq = [(float(t), int(n), int(d)) for t, n, d in meter_map]
+        if len(meter_seq) > 1:
+            meter_seq.sort(key=lambda x: x[0])
+        meter_times = [mt for mt, _, _ in meter_seq]
+
+    def _numden_at_time(t: Optional[float]) -> Tuple[int, int]:
+        if meter_seq:
+            ref = float(t or meter_seq[0][0])
+            try:
+                n, d = get_meter_at(meter_seq, ref, times=meter_times)
+                return int(n), int(d)
+            except Exception:
+                pass
+        return int(default_ts[0]), int(default_ts[1])
+
+    # bar_times（実小節境界）があれば最優先。なければ meter_map×BPM から近似。
+    bar_times_sorted: List[float] = []
+    if bar_times:
+        tmp: List[float] = []
+        for r in bar_times:
+            try:
+                v = float(r)
+            except Exception:
+                continue
+            if math.isfinite(v):
+                tmp.append(v)
+        tmp.sort()
+        for v in tmp:
+            if not bar_times_sorted or abs(v - bar_times_sorted[-1]) > EPS:
+                bar_times_sorted.append(v)
+
+    # メータセグメント（可変拍子を秒換算）を単純近似（各区間で一定小節長とする）
+    meter_segments: List[Tuple[int, float, float, Optional[int]]] = []  # (start_bar_idx, start_time, bar_len_sec, count)
+    if not bar_times_sorted and meter_seq:
+        current_idx = 0
+        for seg_i, (seg_time, n, d) in enumerate(meter_seq):
+            start_time = seg_time
+            bar_len = _beats_per_bar(n, d) * sec_per_beat
+            if not math.isfinite(bar_len) or bar_len <= EPS:
+                dn = _beats_per_bar(default_ts[0], default_ts[1])
+                bar_len = (dn if math.isfinite(dn) and dn > 0 else 4.0) * sec_per_beat
+            next_t = meter_seq[seg_i + 1][0] if seg_i + 1 < len(meter_seq) else None
+            count: Optional[int] = None
+            if next_t is not None and next_t > start_time + EPS:
+                approx = int(round((next_t - start_time) / bar_len))
+                if approx > 0:
+                    count = approx
+            meter_segments.append((current_idx, start_time, bar_len, count))
+            if count:
+                current_idx += count
+
+    def _bar_length(idx: int) -> float:
+        if bar_times_sorted and 0 <= idx < len(bar_times_sorted) - 1:
+            L = bar_times_sorted[idx + 1] - bar_times_sorted[idx]
+            if L > EPS:
+                return L
+        if meter_segments:
+            for s_idx, _, bl, cnt in meter_segments:
+                limit = s_idx + (cnt if cnt is not None else 10**9)
+                if idx < limit:
+                    return bl
+            return meter_segments[-1][2]
+        n, d = _numden_at_time(None)
+        dn = _beats_per_bar(n, d)
+        return (dn if dn > 0 else 4.0) * sec_per_beat
+
+    def _bar_start(idx: int) -> float:
+        if idx < 0:
+            raise SystemExit("bar index must be >= 0")
+        if bar_times_sorted:
+            if idx < len(bar_times_sorted):
+                return bar_times_sorted[idx]
+            base = bar_times_sorted[-1]
+            last_len = _bar_length(len(bar_times_sorted) - 1)
+            return base + (idx - (len(bar_times_sorted) - 1)) * last_len
+        if meter_segments:
+            for s_idx, s_time, bl, cnt in meter_segments:
+                limit = s_idx + (cnt if cnt is not None else 10**9)
+                if idx < limit:
+                    return s_time + (idx - s_idx) * bl
+            s_idx, s_time, bl, _ = meter_segments[-1]
+            return s_time + (idx - s_idx) * bl
+        return idx * _bar_length(0)
+
+    def _bar_to_seconds(bar_token: str) -> Tuple[float, Optional[float]]:
+        """Returns (start_sec, bar_value_if_given)"""
+        v = _safe_float(bar_token, "Invalid bar index")
+        if v < 0.0:
+            raise SystemExit("bar index must be >= 0")
+        base = int(math.floor(v))
+        frac = v - base
+        t0 = _bar_start(base)
+        if frac > EPS:
+            t0 += frac * _bar_length(base)
+        return t0, v
+
+    def _span_end_default(start_sec: float, bar_value: Optional[float]) -> float:
+        if bar_value is not None:
+            base = int(math.floor(bar_value))
+            return start_sec + _bar_length(base)
+        # 秒基準の場合は開始時点のメータから 1bar
+        n, d = _numden_at_time(start_sec)
+        return start_sec + _beats_per_bar(n, d) * sec_per_beat
+
+    # --- normalize into (start_sec, symbol, bar_value?, beat_offset?)  -----
+    items: List[Tuple[float, str, Optional[float], float]] = []  # (start_sec, symbol, bar_value, beat_off_ratio)
+
+    if is_header:
+        cols = {name: i for i, name in enumerate(header) if name}
+        data = rows[1:]
+
+        # (A) start,end,root,quality  or  (B) start,end,chord
+        if {"start", "end"} <= cols.keys() and ({"root", "quality"} <= cols.keys() or "chord" in cols):
+            spans: List[ChordSpan] = []
+            for raw in data:
+                start = _safe_float(raw[cols["start"]], "Invalid start time")
+                end = _safe_float(raw[cols["end"]], "Invalid end time")
+                if end <= start + EPS:
+                    raise SystemExit("Non-positive chord duration in CSV")
+                if "chord" in cols:
+                    symbol = raw[cols["chord"]].strip()
+                    root_pc, quality = parse_chord_symbol(symbol)
+                    span = ChordSpan(start, end, root_pc, quality)
+                    setattr(span, "symbol", symbol)
+                    setattr(span, "root_name", symbol.split(":", 1)[0])
+                else:
+                    root = raw[cols["root"]].strip()
+                    quality = raw[cols["quality"]].strip().lower()
+                    root_pc, quality = parse_chord_symbol(f"{root}:{quality}")
+                    span = ChordSpan(start, end, root_pc, quality)
+                    setattr(span, "symbol", f"{root}:{quality}")
+                    setattr(span, "root_name", root)
+                spans.append(span)
+            return spans
+
+        # (C/D) start-based rows
+        if "start" in cols and ("chord" in cols or {"root", "quality"} <= cols.keys()):
+            for raw in data:
+                start = _safe_float(raw[cols["start"]], "Invalid start time")
+                if "chord" in cols:
+                    sym = raw[cols["chord"]].strip()
+                else:
+                    sym = f"{raw[cols['root']].strip()}:{raw[cols['quality']].strip().lower()}"
+                items.append((start, sym, None, 0.0))
+
+        # (E/F/G) bar-based rows
+        elif "bar" in cols and "chord" in cols:
+            beat_idx = cols.get("beat")
+            for raw in data:
+                bar_token = raw[cols["bar"]]
+                start_sec, bar_val = _bar_to_seconds(bar_token if bar_token else "0")
+                beat_off = 0.0
+                if beat_idx is not None and raw[beat_idx]:
+                    # 0..(numerator-1) の整数想定。比率に変換。
+                    n, d = _numden_at_time(start_sec)
+                    beat_val = _safe_float(raw[beat_idx], "Invalid beat")
+                    if beat_val < 0 or beat_val >= n:
+                        raise SystemExit(f"beat must be in [0,{n})")
+                    beat_off = float(beat_val) / float(n)
+                    start_sec = start_sec + _bar_length(int(math.floor(bar_val))) * beat_off
+                items.append((start_sec, raw[cols["chord"]].strip(), bar_val, beat_off))
+
+        elif {"bar_start", "bar_end", "chord"} <= cols.keys():
+            for raw in data:
+                s_sec, _ = _bar_to_seconds(raw[cols["bar_start"]])
+                e_sec, _ = _bar_to_seconds(raw[cols["bar_end"]])
+                if e_sec <= s_sec + EPS:
+                    raise SystemExit("Non-positive chord duration in CSV")
+                sym = raw[cols["chord"]].strip()
+                root_pc, quality = parse_chord_symbol(sym)
+                span = ChordSpan(s_sec, e_sec, root_pc, quality)
+                setattr(span, "symbol", sym)
+                setattr(span, "root_name", sym.split(":", 1)[0])
+                items.append((s_sec, sym, None, 0.0))  # keep for ordering; explicit-span handled below
+        else:
+            raise SystemExit("Unsupported chord CSV header")
+    else:
+        # headerless: 2 columns → (bar,chord) if first is integer-like, else (start,chord)
+        for raw in rows:
+            if len(raw) < 2:
+                raise SystemExit("Chord CSV without header must have at least two columns")
+            first, second = raw[0], raw[1]
+            if re.fullmatch(r"^[+-]?\d+$", first):
+                start_sec, bar_val = _bar_to_seconds(first)
+                items.append((start_sec, second.strip(), bar_val, 0.0))
+            else:
+                items.append((_safe_float(first, "Invalid start"), second.strip(), None, 0.0))
+
+    if not items:
+        return []
+
+    # --- build spans -------------------------------------------------------
+    items.sort(key=lambda it: it[0])
+    spans: List[ChordSpan] = []
+    for i, (start_sec, symbol, bar_val, _) in enumerate(items):
+        next_start = items[i + 1][0] if i + 1 < len(items) else None
+        end_sec = (
+            _span_end_default(start_sec, bar_val)
+            if next_start is None or not math.isfinite(next_start) or next_start <= start_sec + EPS
+            else next_start
+        )
+        root_pc, quality = parse_chord_symbol(symbol)
+        span = ChordSpan(start_sec, end_sec, root_pc, quality)
+        setattr(span, "symbol", symbol)
+        setattr(span, "root_name", symbol.split(":", 1)[0])
+        spans.append(span)
+    return spans
 
 
 def infer_chords_by_bar(pm: "pretty_midi.PrettyMIDI", ts_num=4, ts_den=4) -> List["ChordSpan"]:
@@ -5123,31 +5239,47 @@ def main():
     ap.add_argument(
         "--pulse", type=str, default="1/8", help="Pulse subdivision (e.g., 1/8, 1/16, 1/4)"
     )
-    ap.add_argument("--bpm", type=float, default=None, help="Fallback BPM if input has no tempo")
+    ap.add_argument(
+        "--bpm",
+        type=float,
+        default=None,
+        help="Fallback BPM if input has no tempo (also used for bar-index chord CSVs)",
+    )
     ap.add_argument(
         "--chords",
         type=str,
         default=None,
         help=(
-            "Chord CSV/YAML path or inline spec. CSV may use start,end,root,quality "
-            "or compact bars: 'bar,chord' (header optional, e.g. 8,G:maj), "
-            "'bar_start,bar_end,chord' for multi-bar spans, or 'bar,beat,chord' for "
-            "in-bar starts (beat accepts integers/floats/fractions)."
-        ),
-    )
-    ap.add_argument(
-        "--chords-ts",
-        type=str,
-        default=None,
-        help=(
-            "Optional meter hints for compact chord CSV when MIDI lacks TS info "
-            "(e.g., 12/8@0,4/4@20)."
-        ),
-    )
-    ap.add_argument(
-        "--strict-chords",
-        action="store_true",
-        help="Raise errors for overlapping/duplicate chord rows instead of tolerating them.",
+ap.add_argument(
+    "--chords",
+    type=str,
+    default=None,
+    help=(
+        "Chord CSV/YAML path or inline spec. CSV may use start,end,root,quality; "
+        "start,end,chord; start,chord; bar,chord; bar_start,bar_end,chord; or "
+        "bar,beat,chord (beat accepts integers/floats/fractions). Headerless two-"
+        "column is auto-detected. Inline examples: 0:G:maj,2:D:maj or a JSON list."
+    ),
+)
+
+ap.add_argument(
+    "--chords-ts",
+    type=str,
+    default=None,
+    help=(
+        "Optional meter hints for compact chord CSV when MIDI lacks time-signature info. "
+        "Format: '12/8@0,4/4@20' (denotes num/den active from time-sec)."
+    ),
+)
+
+ap.add_argument(
+    "--strict-chords",
+    action="store_true",
+    help=(
+        "Be strict about overlapping/duplicate chord rows (currently the loader already "
+        "raises on invalid or overlapping spans; this flag is reserved for future relaxation)."
+    ),
+)
     )
     ap.add_argument(
         "--mapping",
@@ -5988,19 +6120,36 @@ def main():
                 if chord_path.suffix in {".yaml", ".yml"}:
                     chords = read_chords_yaml(chord_path)
                 else:
-                    try:
-                        chords = read_chords_csv(
-                            chord_path,
-                            bar_times=downbeats_chord,
-                            beat_times=beat_times_chord,
-                            meter_map=meter_map_chord,
-                            meter_hints=chord_ts_hints,
-                            bpm_hint=bpm,
-                            default_meter=(ts_num, ts_den),
-                            strict=args.strict_chords,
-                        )
-                    except ChordCsvError as exc:
-                        raise SystemExit(str(exc)) from exc
+# 既存の TimeSignature を meter_map_cli に反映
+meter_map_cli: List[Tuple[float, int, int]] = [
+    (float(ts.time), int(ts.numerator), int(ts.denominator))
+    for ts in pm.time_signature_changes
+]
+
+# TS が無い場合は --chords-ts のヒントを使用、無ければデフォルト (ts_num/ts_den)
+if not meter_map_cli:
+    chord_ts_hints = _parse_chords_ts_hint(getattr(args, "chords_ts", None)) if "chords_ts" in args.__dict__ else None
+    if chord_ts_hints:
+        meter_map_cli = chord_ts_hints
+    else:
+        meter_map_cli = [(0.0, ts_num, ts_den)]
+
+# bar_times には downbeats（あれば）を渡す
+downbeats_chord = []
+try:
+    downbeats_chord = list(pm.get_downbeats())
+except Exception:
+    downbeats_chord = []
+
+# read_chords_csv は簡易版シグネチャに合わせる
+chords = read_chords_csv(
+    chord_path,
+    bar_times=downbeats_chord if downbeats_chord else None,
+    meter_map=meter_map_cli,
+    bpm_hint=bpm,
+    default_ts=(ts_num, ts_den),
+)
+
             else:
                 raise SystemExit(f"--chords path not found or unsupported inline spec: {args.chords}")
         else:
@@ -6455,6 +6604,27 @@ def main():
 
     out_pm.write(args.out)
     logging.info("Wrote %s", args.out)
+def _parse_chords_ts_hint(s: Optional[str]) -> Optional[List[Tuple[float, int, int]]]:
+    if not s:
+        return None
+    out: List[Tuple[float, int, int]] = []
+    for tok in s.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        # accept 12/8@0 or 4/4 (implicitly @0)
+        if "@" in tok:
+            sig, at = tok.split("@", 1)
+            t = float(at.strip())
+        else:
+            sig, t = tok, 0.0
+        num_str, den_str = sig.split("/", 1)
+        num = int(num_str.strip())
+        den = int(den_str.strip())
+        out.append((float(t), num, den))
+    # sort by start time
+    out.sort(key=lambda x: x[0])
+    return out
 
 
 if __name__ == "__main__":

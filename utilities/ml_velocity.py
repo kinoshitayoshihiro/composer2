@@ -84,21 +84,33 @@ class MLVelocityModel(nn.Module if torch is not None else object):
 
     @staticmethod
     def load(path: str):
+        """Load a velocity model checkpoint as an ``nn.Module`` ready for eval.
+
+        TorchScript files are loaded via :func:`torch.jit.load`; other
+        checkpoints use :func:`torch.load` and must still yield an ``nn.Module``.
         """
-        Robust loader:
-        - .ts / .torchscript → torch.jit.load (TorchScript)
-        - others (.ckpt / .pt / .pth など) → torch.load (PyTorch/Lightning ckpt)
-        これで Lightning ckpt に対して jit.load を呼んで落ちる問題を防ぐ。
-        """
+        if torch is None:
+            raise RuntimeError("torch required")
+
         p = str(path)
         if p.endswith((".ts", ".torchscript")):
-            mod = torch.jit.load(p, map_location="cpu")
-            mod.eval()
-            return mod
-        else:
-            # Lightning/PyTorch ckpt を想定
-            obj = torch.load(p, map_location="cpu")
-            return obj
+            return torch.jit.load(p, map_location="cpu").eval()
+
+        obj = torch.load(p, map_location="cpu")
+        if isinstance(obj, nn.Module):
+            return obj.eval()
+
+        if isinstance(obj, dict):
+            for key in ("model", "net", "module"):
+                mod = obj.get(key)
+                if isinstance(mod, nn.Module):
+                    return mod.eval()
+            if "state_dict" in obj:
+                raise RuntimeError(
+                    "DUV ckpt is state_dict-only. Export to TorchScript or restore model class to load state_dict."
+                )
+
+        raise RuntimeError(f"Unsupported ckpt type: {type(obj).__name__}")
 
     def predict(self, ctx, *, cache_key: str | None = None):
         if torch is None or getattr(self, "_dummy", False):

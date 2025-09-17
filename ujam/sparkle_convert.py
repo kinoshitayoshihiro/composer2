@@ -3910,6 +3910,18 @@ def main():
 
     args, extras = ap.parse_known_args()
 
+    stats: Dict[str, Any] = {}
+    stats_enabled = bool(
+        args.debug_json
+        or args.report_md
+        or args.debug_md
+        or args.bar_summary
+        or args.print_plan
+        or args.debug_csv
+        or args.report_json
+        or args.dry_run
+    )
+
     # Back-compat: parse unified --damp if present
     if getattr(args, "damp", None):
         mode, kw = parse_damp_arg(args.damp)
@@ -4295,7 +4307,8 @@ def main():
             return idx + (t - g_beats[idx]) / span
 
         guide_units = [(g_time_to_beat(s), g_time_to_beat(e)) for s, e in guide_units_time]
-        stats["sections"] = sections
+        if stats_enabled:
+            stats["sections"] = sections
 
     # Chords
     if args.chords:
@@ -4306,8 +4319,6 @@ def main():
             chords = read_chords_csv(chord_path)
     else:
         chords = infer_chords_by_bar(pm, ts_num, ts_den)
-
-    stats: Dict = {}
 
     section_overrides = None
     if args.sections:
@@ -4406,7 +4417,7 @@ def main():
         skip_phrase_in_rests=args.skip_phrase_in_rests,
         silent_qualities=silent_qualities,
         clone_meta_only=clone_meta_only,
-        stats=stats,
+        stats=stats if stats_enabled else None,
         merge_reset_at=merge_reset_at,
         guide_notes=guide_notes,
         guide_quant=args.guide_quant,
@@ -4499,6 +4510,7 @@ def main():
                 if val is None:
                     raise SystemExit("fill-avoid-pitches cannot include 'rest'")
                 avoid.add(val)
+        filled_bars = stats.setdefault("fill_bars", []) if stats_enabled else None
         fill_count = insert_style_fill(
             out_pm,
             args.auto_fill,
@@ -4511,7 +4523,7 @@ def main():
             bpm=bpm,
             min_gap_beats=args.fill_min_gap_beats,
             avoid_pitches=avoid,
-            filled_bars=stats.setdefault("fill_bars", []),
+            filled_bars=filled_bars,
         )
 
     # Emit damping CC to selected destination
@@ -4535,7 +4547,7 @@ def main():
             inst.control_changes.append(
                 pretty_midi.ControlChange(number=damp_cc_num, value=v, time=t)
             )
-        if stats is not None:
+        if stats_enabled:
             vals = [v for _, v in guide_cc]
             cc_stats = {
                 "min": min(vals),
@@ -4545,7 +4557,7 @@ def main():
             }
 
     # Reports / debug artifacts
-    if stats is not None and guide_notes is not None:
+    if stats_enabled and guide_notes is not None:
         stats["guide_keys"] = [guide_notes.get(i) for i in sorted(guide_notes.keys())]
         stats["fill_count"] = fill_count
         if rest_ratios is not None and onset_counts is not None and guide_cc:
@@ -4572,7 +4584,7 @@ def main():
             "length_beats": args.fill_length_beats,
         }
 
-    if args.debug_csv and rest_ratios is not None and onset_counts is not None:
+    if stats_enabled and args.debug_csv and rest_ratios is not None and onset_counts is not None:
         with open(args.debug_csv, "w", newline="") as fp:
             writer = csv.writer(fp)
             writer.writerow(
@@ -4593,7 +4605,7 @@ def main():
                     ]
                 )
 
-    if args.bar_summary and rest_ratios is not None and onset_counts is not None:
+    if stats_enabled and args.bar_summary and rest_ratios is not None and onset_counts is not None:
         with open(args.bar_summary, "w", newline="") as fp:
             writer = csv.writer(fp)
             writer.writerow(
@@ -4632,7 +4644,7 @@ def main():
                     ]
                 )
 
-    if args.report_json:
+    if stats_enabled and args.report_json:
         p = Path(args.report_json)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(stats, indent=2, sort_keys=True))

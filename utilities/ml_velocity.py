@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Dict
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import numpy as np
 
 try:
     import torch
@@ -13,7 +17,24 @@ except Exception:  # pragma: no cover - optional
     torch = None  # type: ignore
     nn = object  # type: ignore
 
+try:  # pragma: no cover - optional during documentation builds
+    from models.phrase_transformer import PhraseTransformer  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - fallback for environments without model deps
+    PhraseTransformer = None  # type: ignore
+
 _script_cache: dict[str, Any] = {}
+
+
+def _strip_prefix(sd: Dict[str, Any], prefix: str = "model.") -> Dict[str, Any]:
+    if not prefix:
+        return dict(sd)
+    out: Dict[str, Any] = {}
+    for key, value in sd.items():
+        if key.startswith(prefix):
+            out[key[len(prefix) :]] = value
+        else:
+            out[key] = value
+    return out
 
 
 def _lru_script(model: nn.Module, key: str) -> Any:
@@ -83,7 +104,7 @@ class MLVelocityModel(nn.Module if torch is not None else object):
         return self.fc_out(h).squeeze(-1)
 
     @staticmethod
-    def load(path: str):
+    def load(path: str) -> nn.Module:
         """Load a velocity model checkpoint as an ``nn.Module`` ready for eval.
 
         TorchScript files are loaded via :func:`torch.jit.load`; other
@@ -94,7 +115,12 @@ class MLVelocityModel(nn.Module if torch is not None else object):
 
         p = str(path)
         if p.endswith((".ts", ".torchscript")):
-            return torch.jit.load(p, map_location="cpu").eval()
+            model = torch.jit.load(p, map_location="cpu").eval()
+            try:
+                setattr(model, "_duv_loader", "ts")
+            except Exception:  # pragma: no cover - best effort on ScriptModule
+                pass
+            return model
 
         obj = torch.load(p, map_location="cpu")
         if isinstance(obj, nn.Module):
@@ -105,6 +131,91 @@ class MLVelocityModel(nn.Module if torch is not None else object):
                 mod = obj.get(key)
                 if isinstance(mod, nn.Module):
                     return mod.eval()
+            model_state = obj.get("model")
+            if isinstance(model_state, dict):
+                if PhraseTransformer is None:
+                    raise RuntimeError("PhraseTransformer unavailable; install model dependencies")
+                meta = obj.get("meta", {}) if isinstance(obj.get("meta"), dict) else {}
+
+                def _get_int(name: str, fallback: int) -> int:
+                    try:
+                        return int(meta.get(name, fallback))
+                    except Exception:
+                        return fallback
+
+                state_dict = _strip_prefix(model_state, "model.")
+                pitch_emb = state_dict.get("pitch_emb.weight")
+                pos_emb = state_dict.get("pos_emb.weight")
+                if pitch_emb is None or pos_emb is None:
+                    raise ValueError("state_dict missing pitch_emb/pos_emb tensors")
+                d_model = _get_int("d_model", int(pitch_emb.shape[1] * 4))
+                max_len = _get_int("max_len", int(pos_emb.shape[0]))
+                vel_bucket_size = _get_int(
+                    "vel_bucket_size",
+                    int(state_dict.get("head_vel_cls.weight", torch.empty(0, d_model)).shape[0])
+                    if "head_vel_cls.weight" in state_dict
+                    else 0,
+                )
+                dur_bucket_size = _get_int(
+                    "dur_bucket_size",
+                    int(state_dict.get("head_dur_cls.weight", torch.empty(0, d_model)).shape[0])
+                    if "head_dur_cls.weight" in state_dict
+                    else 0,
+                )
+                duv_mode = str(meta.get("duv_mode", "reg"))
+
+                core = PhraseTransformer(
+                    d_model=d_model,
+                    max_len=max_len,
+                    vel_bucket_size=vel_bucket_size,
+                    dur_bucket_size=dur_bucket_size,
+                    duv_mode=duv_mode,
+                )
+                missing, unexpected = core.load_state_dict(state_dict, strict=False)
+                miss_list = sorted(missing) if isinstance(missing, (list, tuple)) else list(missing)
+                unexp_list = (
+                    sorted(unexpected) if isinstance(unexpected, (list, tuple)) else list(unexpected)
+                )
+                if miss_list or unexp_list:
+                    logging.warning(
+                        {"missing_keys": miss_list, "unexpected_keys": unexp_list}
+                    )
+
+                class PhraseDUVModule(nn.Module):
+                    def __init__(self, inner: nn.Module, *, meta: dict[str, Any]) -> None:
+                        super().__init__()
+                        self.core = inner
+                        self.meta = dict(meta)
+                        self.requires_duv_feats = True
+                        self.has_vel_head = bool(getattr(inner, "head_vel_reg", None))
+                        self.has_dur_head = bool(getattr(inner, "head_dur_reg", None))
+                        self.d_model = int(getattr(inner, "d_model", d_model))
+                        self.max_len = int(getattr(inner, "max_len", max_len))
+                        self.heads = {
+                            "vel_reg": self.has_vel_head,
+                            "dur_reg": self.has_dur_head,
+                        }
+                        self._duv_loader = "ckpt"
+
+                    def forward(
+                        self,
+                        feats: dict[str, torch.Tensor],
+                        mask: torch.Tensor | None = None,
+                    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+                        if mask is None:
+                            raise ValueError("mask tensor required for DUV transformer")
+                        outputs = self.core(feats, mask)
+                        if isinstance(outputs, dict):
+                            vel = outputs.get("vel_reg")
+                            dur = outputs.get("dur_reg")
+                            return vel, dur
+                        if isinstance(outputs, tuple):
+                            out0 = outputs[0] if len(outputs) > 0 else None
+                            out1 = outputs[1] if len(outputs) > 1 else None
+                            return out0, out1
+                        return outputs, None
+
+                return PhraseDUVModule(core.eval(), meta=meta).eval()
             if "state_dict" in obj:
                 raise RuntimeError(
                     "DUV ckpt is state_dict-only. Export to TorchScript or restore model class to load state_dict."
@@ -112,7 +223,7 @@ class MLVelocityModel(nn.Module if torch is not None else object):
 
         raise RuntimeError(f"Unsupported ckpt type: {type(obj).__name__}")
 
-    def predict(self, ctx, *, cache_key: str | None = None):
+    def predict(self, ctx, *, cache_key: str | None = None) -> "np.ndarray":
         if torch is None or getattr(self, "_dummy", False):
             import numpy as np
             return np.full((ctx.shape[0],), 64.0, dtype=np.float32)

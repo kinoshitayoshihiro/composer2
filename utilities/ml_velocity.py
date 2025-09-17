@@ -83,23 +83,22 @@ class MLVelocityModel(nn.Module if torch is not None else object):
         return self.fc_out(h).squeeze(-1)
 
     @staticmethod
-    def load(path: str) -> "MLVelocityModel":
-        if torch is None:
-            raise RuntimeError("torch required")
-        obj = torch.load(path, map_location="cpu")
-        if isinstance(obj, dict) and "state_dict" in obj:
-            state = {k.replace("model.", ""): v for k, v in obj["state_dict"].items()}
-            model = MLVelocityModel()
-            model.load_state_dict(state, strict=False)
-            model.eval()
-            return model
-        if isinstance(obj, dict) and all(isinstance(v, torch.Tensor) for v in obj.values()):
-            model = MLVelocityModel()
-            model.load_state_dict(obj, strict=False)
-            model.eval()
-            return model
-        # assume scripted
-        return torch.jit.load(path)
+    def load(path: str):
+        """
+        Robust loader:
+        - .ts / .torchscript → torch.jit.load (TorchScript)
+        - others (.ckpt / .pt / .pth など) → torch.load (PyTorch/Lightning ckpt)
+        これで Lightning ckpt に対して jit.load を呼んで落ちる問題を防ぐ。
+        """
+        p = str(path)
+        if p.endswith((".ts", ".torchscript")):
+            mod = torch.jit.load(p, map_location="cpu")
+            mod.eval()
+            return mod
+        else:
+            # Lightning/PyTorch ckpt を想定
+            obj = torch.load(p, map_location="cpu")
+            return obj
 
     def predict(self, ctx, *, cache_key: str | None = None):
         if torch is None or getattr(self, "_dummy", False):

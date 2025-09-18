@@ -236,8 +236,17 @@ class MLVelocityModel(nn.Module if torch is not None else object):
                         feats: dict[str, torch.Tensor],
                         mask: torch.Tensor | None = None,
                     ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+                        """Run the DUV core while tolerating missing padding masks."""
                         if mask is None:
-                            raise ValueError("mask tensor required for DUV transformer")
+                            first = None
+                            if isinstance(feats, dict) and feats:
+                                first = next(iter(feats.values()))
+                            else:
+                                first = feats
+                            if first is None:
+                                raise ValueError("unable to infer mask shape for DUV transformer")
+                            B, T = first.shape[:2]
+                            mask = torch.ones((B, T), dtype=torch.bool, device=first.device)
                         outputs = self.core(feats, mask)
                         if isinstance(outputs, dict):
                             vel = outputs.get("vel_reg")

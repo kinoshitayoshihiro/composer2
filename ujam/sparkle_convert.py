@@ -3857,7 +3857,10 @@ def read_chords_csv(
                 if e_sec <= s_sec + EPS:
                     raise SystemExit("Non-positive chord duration in CSV")
                 sym = raw[cols["chord"]].strip()
-                root_pc, quality = parse_chord_symbol(sym)
+                try:
+                    root_pc, quality = parse_chord_symbol(sym)
+                except ValueError as exc:
+                    raise SystemExit(str(exc))
                 span = ChordSpan(s_sec, e_sec, root_pc, quality)
                 setattr(span, "symbol", sym)
                 setattr(span, "root_name", sym.split(":", 1)[0])
@@ -3889,7 +3892,10 @@ def read_chords_csv(
             if next_start is None or not math.isfinite(next_start) or next_start <= start_sec + EPS
             else next_start
         )
-        root_pc, quality = parse_chord_symbol(symbol)
+        try:
+            root_pc, quality = parse_chord_symbol(symbol)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
         span = ChordSpan(start_sec, end_sec, root_pc, quality)
         setattr(span, "symbol", symbol)
         setattr(span, "root_name", symbol.split(":", 1)[0])
@@ -5250,36 +5256,28 @@ def main():
         type=str,
         default=None,
         help=(
-ap.add_argument(
-    "--chords",
-    type=str,
-    default=None,
-    help=(
-        "Chord CSV/YAML path or inline spec. CSV may use start,end,root,quality; "
-        "start,end,chord; start,chord; bar,chord; bar_start,bar_end,chord; or "
-        "bar,beat,chord (beat accepts integers/floats/fractions). Headerless two-"
-        "column is auto-detected. Inline examples: 0:G:maj,2:D:maj or a JSON list."
-    ),
-)
-
-ap.add_argument(
-    "--chords-ts",
-    type=str,
-    default=None,
-    help=(
-        "Optional meter hints for compact chord CSV when MIDI lacks time-signature info. "
-        "Format: '12/8@0,4/4@20' (denotes num/den active from time-sec)."
-    ),
-)
-
-ap.add_argument(
-    "--strict-chords",
-    action="store_true",
-    help=(
-        "Be strict about overlapping/duplicate chord rows (currently the loader already "
-        "raises on invalid or overlapping spans; this flag is reserved for future relaxation)."
-    ),
-)
+            "Chord CSV/YAML path or inline spec. CSV may use start,end,root,quality; "
+            "start,end,chord; start,chord; bar,chord; bar_start,bar_end,chord; or "
+            "bar,beat,chord (beat accepts integers/floats/fractions). Headerless two-"
+            "column is auto-detected. Inline examples: 0:G:maj,2:D:maj or a JSON list."
+        ),
+    )
+    ap.add_argument(
+        "--chords-ts",
+        type=str,
+        default=None,
+        help=(
+            "Optional meter hints for compact chord CSV when MIDI lacks time-signature info. "
+            "Format: '12/8@0,4/4@20' (denotes num/den active from time-sec)."
+        ),
+    )
+    ap.add_argument(
+        "--strict-chords",
+        action="store_true",
+        help=(
+            "Be strict about overlapping/duplicate chord rows (currently the loader already "
+            "raises on invalid or overlapping spans; this flag is reserved for future relaxation)."
+        ),
     )
     ap.add_argument(
         "--mapping",
@@ -6120,35 +6118,39 @@ ap.add_argument(
                 if chord_path.suffix in {".yaml", ".yml"}:
                     chords = read_chords_yaml(chord_path)
                 else:
-# 既存の TimeSignature を meter_map_cli に反映
-meter_map_cli: List[Tuple[float, int, int]] = [
-    (float(ts.time), int(ts.numerator), int(ts.denominator))
-    for ts in pm.time_signature_changes
-]
+                    # 既存の TimeSignature を meter_map_cli に反映
+                    meter_map_cli: List[Tuple[float, int, int]] = [
+                        (float(ts.time), int(ts.numerator), int(ts.denominator))
+                        for ts in pm.time_signature_changes
+                    ]
 
-# TS が無い場合は --chords-ts のヒントを使用、無ければデフォルト (ts_num/ts_den)
-if not meter_map_cli:
-    chord_ts_hints = _parse_chords_ts_hint(getattr(args, "chords_ts", None)) if "chords_ts" in args.__dict__ else None
-    if chord_ts_hints:
-        meter_map_cli = chord_ts_hints
-    else:
-        meter_map_cli = [(0.0, ts_num, ts_den)]
+                    # TS が無い場合は --chords-ts のヒントを使用、無ければデフォルト (ts_num/ts_den)
+                    if not meter_map_cli:
+                        chord_ts_hints = (
+                            _parse_chords_ts_hint(getattr(args, "chords_ts", None))
+                            if "chords_ts" in args.__dict__
+                            else None
+                        )
+                        if chord_ts_hints:
+                            meter_map_cli = chord_ts_hints
+                        else:
+                            meter_map_cli = [(0.0, ts_num, ts_den)]
 
-# bar_times には downbeats（あれば）を渡す
-downbeats_chord = []
-try:
-    downbeats_chord = list(pm.get_downbeats())
-except Exception:
-    downbeats_chord = []
+                    # bar_times には downbeats（あれば）を渡す
+                    downbeats_chord = []
+                    try:
+                        downbeats_chord = list(pm.get_downbeats())
+                    except Exception:
+                        downbeats_chord = []
 
-# read_chords_csv は簡易版シグネチャに合わせる
-chords = read_chords_csv(
-    chord_path,
-    bar_times=downbeats_chord if downbeats_chord else None,
-    meter_map=meter_map_cli,
-    bpm_hint=bpm,
-    default_ts=(ts_num, ts_den),
-)
+                    # read_chords_csv は簡易版シグネチャに合わせる
+                    chords = read_chords_csv(
+                        chord_path,
+                        bar_times=downbeats_chord if downbeats_chord else None,
+                        meter_map=meter_map_cli,
+                        bpm_hint=bpm,
+                        default_ts=(ts_num, ts_den),
+                    )
 
             else:
                 raise SystemExit(f"--chords path not found or unsupported inline spec: {args.chords}")

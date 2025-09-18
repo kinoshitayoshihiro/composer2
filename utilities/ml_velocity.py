@@ -211,9 +211,14 @@ class MLVelocityModel(nn.Module if torch is not None else object):
                     sorted(unexpected) if isinstance(unexpected, (list, tuple)) else list(unexpected)
                 )
                 if miss_list or unexp_list:
-                    logging.warning(
-                        {"missing_keys": miss_list, "unexpected_keys": unexp_list}
-                    )
+                    payload = {"missing_keys": miss_list, "unexpected_keys": unexp_list}
+                    if not miss_list and unexp_list == ["pos_enc.pe"]:
+                        logging.info(
+                            "state_dict extra keys ignored for compatibility: %s",
+                            unexp_list,
+                        )
+                    else:
+                        logging.warning(payload)
 
                 class PhraseDUVModule(nn.Module):
                     def __init__(self, inner: nn.Module, *, meta: dict[str, Any]) -> None:

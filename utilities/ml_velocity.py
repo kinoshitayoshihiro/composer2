@@ -150,25 +150,59 @@ class MLVelocityModel(nn.Module if torch is not None else object):
                     raise ValueError("state_dict missing pitch_emb/pos_emb tensors")
                 d_model = _get_int("d_model", int(pitch_emb.shape[1] * 4))
                 max_len = _get_int("max_len", int(pos_emb.shape[0]))
-                vel_bucket_size = _get_int(
-                    "vel_bucket_size",
-                    int(state_dict.get("head_vel_cls.weight", torch.empty(0, d_model)).shape[0])
-                    if "head_vel_cls.weight" in state_dict
-                    else 0,
-                )
-                dur_bucket_size = _get_int(
-                    "dur_bucket_size",
-                    int(state_dict.get("head_dur_cls.weight", torch.empty(0, d_model)).shape[0])
-                    if "head_dur_cls.weight" in state_dict
-                    else 0,
-                )
-                duv_mode = str(meta.get("duv_mode", "reg"))
 
+                def _rows(key: str) -> int:
+                    tensor = state_dict.get(key)
+                    try:
+                        return int(tensor.shape[0]) if tensor is not None else 0
+                    except Exception:
+                        return 0
+
+                def _has_param(key: str) -> bool:
+                    tensor = state_dict.get(key)
+                    if tensor is None:
+                        return False
+                    try:
+                        return int(tensor.numel()) > 0  # type: ignore[call-arg]
+                    except Exception:
+                        return False
+
+                section_vocab_size = _get_int("section_vocab_size", _rows("section_emb.weight"))
+                mood_vocab_size = _get_int("mood_vocab_size", _rows("mood_emb.weight"))
+                vel_bucket_size = _get_int("vel_bucket_size", _rows("vel_bucket_emb.weight"))
+                dur_bucket_size = _get_int("dur_bucket_size", _rows("dur_bucket_emb.weight"))
+                vel_bins = _get_int("vel_bins", _rows("head_vel_cls.weight"))
+                dur_bins = _get_int("dur_bins", _rows("head_dur_cls.weight"))
+
+                has_reg_head = _has_param("head_vel_reg.weight") or _has_param(
+                    "head_dur_reg.weight"
+                )
+                has_cls_head = vel_bins > 0 or dur_bins > 0
+                duv_mode_meta = str(meta.get("duv_mode", "")).strip()
+                if duv_mode_meta in {"reg", "cls", "both"}:
+                    duv_mode = duv_mode_meta
+                elif has_reg_head and has_cls_head:
+                    duv_mode = "both"
+                elif has_cls_head:
+                    duv_mode = "cls"
+                else:
+                    duv_mode = "reg"
+
+                use_bar_beat = bool(
+                    meta.get("use_bar_beat")
+                    if isinstance(meta.get("use_bar_beat"), bool)
+                    else _has_param("barpos_proj.weight") and _has_param("beatpos_proj.weight")
+                )
                 core = PhraseTransformer(
                     d_model=d_model,
                     max_len=max_len,
+                    section_vocab_size=section_vocab_size,
+                    mood_vocab_size=mood_vocab_size,
                     vel_bucket_size=vel_bucket_size,
                     dur_bucket_size=dur_bucket_size,
+                    vel_bins=vel_bins,
+                    dur_bins=dur_bins,
+                    use_bar_beat=use_bar_beat,
                     duv_mode=duv_mode,
                 )
                 missing, unexpected = core.load_state_dict(state_dict, strict=False)

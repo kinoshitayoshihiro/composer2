@@ -1803,13 +1803,173 @@ def summarize_guide_midi(
     return note_map, cc_events, units, rest_list, onset_list, sections
 
 
+def _normalize_sections(
+    sections: Optional[List[Any]],
+    bar_count: Optional[int],
+    default_tag: str,
+    *,
+    stats: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Normalise mixed section definitions into ``{start_bar, end_bar, tag}`` dicts.
+
+    ``sections`` may be a list of dictionaries (``start_bar``/``end_bar``/``tag``) or a
+    list of strings representing section labels per bar. ``bar_count`` provides the
+    global bar span so the final section extends to the song end. When entries need
+    adjustments (e.g., negative bars, overlaps, or missing ``end_bar``), the fixer
+    clamps them to sensible defaults and records human-readable warnings. When
+    ``stats`` is supplied the raw and normalised payloads plus any warnings are
+    recorded for debug output.
+    """
+
+    original = list(sections) if isinstance(sections, list) else []
+    verbose = bool(stats.get("_section_verbose")) if stats else False
+    if stats is not None:
+        stats["sections_input"] = list(original)
+    if verbose and original:
+        logging.info("section normalize input=%s", original)
+
+    if not isinstance(sections, list) or not sections:
+        if stats is not None:
+            stats["sections_norm"] = []
+        return []
+
+    warnings: List[Dict[str, Any]] = []
+
+    def _coerce_bar(value: Any, fallback: int) -> int:
+        try:
+            bar = int(value)
+        except (TypeError, ValueError):
+            bar = fallback
+            warnings.append({"kind": "section_cast", "msg": "invalid bar coerced", "at": fallback})
+        if bar < 0:
+            warnings.append({"kind": "section_clamp", "msg": "negative bar clamped", "at": fallback})
+            bar = 0
+        return bar
+
+    total_bars: Optional[int]
+    try:
+        total_bars = max(0, int(bar_count)) if bar_count is not None else None
+    except (TypeError, ValueError):
+        total_bars = None
+
+    prepared: List[Dict[str, Any]] = []
+    for idx, raw in enumerate(sections):
+        if isinstance(raw, str):
+            start_bar = _coerce_bar(idx, idx)
+            tag = raw
+            end_val: Optional[int] = None
+        elif isinstance(raw, dict):
+            start_bar = _coerce_bar(raw.get("start_bar", idx), idx)
+            tag = raw.get("tag") or raw.get("name") or raw.get("label") or ""
+            end = raw.get("end_bar")
+            end_val = None
+            if end is not None:
+                end_val = _coerce_bar(end, start_bar + 1)
+        else:
+            warnings.append({"kind": "section_type", "msg": "unsupported section", "at": idx})
+            continue
+
+        if total_bars is not None and start_bar >= total_bars:
+            warnings.append({"kind": "section_drop", "msg": "start beyond song", "at": idx})
+            continue
+
+        prepared.append(
+            {
+                "start_bar": start_bar,
+                "end_bar": end_val,
+                "tag": str(tag).strip(),
+                "_idx": idx,
+            }
+        )
+
+    prepared.sort(key=lambda item: (item["start_bar"], item["_idx"]))
+
+    result: List[Dict[str, Any]] = []
+    prev_end = 0
+    for pos, item in enumerate(prepared):
+        start = item["start_bar"]
+        if start < prev_end:
+            warnings.append({"kind": "section_adjust", "msg": "start raised", "at": item["_idx"]})
+            start = prev_end
+
+        next_hint: Optional[int]
+        if pos + 1 < len(prepared):
+            next_hint = prepared[pos + 1]["start_bar"]
+        else:
+            next_hint = total_bars
+
+        end_val = item["end_bar"]
+        if end_val is None:
+            candidate = next_hint if next_hint is not None else start + 1
+            end_val = max(start + 1, candidate if candidate is not None else start + 1)
+        else:
+            if total_bars is not None and end_val > total_bars:
+                warnings.append({"kind": "section_clamp", "msg": "end clipped", "at": item["_idx"]})
+                end_val = total_bars
+
+        if total_bars is not None and end_val > total_bars:
+            warnings.append({"kind": "section_clamp", "msg": "end clipped", "at": item["_idx"]})
+            end_val = total_bars
+
+        if end_val <= start:
+            warnings.append({"kind": "section_drop", "msg": "empty span", "at": item["_idx"]})
+            prev_end = start
+            continue
+
+        tag = item["tag"] or default_tag
+        result.append({"start_bar": start, "end_bar": end_val, "tag": tag})
+        prev_end = end_val
+
+    if stats is not None:
+        stats["sections_norm"] = [dict(sec) for sec in result]
+        if warnings:
+            warn_list = stats.setdefault("warnings", [])
+            warn_list.extend(warnings)
+    if warnings:
+        logging.warning("sections normalized with adjustments: %s", warnings)
+    if verbose and (original or result):
+        logging.info("section normalize output=%s", result)
+
+    return result
+
+
+def _sections_to_labels(
+    sections: List[Dict[str, Any]],
+    bar_count: int,
+    default_tag: str,
+) -> List[str]:
+    labels = [default_tag] * max(0, bar_count)
+    if not sections or bar_count <= 0:
+        return labels
+    limit = len(labels)
+    for sec in sections:
+        try:
+            start = int(sec.get("start_bar", 0))
+        except Exception:
+            start = 0
+        try:
+            end = int(sec.get("end_bar", start + 1))
+        except Exception:
+            end = start + 1
+        tag_val = sec.get("tag", default_tag)
+        tag = str(tag_val).strip() if tag_val is not None else ""
+        if not tag:
+            tag = default_tag
+        start = max(0, min(bar_count, start))
+        end = max(start, min(bar_count, end))
+        for idx in range(start, end):
+            if idx < limit:
+                labels[idx] = tag
+    return labels
+
+
 def insert_style_fill(
     pm_out: "pretty_midi.PrettyMIDI",
     mode: str,
     units: List[Tuple[float, float]],
     mapping: Dict,
     *,
-    sections: Optional[List[Dict]] = None,
+    sections: Optional[List[Any]] = None,
     rest_ratio_list: Optional[List[float]] = None,
     rest_th: float = 0.75,
     fill_length_beats: float = 0.25,
@@ -1817,6 +1977,8 @@ def insert_style_fill(
     min_gap_beats: float = 0.0,
     avoid_pitches: Optional[Set[int]] = None,
     filled_bars: Optional[List[int]] = None,
+    bar_count: Optional[int] = None,
+    section_default: str = "section",
 ) -> int:
     """Insert style fills based on mode."""
     phrase_inst = None
@@ -1878,61 +2040,194 @@ def insert_style_fill(
         span = beat_times[idx + 1] - beat_times[idx]
         return idx + (t - beat_times[idx]) / span
 
+    avoid_set: Set[int]
+    derived: Set[int] = set()
+    if avoid_pitches is None:
+        for key, val in mapping.items():
+            if "phrase_note" in key or "cycle_phrase_notes" in key:
+                if isinstance(val, int):
+                    derived.add(int(val))
+                elif isinstance(val, (list, tuple, set)):
+                    for item in val:
+                        if isinstance(item, int):
+                            derived.add(int(item))
+        avoid_set = derived
+    else:
+        avoid_set = {int(p) for p in avoid_pitches}
+    if avoid_pitches is None and avoid_set and pitch not in avoid_set:
+        avoid_overlap = {pitch}
+    else:
+        avoid_overlap = set(avoid_set)
+        avoid_overlap.add(pitch)
+
     count = 0
-    used: set = set()
-    if mode == "section_end" and sections:
-        for sec in sections:
+    used: Set[int] = set()
+    filled_tracker: Set[int] = set(filled_bars or [])
+    inserted_spans: List[Tuple[float, float, float]] = []
+
+    max_bar_idx = len(units) - 1
+    unit_starts = [start for start, _ in units]
+    bar_note_index: Dict[int, List[Tuple[int, float, float, float, float]]] = {}
+    for note_obj in phrase_inst.notes:
+        try:
+            note_start = float(getattr(note_obj, "start", 0.0))
+            note_end = float(getattr(note_obj, "end", note_start))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(note_start):
+            continue
+        if not math.isfinite(note_end):
+            note_end = note_start
+        note_pitch = int(getattr(note_obj, "pitch", 0))
+        note_start_b = time_to_beat(note_start)
+        note_end_b = time_to_beat(note_end)
+        data = (note_pitch, note_start, note_end, note_start_b, note_end_b)
+        if max_bar_idx < 0:
+            continue
+        start_idx = bisect.bisect_right(unit_starts, note_start) - 1
+        if start_idx < 0:
+            start_idx = 0
+        for bar in range(start_idx, max_bar_idx + 1):
+            unit_start, unit_end = units[bar]
+            if note_end <= unit_start - EPS:
+                break
+            if note_start < unit_end + EPS and note_end > unit_start - EPS:
+                bar_note_index.setdefault(bar, []).append(data)
+            if note_end <= unit_end + EPS:
+                break
+
+    def iter_notes_for_bar(bar_idx: int) -> Iterable[Tuple[int, float, float, float, float]]:
+        if not bar_note_index:
+            return []  # type: ignore[return-value]
+        seen: Set[Tuple[int, float, float]] = set()
+        collected: List[Tuple[int, float, float, float, float]] = []
+        for neighbor in (bar_idx - 1, bar_idx, bar_idx + 1):
+            if neighbor < 0:
+                continue
+            if max_bar_idx >= 0 and neighbor > max_bar_idx:
+                continue
+            for entry in bar_note_index.get(neighbor, []):
+                key = (entry[0], entry[1], entry[2])
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(entry)
+        return collected
+    if mode == "section_end":
+        total_bars = bar_count if bar_count is not None else len(units)
+        norm_sections = _normalize_sections(sections or [], total_bars, section_default)
+        if not norm_sections:
+            return 0
+        for sec in norm_sections:
+            if not isinstance(sec, dict):
+                # Gracefully ignore malformed section entries that slipped through
+                # normalisation (e.g. raw label strings from legacy stats dumps).
+                continue
             idx = int(sec.get("end_bar", 0)) - 1
-            if 0 <= idx < len(units) and idx not in used:
-                start = units[idx][0]
-                start_b = time_to_beat(start)
-                length = beat_to_time(start_b + fill_length_beats) - start
+            if idx < 0 or idx >= len(units):
+                continue
+            if idx in used or idx in filled_tracker:
+                continue
+            start = units[idx][0]
+            start_b = time_to_beat(start)
+            length = beat_to_time(start_b + fill_length_beats) - start
+            if length <= 0.0:
+                continue
+            candidate_pitches: List[int] = []
+            for delta in (0, 1, -1):
+                cand = pitch + delta
+                if delta != 0 and cand == pitch:
+                    continue
+                if cand in candidate_pitches:
+                    continue
+                if cand < 0 or cand > 127:
+                    continue
+                if cand in avoid_set and (delta != 0 or avoid_pitches is not None):
+                    continue
+                candidate_pitches.append(cand)
+            chosen_pitch: Optional[int] = None
+            for cand in candidate_pitches:
                 conflict = False
-                if avoid_pitches or min_gap_beats > 0.0:
-                    for n in phrase_inst.notes:
-                        if n.pitch == pitch or (avoid_pitches and n.pitch in avoid_pitches):
-                            if start < n.end + EPS and n.start < start + length - EPS:
-                                conflict = True
-                                break
-                            gap = start_b - time_to_beat(n.start)
-                            if gap < min_gap_beats:
-                                conflict = True
-                                break
+                for (
+                    note_pitch,
+                    note_start,
+                    note_end,
+                    note_start_b,
+                    note_end_b,
+                ) in iter_notes_for_bar(idx):
+                    overlaps = start < note_end + EPS and note_start < start + length - EPS
+                    if overlaps and note_pitch == cand:
+                        conflict = True
+                        break
+                    if min_gap_beats > 0.0 and start >= note_start:
+                        gap = start_b - note_end_b
+                        if gap < min_gap_beats and cand in avoid_overlap:
+                            conflict = True
+                            break
                 if conflict:
                     continue
-                phrase_inst.notes.append(
-                    pretty_midi.Note(
-                        velocity=int(mapping.get("phrase_velocity", 96)),
-                        pitch=pitch,
-                        start=start,
-                        end=start + length,
-                    )
+                for st_t, en_t, st_b in inserted_spans:
+                    if start < en_t + EPS and st_t < start + length - EPS:
+                        conflict = True
+                        break
+                    if min_gap_beats > 0.0 and start_b - st_b < min_gap_beats:
+                        conflict = True
+                        break
+                if conflict:
+                    continue
+                chosen_pitch = cand
+                break
+            if chosen_pitch is None:
+                continue
+            phrase_inst.notes.append(
+                pretty_midi.Note(
+                    velocity=int(mapping.get("phrase_velocity", 96)),
+                    pitch=int(chosen_pitch),
+                    start=start,
+                    end=start + length,
                 )
-                used.add(idx)
-                count += 1
-                if filled_bars is not None:
-                    filled_bars.append(idx)
+            )
+            used.add(idx)
+            filled_tracker.add(idx)
+            inserted_spans.append((start, start + length, start_b))
+            count += 1
+            if filled_bars is not None:
+                filled_bars.append(idx)
+            if stats_ref is not None:
+                fills = stats_ref.setdefault("fills", [])  # type: ignore[assignment]
+                fills.append(
+                    {"bar": idx, "pitch": int(chosen_pitch), "len_beats": float(fill_length_beats)}
+                )
     elif mode == "long_rest" and rest_ratio_list:
         i = 0
         n = len(rest_ratio_list)
         while i < n:
             if rest_ratio_list[i] >= rest_th:
                 idx = i - 1 if i > 0 else 0
-                if idx not in used:
+                if idx not in used and idx not in filled_tracker:
                     start = units[idx][0]
                     start_b = time_to_beat(start)
                     length = beat_to_time(start_b + fill_length_beats) - start
                     conflict = False
-                    if avoid_pitches or min_gap_beats > 0.0:
-                        for n in phrase_inst.notes:
-                            if n.pitch == pitch or (avoid_pitches and n.pitch in avoid_pitches):
-                                if start < n.end + EPS and n.start < start + length - EPS:
+                    for note_obj in phrase_inst.notes:
+                        note_pitch = int(getattr(note_obj, "pitch", 0))
+                        if note_pitch in avoid_overlap:
+                            if start < note_obj.end + EPS and note_obj.start < start + length - EPS:
+                                conflict = True
+                                break
+                            if min_gap_beats > 0.0:
+                                gap = start_b - time_to_beat(note_obj.end)
+                                if gap < min_gap_beats and start >= note_obj.start:
                                     conflict = True
                                     break
-                                gap = start_b - time_to_beat(n.start)
-                                if gap < min_gap_beats:
-                                    conflict = True
-                                    break
+                    if not conflict:
+                        for st_t, en_t, st_b in inserted_spans:
+                            if start < en_t + EPS and st_t < start + length - EPS:
+                                conflict = True
+                                break
+                            if min_gap_beats > 0.0 and start_b - st_b < min_gap_beats:
+                                conflict = True
+                                break
                     if conflict:
                         pass
                     else:
@@ -1945,9 +2240,20 @@ def insert_style_fill(
                             )
                         )
                         used.add(idx)
+                        filled_tracker.add(idx)
+                        inserted_spans.append((start, start + length, start_b))
                         count += 1
                         if filled_bars is not None:
                             filled_bars.append(idx)
+                        if stats_ref is not None:
+                            fills = stats_ref.setdefault("fills", [])  # type: ignore[assignment]
+                            fills.append(
+                                {
+                                    "bar": idx,
+                                    "pitch": int(pitch),
+                                    "len_beats": float(fill_length_beats),
+                                }
+                            )
                 while i < n and rest_ratio_list[i] >= rest_th:
                     i += 1
                 continue
@@ -2081,6 +2387,11 @@ def finalize_phrase_track(
     """
 
     stats_enabled = stats is not None
+    if stats_enabled:
+        stats.setdefault("bar_phrase_notes", {})
+        stats.setdefault("bar_velocities", {})
+        if downbeats and "downbeats" not in stats:
+            stats["downbeats"] = list(downbeats)
     fill_count = stats.get("fill_count", 0) if stats_enabled else 0
     fill_count += _apply_fills(
         phrase_inst,
@@ -2121,10 +2432,32 @@ def finalize_phrase_track(
         chords,
     )
 
+    bar_count = max(0, len(downbeats) - 1) if downbeats else 0
+    sections_candidate: Optional[List[Any]] = None
+    for candidate in (
+        section_overrides,
+        mapping.get("sections"),
+        stats.get("sections") if stats_enabled else None,
+        section_labels,
+    ):
+        if isinstance(candidate, list):
+            sections_candidate = candidate
+            break
+    normalized_sections = _normalize_sections(
+        sections_candidate or [],
+        bar_count,
+        section_default,
+        stats=stats if stats_enabled else None,
+    )
+    section_labels_by_bar = _sections_to_labels(normalized_sections, bar_count, section_default)
+    if stats_enabled:
+        stats["sections"] = section_labels_by_bar
+        stats["bar_count"] = max(bar_count, int(stats.get("bar_count", bar_count)))
+
     _write_markers(
         out_pm,
         write_markers,
-        section_labels,
+        normalized_sections,
         section_default,
         downbeats,
         marker_encoding,
@@ -2142,13 +2475,12 @@ def finalize_phrase_track(
                     raise SystemExit("fill-avoid-pitches cannot include 'rest'")
                 avoid.add(val)
         filled_bars = stats.setdefault("fill_bars", []) if stats_enabled else None
-        sections = stats.get("sections") if stats_enabled else None
         inserted = insert_style_fill(
             out_pm,
             auto_fill_mode,
             guide_units_time,
             mapping,
-            sections=sections,
+            sections=normalized_sections,
             rest_ratio_list=rest_ratios,
             rest_th=getattr(args, "guide_rest_silence_th", None) or 0.75,
             fill_length_beats=getattr(args, "fill_length_beats", 0.25),
@@ -2156,6 +2488,8 @@ def finalize_phrase_track(
             min_gap_beats=getattr(args, "fill_min_gap_beats", 0.0),
             avoid_pitches=avoid,
             filled_bars=filled_bars,
+            bar_count=bar_count,
+            section_default=section_default,
         )
         fill_count += inserted
 
@@ -2577,9 +2911,19 @@ def _apply_quantize_safe(
 
 
 def _encode_marker_label(label: str, mode: str) -> str:
-    label_up = label.upper()
+    if mode == "raw":
+        return label
+    normalized = unicodedata.normalize("NFC", label)
+    label_up = normalized.upper()
     if mode == "ascii":
-        return label_up.encode("ascii", "ignore").decode("ascii")
+        encoded_chars: List[str] = []
+        for ch in label_up:
+            code = ord(ch)
+            if 32 <= code < 127:
+                encoded_chars.append(ch)
+            else:
+                encoded_chars.append("?")
+        return "".join(encoded_chars)
     if mode == "escape":
         encoded: List[str] = []
         for ch in label_up:
@@ -2595,18 +2939,26 @@ def _encode_marker_label(label: str, mode: str) -> str:
 def _write_markers(
     out_pm: "pretty_midi.PrettyMIDI",
     write_markers: bool,
-    section_labels: Optional[List[str]],
+    sections: Optional[List[Dict[str, Any]]],
     section_default: str,
     downbeats: Optional[List[float]],
     marker_encoding: str,
 ) -> None:
     """Emit section markers when requested via CLI flags."""
 
-    if not write_markers or section_labels is None or downbeats is None:
+    if not write_markers or downbeats is None:
         return
+    mode = (marker_encoding or "raw").strip().lower()
+    if mode not in {"raw", "ascii", "escape"}:
+        raise SystemExit(f"unknown marker-encoding: {marker_encoding}")
+    bar_count = max(0, len(downbeats) - 1)
+    labels = _sections_to_labels(sections or [], bar_count, section_default)
     for i, t in enumerate(downbeats):
-        label = section_labels[i] if i < len(section_labels) else section_default
-        encoded = _encode_marker_label(label, marker_encoding)
+        if labels:
+            label = labels[i] if i < len(labels) else labels[-1]
+        else:
+            label = section_default
+        encoded = _encode_marker_label(label, mode)
         try:
             out_pm.markers.append(pretty_midi.Marker(encoded, t))
         except Exception:
@@ -3903,7 +4255,13 @@ def read_chords_csv(
         try:
             root_pc, quality = parse_chord_symbol(symbol)
         except ValueError as exc:
-            raise SystemExit(str(exc))
+            cleaned = symbol.replace("\n", " ").replace("\r", " ")
+            excerpt = cleaned
+            if len(excerpt) > 24:
+                excerpt = excerpt[:21] + "..."
+            raise SystemExit(
+                f"{path}: token {i} ('{excerpt}') invalid: {exc}"
+            ) from exc
         span = ChordSpan(start_sec, end_sec, root_pc, quality)
         setattr(span, "symbol", symbol)
         setattr(span, "root_name", symbol.split(":", 1)[0])
@@ -4316,10 +4674,10 @@ def build_sparkle_midi(
             stats["cycle_disabled"] = True
 
     if stats is not None:
-        stats.setdefault("bar_triggers", {})
-        stats.setdefault("bar_pulse_grid", {})
-        stats.setdefault("bar_pulses", stats.get("bar_pulse_grid", {}))
+        legacy_grid = bool(stats.get("_legacy_bar_pulses_grid", False))
+        stats.setdefault("warnings", [])
         stats["schema_version"] = "1.1"
+        stats["schema"] = "1.1"
         stats["downbeats"] = downbeats
         # Dict[bar_index, List[(beat_position_in_beats, absolute_time_seconds)]]
         # capturing the meter-derived reference grid per bar. Stored as floats to
@@ -4333,15 +4691,26 @@ def build_sparkle_midi(
         else:
             bar_triggers_obj = {}
         stats["bar_triggers"] = bar_triggers_obj
+        stats["bar_trigger_pulses"] = bar_triggers_obj
+        stats["bar_trigger_pulses_compat"] = bar_triggers_obj
+
         bar_pulse_grid_obj = stats.get("bar_pulse_grid")
         if isinstance(bar_pulse_grid_obj, dict):
             bar_pulse_grid_obj.clear()
         else:
             bar_pulse_grid_obj = {}
         stats["bar_pulse_grid"] = bar_pulse_grid_obj
-        stats["bar_pulses"] = bar_pulse_grid_obj
-        stats["bar_trigger_pulses"] = bar_triggers_obj
-        stats["bar_trigger_pulses_compat"] = bar_triggers_obj
+
+        if legacy_grid:
+            bar_pulses_obj = stats.get("bar_pulses")
+            if isinstance(bar_pulses_obj, dict):
+                bar_pulses_obj.clear()
+            else:
+                bar_pulses_obj = {}
+            stats["bar_pulses"] = bar_pulses_obj
+        else:
+            if "bar_pulses" in stats:
+                stats.pop("bar_pulses")
         stats["bar_phrase_notes"] = {}
         stats["bar_velocities"] = {}
         stats["triads"] = []
@@ -4571,20 +4940,27 @@ def build_sparkle_midi(
                             stats["fill_bars"].append(tgt)
                     break
         if stats is not None and bar_sources is not None:
+            labels_for_reason = section_labels if section_labels else []
             for i, pn in enumerate(phrase_plan):
-                stats["bar_reason"][i] = {"source": bar_sources[i], "note": pn}
+                src = bar_sources[i]
+                if labels_for_reason:
+                    tag = labels_for_reason[i] if i < len(labels_for_reason) else labels_for_reason[-1]
+                    if tag:
+                        prefix = f"section:{tag}"
+                        src = f"{prefix}|{src}" if src else prefix
+                stats["bar_reason"][i] = {"source": src, "note": pn}
             stats["fill_sources"].update(fill_src)
 
     # Precompute pulse timestamps per bar (meter-derived grid; swing shifts timing only)
     if stats is not None:
         legacy_pulses_grid = bool(stats.get("_legacy_bar_pulses_grid", False))
-        bar_pulses_dict = stats.setdefault("bar_pulses", {})
         bar_grid = stats.setdefault("bar_pulse_grid", {})
         bar_triggers = stats.setdefault("bar_triggers", {})
-        pulses_share_grid = bar_pulses_dict is bar_grid
-        bar_pulses_dict.clear()
+        bar_pulses_dict = stats.get("bar_pulses") if legacy_pulses_grid else None
         bar_grid.clear()
         bar_triggers.clear()
+        if bar_pulses_dict is not None:
+            bar_pulses_dict.clear()
         for i, (start, next_start) in enumerate(zip(downbeats[:-1], downbeats[1:])):
             num, den = get_meter_at(meter_map, start, times=meter_times)
             sb = time_to_beat(start)
@@ -4595,7 +4971,7 @@ def build_sparkle_midi(
                 pulse = (float(sb), float(beat_to_time(sb)))
                 grid_list = [pulse]
                 bar_grid[i] = grid_list
-                if not pulses_share_grid:
+                if bar_pulses_dict is not None:
                     bar_pulses_dict[i] = list(grid_list)
                 continue
             step = bar_beats / total
@@ -4623,7 +4999,7 @@ def build_sparkle_midi(
                 grid = [(float(sb), float(beat_to_time(sb)))]
             grid_list = list(grid)
             bar_grid[i] = grid_list
-            if not pulses_share_grid:
+            if bar_pulses_dict is not None:
                 bar_pulses_dict[i] = list(grid_list)
 
     # Velocity curve helper
@@ -5435,7 +5811,14 @@ def main():
 
     # Sections & profiles
     ap.add_argument(
-        "--sections", type=str, default=None, help="JSON list of sections (start_bar,end_bar,tag)"
+        "--sections",
+        type=str,
+        default=None,
+        help=(
+            "Section layout JSON: label lists (e.g. '[\"A\",\"B\"]') or "
+            "dict entries with start/end/tag (e.g. '[{\"start_bar\":0,\"tag\":\"A\"}]'). "
+            "Priority: CLI > mapping > guide. Providing sections helps --auto-fill section_end."
+        ),
     )
     ap.add_argument(
         "--section-profiles", type=str, default=None, help="YAML file of section profiles"
@@ -6049,6 +6432,7 @@ def main():
 
     if stats_enabled:
         stats["_legacy_bar_pulses_grid"] = legacy_bar_pulses_grid
+        stats["_section_verbose"] = bool(args.section_verbose)
 
     if args.debug_json:
         Path(args.debug_json).write_text(json.dumps(mapping, indent=2))
@@ -6534,7 +6918,7 @@ def main():
             if inst.name == PHRASE_INST_NAME:
                 phrase_inst = inst
                 break
-        bar_pulses = stats.get("bar_pulses", {})
+        bar_pulses = stats.get("bar_pulses", {}) or {}
         B = len(bar_pulses)
         P = sum(len(p) for p in bar_pulses.values())
         T = len(phrase_inst.notes) if phrase_inst else 0
@@ -6569,7 +6953,7 @@ def main():
         for i in range(min(4, stats.get("bar_count", 0))):
             pn = stats["bar_phrase_notes"].get(i, mapping.get("phrase_note"))
             prev = stats["bar_phrase_notes"].get(i - 1) if i > 0 else None
-            pulses = stats["bar_pulses"].get(i, [])
+            pulses = bar_pulses.get(i, [])
             vels = stats["bar_velocities"].get(i, [])
             if str(mapping.get("phrase_hold")) != "off" and phrase_inst is not None:
                 bar_start = stats["downbeats"][i]
@@ -6609,9 +6993,9 @@ def main():
             logging.info("rest_silence=%s bars", stats.get("rest_silence"))
         if stats.get("damp_stats"):
             logging.info("damp_cc=%s", stats.get("damp_stats"))
-        if args.verbose:
-            for b_idx in sorted(stats["bar_pulses"].keys()):
-                logging.info("bar %d pulses %s", b_idx, stats["bar_pulses"][b_idx])
+        if args.verbose and bar_pulses:
+            for b_idx in sorted(bar_pulses.keys()):
+                logging.info("bar %d pulses %s", b_idx, bar_pulses[b_idx])
         return
 
     out_pm.write(args.out)

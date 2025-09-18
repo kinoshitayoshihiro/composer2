@@ -1226,12 +1226,22 @@ SECTIONS_SCHEMA: Dict[str, Any] = {
 
 def parse_json_arg(name: str, raw: str, schema: Dict[str, Any]) -> Any:
     label = name if name.startswith("--") else f"--{name}"
+    errors: List[str] = []
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise SystemExit(
-            f"{label} expects JSON ({exc.msg} at line {exc.lineno} column {exc.colno})"
-        ) from exc
+        errors.append(f"{exc.msg} at line {exc.lineno} column {exc.colno}")
+        normalized = raw.replace("'", '"')
+        if normalized != raw:
+            try:
+                data = json.loads(normalized)
+            except json.JSONDecodeError as exc_norm:
+                errors.append(
+                    f"after quote normalization: {exc_norm.msg} at line {exc_norm.lineno} column {exc_norm.colno}"
+                )
+                raise SystemExit(f"{label} expects JSON ({'; '.join(errors)})") from exc_norm
+        else:
+            raise SystemExit(f"{label} expects JSON ({errors[0]})") from exc
     except Exception as exc:
         raise SystemExit(f"{label} expects JSON ({exc})") from exc
 
@@ -1803,164 +1813,160 @@ def summarize_guide_midi(
     return note_map, cc_events, units, rest_list, onset_list, sections
 
 
-def _normalize_sections(
-    sections: Optional[List[Any]],
-    bar_count: Optional[int],
-    default_tag: str,
+def normalize_sections(
+    input_sections: Optional[Sequence[Any]],
     *,
-    stats: Optional[Dict[str, Any]] = None,
-) -> List[Dict[str, Any]]:
-    """Normalise mixed section definitions into ``{start_bar, end_bar, tag}`` dicts.
+    units: Union[int, Sequence[Any], None],
+    default_tag: str = "section",
+    fill_ends: bool = True,
+    clamp: bool = True,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Normalise section specs into ordered ranges and per-bar labels."""
 
-    ``sections`` may be a list of dictionaries (``start_bar``/``end_bar``/``tag``) or a
-    list of strings representing section labels per bar. ``bar_count`` provides the
-    global bar span so the final section extends to the song end. When entries need
-    adjustments (e.g., negative bars, overlaps, or missing ``end_bar``), the fixer
-    clamps them to sensible defaults and records human-readable warnings. When
-    ``stats`` is supplied the raw and normalised payloads plus any warnings are
-    recorded for debug output.
-    """
+    if isinstance(input_sections, dict):  # pragma: no cover - defensive
+        sections_iterable: Sequence[Any] = [input_sections]
+    else:
+        sections_iterable = input_sections or []
 
-    original = list(sections) if isinstance(sections, list) else []
-    verbose = bool(stats.get("_section_verbose")) if stats else False
-    if stats is not None:
-        stats["sections_input"] = list(original)
-    if verbose and original:
-        logging.info("section normalize input=%s", original)
+    try:
+        unit_count = max(0, int(units)) if isinstance(units, (int, float)) else len(units)  # type: ignore[arg-type]
+    except TypeError:
+        unit_count = 0
+    except ValueError:
+        unit_count = 0
 
-    if not isinstance(sections, list) or not sections:
-        if stats is not None:
-            stats["sections_norm"] = []
-        return []
-
-    warnings: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    did_fill = False
+    did_clamp = False
+    did_overlap = False
+    did_clamp_local = [False]
 
     def _coerce_bar(value: Any, fallback: int) -> int:
         try:
             bar = int(value)
         except (TypeError, ValueError):
             bar = fallback
-            warnings.append({"kind": "section_cast", "msg": "invalid bar coerced", "at": fallback})
-        if bar < 0:
-            warnings.append({"kind": "section_clamp", "msg": "negative bar clamped", "at": fallback})
+            warnings.append("coerced non-integer start/end")
+        if clamp and bar < 0:
             bar = 0
+            did_clamp_local[0] = True
         return bar
 
-    total_bars: Optional[int]
-    try:
-        total_bars = max(0, int(bar_count)) if bar_count is not None else None
-    except (TypeError, ValueError):
-        total_bars = None
-
     prepared: List[Dict[str, Any]] = []
-    for idx, raw in enumerate(sections):
+    for idx, raw in enumerate(sections_iterable):
         if isinstance(raw, str):
             start_bar = _coerce_bar(idx, idx)
             tag = raw
             end_val: Optional[int] = None
+            explicit = True
         elif isinstance(raw, dict):
             start_bar = _coerce_bar(raw.get("start_bar", idx), idx)
-            tag = raw.get("tag") or raw.get("name") or raw.get("label") or ""
+            tag_val = raw.get("tag") or raw.get("name") or raw.get("label") or default_tag
+            tag = str(tag_val).strip() or default_tag
             end = raw.get("end_bar")
+            explicit = end is not None
             end_val = None
             if end is not None:
                 end_val = _coerce_bar(end, start_bar + 1)
         else:
-            warnings.append({"kind": "section_type", "msg": "unsupported section", "at": idx})
+            warnings.append("ignored unsupported section token")
             continue
 
-        if total_bars is not None and start_bar >= total_bars:
-            warnings.append({"kind": "section_drop", "msg": "start beyond song", "at": idx})
+        if clamp and unit_count and start_bar >= unit_count:
+            warnings.append("dropped section starting beyond unit span")
             continue
 
         prepared.append(
             {
                 "start_bar": start_bar,
                 "end_bar": end_val,
-                "tag": str(tag).strip(),
-                "_idx": idx,
+                "tag": tag,
+                "explicit_end": explicit,
+                "_order": idx,
             }
         )
 
-    prepared.sort(key=lambda item: (item["start_bar"], item["_idx"]))
+    if not prepared:
+        labels = [default_tag] * unit_count if unit_count > 0 else []
+        return [], labels
 
-    result: List[Dict[str, Any]] = []
+    prepared.sort(key=lambda item: (item["start_bar"], item["_order"]))
+
+    normalized: List[Dict[str, Any]] = []
     prev_end = 0
+    max_end = 0
     for pos, item in enumerate(prepared):
-        start = item["start_bar"]
-        if start < prev_end:
-            warnings.append({"kind": "section_adjust", "msg": "start raised", "at": item["_idx"]})
+        start = int(item["start_bar"])
+        if clamp and start < 0:
+            start = 0
+            did_clamp = True
+        if normalized and start < prev_end:
             start = prev_end
+            did_overlap = True
 
         next_hint: Optional[int]
         if pos + 1 < len(prepared):
-            next_hint = prepared[pos + 1]["start_bar"]
+            next_hint = int(prepared[pos + 1]["start_bar"])
         else:
-            next_hint = total_bars
+            next_hint = unit_count if unit_count else None
 
         end_val = item["end_bar"]
+        explicit = bool(item["explicit_end"])
         if end_val is None:
-            candidate = next_hint if next_hint is not None else start + 1
-            end_val = max(start + 1, candidate if candidate is not None else start + 1)
+            if fill_ends:
+                candidate = next_hint if next_hint is not None else start + 1
+                end_val = max(start + 1, candidate)
+                if not explicit:
+                    did_fill = True
+            else:
+                end_val = start + 1
         else:
-            if total_bars is not None and end_val > total_bars:
-                warnings.append({"kind": "section_clamp", "msg": "end clipped", "at": item["_idx"]})
-                end_val = total_bars
+            end_val = int(end_val)
 
-        if total_bars is not None and end_val > total_bars:
-            warnings.append({"kind": "section_clamp", "msg": "end clipped", "at": item["_idx"]})
-            end_val = total_bars
+        if clamp and unit_count and end_val > unit_count:
+            end_val = unit_count
+            did_clamp = True
 
         if end_val <= start:
-            warnings.append({"kind": "section_drop", "msg": "empty span", "at": item["_idx"]})
+            did_overlap = True
             prev_end = start
             continue
 
-        tag = item["tag"] or default_tag
-        result.append({"start_bar": start, "end_bar": end_val, "tag": tag})
+        tag = str(item["tag"]).strip() or default_tag
+        normalized.append(
+            {
+                "start_bar": start,
+                "end_bar": end_val,
+                "tag": tag,
+                "explicit_end": explicit,
+            }
+        )
         prev_end = end_val
+        max_end = max(max_end, end_val)
 
-    if stats is not None:
-        stats["sections_norm"] = [dict(sec) for sec in result]
-        if warnings:
-            warn_list = stats.setdefault("warnings", [])
-            warn_list.extend(warnings)
-    if warnings:
-        logging.warning("sections normalized with adjustments: %s", warnings)
-    if verbose and (original or result):
-        logging.info("section normalize output=%s", result)
-
-    return result
-
-
-def _sections_to_labels(
-    sections: List[Dict[str, Any]],
-    bar_count: int,
-    default_tag: str,
-) -> List[str]:
-    labels = [default_tag] * max(0, bar_count)
-    if not sections or bar_count <= 0:
-        return labels
-    limit = len(labels)
-    for sec in sections:
-        try:
-            start = int(sec.get("start_bar", 0))
-        except Exception:
-            start = 0
-        try:
-            end = int(sec.get("end_bar", start + 1))
-        except Exception:
-            end = start + 1
-        tag_val = sec.get("tag", default_tag)
-        tag = str(tag_val).strip() if tag_val is not None else ""
-        if not tag:
-            tag = default_tag
-        start = max(0, min(bar_count, start))
-        end = max(start, min(bar_count, end))
-        for idx in range(start, end):
-            if idx < limit:
+    final_span = unit_count if unit_count else max_end
+    labels = [default_tag] * max(0, final_span)
+    if final_span and normalized:
+        for sec in normalized:
+            start = max(0, min(final_span, int(sec.get("start_bar", 0))))
+            end = max(start, min(final_span, int(sec.get("end_bar", start + 1))))
+            tag = str(sec.get("tag", default_tag)).strip() or default_tag
+            for idx in range(start, end):
                 labels[idx] = tag
-    return labels
+
+    details: List[str] = []
+    if did_fill:
+        details.append("filled missing end bars")
+    if did_overlap:
+        details.append("resolved overlaps/empties")
+    if did_clamp or did_clamp_local[0]:
+        details.append("clamped to unit span")
+    if warnings:
+        details.extend(sorted(set(warnings)))
+    if details:
+        logging.warning("normalize_sections adjustments: %s", ", ".join(details))
+
+    return normalized, labels
 
 
 def insert_style_fill(
@@ -2113,12 +2119,21 @@ def insert_style_fill(
                 seen.add(key)
                 collected.append(entry)
         return collected
+    section_unit_count = bar_count if bar_count is not None else len(units)
+    section_layout: List[Dict[str, Any]] = []
+    if sections:
+        layout, _labels = normalize_sections(
+            sections,
+            units=section_unit_count,
+            default_tag=section_default,
+        )
+        if any(not isinstance(sec, dict) for sec in sections):
+            logging.info("sections(label) was provided; normalized to ranges")
+        section_layout = layout
     if mode == "section_end":
-        total_bars = bar_count if bar_count is not None else len(units)
-        norm_sections = _normalize_sections(sections or [], total_bars, section_default)
-        if not norm_sections:
+        if len(section_layout) <= 1:
             return 0
-        for sec in norm_sections:
+        for sec in section_layout:
             if not isinstance(sec, dict):
                 # Gracefully ignore malformed section entries that slipped through
                 # normalisation (e.g. raw label strings from legacy stats dumps).
@@ -2262,7 +2277,7 @@ def insert_style_fill(
     return count
 
 
-def _normalize_sections(
+def _normalize_sections_ranges(
     sections: Optional[Sequence[Any]],
     num_bars: Optional[int],
     *,
@@ -2270,112 +2285,40 @@ def _normalize_sections(
 ) -> List[Dict[str, Any]]:
     """Normalize section specs into sorted ranges."""
 
-    if not sections:
-        return []
-
-    normalized: List[Dict[str, Any]] = []
-    fixes: List[str] = []
-
-    def _emit(tag: Optional[str], start: int, end: Optional[int], explicit: bool) -> None:
-        tag_val = f"sec{len(normalized)}" if tag is None else str(tag)
-        normalized.append(
-            {
-                "start_bar": max(0, int(start)),
-                "end_bar": int(end) if end is not None else None,
-                "tag": tag_val,
-                "source": source,
-                "explicit_end": explicit,
-            }
-        )
-
-    if isinstance(sections, dict):  # pragma: no cover - defensive
-        sections = [sections]
-
-    seq = list(sections)
-    if seq and all(isinstance(item, dict) for item in seq):
-        for idx, raw in enumerate(seq):
-            if not isinstance(raw, dict):
-                continue
-            start_val = raw.get("start_bar")
-            if start_val is None:
-                start_val = idx if not normalized else normalized[-1]["end_bar"]
-            start = int(start_val) if start_val is not None else 0
-            end_val = raw.get("end_bar")
-            explicit = end_val is not None
-            end = int(end_val) if end_val is not None else None
-            _emit(raw.get("tag"), start, end, explicit)
-    else:
-        tags = [str(item) if item is not None else None for item in seq]
-        if not tags:
-            return []
-        start = 0
-        cur = tags[0]
-        for idx, tag in enumerate(tags[1:], 1):
-            if tag != cur:
-                _emit(cur, start, idx, True)
-                start = idx
-                cur = tag
-        _emit(cur, start, len(tags), True)
-
-    normalized.sort(key=lambda sec: sec["start_bar"])
-
-    for i, sec in enumerate(normalized):
-        start = sec["start_bar"]
-        if start < 0:
-            fixes.append(f"start<0 -> clamp to 0 (src={source})")
-            start = 0
-            sec["start_bar"] = start
-        end = sec["end_bar"]
-        explicit = sec["explicit_end"]
-        next_start: Optional[int] = None
-        if i + 1 < len(normalized):
-            next_start = normalized[i + 1]["start_bar"]
-        if end is None:
-            if next_start is not None:
-                end = next_start
-            elif num_bars is not None:
-                end = num_bars
-            else:
-                end = start + 1
-        if end <= start:
-            fixes.append(f"end<=start -> extend (src={source} idx={i})")
-            end = start + 1
-        if num_bars is not None and end > num_bars:
-            fixes.append(f"end>{num_bars} -> clamp (src={source} idx={i})")
-            end = num_bars
-        sec["end_bar"] = end
-        sec["explicit_end"] = explicit
-        if i > 0:
-            prev = normalized[i - 1]
-            if prev["end_bar"] > start:
-                fixes.append(f"overlap -> shorten prev (src={source} idx={i-1})")
-                prev["end_bar"] = start
-        if sec["end_bar"] <= sec["start_bar"]:
-            fixes.append(f"empty -> drop (src={source} idx={i})")
-
-    normalized = [sec for sec in normalized if sec["end_bar"] > sec["start_bar"]]
-
-    if fixes:
-        msg = "; ".join(dict.fromkeys(fixes))
-        logging.info("section auto-fix (%s): %s", source, msg)
-
-    return normalized
+    layout, _ = normalize_sections(
+        sections,
+        units=num_bars,
+        default_tag="section",
+        fill_ends=True,
+        clamp=True,
+    )
+    for sec in layout:
+        sec["source"] = source
+    return layout
 
 
-def _sections_to_labels(
+def _sections_to_labels_infer(
     sections: List[Dict[str, Any]],
     num_bars: Optional[int],
     section_default: str,
 ) -> List[str]:
+    target_units: Union[int, Sequence[Any], None]
     if num_bars is None:
-        max_end = max((sec["end_bar"] for sec in sections), default=0)
-        num_bars = max_end
-    labels = [section_default for _ in range(max(0, num_bars))]
-    for sec in sections:
-        start = max(0, min(len(labels), int(sec["start_bar"])) )
-        end = max(start, min(len(labels), int(sec.get("end_bar", start))))
-        for b in range(start, end):
-            labels[b] = str(sec.get("tag", section_default))
+        max_end = max((int(sec.get("end_bar", 0)) for sec in sections), default=0)
+        target_units = max_end
+    else:
+        target_units = num_bars
+    _, labels = normalize_sections(
+        sections,
+        units=target_units,
+        default_tag=section_default,
+        fill_ends=True,
+        clamp=True,
+    )
+    if num_bars is not None and len(labels) < num_bars:
+        labels.extend([section_default] * (num_bars - len(labels)))
+    if num_bars is not None and len(labels) > num_bars:
+        return labels[:num_bars]
     return labels
 
 
@@ -2412,8 +2355,8 @@ def _merge_sections(
     guide_sections: Sequence[Any],
     num_bars: Optional[int],
 ) -> List[Dict[str, Any]]:
-    cli_norm = _normalize_sections(cli_sections, num_bars, source="cli")
-    guide_norm = _normalize_sections(guide_sections, num_bars, source="guide")
+    cli_norm = _normalize_sections_ranges(cli_sections, num_bars, source="cli")
+    guide_norm = _normalize_sections_ranges(guide_sections, num_bars, source="guide")
     if not cli_norm and not guide_norm:
         return []
 
@@ -2631,15 +2574,15 @@ def finalize_phrase_track(
     if cli_sections and guide_section_input:
         merged_sections = _merge_sections(cli_sections, guide_section_input, num_bars)
     elif cli_sections:
-        merged_sections = _normalize_sections(cli_sections, num_bars, source="cli")
+        merged_sections = _normalize_sections_ranges(cli_sections, num_bars, source="cli")
     elif guide_section_input:
-        merged_sections = _normalize_sections(guide_section_input, num_bars, source="guide")
+        merged_sections = _normalize_sections_ranges(guide_section_input, num_bars, source="guide")
 
     if num_bars is None and merged_sections:
         num_bars = max((sec["end_bar"] for sec in merged_sections), default=0)
 
     if merged_sections:
-        section_labels = _sections_to_labels(merged_sections, num_bars, section_default)
+        section_labels = _sections_to_labels_infer(merged_sections, num_bars, section_default)
     elif isinstance(guide_section_input, list):
         section_labels = [
             str(tag) if tag is not None else section_default for tag in guide_section_input
@@ -2692,25 +2635,33 @@ def finalize_phrase_track(
     )
 
     bar_count = max(0, len(downbeats) - 1) if downbeats else 0
-    sections_candidate: Optional[List[Any]] = None
+    sections_candidate: Optional[Sequence[Any]] = None
     for candidate in (
         section_overrides,
         mapping.get("sections"),
+        stats.get("sections_layout") if stats_enabled else None,
+        stats.get("section_labels") if stats_enabled else None,
         stats.get("sections") if stats_enabled else None,
         section_labels,
     ):
         if isinstance(candidate, list):
             sections_candidate = candidate
             break
-    normalized_sections = _normalize_sections(
-        sections_candidate or [],
-        bar_count,
-        section_default,
-        stats=stats if stats_enabled else None,
+    raw_sections = sections_candidate or []
+    if stats_enabled and stats.get("_section_verbose") and raw_sections:
+        logging.info("section normalize input=%s", raw_sections)
+    normalized_sections, section_labels_by_bar = normalize_sections(
+        raw_sections,
+        units=bar_count,
+        default_tag=section_default,
     )
-    section_labels_by_bar = _sections_to_labels(normalized_sections, bar_count, section_default)
+    if stats_enabled and stats.get("_section_verbose") and normalized_sections:
+        logging.info("section normalize output=%s", normalized_sections)
     if stats_enabled:
-        stats["sections"] = section_labels_by_bar
+        stats["sections_layout"] = [dict(sec) for sec in normalized_sections]
+        stats["section_labels"] = list(section_labels_by_bar)
+        # Maintain legacy key for downstream consumers while transitioning.
+        stats["sections"] = list(section_labels_by_bar)
         stats["bar_count"] = max(bar_count, int(stats.get("bar_count", bar_count)))
 
     _write_markers(
@@ -2789,8 +2740,9 @@ def finalize_phrase_track(
             if label:
                 density_hist[str(label)] = density_hist.get(str(label), 0) + 1
         section_sample: List[str] = []
-        if isinstance(stats.get("sections"), list):
-            section_sample = [str(s) for s in stats["sections"][:4]]
+        section_stat = stats.get("section_labels") or stats.get("sections")
+        if isinstance(section_stat, list):
+            section_sample = [str(s) for s in section_stat[:4]]
         bar_total = int(stats.get("bar_count", len(downbeats or [])))
         quicklook = {
             "bpm": float(bpm) if bpm is not None and math.isfinite(bpm) else None,
@@ -2814,7 +2766,7 @@ def finalize_phrase_track(
                 ["bar", "onset_count", "rest_ratio", "phrase_note", "cc_value", "section"]
             )
             cc_map = {i: v for i, (_, v) in enumerate(guide_cc)} if guide_cc else {}
-            sect = stats.get("sections") or []
+            sect = stats.get("section_labels") or stats.get("sections") or []
             for i in range(len(onset_counts)):
                 pn = stats.get("bar_phrase_notes", {}).get(i)
                 writer.writerow(
@@ -2850,7 +2802,7 @@ def finalize_phrase_track(
                     "cc_value",
                 ]
             )
-            sect = stats.get("sections") or []
+            sect = stats.get("section_labels") or stats.get("sections") or []
             bar_vel = stats.get("bar_velocities", {})
             fill_bars = set(stats.get("fill_bars", []))
             cc_map = {i: v for i, (_, v) in enumerate(guide_cc)} if guide_cc else {}
@@ -3214,7 +3166,11 @@ def _write_markers(
     if mode not in {"raw", "ascii", "escape"}:
         raise SystemExit(f"unknown marker-encoding: {marker_encoding}")
     bar_count = max(0, len(downbeats) - 1)
-    labels = _sections_to_labels(sections or [], bar_count, section_default)
+    _, labels = normalize_sections(
+        sections or [],
+        units=bar_count,
+        default_tag=section_default,
+    )
     for i, t in enumerate(downbeats):
         if labels:
             label = labels[i] if i < len(labels) else labels[-1]
@@ -4198,337 +4154,311 @@ def read_chords_csv(
     Supported schemas:
 
     * ``start,end,root,quality`` (or ``start,end,chord``) with explicit second offsets.
+    * ``start,chord`` or ``start,root,quality`` rows (header optional) with implicit ends.
     * ``bar,chord`` rows (header optional) for per-bar chords.
     * ``bar_start,bar_end,chord`` and ``bar,beat,chord`` compact rows.
 
-    Compact timelines prioritise provided ``bar_times`` (downbeats), then PrettyMIDI's
-    beat grid, followed by meter hints or the MIDI ``meter_map``. As a final fallback
-    the ``bpm_hint`` with ``default_meter`` seeds a uniform grid. Errors raise
-    :class:`ChordCsvError` with actionable messages. Set ``strict=True`` to force
-    monotonic explicit rows when invoking programmatically (``--strict-chords`` in CLI).
+    Compact timelines prioritise provided ``bar_times`` (downbeats), then supplied
+    ``beat_times`` (PrettyMIDI beat grid), followed by meter hints or the MIDI
+    ``meter_map``. As a final fallback the ``bpm_hint`` with ``default_meter`` seeds a
+    uniform grid. Errors raise :class:`ChordCsvError` with actionable messages. Set
+    ``strict=True`` to require explicit spans to be strictly ascending.
     """
 
     raw_text = path.read_text(encoding="utf-8")
     if not raw_text.strip():
         return []
     raw_text = raw_text.replace("，", ",")
-    if raw_text.startswith("\ufeff"):
-        raw_text = raw_text.lstrip("\ufeff")
-    stream = io.StringIO(raw_text)
+    raw_text = raw_text.lstrip("\ufeff")
 
-    first_line: Optional[str] = None
-    while True:
-        pos = stream.tell()
-        line = stream.readline()
-        if not line:
-            break
-        if line.strip():
-            first_line = line
-            stream.seek(pos)
-            break
-    if first_line is None:
+    reader = csv.reader(io.StringIO(raw_text))
+    rows_with_line: List[Tuple[int, List[str]]] = [
+        (line_no, list(row)) for line_no, row in enumerate(reader, start=1)
+    ]
+    if not rows_with_line:
         return []
 
-    header_reader = csv.reader([first_line])
-    header_cells_raw = next(header_reader, [])
-    header_cells = [cell.strip() for cell in header_cells_raw]
-    header_lower = [cell.strip().lower() for cell in header_cells_raw]
-    if header_cells:
-        header_cells[0] = header_cells[0].lstrip("\ufeff")
-    if header_lower:
-        header_lower[0] = header_lower[0].lstrip("\ufeff")
-    header_set = {cell for cell in header_lower if cell}
+    recognised = {
+        "start",
+        "end",
+        "root",
+        "quality",
+        "chord",
+        "bar",
+        "beat",
+        "bar_start",
+        "bar_end",
+    }
 
-def read_chords_csv(
-    path: Path,
-    *,
-    bar_times: Optional[List[float]] = None,
-    meter_map: Optional[List[Tuple[float, int, int]]] = None,
-    bpm_hint: Optional[float] = None,
-    default_ts: Tuple[int, int] = (4, 4),
-) -> List["ChordSpan"]:
-    """Load chord CSV in multiple common layouts.
+    header_cells: Optional[List[str]] = None
+    header_lower: Optional[List[str]] = None
+    header_line: Optional[int] = None
+    data_index = 0
+    for idx, (line_no, raw_row) in enumerate(rows_with_line):
+        cells = [cell.strip() for cell in raw_row]
+        if not any(cells):
+            continue
+        lower = [cell.strip().lower() for cell in raw_row]
+        if lower:
+            lower[0] = lower[0].lstrip("\ufeff")
+        if any(token in recognised for token in lower if token):
+            header_cells = cells
+            header_lower = lower
+            header_line = line_no
+            data_index = idx + 1
+            break
+        data_index = idx
+        break
 
-    Supported headers:
-      (A) start,end,root,quality           # explicit span in seconds
-      (B) start,end,chord                  # explicit span with chord symbol
-      (C) start,chord                      # start sec + symbol, end is next start or +1 bar
-      (D) start,root,quality               # start sec + (root, quality)
-      (E) bar,chord                        # bar index (can be float) + symbol
-      (F) bar,beat,chord                   # bar index + beat offset within bar + symbol
-      (G) bar_start,bar_end,chord          # span by bar indices
-
-    Headerless (no names):
-      - 2 cols: if col0 looks integer → (bar,chord), else → (start,chord)
-    """
-    # --- read all rows -----------------------------------------------------
-    rows: List[List[str]] = []
-    with path.open(newline="", encoding="utf-8") as fh:
-        for raw in csv.reader(fh):
-            if not raw:
-                continue
-            if all(not (c or "").strip() for c in raw):
-                continue
-            rows.append([c.strip() for c in raw])
-
-    if not rows:
+    if data_index >= len(rows_with_line):
         return []
 
-    header = [c.lower() for c in rows[0]]
-    header_set = {h for h in header if h}
-    is_header = bool(header_set & {"start", "end", "root", "quality", "chord", "bar", "beat", "bar_start", "bar_end"})
-
-    # --- helpers -----------------------------------------------------------
-    def _safe_float(x: str, msg: str) -> float:
+    def _safe_float(token: str, *, line: int, field: str) -> float:
         try:
-            v = float(x)
+            value = float(token)
         except Exception as exc:
-            raise SystemExit(f"{msg}: '{x}'") from exc
-        if not math.isfinite(v):
-            raise SystemExit(f"{msg}: '{x}'")
-        return v
-
-    def _sanitise_bpm(value: Optional[float]) -> float:
-        try:
-            bpm_val = float(value) if value is not None else 120.0
-        except Exception:
-            bpm_val = 120.0
-        if not math.isfinite(bpm_val) or bpm_val <= 0.0:
-            bpm_val = 120.0
-        return bpm_val
-
-    def _beats_per_bar(num: int, den: int) -> float:
-        if den == 0:
-            den = 4
-        if num <= 0:
-            num = 4
-        return num * (4.0 / den)
-
-    bpm_val = _sanitise_bpm(bpm_hint)
-    sec_per_beat = 60.0 / bpm_val
-
-    meter_seq: Optional[List[Tuple[float, int, int]]] = None
-    meter_times: Optional[List[float]] = None
-    if meter_map:
-        meter_seq = [(float(t), int(n), int(d)) for t, n, d in meter_map]
-        if len(meter_seq) > 1:
-            meter_seq.sort(key=lambda x: x[0])
-        meter_times = [mt for mt, _, _ in meter_seq]
-
-    def _numden_at_time(t: Optional[float]) -> Tuple[int, int]:
-        if meter_seq:
-            ref = float(t or meter_seq[0][0])
-            try:
-                n, d = get_meter_at(meter_seq, ref, times=meter_times)
-                return int(n), int(d)
-            except Exception:
-                pass
-        return int(default_ts[0]), int(default_ts[1])
-
-    # bar_times（実小節境界）があれば最優先。なければ meter_map×BPM から近似。
-    bar_times_sorted: List[float] = []
-    if bar_times:
-        tmp: List[float] = []
-        for r in bar_times:
-            try:
-                v = float(r)
-            except Exception:
-                continue
-            if math.isfinite(v):
-                tmp.append(v)
-        tmp.sort()
-        for v in tmp:
-            if not bar_times_sorted or abs(v - bar_times_sorted[-1]) > EPS:
-                bar_times_sorted.append(v)
-
-    # メータセグメント（可変拍子を秒換算）を単純近似（各区間で一定小節長とする）
-    meter_segments: List[Tuple[int, float, float, Optional[int]]] = []  # (start_bar_idx, start_time, bar_len_sec, count)
-    if not bar_times_sorted and meter_seq:
-        current_idx = 0
-        for seg_i, (seg_time, n, d) in enumerate(meter_seq):
-            start_time = seg_time
-            bar_len = _beats_per_bar(n, d) * sec_per_beat
-            if not math.isfinite(bar_len) or bar_len <= EPS:
-                dn = _beats_per_bar(default_ts[0], default_ts[1])
-                bar_len = (dn if math.isfinite(dn) and dn > 0 else 4.0) * sec_per_beat
-            next_t = meter_seq[seg_i + 1][0] if seg_i + 1 < len(meter_seq) else None
-            count: Optional[int] = None
-            if next_t is not None and next_t > start_time + EPS:
-                approx = int(round((next_t - start_time) / bar_len))
-                if approx > 0:
-                    count = approx
-            meter_segments.append((current_idx, start_time, bar_len, count))
-            if count:
-                current_idx += count
-
-    def _bar_length(idx: int) -> float:
-        if bar_times_sorted and 0 <= idx < len(bar_times_sorted) - 1:
-            L = bar_times_sorted[idx + 1] - bar_times_sorted[idx]
-            if L > EPS:
-                return L
-        if meter_segments:
-            for s_idx, _, bl, cnt in meter_segments:
-                limit = s_idx + (cnt if cnt is not None else 10**9)
-                if idx < limit:
-                    return bl
-            return meter_segments[-1][2]
-        n, d = _numden_at_time(None)
-        dn = _beats_per_bar(n, d)
-        return (dn if dn > 0 else 4.0) * sec_per_beat
-
-    def _bar_start(idx: int) -> float:
-        if idx < 0:
-            raise SystemExit("bar index must be >= 0")
-        if bar_times_sorted:
-            if idx < len(bar_times_sorted):
-                return bar_times_sorted[idx]
-            base = bar_times_sorted[-1]
-            last_len = _bar_length(len(bar_times_sorted) - 1)
-            return base + (idx - (len(bar_times_sorted) - 1)) * last_len
-        if meter_segments:
-            for s_idx, s_time, bl, cnt in meter_segments:
-                limit = s_idx + (cnt if cnt is not None else 10**9)
-                if idx < limit:
-                    return s_time + (idx - s_idx) * bl
-            s_idx, s_time, bl, _ = meter_segments[-1]
-            return s_time + (idx - s_idx) * bl
-        return idx * _bar_length(0)
-
-    def _bar_to_seconds(bar_token: str) -> Tuple[float, Optional[float]]:
-        """Returns (start_sec, bar_value_if_given)"""
-        v = _safe_float(bar_token, "Invalid bar index")
-        if v < 0.0:
-            raise SystemExit("bar index must be >= 0")
-        base = int(math.floor(v))
-        frac = v - base
-        t0 = _bar_start(base)
-        if frac > EPS:
-            t0 += frac * _bar_length(base)
-        return t0, v
-
-    def _span_end_default(start_sec: float, bar_value: Optional[float]) -> float:
-        if bar_value is not None:
-            base = int(math.floor(bar_value))
-            return start_sec + _bar_length(base)
-        # 秒基準の場合は開始時点のメータから 1bar
-        n, d = _numden_at_time(start_sec)
-        return start_sec + _beats_per_bar(n, d) * sec_per_beat
-
-    # --- normalize into (start_sec, symbol, bar_value?, beat_offset?)  -----
-    items: List[Tuple[float, str, Optional[float], float]] = []  # (start_sec, symbol, bar_value, beat_off_ratio)
-
-    if is_header:
-        cols = {name: i for i, name in enumerate(header) if name}
-        data = rows[1:]
-
-        # (A) start,end,root,quality  or  (B) start,end,chord
-        if {"start", "end"} <= cols.keys() and ({"root", "quality"} <= cols.keys() or "chord" in cols):
-            spans: List[ChordSpan] = []
-            for raw in data:
-                start = _safe_float(raw[cols["start"]], "Invalid start time")
-                end = _safe_float(raw[cols["end"]], "Invalid end time")
-                if end <= start + EPS:
-                    raise SystemExit("Non-positive chord duration in CSV")
-                if "chord" in cols:
-                    symbol = raw[cols["chord"]].strip()
-                    root_pc, quality = parse_chord_symbol(symbol)
-                    span = ChordSpan(start, end, root_pc, quality)
-                    setattr(span, "symbol", symbol)
-                    setattr(span, "root_name", symbol.split(":", 1)[0])
-                else:
-                    root = raw[cols["root"]].strip()
-                    quality = raw[cols["quality"]].strip().lower()
-                    root_pc, quality = parse_chord_symbol(f"{root}:{quality}")
-                    span = ChordSpan(start, end, root_pc, quality)
-                    setattr(span, "symbol", f"{root}:{quality}")
-                    setattr(span, "root_name", root)
-                spans.append(span)
-            return spans
-
-        # (C/D) start-based rows
-        if "start" in cols and ("chord" in cols or {"root", "quality"} <= cols.keys()):
-            for raw in data:
-                start = _safe_float(raw[cols["start"]], "Invalid start time")
-                if "chord" in cols:
-                    sym = raw[cols["chord"]].strip()
-                else:
-                    sym = f"{raw[cols['root']].strip()}:{raw[cols['quality']].strip().lower()}"
-                items.append((start, sym, None, 0.0))
-
-        # (E/F/G) bar-based rows
-        elif "bar" in cols and "chord" in cols:
-            beat_idx = cols.get("beat")
-            for raw in data:
-                bar_token = raw[cols["bar"]]
-                start_sec, bar_val = _bar_to_seconds(bar_token if bar_token else "0")
-                beat_off = 0.0
-                if beat_idx is not None and raw[beat_idx]:
-                    # 0..(numerator-1) の整数想定。比率に変換。
-                    n, d = _numden_at_time(start_sec)
-                    beat_val = _safe_float(raw[beat_idx], "Invalid beat")
-                    if beat_val < 0 or beat_val >= n:
-                        raise SystemExit(f"beat must be in [0,{n})")
-                    beat_off = float(beat_val) / float(n)
-                    start_sec = start_sec + _bar_length(int(math.floor(bar_val))) * beat_off
-                items.append((start_sec, raw[cols["chord"]].strip(), bar_val, beat_off))
-
-        elif {"bar_start", "bar_end", "chord"} <= cols.keys():
-            for raw in data:
-                s_sec, _ = _bar_to_seconds(raw[cols["bar_start"]])
-                e_sec, _ = _bar_to_seconds(raw[cols["bar_end"]])
-                if e_sec <= s_sec + EPS:
-                    raise SystemExit("Non-positive chord duration in CSV")
-                sym = raw[cols["chord"]].strip()
-                try:
-                    root_pc, quality = parse_chord_symbol(sym)
-                except ValueError as exc:
-                    raise SystemExit(str(exc))
-                span = ChordSpan(s_sec, e_sec, root_pc, quality)
-                setattr(span, "symbol", sym)
-                setattr(span, "root_name", sym.split(":", 1)[0])
-                items.append((s_sec, sym, None, 0.0))  # keep for ordering; explicit-span handled below
-        else:
-            raise SystemExit("Unsupported chord CSV header")
-    else:
-        # headerless: 2 columns → (bar,chord) if first is integer-like, else (start,chord)
-        for raw in rows:
-            if len(raw) < 2:
-                raise SystemExit("Chord CSV without header must have at least two columns")
-            first, second = raw[0], raw[1]
-            if re.fullmatch(r"^[+-]?\d+$", first):
-                start_sec, bar_val = _bar_to_seconds(first)
-                items.append((start_sec, second.strip(), bar_val, 0.0))
-            else:
-                items.append((_safe_float(first, "Invalid start"), second.strip(), None, 0.0))
-
-    if not items:
-        return []
-
-    # --- build spans -------------------------------------------------------
-    items.sort(key=lambda it: it[0])
-    spans: List[ChordSpan] = []
-    for i, (start_sec, symbol, bar_val, _) in enumerate(items):
-        next_start = items[i + 1][0] if i + 1 < len(items) else None
-        end_sec = (
-            _span_end_default(start_sec, bar_val)
-            if next_start is None or not math.isfinite(next_start) or next_start <= start_sec + EPS
-            else next_start
-        )
-        try:
-            root_pc, quality = parse_chord_symbol(symbol)
-        except ValueError as exc:
-            cleaned = symbol.replace("\n", " ").replace("\r", " ")
-            excerpt = cleaned
-            if len(excerpt) > 24:
-                excerpt = excerpt[:21] + "..."
-            raise SystemExit(
-                f"{path}: token {i} ('{excerpt}') invalid: {exc}"
+            raise ChordCsvError(
+                f"{path} line {line}: {field} '{token}' must be a number"
             ) from exc
-        span = ChordSpan(start_sec, end_sec, root_pc, quality)
-        setattr(span, "symbol", symbol)
-        setattr(span, "root_name", symbol.split(":", 1)[0])
-        spans.append(span)
-    return spans
+        if not math.isfinite(value):
+            raise ChordCsvError(f"{path} line {line}: {field} '{token}' is not finite")
+        return value
+
+    def _fallback_bar_seconds() -> float:
+        num, den = default_meter
+        den = max(1, int(den))
+        num = max(1, int(num))
+        beats_per_bar = num * (4.0 / den)
+        bpm_val = bpm_hint if bpm_hint and math.isfinite(bpm_hint) and bpm_hint > 0 else 120.0
+        seconds = beats_per_bar * (60.0 / bpm_val)
+        if not math.isfinite(seconds) or seconds <= 0.0:
+            return 4.0 * (60.0 / 120.0)
+        return seconds
+
+    def _parse_explicit(
+        header_map: Dict[str, int],
+        data_rows: Sequence[Tuple[int, List[str]]],
+    ) -> List[ChordSpan]:
+        start_idx = header_map["start"]
+        end_idx = header_map["end"]
+        chord_idx = header_map.get("chord")
+        root_idx = header_map.get("root")
+        qual_idx = header_map.get("quality")
+        max_idx = max(idx for idx in (start_idx, end_idx, chord_idx or 0, root_idx or 0, qual_idx or 0))
+        spans: List[ChordSpan] = []
+        prev_end: Optional[float] = None
+        for line_no, raw_row in data_rows:
+            cells = [cell.strip() for cell in raw_row]
+            if not any(cells):
+                continue
+            if len(cells) <= max_idx:
+                cells.extend([""] * (max_idx + 1 - len(cells)))
+            start_txt = cells[start_idx].lstrip("\ufeff")
+            end_txt = cells[end_idx]
+            start_val = _safe_float(start_txt, line=line_no, field="start")
+            end_val = _safe_float(end_txt, line=line_no, field="end")
+            if end_val <= start_val + EPS:
+                raise ChordCsvError(
+                    f"{path} line {line_no}: chord duration must be positive"
+                )
+            if strict and prev_end is not None and start_val < prev_end - EPS:
+                raise ChordCsvError(
+                    f"{path} line {line_no}: start {start_val} must be >= previous end {prev_end}"
+                )
+            prev_end = end_val
+
+            parse_token: Optional[str] = None
+            if chord_idx is not None and chord_idx < len(cells):
+                raw_symbol = cells[chord_idx]
+            else:
+                if root_idx is None or qual_idx is None:
+                    raise ChordCsvError(
+                        f"{path} line {line_no}: chord columns missing (need 'chord' or 'root'+'quality')"
+                    )
+                root_txt = cells[root_idx]
+                qual_txt = cells[qual_idx]
+                if not root_txt or not qual_txt:
+                    raise ChordCsvError(
+                        f"{path} line {line_no}: root/quality cannot be empty"
+                    )
+                raw_symbol = f"{root_txt}:{qual_txt}"
+
+            symbol_attr = raw_symbol.strip()
+            parse_token = symbol_attr
+            try:
+                root_pc, quality = parse_chord_symbol(parse_token)
+            except ValueError as exc:
+                if ":" not in symbol_attr:
+                    try:
+                        parse_token = _normalize_compact_chord(symbol_attr)
+                        root_pc, quality = parse_chord_symbol(parse_token)
+                    except (ChordCsvError, ValueError) as inner_exc:
+                        raise ChordCsvError(f"{path} line {line_no}: {inner_exc}") from inner_exc
+                else:
+                    raise ChordCsvError(f"{path} line {line_no}: {exc}") from exc
+
+            span = ChordSpan(start_val, end_val, root_pc, quality)
+            setattr(span, "symbol", symbol_attr)
+            setattr(span, "root_name", _guess_root_display(symbol_attr, symbol_attr.split(":", 1)[0]))
+            spans.append(span)
+        return spans
+
+    def _parse_start_rows(
+        start_idx: int,
+        symbol_fn: Callable[[List[str]], str],
+        data_rows: Sequence[Tuple[int, List[str]]],
+    ) -> List[ChordSpan]:
+        entries: List[Tuple[int, float, str]] = []
+        for line_no, raw_row in data_rows:
+            cells = [cell.strip() for cell in raw_row]
+            if not any(cells):
+                continue
+            if len(cells) <= start_idx:
+                cells.extend([""] * (start_idx + 1 - len(cells)))
+            start_txt = cells[start_idx].lstrip("\ufeff")
+            start_val = _safe_float(start_txt, line=line_no, field="start")
+            raw_symbol = symbol_fn(cells)
+            if not raw_symbol:
+                raise ChordCsvError(f"{path} line {line_no}: missing chord symbol")
+            entries.append((line_no, start_val, raw_symbol))
+        if not entries:
+            return []
+        entries.sort(key=lambda item: item[1])
+        spans: List[ChordSpan] = []
+        fallback = _fallback_bar_seconds()
+        for idx, (line_no, start_val, raw_symbol) in enumerate(entries):
+            end_val = entries[idx + 1][1] if idx + 1 < len(entries) else start_val + fallback
+            if end_val <= start_val + EPS:
+                raise ChordCsvError(
+                    f"{path} line {line_no}: start times must be strictly increasing"
+                )
+            symbol_attr = raw_symbol.strip()
+            parse_token = symbol_attr
+            try:
+                root_pc, quality = parse_chord_symbol(parse_token)
+            except ValueError as exc:
+                if ":" not in symbol_attr:
+                    try:
+                        parse_token = _normalize_compact_chord(symbol_attr)
+                        root_pc, quality = parse_chord_symbol(parse_token)
+                    except (ChordCsvError, ValueError) as inner_exc:
+                        raise SystemExit(f"{path} line {line_no}: {inner_exc}") from inner_exc
+                else:
+                    raise SystemExit(f"{path} line {line_no}: {exc}") from exc
+            span = ChordSpan(start_val, end_val, root_pc, quality)
+            setattr(span, "symbol", symbol_attr)
+            setattr(span, "root_name", _guess_root_display(symbol_attr, symbol_attr.split(":", 1)[0]))
+            spans.append(span)
+        return spans
+
+    def _compact_to_spans(rows: List[_CompactChordRow]) -> List[ChordSpan]:
+        if not rows:
+            return []
+        timeline = _BarTimeline(
+            path=path,
+            bar_times=bar_times,
+            beat_times=beat_times,
+            meter_map=meter_map,
+            meter_hints=meter_hints,
+            bpm_hint=bpm_hint,
+            default_meter=default_meter,
+        )
+
+        starts: List[float] = []
+        for row in rows:
+            start_time = timeline.start_time(row.start_bar)
+            num, den = timeline.meter_for(row.start_bar, start_time)
+            bar_duration = timeline.end_time(row.start_bar) - start_time
+            if row.start_beat:
+                beat_val = float(row.start_beat)
+                if beat_val < 0:
+                    raise ChordCsvError(
+                        f"{path} line {row.line_no}: beat must be >= 0 (got {beat_val})"
+                    )
+                if beat_val >= num:
+                    raise ChordCsvError(
+                        f"{path} line {row.line_no}: beat {beat_val} must be < meter numerator {num}"
+                    )
+                if bar_duration <= 0.0:
+                    raise ChordCsvError(
+                        f"{path} line {row.line_no}: bar duration is non-positive"
+                    )
+                start_time += (beat_val / float(num)) * bar_duration
+            starts.append(start_time)
+
+        spans: List[ChordSpan] = []
+        for idx, row in enumerate(rows):
+            start_time = starts[idx]
+            end_time: float
+            if row.end_bar is not None:
+                end_time = timeline.start_time(row.end_bar)
+            elif idx + 1 < len(starts):
+                end_time = starts[idx + 1]
+            else:
+                end_time = timeline.end_time(row.start_bar)
+            if end_time <= start_time + EPS:
+                raise ChordCsvError(
+                    f"{path} line {row.line_no}: chord duration must be positive"
+                )
+            try:
+                root_pc, quality = parse_chord_symbol(row.symbol)
+            except ValueError as exc:
+                raise ChordCsvError(f"{path} line {row.line_no}: {exc}") from exc
+            span = ChordSpan(start_time, end_time, root_pc, quality)
+            display = row.raw_symbol or row.symbol
+            setattr(span, "symbol", display)
+            setattr(span, "root_name", _guess_root_display(display, display.split(":", 1)[0]))
+            spans.append(span)
+        return spans
+
+    if header_lower:
+        header_map = {name: idx for idx, name in enumerate(header_lower) if name}
+        data_rows = rows_with_line[data_index:]
+        if "start" in header_map and "end" in header_map:
+            return _parse_explicit(header_map, data_rows)
+        if "start" in header_map and ("chord" in header_map or {"root", "quality"} <= header_map.keys()):
+            def _symbol_from_row(cells: List[str]) -> str:
+                if "chord" in header_map:
+                    return cells[header_map["chord"]]
+                root_idx = header_map["root"]
+                qual_idx = header_map["quality"]
+                if root_idx >= len(cells) or qual_idx >= len(cells):
+                    return ""
+                root_txt = cells[root_idx]
+                qual_txt = cells[qual_idx]
+                return f"{root_txt}:{qual_txt}"
+
+            return _parse_start_rows(header_map["start"], _symbol_from_row, data_rows)
+        if "bar" in header_map or "bar_start" in header_map:
+            compact_rows = _parse_bar_chord_rows(
+                [row for _, row in data_rows],
+                start_line=(header_line or 0) + 1,
+                path=path,
+                header=header_cells,
+            )
+            return _compact_to_spans(compact_rows)
+        raise ChordCsvError(
+            f"{path}: unsupported chord CSV header {header_cells}"
+        )
+
+    first_line_no, first_row = rows_with_line[data_index]
+    first_cells = [cell.strip() for cell in first_row]
+    if not first_cells or len(first_cells) < 2:
+        raise ChordCsvError(f"{path} line {first_line_no}: expected at least two columns")
+    if re.fullmatch(r"^[+-]?\d+$", first_cells[0].lstrip("\ufeff")):
+        compact_rows = _parse_bar_chord_rows(
+            [row for _, row in rows_with_line[data_index:]],
+            start_line=first_line_no,
+            path=path,
+        )
+        return _compact_to_spans(compact_rows)
+
+    def _symbol_plain(cells: List[str]) -> str:
+        if len(cells) < 2:
+            return ""
+        return cells[1]
+
+    return _parse_start_rows(0, _symbol_plain, rows_with_line[data_index:])
 
 
 def infer_chords_by_bar(pm: "pretty_midi.PrettyMIDI", ts_num=4, ts_den=4) -> List["ChordSpan"]:
@@ -4638,7 +4568,7 @@ def build_sparkle_midi(
     stop_min_gap_beats: float = 0.0,
     stop_velocity: int = 64,
     section_profiles: Optional[Dict[str, Dict]] = None,
-    sections: Optional[List[Dict]] = None,
+    sections: Optional[Sequence[Any]] = None,
     section_default: str = "verse",
     section_verbose: bool = False,
     style_layer_mode: str = "off",
@@ -4990,6 +4920,15 @@ def build_sparkle_midi(
             logging.info("suggest --swing-unit 1/12 for ternary feel")
 
     num_bars = len(downbeats) - 1
+    section_labels_override: Optional[List[str]] = None
+    if sections:
+        normalized_sections_cli, labels_override = normalize_sections(
+            sections,
+            units=num_bars,
+            default_tag=section_default,
+        )
+        sections = normalized_sections_cli
+        section_labels_override = labels_override
     density_map: Optional[Dict[int, str]] = {} if stats is not None else None
     sections_map = mapping.get("sections")
     if sections_map:
@@ -5064,15 +5003,19 @@ def build_sparkle_midi(
     bar_pool_pickers: Dict[int, PoolPicker] = {}
     section_labels: List[str] = []
     if sections:
-        for i in range(len(downbeats)):
-            tag = section_default
-            for sec in sections:
-                if sec.get("start_bar", 0) <= i < sec.get("end_bar", 0):
-                    tag = sec.get("tag", section_default)
-                    break
-            section_labels.append(tag)
-    elif stats is not None and stats.get("sections"):
-        section_labels = stats["sections"]
+        section_labels = section_labels_override or [section_default] * len(downbeats)
+        if section_labels:
+            section_labels = section_labels[: len(downbeats)] + [
+                section_default
+            ] * max(0, len(downbeats) - len(section_labels))
+        else:
+            section_labels = [section_default] * len(downbeats)
+    elif stats is not None:
+        labels_from_stats = stats.get("section_labels") or stats.get("sections")
+        if isinstance(labels_from_stats, list):
+            section_labels = list(labels_from_stats)
+        else:
+            section_labels = [section_default] * len(downbeats)
     else:
         section_labels = [section_default] * len(downbeats)
     if section_profiles:
@@ -5380,15 +5323,19 @@ def build_sparkle_midi(
     # Determine section labels per bar
     section_labels: List[str] = []
     if sections:
-        for i in range(len(downbeats)):
-            tag = section_default
-            for sec in sections:
-                if sec.get("start_bar", 0) <= i < sec.get("end_bar", 0):
-                    tag = sec.get("tag", section_default)
-                    break
-            section_labels.append(tag)
-    elif stats is not None and stats.get("sections"):
-        section_labels = stats["sections"]
+        section_labels = section_labels_override or [section_default] * len(downbeats)
+        if section_labels:
+            section_labels = section_labels[: len(downbeats)] + [
+                section_default
+            ] * max(0, len(downbeats) - len(section_labels))
+        else:
+            section_labels = [section_default] * len(downbeats)
+    elif stats is not None:
+        labels_from_stats = stats.get("section_labels") or stats.get("sections")
+        if isinstance(labels_from_stats, list):
+            section_labels = list(labels_from_stats)
+        else:
+            section_labels = [section_default] * len(downbeats)
     else:
         section_labels = [section_default] * len(downbeats)
 
@@ -6805,12 +6752,19 @@ def main():
                     chords = read_chords_csv(
                         chord_path,
                         bar_times=downbeats_chord if downbeats_chord else None,
+                        beat_times=beat_times_chord,
                         meter_map=meter_map_cli,
+                        meter_hints=chord_ts_hints,
                         bpm_hint=bpm,
-                        default_ts=(ts_num, ts_den),
+                        default_meter=(ts_num, ts_den),
                     )
                 except TypeError:
-                    chords = read_chords_csv(chord_path)
+                    chords = read_chords_csv(
+                        chord_path,
+                        bar_times=downbeats_chord if downbeats_chord else None,
+                        bpm_hint=bpm,
+                        default_meter=(ts_num, ts_den),
+                    )
         elif parsed_inline is not None:
             inline_chord_events = parsed_inline
             chords = []
@@ -7162,7 +7116,9 @@ def main():
         rest_silence_send_stop=False,
         quantize_strength=0.0,
         write_markers=False,
-        section_labels=stats.get("sections") if stats_enabled else None,
+        section_labels=(
+            (stats.get("section_labels") or stats.get("sections")) if stats_enabled else None
+        ),
         section_default=args.section_default,
         chord_merge_gap=mapping.get("chord_merge_gap", 0.01),
         clone_meta_only=clone_meta_only,

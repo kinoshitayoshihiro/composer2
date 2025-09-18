@@ -19,13 +19,14 @@ import pretty_midi as pm
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
+from utilities.duv_infer import duv_sequence_predict, duv_verbose
 from utilities.ml_velocity import MLVelocityModel
 
 from .eval_duv import (  # reuse helpers
     _as_float32,
     _as_int,
+    _ensure_int,
     _duration_predict,
-    _duv_sequence_predict,
     _get_device,
     _load_duration_model,
     _load_stats,
@@ -34,6 +35,9 @@ from .eval_duv import (  # reuse helpers
     _worker_init_fn,
     load_stats_and_normalize,
 )
+
+
+_duv_sequence_predict = duv_sequence_predict
 
 
 def _median_smooth(x: np.ndarray, k: int) -> np.ndarray:
@@ -69,8 +73,40 @@ def run(args: argparse.Namespace) -> int:
         df["position"] = _as_int(df["position"], "int32")
 
     device = _get_device(args.device)
-    vel_model = MLVelocityModel.load(str(args.ckpt)).to(device).eval()
-    duv_preds = _duv_sequence_predict(df, vel_model, device)
+    vel_model = MLVelocityModel.load(str(args.ckpt))
+    loader_type = getattr(vel_model, "_duv_loader", "ts" if str(args.ckpt).endswith((".ts", ".torchscript")) else "ckpt")
+    core = getattr(vel_model, "core", vel_model)
+    d_model = _ensure_int(getattr(vel_model, "d_model", getattr(core, "d_model", 0)), 0)
+    max_len = _ensure_int(getattr(vel_model, "max_len", getattr(core, "max_len", 0)), 0)
+    heads = getattr(
+        vel_model,
+        "heads",
+        {
+            "vel_reg": bool(getattr(vel_model, "has_vel_head", getattr(core, "head_vel_reg", None))),
+            "dur_reg": bool(getattr(vel_model, "has_dur_head", getattr(core, "head_dur_reg", None))),
+        },
+    )
+    extras = {
+        "use_bar_beat": bool(getattr(core, "use_bar_beat", False)),
+        "section_emb": getattr(core, "section_emb", None) is not None,
+        "mood_emb": getattr(core, "mood_emb", None) is not None,
+        "vel_bucket_emb": getattr(core, "vel_bucket_emb", None) is not None,
+        "dur_bucket_emb": getattr(core, "dur_bucket_emb", None) is not None,
+    }
+    print(
+        {
+            "ckpt": str(args.ckpt),
+            "loader": loader_type,
+            "d_model": d_model or None,
+            "max_len": max_len or None,
+            "heads": {k: bool(v) for k, v in heads.items()},
+            "extras": extras,
+        }
+    )
+
+    vel_model = vel_model.to(device).eval()
+    verbose = duv_verbose(getattr(args, "verbose", False))
+    duv_preds = _duv_sequence_predict(df, vel_model, device, verbose=verbose)
 
     vel_pred: np.ndarray | None
     vel_mask: np.ndarray | None = None
@@ -179,7 +215,17 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
         default=True,
         help="When smoothing velocities, only adjust bins predicted by the model",
     )
-    p.add_argument("--dur-quant", type=str, dest="dur_quant")
+    p.add_argument(
+        "--dur-quant",
+        type=str,
+        dest="dur_quant",
+        help="Quantise durations to the given fraction (e.g. 1/16); omit to keep predictions",
+    )
+    p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Emit additional DUV diagnostics including optional zero-filled features",
+    )
     args = p.parse_args(argv)
     return run(args)
 

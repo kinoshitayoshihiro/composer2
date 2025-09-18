@@ -6119,11 +6119,17 @@ def main():
     # Chords
     inline_chord_events: Optional[List[InlineChordEvent]] = None
     if args.chords:
-        chord_path = Path(args.chords)
+        chord_path: Optional[Path]
         parsed_inline: Optional[List[InlineChordEvent]] = None
-        if not chord_path.exists():
+        try:
+            chord_path = Path(args.chords)
+            path_exists = chord_path.exists()
+        except OSError:
+            chord_path = None
+            path_exists = False
+        if not path_exists:
             parsed_inline = parse_inline_chords(args.chords)
-        if chord_path.exists():
+        if path_exists and chord_path is not None:
             if chord_path.suffix in {".yaml", ".yml"}:
                 chords = read_chords_yaml(chord_path)
             else:

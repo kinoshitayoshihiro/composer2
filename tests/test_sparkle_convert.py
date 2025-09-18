@@ -5,7 +5,7 @@ import sys
 import tempfile
 import types
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 from unittest import mock
 
 import pytest
@@ -67,7 +67,7 @@ def test_place_in_range_closed() -> None:
 
 
 def test_normalize_sections_from_labels() -> None:
-    layout, labels = sc.normalize_sections(["a", "b", "c"], units=10, default_tag="sec")
+    layout, labels = sc.normalize_sections(["a", "b", "c"], bar_count=10, default_tag="sec")
     assert [
         {k: sec[k] for k in ("start_bar", "end_bar", "tag")}
         for sec in layout
@@ -85,7 +85,7 @@ def test_normalize_sections_from_labels() -> None:
 
 def test_normalize_sections_from_dicts() -> None:
     sections = [{"start_bar": 5, "tag": "pre"}, {"start_bar": 10, "tag": "cho"}]
-    layout, labels = sc.normalize_sections(sections, units=20, default_tag="sec")
+    layout, labels = sc.normalize_sections(sections, bar_count=20, default_tag="sec")
     assert [
         {k: sec[k] for k in ("start_bar", "end_bar", "tag")}
         for sec in layout
@@ -98,7 +98,7 @@ def test_normalize_sections_from_dicts() -> None:
 
 
 def test_normalize_sections_label_indices() -> None:
-    layout, labels = sc.normalize_sections(["A", "B"], units=8, default_tag="verse")
+    layout, labels = sc.normalize_sections(["A", "B"], bar_count=8, default_tag="verse")
     assert [
         {k: sec[k] for k in ("start_bar", "end_bar", "tag")}
         for sec in layout
@@ -112,7 +112,7 @@ def test_normalize_sections_label_indices() -> None:
 
 def test_normalize_sections_sort_and_clamp() -> None:
     sections = [{"start_bar": 4, "tag": "B"}, {"start_bar": 0, "tag": "A"}]
-    layout, _ = sc.normalize_sections(sections, units=8, default_tag="sec")
+    layout, _ = sc.normalize_sections(sections, bar_count=8, default_tag="sec")
     assert [
         {k: sec[k] for k in ("start_bar", "end_bar", "tag")}
         for sec in layout
@@ -127,7 +127,7 @@ def test_normalize_sections_overlap_adjust() -> None:
         {"start_bar": 0, "end_bar": 4, "tag": "A"},
         {"start_bar": 3, "tag": "B"},
     ]
-    layout, _ = sc.normalize_sections(sections, units=12, default_tag="sec")
+    layout, _ = sc.normalize_sections(sections, bar_count=12, default_tag="sec")
     assert [
         {k: sec[k] for k in ("start_bar", "end_bar", "tag")}
         for sec in layout
@@ -139,7 +139,7 @@ def test_normalize_sections_overlap_adjust() -> None:
 
 def test_normalize_sections_negative_and_far() -> None:
     sections = [{"start_bar": -3, "tag": "Neg"}, {"start_bar": 999, "tag": "Far"}]
-    layout, labels = sc.normalize_sections(sections, units=20, default_tag="sec")
+    layout, labels = sc.normalize_sections(sections, bar_count=20, default_tag="sec")
     assert [
         {k: sec[k] for k in ("start_bar", "end_bar", "tag")}
         for sec in layout
@@ -155,10 +155,25 @@ def test_normalize_sections_verbose_logging(caplog: pytest.LogCaptureFixture) ->
         {"start_bar": 1, "end_bar": 1, "tag": "tight"},
     ]
     with caplog.at_level(logging.WARNING):
-        layout, _ = sc.normalize_sections(sections, units=4, default_tag="sec")
+        layout, _ = sc.normalize_sections(sections, bar_count=4, default_tag="sec")
     assert layout
     messages = [rec.getMessage() for rec in caplog.records]
     assert any("normalize_sections adjustments" in msg for msg in messages)
+
+
+def test_normalize_sections_stats_output() -> None:
+    stats: Dict[str, Any] = {}
+    layout, labels = sc.normalize_sections(
+        [{"start_bar": -1, "tag": "lead"}, {"start_bar": 2, "tag": "hook"}],
+        bar_count=4,
+        default_tag="sec",
+        stats=stats,
+    )
+    assert layout
+    assert labels[0] == "lead"
+    assert "sections_norm" in stats and stats["sections_norm"]
+    warnings = stats.get("warnings", [])
+    assert any("normalize_sections adjustments" in w for w in warnings)
 
 
 def test_sections_accepts_labels_and_dicts(tmp_path: Path) -> None:
@@ -1594,18 +1609,33 @@ def test_auto_fill_once() -> None:
 
 
 def test_insert_style_fill_with_label_sections() -> None:
-    pm = _dummy_pm(8.0)
-    chords = [sc.ChordSpan(i * 2, (i + 1) * 2, 0, 'maj') for i in range(4)]
-    mapping = {'phrase_note': 36, 'phrase_velocity': 100, 'phrase_length_beats': 0.25,
-               'cycle_phrase_notes': [], 'cycle_start_bar': 0, 'cycle_mode': 'bar'}
-    stats: Dict[str, Any] = {"_legacy_bar_pulses_grid": True}
-    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5,
-                                stats=stats)
-    downbeats = stats.get('downbeats') or []
-    units = [(downbeats[i], downbeats[i + 1]) for i in range(len(downbeats) - 1)]
-    cnt = sc.insert_style_fill(out, 'section_end', units, mapping,
-                               sections=['intro', 'verse', 'chorus'], bpm=120.0)
-    assert cnt >= 1
+    pm = pretty_midi.PrettyMIDI()
+    inst = pretty_midi.Instrument(0, name=sc.PHRASE_INST_NAME)
+    pm.instruments.append(inst)
+    units = [(float(i), float(i + 1)) for i in range(4)]
+    mapping = {
+        'phrase_note': 36,
+        'phrase_velocity': 96,
+        'phrase_length_beats': 0.5,
+        'cycle_phrase_notes': [],
+        'cycle_start_bar': 0,
+        'cycle_mode': 'bar',
+    }
+    stats_ref: Dict[str, Any] = {'beat_times': [float(i) for i in range(5)]}
+    setattr(pm, '_sparkle_stats', stats_ref)
+    cnt = sc.insert_style_fill(
+        pm,
+        'section_end',
+        units,
+        mapping,
+        sections=['intro', 'intro', 'verse', 'chorus'],
+        bpm=120.0,
+        bar_count=4,
+    )
+    fill_pitch = int(mapping.get('style_fill', 34))
+    fills = [n for n in inst.notes if n.pitch == fill_pitch]
+    assert cnt == 3
+    assert [round(n.start) for n in fills] == [1, 2, 3]
 
 
 def test_insert_style_fill_avoid_overlap() -> None:
@@ -2721,6 +2751,60 @@ def test_parse_sections_invalid_json() -> None:
     assert "expects JSON" in str(exc.value)
 
 
+def _run_cli_with_sections(tmp_path: Path, sections_json: str) -> dict:
+    midi_in = tmp_path / "in.mid"
+    midi_out = tmp_path / "out.mid"
+    midi_in.write_bytes(b"")
+    captured: dict = {}
+
+    def fake_pm(*_a, **_k):
+        return _dummy_pm(4.0)
+
+    def fake_build(*_a, **kwargs):
+        captured["sections_arg"] = kwargs.get("sections")
+        stats = kwargs.get("stats")
+        if stats is not None:
+            captured["sections_norm"] = stats.get("sections_norm")
+        out = _dummy_pm(4.0)
+        setattr(out, "_sparkle_stats", stats)
+        return out
+
+    argv = [
+        "sparkle_convert",
+        str(midi_in),
+        "--out",
+        str(midi_out),
+        "--sections",
+        sections_json,
+        "--pulse",
+        "1/8",
+        "--dry-run",
+    ]
+
+    with mock.patch.object(sc.pretty_midi, "PrettyMIDI", side_effect=fake_pm):
+        with mock.patch.object(sc, "build_sparkle_midi", side_effect=fake_build):
+            with mock.patch.object(sys, "argv", argv):
+                sc.main()
+    return captured
+
+
+def test_cli_sections_label_list(tmp_path: Path) -> None:
+    captured = _run_cli_with_sections(tmp_path, '["A","B"]')
+    assert captured["sections_arg"] == ["A", "B"]
+    assert captured.get("sections_norm") is not None
+
+
+def test_cli_sections_dict_list(tmp_path: Path) -> None:
+    captured = _run_cli_with_sections(
+        tmp_path,
+        '[{"start_bar":0,"end_bar":2,"tag":"A"},{"start_bar":2,"tag":"B"}]',
+    )
+    sections = captured["sections_arg"]
+    assert isinstance(sections, list)
+    assert sections[0]["tag"] == "A"
+    assert captured.get("sections_norm") is not None
+
+
 def test_parse_inline_chords_japanese_tokens() -> None:
     events = sc.parse_inline_chords("０：Ｃ♯：maj，２：Ｄ♭：min")
     assert events is not None
@@ -2923,9 +3007,11 @@ def test_meter_change_stats_consistency() -> None:
         sc.pulses_per_bar(4, 4, 0.5),
         sc.pulses_per_bar(4, 4, 0.5),
     ]
+    pulses = stats["bar_pulses"]
     for i, count in enumerate(expected):
         assert len(grid[i]) == count
-    assert "bar_pulses" not in stats
+        assert len(pulses[i]) == count
+        assert pulses[i] == grid[i]
     triggers = stats["bar_triggers"]
     assert stats["bar_trigger_pulses"] is triggers
     assert stats["bar_trigger_pulses_compat"] is triggers

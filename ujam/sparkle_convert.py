@@ -870,8 +870,6 @@ def _emit_phrases_for_span(span: "ChordSpan", c_idx: int, ctx: RuntimeContext) -
         if ctx.cycle_mode == "bar" and bar_idx + 1 < len(ctx.downbeats):
             boundary = min(boundary, ctx.downbeats[bar_idx + 1])
         boundary = min(boundary, span.end)
-        if ctx.stats is not None:
-            ctx.stats.setdefault("bar_triggers", {}).setdefault(bar_idx, []).append((b, t))
         if pn is not None:
             if ctx.humanize_ms > 0.0:
                 delta_s = ctx.rng.uniform(-ctx.humanize_ms, ctx.humanize_ms) / 1000.0
@@ -903,6 +901,8 @@ def _emit_phrases_for_span(span: "ChordSpan", c_idx: int, ctx: RuntimeContext) -
                 ctx.min_phrase_len_sec,
                 ctx.stats,
             )
+            if ctx.stats is not None:
+                ctx.stats.setdefault("bar_triggers", {}).setdefault(bar_idx, []).append((b, start_t))
             if ctx.stats is not None and bar_idx not in ctx.stats["bar_phrase_notes"]:
                 ctx.stats["bar_phrase_notes"][bar_idx] = pn
             if ctx.stats is not None:
@@ -1210,16 +1210,18 @@ STYLE_INJECT_SCHEMA: Dict[str, Any] = {
 
 SECTIONS_SCHEMA: Dict[str, Any] = {
     "__type__": list,
-    "__description__": '[{"start_bar": int, "tag": str, ...}]',
+    "__description__": '[{"start_bar": int, "tag": str, ...}] or label list',
     "__item__": {
-        "__type__": dict,
-        "start_bar": {"type": int, "min": 0, "optional": True},
-        "end_bar": {"type": int, "min": 0, "optional": True},
-        "tag": {"type": str, "optional": True},
-        "density": {"type": str, "optional": True},
-        "phrase_pool": {"type": list, "optional": True},
-        "pool": {"type": list, "optional": True},
-        "pool_by_quality": {"type": dict, "optional": True},
+        "__type__": (dict, str),
+        "__schema__": {
+            "start_bar": {"type": int, "min": 0, "optional": True},
+            "end_bar": {"type": int, "min": 0, "optional": True},
+            "tag": {"type": str, "optional": True},
+            "density": {"type": str, "optional": True},
+            "phrase_pool": {"type": list, "optional": True},
+            "pool": {"type": list, "optional": True},
+            "pool_by_quality": {"type": dict, "optional": True},
+        },
     },
 }
 
@@ -1262,6 +1264,9 @@ def parse_json_arg(name: str, raw: str, schema: Dict[str, Any]) -> Any:
         expected_type = spec.get("__type__")
         if expected_type is not None:
             _ensure_type(obj, expected_type, path or "root")
+        nested_schema = spec.get("__schema__")
+        if nested_schema and isinstance(obj, (dict, list)):
+            _validate(obj, nested_schema, path)
         if isinstance(obj, list) and "__item__" in spec:
             item_spec = spec["__item__"]
             for idx, item in enumerate(obj):
@@ -1814,159 +1819,208 @@ def summarize_guide_midi(
 
 
 def normalize_sections(
-    input_sections: Optional[Sequence[Any]],
+    raw: Optional[Sequence[Any]],
     *,
-    units: Union[int, Sequence[Any], None],
+    bar_count: Optional[int],
     default_tag: str = "section",
-    fill_ends: bool = True,
-    clamp: bool = True,
+    stats: Optional[Dict] = None,
+    verbose: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Normalise section specs into ordered ranges and per-bar labels."""
+    """Normalize section specs into sorted ranges and per-bar labels."""
 
-    if isinstance(input_sections, dict):  # pragma: no cover - defensive
-        sections_iterable: Sequence[Any] = [input_sections]
+    if isinstance(raw, dict):  # pragma: no cover - defensive
+        tokens: Sequence[Any] = [raw]
+    elif raw is None:
+        tokens = []
     else:
-        sections_iterable = input_sections or []
+        tokens = list(raw)
 
-    try:
-        unit_count = max(0, int(units)) if isinstance(units, (int, float)) else len(units)  # type: ignore[arg-type]
-    except TypeError:
-        unit_count = 0
-    except ValueError:
-        unit_count = 0
+    unit_count = None
+    if bar_count is not None:
+        try:
+            unit_count = max(0, int(bar_count))
+        except (TypeError, ValueError):
+            unit_count = None
+
+    has_dict = any(isinstance(tok, dict) for tok in tokens)
+    labels_mode = bool(tokens) and not has_dict
 
     warnings: List[str] = []
-    did_fill = False
-    did_clamp = False
-    did_overlap = False
-    did_clamp_local = [False]
-
-    def _coerce_bar(value: Any, fallback: int) -> int:
-        try:
-            bar = int(value)
-        except (TypeError, ValueError):
-            bar = fallback
-            warnings.append("coerced non-integer start/end")
-        if clamp and bar < 0:
-            bar = 0
-            did_clamp_local[0] = True
-        return bar
-
-    prepared: List[Dict[str, Any]] = []
-    for idx, raw in enumerate(sections_iterable):
-        if isinstance(raw, str):
-            start_bar = _coerce_bar(idx, idx)
-            tag = raw
-            end_val: Optional[int] = None
-            explicit = True
-        elif isinstance(raw, dict):
-            start_bar = _coerce_bar(raw.get("start_bar", idx), idx)
-            tag_val = raw.get("tag") or raw.get("name") or raw.get("label") or default_tag
-            tag = str(tag_val).strip() or default_tag
-            end = raw.get("end_bar")
-            explicit = end is not None
-            end_val = None
-            if end is not None:
-                end_val = _coerce_bar(end, start_bar + 1)
-        else:
-            warnings.append("ignored unsupported section token")
-            continue
-
-        if clamp and unit_count and start_bar >= unit_count:
-            warnings.append("dropped section starting beyond unit span")
-            continue
-
-        prepared.append(
-            {
-                "start_bar": start_bar,
-                "end_bar": end_val,
-                "tag": tag,
-                "explicit_end": explicit,
-                "_order": idx,
-            }
-        )
-
-    if not prepared:
-        labels = [default_tag] * unit_count if unit_count > 0 else []
-        return [], labels
-
-    prepared.sort(key=lambda item: (item["start_bar"], item["_order"]))
-
-    normalized: List[Dict[str, Any]] = []
-    prev_end = 0
-    max_end = 0
-    for pos, item in enumerate(prepared):
-        start = int(item["start_bar"])
-        if clamp and start < 0:
-            start = 0
-            did_clamp = True
-        if normalized and start < prev_end:
-            start = prev_end
-            did_overlap = True
-
-        next_hint: Optional[int]
-        if pos + 1 < len(prepared):
-            next_hint = int(prepared[pos + 1]["start_bar"])
-        else:
-            next_hint = unit_count if unit_count else None
-
-        end_val = item["end_bar"]
-        explicit = bool(item["explicit_end"])
-        if end_val is None:
-            if fill_ends:
-                candidate = next_hint if next_hint is not None else start + 1
-                end_val = max(start + 1, candidate)
-                if not explicit:
-                    did_fill = True
-            else:
-                end_val = start + 1
-        else:
-            end_val = int(end_val)
-
-        if clamp and unit_count and end_val > unit_count:
-            end_val = unit_count
-            did_clamp = True
-
-        if end_val <= start:
-            did_overlap = True
-            prev_end = start
-            continue
-
-        tag = str(item["tag"]).strip() or default_tag
-        normalized.append(
-            {
-                "start_bar": start,
-                "end_bar": end_val,
-                "tag": tag,
-                "explicit_end": explicit,
-            }
-        )
-        prev_end = end_val
-        max_end = max(max_end, end_val)
-
-    final_span = unit_count if unit_count else max_end
-    labels = [default_tag] * max(0, final_span)
-    if final_span and normalized:
-        for sec in normalized:
-            start = max(0, min(final_span, int(sec.get("start_bar", 0))))
-            end = max(start, min(final_span, int(sec.get("end_bar", start + 1))))
-            tag = str(sec.get("tag", default_tag)).strip() or default_tag
-            for idx in range(start, end):
-                labels[idx] = tag
-
     details: List[str] = []
-    if did_fill:
-        details.append("filled missing end bars")
-    if did_overlap:
-        details.append("resolved overlaps/empties")
-    if did_clamp or did_clamp_local[0]:
-        details.append("clamped to unit span")
+
+    if labels_mode:
+        label_values: List[str] = []
+        for tok in tokens:
+            if tok is None:
+                label = default_tag
+            else:
+                label = str(tok).strip()
+                if not label:
+                    label = default_tag
+            label_values.append(label)
+        if unit_count is not None:
+            if len(label_values) < unit_count:
+                fill_label = label_values[-1] if label_values else default_tag
+                label_values.extend([fill_label] * (unit_count - len(label_values)))
+                details.append("extended labels to bar span")
+            elif len(label_values) > unit_count:
+                label_values = label_values[:unit_count]
+                details.append("clamped to bar span")
+        labels = label_values
+        if not labels and unit_count:
+            labels = [default_tag] * unit_count
+        normalized: List[Dict[str, Any]] = []
+        if labels:
+            start = 0
+            cur = labels[0]
+            for idx in range(1, len(labels) + 1):
+                if idx == len(labels) or labels[idx] != cur:
+                    normalized.append(
+                        {
+                            "start_bar": start,
+                            "end_bar": idx,
+                            "tag": cur,
+                            "explicit_end": True,
+                        }
+                    )
+                    if idx < len(labels):
+                        start = idx
+                        cur = labels[idx]
+        if unit_count is not None and len(labels) < unit_count:
+            labels.extend([default_tag] * (unit_count - len(labels)))
+        final_labels = labels
+    else:
+        prepared: List[Dict[str, Any]] = []
+        did_fill = False
+        did_clamp = False
+        did_overlap = False
+        did_clamp_local = False
+
+        def _coerce_bar(value: Any, fallback: int) -> int:
+            nonlocal did_clamp_local
+            try:
+                bar = int(value)
+            except (TypeError, ValueError):
+                bar = fallback
+                warnings.append("coerced non-integer start/end")
+            if bar < 0:
+                bar = 0
+                did_clamp_local = True
+            return bar
+
+        for idx, tok in enumerate(tokens):
+            if isinstance(tok, dict):
+                start_bar = _coerce_bar(tok.get("start_bar", idx), idx)
+                tag_val = tok.get("tag") or tok.get("name") or tok.get("label") or default_tag
+                tag = str(tag_val).strip() or default_tag
+                end = tok.get("end_bar")
+                explicit = end is not None
+                end_val = _coerce_bar(end, start_bar + 1) if end is not None else None
+            else:
+                start_bar = _coerce_bar(idx, idx)
+                tag = str(tok).strip() or default_tag
+                explicit = True
+                end_val = None
+
+            if unit_count is not None and start_bar >= unit_count:
+                warnings.append("dropped section starting beyond unit span")
+                continue
+
+            prepared.append(
+                {
+                    "start_bar": start_bar,
+                    "end_bar": end_val,
+                    "tag": tag,
+                    "explicit_end": explicit,
+                    "_order": idx,
+                }
+            )
+
+        if not prepared:
+            final_labels = [default_tag] * unit_count if unit_count else []
+            normalized = []
+        else:
+            prepared.sort(key=lambda item: (item["start_bar"], item["_order"]))
+            normalized = []
+            prev_end = 0
+            max_end = 0
+            for pos, item in enumerate(prepared):
+                start = int(item["start_bar"])
+                if start < 0:
+                    start = 0
+                    did_clamp = True
+                if normalized and start < prev_end:
+                    start = prev_end
+                    did_overlap = True
+
+                if pos + 1 < len(prepared):
+                    next_hint: Optional[int] = int(prepared[pos + 1]["start_bar"])
+                else:
+                    next_hint = unit_count
+
+                end_val = item["end_bar"]
+                explicit = bool(item["explicit_end"])
+                if end_val is None:
+                    candidate = next_hint if next_hint is not None else start + 1
+                    end_val = max(start + 1, candidate)
+                    if not explicit:
+                        did_fill = True
+                else:
+                    end_val = int(end_val)
+
+                if unit_count is not None and end_val > unit_count:
+                    end_val = unit_count
+                    did_clamp = True
+
+                if end_val <= start:
+                    did_overlap = True
+                    prev_end = start
+                    continue
+
+                tag = str(item["tag"]).strip() or default_tag
+                normalized.append(
+                    {
+                        "start_bar": start,
+                        "end_bar": end_val,
+                        "tag": tag,
+                        "explicit_end": explicit,
+                    }
+                )
+                prev_end = end_val
+                max_end = max(max_end, end_val)
+
+            span = unit_count if unit_count is not None else max_end
+            final_labels = [default_tag] * max(0, span)
+            if span and normalized:
+                for sec in normalized:
+                    start = max(0, min(span, int(sec.get("start_bar", 0))))
+                    end = max(start, min(span, int(sec.get("end_bar", start + 1))))
+                    tag = str(sec.get("tag", default_tag)).strip() or default_tag
+                    for idx in range(start, end):
+                        final_labels[idx] = tag
+
+            if did_fill:
+                details.append("filled missing end bars")
+            if did_overlap:
+                details.append("resolved overlaps/empties")
+            if did_clamp or did_clamp_local:
+                details.append("clamped to unit span")
+
     if warnings:
         details.extend(sorted(set(warnings)))
     if details:
         logging.warning("normalize_sections adjustments: %s", ", ".join(details))
+        if stats is not None:
+            stats.setdefault("warnings", []).append(
+                f"normalize_sections adjustments: {', '.join(details)}"
+            )
 
-    return normalized, labels
+    if stats is not None:
+        stats["sections_norm"] = [dict(sec) for sec in normalized]
+        if verbose and normalized:
+            logging.info("normalize_sections normalized=%s", normalized)
+
+    return normalized, final_labels
 
 
 def insert_style_fill(
@@ -2122,13 +2176,17 @@ def insert_style_fill(
     section_unit_count = bar_count if bar_count is not None else len(units)
     section_layout: List[Dict[str, Any]] = []
     if sections:
+        raw_sections = sections
+        stats_target = stats_ref if isinstance(stats_ref, dict) else None
         layout, _labels = normalize_sections(
             sections,
-            units=section_unit_count,
+            bar_count=section_unit_count,
             default_tag=section_default,
+            stats=stats_target,
         )
-        if any(not isinstance(sec, dict) for sec in sections):
+        if any(not isinstance(sec, dict) for sec in raw_sections):
             logging.info("sections(label) was provided; normalized to ranges")
+        sections = layout
         section_layout = layout
     if mode == "section_end":
         if len(section_layout) <= 1:
@@ -2287,10 +2345,8 @@ def _normalize_sections_ranges(
 
     layout, _ = normalize_sections(
         sections,
-        units=num_bars,
+        bar_count=num_bars,
         default_tag="section",
-        fill_ends=True,
-        clamp=True,
     )
     for sec in layout:
         sec["source"] = source
@@ -2302,18 +2358,13 @@ def _sections_to_labels_infer(
     num_bars: Optional[int],
     section_default: str,
 ) -> List[str]:
-    target_units: Union[int, Sequence[Any], None]
-    if num_bars is None:
-        max_end = max((int(sec.get("end_bar", 0)) for sec in sections), default=0)
-        target_units = max_end
-    else:
-        target_units = num_bars
+    target_units = num_bars
+    if target_units is None:
+        target_units = max((int(sec.get("end_bar", 0)) for sec in sections), default=0)
     _, labels = normalize_sections(
         sections,
-        units=target_units,
+        bar_count=target_units,
         default_tag=section_default,
-        fill_ends=True,
-        clamp=True,
     )
     if num_bars is not None and len(labels) < num_bars:
         labels.extend([section_default] * (num_bars - len(labels)))
@@ -2652,8 +2703,10 @@ def finalize_phrase_track(
         logging.info("section normalize input=%s", raw_sections)
     normalized_sections, section_labels_by_bar = normalize_sections(
         raw_sections,
-        units=bar_count,
+        bar_count=bar_count,
         default_tag=section_default,
+        stats=stats if stats_enabled else None,
+        verbose=bool(stats_enabled and stats.get("_section_verbose")),
     )
     if stats_enabled and stats.get("_section_verbose") and normalized_sections:
         logging.info("section normalize output=%s", normalized_sections)
@@ -2743,6 +2796,18 @@ def finalize_phrase_track(
         section_stat = stats.get("section_labels") or stats.get("sections")
         if isinstance(section_stat, list):
             section_sample = [str(s) for s in section_stat[:4]]
+        sections_norm_sample: List[Dict[str, Any]] = []
+        norm_stat = stats.get("sections_norm")
+        if isinstance(norm_stat, list):
+            for sec in norm_stat[:2]:
+                if isinstance(sec, dict):
+                    sections_norm_sample.append(
+                        {
+                            "start": int(sec.get("start_bar", 0)),
+                            "end": int(sec.get("end_bar", 0)),
+                            "tag": str(sec.get("tag", "")),
+                        }
+                    )
         bar_total = int(stats.get("bar_count", len(downbeats or [])))
         quicklook = {
             "bpm": float(bpm) if bpm is not None and math.isfinite(bpm) else None,
@@ -2750,6 +2815,7 @@ def finalize_phrase_track(
             "fill_count": fill_count,
             "density_hist": density_hist,
             "sections": section_sample,
+            "sections_norm": sections_norm_sample,
         }
         stats["quicklook"] = quicklook
 
@@ -3168,7 +3234,7 @@ def _write_markers(
     bar_count = max(0, len(downbeats) - 1)
     _, labels = normalize_sections(
         sections or [],
-        units=bar_count,
+        bar_count=bar_count,
         default_tag=section_default,
     )
     for i, t in enumerate(downbeats):
@@ -4866,7 +4932,6 @@ def build_sparkle_midi(
             stats["cycle_disabled"] = True
 
     if stats is not None:
-        legacy_grid = bool(stats.get("_legacy_bar_pulses_grid", False))
         stats.setdefault("warnings", [])
         stats["schema_version"] = "1.1"
         stats["schema"] = "1.1"
@@ -4893,16 +4958,12 @@ def build_sparkle_midi(
             bar_pulse_grid_obj = {}
         stats["bar_pulse_grid"] = bar_pulse_grid_obj
 
-        if legacy_grid:
-            bar_pulses_obj = stats.get("bar_pulses")
-            if isinstance(bar_pulses_obj, dict):
-                bar_pulses_obj.clear()
-            else:
-                bar_pulses_obj = {}
-            stats["bar_pulses"] = bar_pulses_obj
+        bar_pulses_obj = stats.get("bar_pulses")
+        if isinstance(bar_pulses_obj, dict):
+            bar_pulses_obj.clear()
         else:
-            if "bar_pulses" in stats:
-                stats.pop("bar_pulses")
+            bar_pulses_obj = {}
+        stats["bar_pulses"] = bar_pulses_obj
         stats["bar_phrase_notes"] = {}
         stats["bar_velocities"] = {}
         stats["triads"] = []
@@ -4924,8 +4985,9 @@ def build_sparkle_midi(
     if sections:
         normalized_sections_cli, labels_override = normalize_sections(
             sections,
-            units=num_bars,
+            bar_count=num_bars,
             default_tag=section_default,
+            stats=stats,
         )
         sections = normalized_sections_cli
         section_labels_override = labels_override
@@ -5158,14 +5220,12 @@ def build_sparkle_midi(
 
     # Precompute pulse timestamps per bar (meter-derived grid; swing shifts timing only)
     if stats is not None:
-        legacy_pulses_grid = bool(stats.get("_legacy_bar_pulses_grid", False))
         bar_grid = stats.setdefault("bar_pulse_grid", {})
         bar_triggers = stats.setdefault("bar_triggers", {})
-        bar_pulses_dict = stats.get("bar_pulses") if legacy_pulses_grid else None
+        bar_pulses_dict = stats.setdefault("bar_pulses", {})
         bar_grid.clear()
         bar_triggers.clear()
-        if bar_pulses_dict is not None:
-            bar_pulses_dict.clear()
+        bar_pulses_dict.clear()
         for i, (start, next_start) in enumerate(zip(downbeats[:-1], downbeats[1:])):
             num, den = get_meter_at(meter_map, start, times=meter_times)
             sb = time_to_beat(start)
@@ -5176,8 +5236,7 @@ def build_sparkle_midi(
                 pulse = (float(sb), float(beat_to_time(sb)))
                 grid_list = [pulse]
                 bar_grid[i] = grid_list
-                if bar_pulses_dict is not None:
-                    bar_pulses_dict[i] = list(grid_list)
+                bar_pulses_dict[i] = list(grid_list)
                 continue
             step = bar_beats / total
             grid: List[Tuple[float, float]] = []
@@ -5204,8 +5263,7 @@ def build_sparkle_midi(
                 grid = [(float(sb), float(beat_to_time(sb)))]
             grid_list = list(grid)
             bar_grid[i] = grid_list
-            if bar_pulses_dict is not None:
-                bar_pulses_dict[i] = list(grid_list)
+            bar_pulses_dict[i] = list(grid_list)
 
     # Velocity curve helper
     bar_progress: Dict[int, int] = {}
@@ -6024,13 +6082,8 @@ def main():
         type=str,
         default=None,
         help=(
-            "Sections JSON. Accepts either a list of labels "
-            "(e.g. '[\"A\",\"B\",\"C\"]') or a list of dicts with "
-            "start_bar[/end_bar]/tag "
-            "(e.g. '[{\"start_bar\":0,\"tag\":\"A\"},{\"start_bar\":8,\"tag\":\"B\"}]'). "
-            "Values are normalized: missing end_bar is backfilled; overlaps/negatives "
-            "are auto-fixed with warnings. Resolution order: CLI > mapping > guide. "
-            "Providing sections improves --auto-fill section_end."
+            "JSON list: labels [\"A\",\"B\",...] or dicts [{\"start_bar\":0,\"end_bar\":8,\"tag\":\"A\"}]. "
+            "Priority: CLI > mapping > guide. Missing end_bar is backfilled; overlaps auto-fixed with warnings."
         ),
     )
 
@@ -6488,6 +6541,8 @@ def main():
         sections = parse_json_arg("--sections", args.sections, SECTIONS_SCHEMA)
     if sections:
         for sec in sections:
+            if not isinstance(sec, dict):
+                continue
             pool = sec.get("phrase_pool") or sec.get("pool")
             if pool:
                 sec["phrase_pool" if "phrase_pool" in sec else "pool"] = [
@@ -6514,6 +6569,15 @@ def main():
     mapping["accent"] = accent
     mapping["sections"] = sections
     mapping["silent_qualities"] = silent_qualities
+
+    if stats_enabled:
+        stats["sections"] = sections or []
+        normalize_sections(
+            sections,
+            bar_count=None,
+            default_tag=args.section_default,
+            stats=stats,
+        )
 
     section_lfo_cfg = mapping.get("section_lfo")
     if args.section_lfo is not None:

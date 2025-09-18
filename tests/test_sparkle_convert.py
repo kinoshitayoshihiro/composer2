@@ -1,13 +1,14 @@
-import tempfile
-from pathlib import Path
-import random
-import logging
-import sys
-from unittest import mock
-import pytest
-import types
 import json
-from typing import Any, Dict, List
+import logging
+import random
+import sys
+import tempfile
+import types
+from pathlib import Path
+from typing import Any
+from unittest import mock
+
+import pytest
 
 try:
     import pretty_midi  # type: ignore
@@ -17,7 +18,6 @@ except Exception:  # pragma: no cover
 import argparse
 
 from ujam import sparkle_convert as sc
-from ujam.damping import _append_phrase
 from ujam.consts import DAMP_INST_NAME
 
 
@@ -330,8 +330,7 @@ def test_read_chords_csv_invalid_symbol(tmp_path: Path) -> None:
 # is not present in the current API (so your suite remains green during refactors).
 
 import inspect
-import random
-import pytest
+
 import pretty_midi
 
 import sparkle_convert as sc  # module under test
@@ -699,6 +698,59 @@ def test_sections_without_guide() -> None:
 
 
 
+
+
+def test_merge_sections_cli_overrides_guide() -> None:
+    merged = sc._merge_sections(
+        [{"start_bar": 2, "tag": "B"}],
+        ["a", "b", "c", "d"],
+        10,
+    )
+    assert merged == [
+        {"start_bar": 0, "end_bar": 1, "tag": "a", "source": "guide", "explicit_end": True},
+        {"start_bar": 1, "end_bar": 2, "tag": "b", "source": "guide", "explicit_end": True},
+        {"start_bar": 2, "end_bar": 3, "tag": "B", "source": "cli", "explicit_end": True},
+        {"start_bar": 3, "end_bar": 10, "tag": "d", "source": "guide", "explicit_end": True},
+    ]
+
+
+def test_merge_sections_backfill_end() -> None:
+    merged = sc._merge_sections(
+        [{"start_bar": 5, "tag": "X"}],
+        ["v", "p", "c"],
+        8,
+    )
+    assert merged[-1]["start_bar"] == 5
+    assert merged[-1]["end_bar"] == 8
+    assert merged[-1]["tag"] == "X"
+
+
+def test_merge_sections_overlap_autofix(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    cli = [{"start_bar": 0, "end_bar": 3, "tag": "intro"}, {"start_bar": 2, "tag": "bridge"}]
+    guide = [
+        {"start_bar": 0, "end_bar": 2, "tag": "A"},
+        {"start_bar": 2, "end_bar": 4, "tag": "B"},
+    ]
+    merged = sc._merge_sections(cli, guide, 6)
+    assert all(sec["start_bar"] < sec["end_bar"] for sec in merged)
+    assert any("auto-fix" in rec.getMessage() for rec in caplog.records)
+
+
+def test_insert_style_fill_section_end_ignores_tiny() -> None:
+    pm = pretty_midi.PrettyMIDI()
+    inst = pretty_midi.Instrument(program=0, name=sc.PHRASE_INST_NAME)
+    pm.instruments.append(inst)
+    units = [(0.0, 1.0), (1.0, 2.0)]
+    count = sc.insert_style_fill(
+        pm,
+        "section_end",
+        units,
+        {"phrase_velocity": 96, "style_fill": 35},
+        sections=[{"start_bar": 0, "end_bar": 0, "tag": "intro"}],
+    )
+    assert count == 0
+    assert not inst.notes
 def test_finalize_not_duplicated() -> None:
     pm = pretty_midi.PrettyMIDI()
     chord_inst = pretty_midi.Instrument(program=0, name=sc.CHORD_INST_NAME)
@@ -1853,7 +1905,7 @@ def test_stats_triggers_vs_grid() -> None:
         "cycle_phrase_notes": [36],
         "cycle_mode": "bar",
     }
-    stats: Dict[str, Any] = {}
+    stats: dict[str, Any] = {}
     out = sc.build_sparkle_midi(
         pm,
         chords,
@@ -2603,7 +2655,7 @@ def test_marker_encoding_modes() -> None:
         def __init__(self) -> None:
             self.markers = []
 
-    def capture_markers(labels: List[str], mode: str) -> List[str]:
+    def capture_markers(labels: list[str], mode: str) -> list[str]:
         dummy = DummyPM()
         sections = [
             {"start_bar": i, "end_bar": i + 1, "tag": label}
@@ -2676,7 +2728,7 @@ def test_quantize_strength_pattern_across_bars() -> None:
 
 
 def test_quicklook_summary_present() -> None:
-    stats: Dict[str, Any] = {"bar_density": {0: "low"}, "sections": ["intro"], "bar_count": 1}
+    stats: dict[str, Any] = {"bar_density": {0: "low"}, "sections": ["intro"], "bar_count": 1}
     sc.finalize_phrase_track(
         pretty_midi.PrettyMIDI(),
         None,
@@ -2756,7 +2808,7 @@ def test_meter_change_stats_consistency() -> None:
         "cycle_phrase_notes": [36],
         "cycle_mode": "bar",
     }
-    stats: Dict[str, Any] = {"_legacy_bar_pulses_grid": False}
+    stats: dict[str, Any] = {"_legacy_bar_pulses_grid": False}
     chords = [sc.ChordSpan(0.0, 9.0, 0, "maj")]
     sc.build_sparkle_midi(
         pm,

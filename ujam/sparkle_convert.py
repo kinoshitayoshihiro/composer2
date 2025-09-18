@@ -6071,21 +6071,21 @@ def main():
         "--damp-cc-clip", type=int, nargs=2, default=None, help="Clip damping CC to [lo hi]"
     )
 
-# Sections & profiles
-ap.add_argument(
-    "--sections",
-    type=str,
-    default=None,
-    help=(
-        "Sections JSON. Accepts either a list of labels "
-        "(e.g. '[\"A\",\"B\",\"C\"]') or a list of dicts with "
-        "start_bar[/end_bar]/tag "
-        "(e.g. '[{\"start_bar\":0,\"tag\":\"A\"},{\"start_bar\":8,\"tag\":\"B\"}]'). "
-        "Values are normalized: missing end_bar is backfilled; overlaps/negatives "
-        "are auto-fixed with warnings. Resolution order: CLI > mapping > guide. "
-        "Providing sections improves --auto-fill section_end."
-    ),
-)
+    # Sections & profiles
+    ap.add_argument(
+        "--sections",
+        type=str,
+        default=None,
+        help=(
+            "Sections JSON. Accepts either a list of labels "
+            "(e.g. '[\"A\",\"B\",\"C\"]') or a list of dicts with "
+            "start_bar[/end_bar]/tag "
+            "(e.g. '[{\"start_bar\":0,\"tag\":\"A\"},{\"start_bar\":8,\"tag\":\"B\"}]'). "
+            "Values are normalized: missing end_bar is backfilled; overlaps/negatives "
+            "are auto-fixed with warnings. Resolution order: CLI > mapping > guide. "
+            "Providing sections improves --auto-fill section_end."
+        ),
+    )
 
     ap.add_argument(
         "--section-profiles", type=str, default=None, help="YAML file of section profiles"

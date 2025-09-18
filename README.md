@@ -1750,6 +1750,7 @@ JSON reports maintain the legacy ``sections`` label array while also surfacing:
 
 * ``section_labels`` – the canonical per-bar label sequence used by the renderer.
 * ``sections_layout`` – normalised section dictionaries with ``start_bar``/``end_bar``/``tag``.
+* ``bar_pulse_grid`` – meter-derived grid (mirrored to ``bar_pulses``); ``bar_triggers`` logs actual phrase hits.
 
 External tools should migrate to the new keys while continuing to accept ``sections`` for
 backwards compatibility.

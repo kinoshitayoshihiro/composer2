@@ -23,8 +23,9 @@ import argparse
 import json
 import os
 import sys
+import warnings
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -36,8 +37,8 @@ try:  # Optional; only used when available
 except Exception:  # pragma: no cover - optional dependency
     pearsonr = spearmanr = None  # type: ignore
 
-from utilities.ml_velocity import MLVelocityModel
 from utilities.ml_duration import DurationTransformer
+from utilities.ml_velocity import MLVelocityModel
 
 
 def _ensure_int(value: object, default: int) -> int:
@@ -55,7 +56,7 @@ def _worker_init_fn(worker_id: int) -> None:
     torch.manual_seed(_worker_seed + worker_id)
 
 
-def _resolve_workers(v: Optional[int]) -> int:
+def _resolve_workers(v: int | None) -> int:
     if v is not None:
         return max(int(v), 0)
     env = os.getenv("COMPOSER2_NUM_WORKERS")
@@ -84,12 +85,12 @@ def _as_int(s: pd.Series, dtype: str = "int64") -> pd.Series:
 # Stats loading / normalisation
 # ---------------------------------------------------------------------------
 
-def _load_stats(stats_json: Optional[Path], ckpt_path: Path) -> Optional[Tuple[Optional[List[str]], np.ndarray, np.ndarray, dict]]:
+def _load_stats(stats_json: Path | None, ckpt_path: Path) -> tuple[list[str] | None, np.ndarray, np.ndarray, dict] | None:
     path = stats_json if stats_json and stats_json.is_file() else ckpt_path.with_suffix(ckpt_path.suffix + ".stats.json")
     if not path.is_file():
         return None
     obj = json.loads(path.read_text())
-    feat_cols: Optional[List[str]] = obj.get("feat_cols")
+    feat_cols: list[str] | None = obj.get("feat_cols")
     if feat_cols and isinstance(obj.get("mean"), dict) and isinstance(obj.get("std"), dict):
         mean = np.array([obj["mean"][c] for c in feat_cols], dtype=np.float32)
         std = np.array([obj["std"][c] for c in feat_cols], dtype=np.float32)
@@ -103,7 +104,7 @@ def _load_stats(stats_json: Optional[Path], ckpt_path: Path) -> Optional[Tuple[O
     return feat_cols, mean, std, meta
 
 
-def _apply_stats(df: pd.DataFrame, feat_cols: Optional[Sequence[str]], mean: np.ndarray, std: np.ndarray, *, strict: bool = False) -> Tuple[np.ndarray, List[str]]:
+def _apply_stats(df: pd.DataFrame, feat_cols: Sequence[str] | None, mean: np.ndarray, std: np.ndarray, *, strict: bool = False) -> tuple[np.ndarray, list[str]]:
     cols = list(feat_cols) if feat_cols else [c for c in df.columns if c.startswith("feat_")]
     missing = [c for c in cols if c not in df.columns]
     extra = [c for c in df.columns if c.startswith("feat_") and c not in cols]
@@ -115,7 +116,7 @@ def _apply_stats(df: pd.DataFrame, feat_cols: Optional[Sequence[str]], mean: np.
     return arr, cols
 
 
-def load_stats_and_normalize(df: pd.DataFrame, stats: Optional[Tuple[Optional[List[str]], np.ndarray, np.ndarray]], *, strict: bool = False) -> Tuple[np.ndarray, List[str]]:
+def load_stats_and_normalize(df: pd.DataFrame, stats: tuple[list[str] | None, np.ndarray, np.ndarray] | None, *, strict: bool = False) -> tuple[np.ndarray, list[str]]:
     if stats is None:
         raise ValueError("feature stats required")
     return _apply_stats(df, stats[0], stats[1], stats[2], strict=strict)
@@ -125,7 +126,7 @@ def load_stats_and_normalize(df: pd.DataFrame, stats: Optional[Tuple[Optional[Li
 # Duration quantisation helpers
 # ---------------------------------------------------------------------------
 
-def _parse_quant(step_str: Optional[str], meta: dict) -> float:
+def _parse_quant(step_str: str | None, meta: dict) -> float:
     if step_str:
         if "_" in step_str:
             step_str = step_str.split("_", 1)[1]
@@ -157,9 +158,9 @@ def _load_duration_model(path: Path) -> DurationTransformer:
     return model.eval()
 
 
-def _duration_predict(df: pd.DataFrame, model: DurationTransformer) -> Tuple[np.ndarray, np.ndarray]:
-    preds: List[float] = []
-    targets: List[float] = []
+def _duration_predict(df: pd.DataFrame, model: DurationTransformer) -> tuple[np.ndarray, np.ndarray]:
+    preds: list[float] = []
+    targets: list[float] = []
     max_len = int(model.max_len.item()) if hasattr(model, "max_len") else 16
     for _, g in df.groupby("bar", sort=False):
         g = g.sort_values("position")
@@ -184,7 +185,7 @@ def _duration_predict(df: pd.DataFrame, model: DurationTransformer) -> Tuple[np.
     return np.array(preds, dtype=np.float32), np.array(targets, dtype=np.float32)
 
 
-def _tensor_slice(tensor: Optional[torch.Tensor], length: int) -> Optional[torch.Tensor]:
+def _tensor_slice(tensor: torch.Tensor | None, length: int) -> torch.Tensor | None:
     if tensor is None:
         return None
     if tensor.ndim == 0:
@@ -209,14 +210,21 @@ def _duv_sequence_predict(
     df: pd.DataFrame,
     model: torch.nn.Module,
     device: torch.device,
-) -> Optional[Dict[str, np.ndarray]]:
+) -> dict[str, np.ndarray] | None:
     if not getattr(model, "requires_duv_feats", False):
         return None
-    if not {"pitch", "velocity", "duration", "position"}.issubset(df.columns):
-        return None
+    required = {"pitch", "velocity", "duration", "position"}
+    missing = sorted(required - set(df.columns))
+    if missing:
+        raise RuntimeError(
+            "DUV checkpoint requires phrase-level features for inference but the CSV is missing: "
+            + ", ".join(missing)
+        )
+    if "bar" not in df.columns:
+        warnings.warn("DUV requires bar segmentation for best results", RuntimeWarning)
 
     core = getattr(model, "core", model)
-    max_len = _ensure_int(getattr(core, "max_len", getattr(model, "max_len", 16)), 16)
+    max_len = int(getattr(core, "max_len", getattr(model, "max_len", 16)))
     has_vel = bool(getattr(model, "has_vel_head", getattr(core, "head_vel_reg", None)))
     has_dur = bool(getattr(model, "has_dur_head", getattr(core, "head_dur_reg", None)))
     if not has_vel and not has_dur:
@@ -228,76 +236,130 @@ def _duv_sequence_predict(
     vel_mask = np.zeros(n, dtype=bool)
     dur_mask = np.zeros(n, dtype=bool)
 
-    group_cols = ["track_id", "bar"] if "track_id" in df.columns else ["bar"]
+    group_cols = [c for c in ("track_id", "bar") if c in df.columns]
+    groups = (df.groupby(group_cols, sort=False) if group_cols else [(None, df)])
 
-    for _, group in df.groupby(group_cols, sort=False):
+    for _, group in groups:
         if group.empty:
             continue
         g = group.sort_values("position")
         idx = g.index.to_numpy()
-        length = len(g)
-        if length > max_len:
-            g = g.iloc[:max_len]
-            idx = g.index.to_numpy()
-            length = len(g)
-        pad = max_len - length
+        length = min(len(g), max_len)
+        if length == 0:
+            continue
+        g = g.iloc[:length]
+        idx = g.index.to_numpy()
 
-        feats: Dict[str, torch.Tensor] = {}
-        pitch_cls = (g["pitch"].to_numpy(dtype="int64") % 12).tolist() + [0] * pad
-        feats["pitch_class"] = torch.tensor(pitch_cls, dtype=torch.long, device=device).unsqueeze(0)
-        vel_vals = g["velocity"].to_numpy(dtype="float32").tolist() + [0.0] * pad
-        feats["velocity"] = torch.tensor(vel_vals, dtype=torch.float32, device=device).unsqueeze(0)
-        dur_vals = g["duration"].to_numpy(dtype="float32").tolist() + [0.0] * pad
-        feats["duration"] = torch.tensor(dur_vals, dtype=torch.float32, device=device).unsqueeze(0)
-        pos_vals = g["position"].to_numpy(dtype="int64").tolist() + [0] * pad
-        feats["position"] = torch.tensor(pos_vals, dtype=torch.long, device=device).unsqueeze(0)
+        pitch_vals = torch.as_tensor(
+            g["pitch"].to_numpy(dtype="int64", copy=False)[:length],
+            dtype=torch.long,
+            device=device,
+        )
+        pos_vals = torch.as_tensor(
+            g["position"].to_numpy(dtype="int64", copy=False)[:length],
+            dtype=torch.long,
+            device=device,
+        ).clamp(max=max_len - 1)
+        vel_vals = torch.as_tensor(
+            g["velocity"].to_numpy(dtype="float32", copy=False)[:length],
+            dtype=torch.float32,
+            device=device,
+        )
+        dur_vals = torch.as_tensor(
+            g["duration"].to_numpy(dtype="float32", copy=False)[:length],
+            dtype=torch.float32,
+            device=device,
+        )
+
+        pitch = torch.zeros(1, max_len, dtype=torch.long, device=device)
+        pitch[:, :length] = pitch_vals
+        pos = torch.zeros(1, max_len, dtype=torch.long, device=device)
+        pos[:, :length] = pos_vals
+        vel_in = torch.zeros(1, max_len, dtype=torch.float32, device=device)
+        vel_in[:, :length] = vel_vals
+        dur_in = torch.zeros(1, max_len, dtype=torch.float32, device=device)
+        dur_in[:, :length] = dur_vals
+
+        feat_dict: dict[str, torch.Tensor] = {
+            "pitch": pitch,
+            "pitch_class": pitch % 12,
+            "position": pos,
+            "velocity": vel_in,
+            "duration": dur_in,
+        }
 
         if bool(getattr(core, "use_bar_beat", False)) and {"bar_phase", "beat_phase"}.issubset(g.columns):
-            bar_phase = _prepare_feature_tensor(g["bar_phase"], pad, dtype="float32").to(device)
-            beat_phase = _prepare_feature_tensor(g["beat_phase"], pad, dtype="float32").to(device)
-            feats["bar_phase"] = bar_phase.unsqueeze(0)
-            feats["beat_phase"] = beat_phase.unsqueeze(0)
+            bar_phase = torch.zeros(1, max_len, dtype=torch.float32, device=device)
+            beat_phase = torch.zeros(1, max_len, dtype=torch.float32, device=device)
+            bar_phase[:, :length] = torch.as_tensor(
+                g["bar_phase"].to_numpy(dtype="float32", copy=False)[:length],
+                dtype=torch.float32,
+                device=device,
+            )
+            beat_phase[:, :length] = torch.as_tensor(
+                g["beat_phase"].to_numpy(dtype="float32", copy=False)[:length],
+                dtype=torch.float32,
+                device=device,
+            )
+            feat_dict["bar_phase"] = bar_phase
+            feat_dict["beat_phase"] = beat_phase
         if getattr(core, "section_emb", None) is not None and "section" in g.columns:
-            section = _prepare_feature_tensor(g["section"], pad, dtype="int64").to(device)
-            feats["section"] = section.unsqueeze(0)
+            section = torch.zeros(1, max_len, dtype=torch.long, device=device)
+            section[:, :length] = torch.as_tensor(
+                g["section"].to_numpy(dtype="int64", copy=False)[:length],
+                dtype=torch.long,
+                device=device,
+            )
+            feat_dict["section"] = section
         if getattr(core, "mood_emb", None) is not None and "mood" in g.columns:
-            mood = _prepare_feature_tensor(g["mood"], pad, dtype="int64").to(device)
-            feats["mood"] = mood.unsqueeze(0)
+            mood = torch.zeros(1, max_len, dtype=torch.long, device=device)
+            mood[:, :length] = torch.as_tensor(
+                g["mood"].to_numpy(dtype="int64", copy=False)[:length],
+                dtype=torch.long,
+                device=device,
+            )
+            feat_dict["mood"] = mood
         if getattr(core, "vel_bucket_emb", None) is not None and "vel_bucket" in g.columns:
-            vel_bucket = _prepare_feature_tensor(g["vel_bucket"], pad, dtype="int64").to(device)
-            feats["vel_bucket"] = vel_bucket.unsqueeze(0)
+            vel_bucket = torch.zeros(1, max_len, dtype=torch.long, device=device)
+            vel_bucket[:, :length] = torch.as_tensor(
+                g["vel_bucket"].to_numpy(dtype="int64", copy=False)[:length],
+                dtype=torch.long,
+                device=device,
+            )
+            feat_dict["vel_bucket"] = vel_bucket
         if getattr(core, "dur_bucket_emb", None) is not None and "dur_bucket" in g.columns:
-            dur_bucket = _prepare_feature_tensor(g["dur_bucket"], pad, dtype="int64").to(device)
-            feats["dur_bucket"] = dur_bucket.unsqueeze(0)
+            dur_bucket = torch.zeros(1, max_len, dtype=torch.long, device=device)
+            dur_bucket[:, :length] = torch.as_tensor(
+                g["dur_bucket"].to_numpy(dtype="int64", copy=False)[:length],
+                dtype=torch.long,
+                device=device,
+            )
+            feat_dict["dur_bucket"] = dur_bucket
 
         mask = torch.zeros(1, max_len, dtype=torch.bool, device=device)
-        mask[0, :length] = True
+        mask[:, :length] = True
 
         with torch.no_grad():
-            raw = model(feats, mask=mask)
-        if isinstance(raw, tuple):
-            vel_out = raw[0] if len(raw) > 0 else None
-            dur_out = raw[1] if len(raw) > 1 else None
-        elif isinstance(raw, dict):
-            vel_out = raw.get("vel_reg")
-            dur_out = raw.get("dur_reg")
+            outputs = model(feat_dict, mask=mask)
+
+        if isinstance(outputs, dict):
+            vel_out = outputs.get("velocity") or outputs.get("vel_reg")
+            dur_out = outputs.get("duration") or outputs.get("dur_reg")
+        elif isinstance(outputs, (tuple, list)):
+            vel_out = outputs[0] if len(outputs) > 0 else None
+            dur_out = outputs[1] if len(outputs) > 1 else None
         else:
-            vel_out = raw
+            vel_out = outputs
             dur_out = None
 
-        vel_slice = _tensor_slice(vel_out, length)
-        if has_vel and vel_slice is not None:
-            vel_vals = (
-                vel_slice.clamp(0.0, 1.0).mul(127.0).round().clamp(0, 127).to(torch.float32).cpu().numpy()
-            )
-            vel_pred[idx[: length]] = vel_vals
-            vel_mask[idx[: length]] = True
-
-        dur_slice = _tensor_slice(dur_out, length)
-        if has_dur and dur_slice is not None:
-            dur_vals = torch.expm1(dur_slice).clamp(min=0.0).to(torch.float32).cpu().numpy()
-            dur_pred[idx[: length]] = dur_vals
-            dur_mask[idx[: length]] = True
+        if vel_out is not None:
+            v = torch.clamp(vel_out.squeeze(0), 0.0, 1.0).mul(127.0).round().clamp(1.0, 127.0)
+            vel_pred[idx] = v.detach().cpu().numpy()[:length]
+            vel_mask[idx] = True
+        if dur_out is not None:
+            d = torch.expm1(dur_out.squeeze(0)).clamp(min=0.0)
+            dur_pred[idx] = d.detach().cpu().numpy()[:length]
+            dur_mask[idx] = True
 
     return {
         "velocity": vel_pred,
@@ -331,21 +393,6 @@ def run(args: argparse.Namespace) -> int:
         df["position"] = _as_int(df["position"], "int32")
     df = df.reset_index(drop=True)
 
-    X, _ = load_stats_and_normalize(df, stats, strict=True)
-    y_vel = df.get("velocity")
-    if y_vel is None:
-        raise SystemExit("CSV missing 'velocity' column")
-    y_vel = y_vel.to_numpy(dtype="float32", copy=False)
-
-    dataset = TensorDataset(torch.from_numpy(X))
-    loader = DataLoader(
-        dataset,
-        batch_size=args.batch,
-        shuffle=False,
-        num_workers=_resolve_workers(args.num_workers),
-        worker_init_fn=_worker_init_fn,
-    )
-
     device = _get_device(args.device)
     vel_model = MLVelocityModel.load(str(args.ckpt))
     loader_type = getattr(vel_model, "_duv_loader", "ts" if str(args.ckpt).endswith((".ts", ".torchscript")) else "ckpt")
@@ -373,13 +420,36 @@ def run(args: argparse.Namespace) -> int:
     vel_model = vel_model.to(device).eval()
     duv_preds = _duv_sequence_predict(df, vel_model, device)
 
-    vel_pred: Optional[np.ndarray] = None
-    vel_mask: Optional[np.ndarray] = None
+    y_vel = df.get("velocity")
+    if y_vel is None:
+        raise SystemExit("CSV missing 'velocity' column")
+    y_vel = y_vel.to_numpy(dtype="float32", copy=False)
+
+    vel_pred: np.ndarray | None = None
+    vel_mask: np.ndarray | None = None
     if duv_preds is not None and duv_preds["velocity_mask"].any():
         vel_pred = duv_preds["velocity"].astype("float32", copy=False)
         vel_mask = duv_preds["velocity_mask"]
     else:
-        preds: List[np.ndarray] = []
+        if getattr(vel_model, "requires_duv_feats", False):
+            required = {"pitch", "velocity", "duration", "position"}
+            missing = sorted(required - set(df.columns))
+            detail = f"; missing columns: {', '.join(missing)}" if missing else ""
+            raise RuntimeError(
+                "DUV checkpoint requires phrase-level features (pitch, velocity, duration, position) "
+                "for inference and cannot fall back to dense feature tensors"
+                f"{detail}."
+            )
+        preds: list[np.ndarray] = []
+        X, _ = load_stats_and_normalize(df, stats, strict=True)
+        dataset = TensorDataset(torch.from_numpy(X))
+        loader = DataLoader(
+            dataset,
+            batch_size=args.batch,
+            shuffle=False,
+            num_workers=_resolve_workers(args.num_workers),
+            worker_init_fn=_worker_init_fn,
+        )
         with torch.no_grad():
             for (xb,) in loader:
                 out = vel_model(xb.to(device))
@@ -388,9 +458,9 @@ def run(args: argparse.Namespace) -> int:
         vel_mask = np.ones_like(vel_pred, dtype=bool)
 
     # Duration
-    dur_pred: Optional[np.ndarray] = None
-    dur_target_seq: Optional[np.ndarray] = None
-    dur_mask: Optional[np.ndarray] = None
+    dur_pred: np.ndarray | None = None
+    dur_target_seq: np.ndarray | None = None
+    dur_mask: np.ndarray | None = None
     if duv_preds is not None and "duration" in df.columns and duv_preds["duration_mask"].any():
         dur_pred = duv_preds["duration"].astype("float32", copy=False)
         dur_target_seq = df["duration"].to_numpy(dtype="float32", copy=False)
@@ -456,7 +526,7 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:  # pragma: no cover - CLI
+def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
     p = argparse.ArgumentParser(prog="eval_duv.py")
     p.add_argument("--csv", type=Path, required=True)
     p.add_argument(

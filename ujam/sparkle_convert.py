@@ -1809,7 +1809,7 @@ def insert_style_fill(
     units: List[Tuple[float, float]],
     mapping: Dict,
     *,
-    sections: Optional[List[Dict]] = None,
+    sections: Optional[List[Dict[str, Any]]] = None,
     rest_ratio_list: Optional[List[float]] = None,
     rest_th: float = 0.75,
     fill_length_beats: float = 0.25,
@@ -1882,7 +1882,11 @@ def insert_style_fill(
     used: set = set()
     if mode == "section_end" and sections:
         for sec in sections:
-            idx = int(sec.get("end_bar", 0)) - 1
+            start_bar = int(sec.get("start_bar", 0))
+            end_bar = int(sec.get("end_bar", start_bar))
+            if end_bar - start_bar < 1:
+                continue
+            idx = end_bar - 1
             if 0 <= idx < len(units) and idx not in used:
                 start = units[idx][0]
                 start_b = time_to_beat(start)
@@ -1953,6 +1957,227 @@ def insert_style_fill(
                 continue
             i += 1
     return count
+
+
+def _normalize_sections(
+    sections: Optional[Sequence[Any]],
+    num_bars: Optional[int],
+    *,
+    source: str = "cli",
+) -> List[Dict[str, Any]]:
+    """Normalize section specs into sorted ranges."""
+
+    if not sections:
+        return []
+
+    normalized: List[Dict[str, Any]] = []
+    fixes: List[str] = []
+
+    def _emit(tag: Optional[str], start: int, end: Optional[int], explicit: bool) -> None:
+        tag_val = f"sec{len(normalized)}" if tag is None else str(tag)
+        normalized.append(
+            {
+                "start_bar": max(0, int(start)),
+                "end_bar": int(end) if end is not None else None,
+                "tag": tag_val,
+                "source": source,
+                "explicit_end": explicit,
+            }
+        )
+
+    if isinstance(sections, dict):  # pragma: no cover - defensive
+        sections = [sections]
+
+    seq = list(sections)
+    if seq and all(isinstance(item, dict) for item in seq):
+        for idx, raw in enumerate(seq):
+            if not isinstance(raw, dict):
+                continue
+            start_val = raw.get("start_bar")
+            if start_val is None:
+                start_val = idx if not normalized else normalized[-1]["end_bar"]
+            start = int(start_val) if start_val is not None else 0
+            end_val = raw.get("end_bar")
+            explicit = end_val is not None
+            end = int(end_val) if end_val is not None else None
+            _emit(raw.get("tag"), start, end, explicit)
+    else:
+        tags = [str(item) if item is not None else None for item in seq]
+        if not tags:
+            return []
+        start = 0
+        cur = tags[0]
+        for idx, tag in enumerate(tags[1:], 1):
+            if tag != cur:
+                _emit(cur, start, idx, True)
+                start = idx
+                cur = tag
+        _emit(cur, start, len(tags), True)
+
+    normalized.sort(key=lambda sec: sec["start_bar"])
+
+    for i, sec in enumerate(normalized):
+        start = sec["start_bar"]
+        if start < 0:
+            fixes.append(f"start<0 -> clamp to 0 (src={source})")
+            start = 0
+            sec["start_bar"] = start
+        end = sec["end_bar"]
+        explicit = sec["explicit_end"]
+        next_start: Optional[int] = None
+        if i + 1 < len(normalized):
+            next_start = normalized[i + 1]["start_bar"]
+        if end is None:
+            if next_start is not None:
+                end = next_start
+            elif num_bars is not None:
+                end = num_bars
+            else:
+                end = start + 1
+        if end <= start:
+            fixes.append(f"end<=start -> extend (src={source} idx={i})")
+            end = start + 1
+        if num_bars is not None and end > num_bars:
+            fixes.append(f"end>{num_bars} -> clamp (src={source} idx={i})")
+            end = num_bars
+        sec["end_bar"] = end
+        sec["explicit_end"] = explicit
+        if i > 0:
+            prev = normalized[i - 1]
+            if prev["end_bar"] > start:
+                fixes.append(f"overlap -> shorten prev (src={source} idx={i-1})")
+                prev["end_bar"] = start
+        if sec["end_bar"] <= sec["start_bar"]:
+            fixes.append(f"empty -> drop (src={source} idx={i})")
+
+    normalized = [sec for sec in normalized if sec["end_bar"] > sec["start_bar"]]
+
+    if fixes:
+        msg = "; ".join(dict.fromkeys(fixes))
+        logging.info("section auto-fix (%s): %s", source, msg)
+
+    return normalized
+
+
+def _sections_to_labels(
+    sections: List[Dict[str, Any]],
+    num_bars: Optional[int],
+    section_default: str,
+) -> List[str]:
+    if num_bars is None:
+        max_end = max((sec["end_bar"] for sec in sections), default=0)
+        num_bars = max_end
+    labels = [section_default for _ in range(max(0, num_bars))]
+    for sec in sections:
+        start = max(0, min(len(labels), int(sec["start_bar"])) )
+        end = max(start, min(len(labels), int(sec.get("end_bar", start))))
+        for b in range(start, end):
+            labels[b] = str(sec.get("tag", section_default))
+    return labels
+
+
+def _labels_to_sections(
+    labels: List[str],
+    sources: List[str],
+) -> List[Dict[str, Any]]:
+    if not labels:
+        return []
+    out: List[Dict[str, Any]] = []
+    start = 0
+    cur_label = str(labels[0]) if labels[0] is not None else "sec0"
+    cur_source = sources[0] if sources else "auto"
+    for idx in range(1, len(labels) + 1):
+        if idx == len(labels) or labels[idx] != cur_label or sources[idx] != cur_source:
+            out.append(
+                {
+                    "start_bar": start,
+                    "end_bar": idx,
+                    "tag": str(cur_label),
+                    "source": cur_source,
+                    "explicit_end": True,
+                }
+            )
+            if idx < len(labels):
+                start = idx
+                cur_label = str(labels[idx]) if labels[idx] is not None else f"sec{idx}"
+                cur_source = sources[idx]
+    return out
+
+
+def _merge_sections(
+    cli_sections: Sequence[Any],
+    guide_sections: Sequence[Any],
+    num_bars: Optional[int],
+) -> List[Dict[str, Any]]:
+    cli_norm = _normalize_sections(cli_sections, num_bars, source="cli")
+    guide_norm = _normalize_sections(guide_sections, num_bars, source="guide")
+    if not cli_norm and not guide_norm:
+        return []
+
+    max_end = num_bars or 0
+    for sec in cli_norm + guide_norm:
+        if sec.get("end_bar") is not None:
+            max_end = max(max_end, int(sec["end_bar"]))
+    if max_end <= 0:
+        return []
+
+    guide_boundaries = sorted({sec["start_bar"] for sec in guide_norm})
+    cli_boundaries = sorted({sec["start_bar"] for sec in cli_norm})
+
+    cli_labels: List[Optional[str]] = [None] * max_end
+    cli_sources: List[Optional[str]] = [None] * max_end
+    for sec in cli_norm:
+        start = max(0, min(max_end, int(sec["start_bar"])))
+        if sec.get("explicit_end"):
+            end = int(sec["end_bar"])
+        else:
+            next_candidates = [b for b in cli_boundaries if b > start]
+            next_candidates.extend(b for b in guide_boundaries if b > start)
+            candidate = min(next_candidates) if next_candidates else max_end
+            end = min(candidate, int(sec.get("end_bar", max_end)))
+        end = max(start + 1, min(max_end, end))
+        for b in range(start, end):
+            cli_labels[b] = str(sec.get("tag"))
+            cli_sources[b] = "cli"
+
+    guide_labels: List[Optional[str]] = [None] * max_end
+    for sec in guide_norm:
+        start = max(0, min(max_end, int(sec["start_bar"])))
+        end = max(start + 1, min(max_end, int(sec.get("end_bar", max_end))))
+        for b in range(start, end):
+            guide_labels[b] = str(sec.get("tag"))
+
+    last_tag: Optional[str] = None
+    for b in range(max_end):
+        if guide_labels[b] is not None:
+            last_tag = guide_labels[b]
+        elif last_tag is not None:
+            guide_labels[b] = last_tag
+
+    labels: List[str] = []
+    sources: List[str] = []
+    for b in range(max_end):
+        if cli_labels[b] is not None:
+            labels.append(str(cli_labels[b]))
+            sources.append(cli_sources[b] or "cli")
+        elif guide_labels[b] is not None:
+            labels.append(str(guide_labels[b]))
+            sources.append("guide")
+        else:
+            labels.append(f"sec{b}")
+            sources.append("auto")
+
+    return _labels_to_sections(labels, sources)
+
+
+def _format_sections_for_log(sections: List[Dict[str, Any]]) -> str:
+    parts: List[str] = []
+    for sec in sections:
+        start = int(sec.get("start_bar", 0))
+        end = int(sec.get("end_bar", start))
+        tag = str(sec.get("tag", ""))
+        parts.append(f"[{start:02d}\u2013{end:02d}) {tag}")
+    return " | ".join(parts)
 
 
 def insert_style_layer(
@@ -2081,6 +2306,40 @@ def finalize_phrase_track(
     """
 
     stats_enabled = stats is not None
+
+    downbeat_ref = (
+        downbeats
+        if downbeats is not None
+        else (stats.get("downbeats") if stats_enabled else None)
+    )
+    num_bars = len(downbeat_ref) - 1 if downbeat_ref else None
+
+    guide_section_input = section_labels
+    cli_sections = section_overrides or []
+    merged_sections: List[Dict[str, Any]] = []
+    if cli_sections and guide_section_input:
+        merged_sections = _merge_sections(cli_sections, guide_section_input, num_bars)
+    elif cli_sections:
+        merged_sections = _normalize_sections(cli_sections, num_bars, source="cli")
+    elif guide_section_input:
+        merged_sections = _normalize_sections(guide_section_input, num_bars, source="guide")
+
+    if num_bars is None and merged_sections:
+        num_bars = max((sec["end_bar"] for sec in merged_sections), default=0)
+
+    if merged_sections:
+        section_labels = _sections_to_labels(merged_sections, num_bars, section_default)
+    elif isinstance(guide_section_input, list):
+        section_labels = [
+            str(tag) if tag is not None else section_default for tag in guide_section_input
+        ]
+
+    if stats_enabled:
+        stats["sections"] = section_labels or []
+
+    if args and getattr(args, "section_verbose", False) and merged_sections:
+        logging.info("section table: %s", _format_sections_for_log(merged_sections))
+
     fill_count = stats.get("fill_count", 0) if stats_enabled else 0
     fill_count += _apply_fills(
         phrase_inst,
@@ -2142,7 +2401,7 @@ def finalize_phrase_track(
                     raise SystemExit("fill-avoid-pitches cannot include 'rest'")
                 avoid.add(val)
         filled_bars = stats.setdefault("fill_bars", []) if stats_enabled else None
-        sections = stats.get("sections") if stats_enabled else None
+        sections = merged_sections
         inserted = insert_style_fill(
             out_pm,
             auto_fill_mode,
@@ -5435,7 +5694,13 @@ def main():
 
     # Sections & profiles
     ap.add_argument(
-        "--sections", type=str, default=None, help="JSON list of sections (start_bar,end_bar,tag)"
+        "--sections",
+        type=str,
+        default=None,
+        help=(
+            "JSON list of sections (start_bar,end_bar,tag); merged with guide labels, "
+            "missing end_bar values are backfilled and overlaps auto-fixed with warnings"
+        ),
     )
     ap.add_argument(
         "--section-profiles", type=str, default=None, help="YAML file of section profiles"
@@ -6460,15 +6725,6 @@ def main():
         guide_cc = [(out_beat_to_time(b), v) for b, v in guide_cc]
     else:
         guide_units_time = None
-
-    if section_overrides and stats.get("sections"):
-        for sec in section_overrides:
-            s = int(sec.get("start_bar", 0))
-            e = int(sec.get("end_bar", s))
-            tag = sec.get("tag", "section")
-            for b in range(s, e):
-                if 0 <= b < len(stats["sections"]):
-                    stats["sections"][b] = tag
 
     chord_inst = next((i for i in out_pm.instruments if i.name == CHORD_INST_NAME), None)
     phrase_inst = next((i for i in out_pm.instruments if i.name == PHRASE_INST_NAME), None)

@@ -17,7 +17,6 @@ import numpy as np
 import pandas as pd
 import pretty_midi as pm
 import torch
-from torch.utils.data import DataLoader, TensorDataset
 
 from utilities.duv_infer import duv_sequence_predict, duv_verbose
 from utilities.ml_velocity import MLVelocityModel
@@ -31,8 +30,6 @@ from .eval_duv import (  # reuse helpers
     _load_duration_model,
     _load_stats,
     _parse_quant,
-    _resolve_workers,
-    _worker_init_fn,
     load_stats_and_normalize,
 )
 
@@ -169,17 +166,10 @@ def run(args: argparse.Namespace) -> int:
             )
         preds: list[np.ndarray] = []
         X, _ = load_stats_and_normalize(df, stats, strict=True)
-        dataset = TensorDataset(torch.from_numpy(X))
-        loader = DataLoader(
-            dataset,
-            batch_size=args.batch,
-            shuffle=False,
-            num_workers=_resolve_workers(args.num_workers),
-            worker_init_fn=_worker_init_fn,
-        )
         with torch.no_grad():
-            for (xb,) in loader:
-                out = vel_model(xb.to(device))
+            for start in range(0, X.shape[0], args.batch):
+                xb = torch.from_numpy(X[start : start + args.batch]).to(device)
+                out = vel_model(xb)
                 preds.append(out.cpu().numpy())
         vel_pred = np.concatenate(preds, axis=0).astype("float32")
 

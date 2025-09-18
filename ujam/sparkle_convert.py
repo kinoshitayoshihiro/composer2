@@ -565,15 +565,23 @@ def resolve_downbeats(
     downbeats = list(pm.get_downbeats())
     rebuild = len(downbeats) < 2
     if not rebuild:
-        num0, den0 = meter_map[0][1], meter_map[0][2]
-        bar_beats = num0 * (4.0 / den0)
-        start_b = time_to_beat(downbeats[0])
-        next_b = time_to_beat(downbeats[1])
-        actual_beats = next_b - start_b
-        if not math.isclose(
-            actual_beats, bar_beats, rel_tol=1e-6, abs_tol=1e-9
-        ):
-            rebuild = True
+        # If PrettyMIDI already places downbeats exactly at meter-change boundaries,
+        # prefer trusting it even when coarse spacing differs from theoretical
+        # bar length (e.g., PM may emit only a single 6/8 bar before a TS change).
+        change_times = [mt for mt, _, _ in meter_map[1:]]
+        has_all_boundaries = all(
+            any(abs(db - mt) <= 1e-6 for db in downbeats) for mt in change_times
+        )
+        if not has_all_boundaries:
+            num0, den0 = meter_map[0][1], meter_map[0][2]
+            bar_beats = num0 * (4.0 / den0)
+            start_b = time_to_beat(downbeats[0])
+            next_b = time_to_beat(downbeats[1])
+            actual_beats = next_b - start_b
+            if not math.isclose(
+                actual_beats, bar_beats, rel_tol=1e-6, abs_tol=1e-9
+            ):
+                rebuild = True
 
     if rebuild:
         downbeats = []

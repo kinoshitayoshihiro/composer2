@@ -23,7 +23,6 @@ import argparse
 import json
 import os
 import sys
-import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -37,8 +36,12 @@ try:  # Optional; only used when available
 except Exception:  # pragma: no cover - optional dependency
     pearsonr = spearmanr = None  # type: ignore
 
+from utilities.duv_infer import duv_sequence_predict, duv_verbose
 from utilities.ml_duration import DurationTransformer
 from utilities.ml_velocity import MLVelocityModel
+
+
+_duv_sequence_predict = duv_sequence_predict
 
 
 def _ensure_int(value: object, default: int) -> int:
@@ -195,180 +198,6 @@ def _tensor_slice(tensor: torch.Tensor | None, length: int) -> torch.Tensor | No
     return tensor.reshape(tensor.shape[0], -1)[0, :length]
 
 
-def _prepare_feature_tensor(series: pd.Series, pad: int, *, dtype: str, numeric: bool = True) -> torch.Tensor:
-    if numeric:
-        vals = pd.to_numeric(series, errors="coerce").fillna(0)
-    else:
-        vals = series.fillna(0)
-    data = vals.to_list() + ([0] * pad if dtype.startswith("int") else [0.0] * pad)
-    if dtype == "int64":
-        return torch.tensor(data, dtype=torch.long)
-    return torch.tensor(data, dtype=torch.float32)
-
-
-def _duv_sequence_predict(
-    df: pd.DataFrame,
-    model: torch.nn.Module,
-    device: torch.device,
-) -> dict[str, np.ndarray] | None:
-    if not getattr(model, "requires_duv_feats", False):
-        return None
-    required = {"pitch", "velocity", "duration", "position"}
-    missing = sorted(required - set(df.columns))
-    if missing:
-        raise RuntimeError(
-            "DUV checkpoint requires phrase-level features for inference but the CSV is missing: "
-            + ", ".join(missing)
-        )
-    if "bar" not in df.columns:
-        warnings.warn("DUV requires bar segmentation for best results", RuntimeWarning)
-
-    core = getattr(model, "core", model)
-    max_len = int(getattr(core, "max_len", getattr(model, "max_len", 16)))
-    has_vel = bool(getattr(model, "has_vel_head", getattr(core, "head_vel_reg", None)))
-    has_dur = bool(getattr(model, "has_dur_head", getattr(core, "head_dur_reg", None)))
-    if not has_vel and not has_dur:
-        return None
-
-    n = len(df)
-    vel_pred = np.zeros(n, dtype=np.float32)
-    dur_pred = np.zeros(n, dtype=np.float32)
-    vel_mask = np.zeros(n, dtype=bool)
-    dur_mask = np.zeros(n, dtype=bool)
-
-    group_cols = [c for c in ("track_id", "bar") if c in df.columns]
-    groups = (df.groupby(group_cols, sort=False) if group_cols else [(None, df)])
-
-    for _, group in groups:
-        if group.empty:
-            continue
-        g = group.sort_values("position")
-        idx = g.index.to_numpy()
-        length = min(len(g), max_len)
-        if length == 0:
-            continue
-        g = g.iloc[:length]
-        idx = g.index.to_numpy()
-
-        pitch_vals = torch.as_tensor(
-            g["pitch"].to_numpy(dtype="int64", copy=False)[:length],
-            dtype=torch.long,
-            device=device,
-        )
-        pos_vals = torch.as_tensor(
-            g["position"].to_numpy(dtype="int64", copy=False)[:length],
-            dtype=torch.long,
-            device=device,
-        ).clamp(max=max_len - 1)
-        vel_vals = torch.as_tensor(
-            g["velocity"].to_numpy(dtype="float32", copy=False)[:length],
-            dtype=torch.float32,
-            device=device,
-        )
-        dur_vals = torch.as_tensor(
-            g["duration"].to_numpy(dtype="float32", copy=False)[:length],
-            dtype=torch.float32,
-            device=device,
-        )
-
-        pitch = torch.zeros(1, max_len, dtype=torch.long, device=device)
-        pitch[:, :length] = pitch_vals
-        pos = torch.zeros(1, max_len, dtype=torch.long, device=device)
-        pos[:, :length] = pos_vals
-        vel_in = torch.zeros(1, max_len, dtype=torch.float32, device=device)
-        vel_in[:, :length] = vel_vals
-        dur_in = torch.zeros(1, max_len, dtype=torch.float32, device=device)
-        dur_in[:, :length] = dur_vals
-
-        feat_dict: dict[str, torch.Tensor] = {
-            "pitch": pitch,
-            "pitch_class": pitch % 12,
-            "position": pos,
-            "velocity": vel_in,
-            "duration": dur_in,
-        }
-
-        if bool(getattr(core, "use_bar_beat", False)) and {"bar_phase", "beat_phase"}.issubset(g.columns):
-            bar_phase = torch.zeros(1, max_len, dtype=torch.float32, device=device)
-            beat_phase = torch.zeros(1, max_len, dtype=torch.float32, device=device)
-            bar_phase[:, :length] = torch.as_tensor(
-                g["bar_phase"].to_numpy(dtype="float32", copy=False)[:length],
-                dtype=torch.float32,
-                device=device,
-            )
-            beat_phase[:, :length] = torch.as_tensor(
-                g["beat_phase"].to_numpy(dtype="float32", copy=False)[:length],
-                dtype=torch.float32,
-                device=device,
-            )
-            feat_dict["bar_phase"] = bar_phase
-            feat_dict["beat_phase"] = beat_phase
-        if getattr(core, "section_emb", None) is not None and "section" in g.columns:
-            section = torch.zeros(1, max_len, dtype=torch.long, device=device)
-            section[:, :length] = torch.as_tensor(
-                g["section"].to_numpy(dtype="int64", copy=False)[:length],
-                dtype=torch.long,
-                device=device,
-            )
-            feat_dict["section"] = section
-        if getattr(core, "mood_emb", None) is not None and "mood" in g.columns:
-            mood = torch.zeros(1, max_len, dtype=torch.long, device=device)
-            mood[:, :length] = torch.as_tensor(
-                g["mood"].to_numpy(dtype="int64", copy=False)[:length],
-                dtype=torch.long,
-                device=device,
-            )
-            feat_dict["mood"] = mood
-        if getattr(core, "vel_bucket_emb", None) is not None and "vel_bucket" in g.columns:
-            vel_bucket = torch.zeros(1, max_len, dtype=torch.long, device=device)
-            vel_bucket[:, :length] = torch.as_tensor(
-                g["vel_bucket"].to_numpy(dtype="int64", copy=False)[:length],
-                dtype=torch.long,
-                device=device,
-            )
-            feat_dict["vel_bucket"] = vel_bucket
-        if getattr(core, "dur_bucket_emb", None) is not None and "dur_bucket" in g.columns:
-            dur_bucket = torch.zeros(1, max_len, dtype=torch.long, device=device)
-            dur_bucket[:, :length] = torch.as_tensor(
-                g["dur_bucket"].to_numpy(dtype="int64", copy=False)[:length],
-                dtype=torch.long,
-                device=device,
-            )
-            feat_dict["dur_bucket"] = dur_bucket
-
-        mask = torch.zeros(1, max_len, dtype=torch.bool, device=device)
-        mask[:, :length] = True
-
-        with torch.no_grad():
-            outputs = model(feat_dict, mask=mask)
-
-        if isinstance(outputs, dict):
-            vel_out = outputs.get("velocity") or outputs.get("vel_reg")
-            dur_out = outputs.get("duration") or outputs.get("dur_reg")
-        elif isinstance(outputs, (tuple, list)):
-            vel_out = outputs[0] if len(outputs) > 0 else None
-            dur_out = outputs[1] if len(outputs) > 1 else None
-        else:
-            vel_out = outputs
-            dur_out = None
-
-        if vel_out is not None:
-            v = torch.clamp(vel_out.squeeze(0), 0.0, 1.0).mul(127.0).round().clamp(1.0, 127.0)
-            vel_pred[idx] = v.detach().cpu().numpy()[:length]
-            vel_mask[idx] = True
-        if dur_out is not None:
-            d = torch.expm1(dur_out.squeeze(0)).clamp(min=0.0)
-            dur_pred[idx] = d.detach().cpu().numpy()[:length]
-            dur_mask[idx] = True
-
-    return {
-        "velocity": vel_pred,
-        "velocity_mask": vel_mask,
-        "duration": dur_pred,
-        "duration_mask": dur_mask,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Main evaluation
 # ---------------------------------------------------------------------------
@@ -407,6 +236,13 @@ def run(args: argparse.Namespace) -> int:
             "dur_reg": bool(getattr(vel_model, "has_dur_head", getattr(core, "head_dur_reg", None))),
         },
     )
+    extras = {
+        "use_bar_beat": bool(getattr(core, "use_bar_beat", False)),
+        "section_emb": getattr(core, "section_emb", None) is not None,
+        "mood_emb": getattr(core, "mood_emb", None) is not None,
+        "vel_bucket_emb": getattr(core, "vel_bucket_emb", None) is not None,
+        "dur_bucket_emb": getattr(core, "dur_bucket_emb", None) is not None,
+    }
     print(
         {
             "ckpt": str(args.ckpt),
@@ -414,11 +250,13 @@ def run(args: argparse.Namespace) -> int:
             "d_model": d_model or None,
             "max_len": max_len or None,
             "heads": {k: bool(v) for k, v in heads.items()},
+            "extras": extras,
         }
     )
 
     vel_model = vel_model.to(device).eval()
-    duv_preds = _duv_sequence_predict(df, vel_model, device)
+    verbose = duv_verbose(getattr(args, "verbose", False))
+    duv_preds = _duv_sequence_predict(df, vel_model, device, verbose=verbose)
 
     y_vel = df.get("velocity")
     if y_vel is None:
@@ -539,8 +377,18 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
     p.add_argument("--device", default="cpu")
     p.add_argument("--stats-json", type=Path)
     p.add_argument("--out-json", type=Path, help="Optional path to write metrics JSON")
-    p.add_argument("--dur-quant", type=str, dest="dur_quant")
+    p.add_argument(
+        "--dur-quant",
+        type=str,
+        dest="dur_quant",
+        help="Quantise durations to the given fraction (e.g. 1/16); omit to keep predictions",
+    )
     p.add_argument("--num-workers", dest="num_workers", type=int)
+    p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Emit additional DUV diagnostics including optional zero-filled features",
+    )
     args = p.parse_args(argv)
     return run(args)
 

@@ -58,18 +58,57 @@ def run(args: argparse.Namespace) -> int:
     if stats is None:
         raise SystemExit("missing or invalid stats json")
 
-    df = pd.read_csv(args.csv, low_memory=False)
+    feat_cols = list(stats[0] or [])
+    needed_cols = set(feat_cols)
+    needed_cols.update(
+        {
+            "pitch",
+            "velocity",
+            "duration",
+            "position",
+            "bar",
+            "track_id",
+            "file",
+            "start",
+            "onset",
+        }
+    )
+    needed_cols.update({"bar_phase", "beat_phase", "section", "mood", "vel_bucket", "dur_bucket"})
+
+    header = pd.read_csv(args.csv, nrows=0)
+    available_cols = set(header.columns)
+    dtype_map: dict[str, object] = {}
+    float32_cols = set(feat_cols) | {"velocity", "duration", "bar_phase", "beat_phase", "start", "onset"}
+    int32_cols = {"pitch", "position", "bar", "track_id", "section", "mood", "vel_bucket", "dur_bucket"}
+    for col in available_cols & needed_cols:
+        if col in float32_cols:
+            dtype_map[col] = np.float32
+        elif col in int32_cols:
+            dtype_map[col] = np.int32
+
+    try:
+        df = pd.read_csv(
+            args.csv,
+            low_memory=False,
+            usecols=lambda c: c in needed_cols,
+            dtype=dtype_map,
+        )
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+
+    if getattr(args, "filter_program", None):
+        df = df.query(args.filter_program, engine="python")
     if "track_id" not in df.columns and "file" in df.columns:
         df["track_id"] = pd.factorize(df["file"])[0].astype("int32")
     for c in stats[0] or []:
-        if c in df.columns:
+        if c in df.columns and df[c].dtype != np.float32:
             df[c] = _as_float32(df[c])
     for col in ["velocity", "duration"]:
-        if col in df.columns:
+        if col in df.columns and df[col].dtype != np.float32:
             df[col] = _as_float32(df[col])
-    if "bar" in df.columns:
+    if "bar" in df.columns and df["bar"].dtype != np.int32:
         df["bar"] = _as_int(df["bar"], "int32")
-    if "position" in df.columns:
+    if "position" in df.columns and df["position"].dtype != np.int32:
         df["position"] = _as_int(df["position"], "int32")
 
     device = _get_device(args.device)
@@ -220,6 +259,11 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
         type=str,
         dest="dur_quant",
         help="Quantise durations to the given fraction (e.g. 1/16); omit to keep predictions",
+    )
+    p.add_argument(
+        "--filter-program",
+        dest="filter_program",
+        help="Optional pandas query string applied immediately after loading the CSV",
     )
     p.add_argument(
         "--verbose",

@@ -51,7 +51,7 @@ def test_12_8_swing_pulses_monotonic() -> None:
     mapping = yaml.safe_load(sc.generate_mapping_template(False))
     mapping["cycle_phrase_notes"] = [36]
     for sw in (0.0, 1 / 12, 2 / 12, 4 / 12):
-        stats: dict = {}
+        stats: dict = {"_legacy_bar_pulses_grid": True}
         out = sc.build_sparkle_midi(
             pm,
             chords,

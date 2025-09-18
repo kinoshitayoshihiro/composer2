@@ -66,6 +66,118 @@ def test_place_in_range_closed() -> None:
     assert sc.place_in_range([60, 64, 67], 50, 64, voicing_mode="closed") == [55, 60, 64]
 
 
+def test_normalize_sections_from_labels() -> None:
+    out = sc._normalize_sections(["a", "b", "c"], 10, "sec")
+    assert [
+        {"start_bar": sec["start_bar"], "end_bar": sec["end_bar"]}
+        for sec in out
+    ] == [
+        {"start_bar": 0, "end_bar": 1},
+        {"start_bar": 1, "end_bar": 2},
+        {"start_bar": 2, "end_bar": 10},
+    ]
+    assert [sec["tag"] for sec in out] == ["a", "b", "c"]
+
+
+def test_normalize_sections_from_dicts() -> None:
+    sections = [{"start_bar": 5, "tag": "pre"}, {"start_bar": 10, "tag": "cho"}]
+    out = sc._normalize_sections(sections, 20, "sec")
+    assert out == [
+        {"start_bar": 5, "end_bar": 10, "tag": "pre"},
+        {"start_bar": 10, "end_bar": 20, "tag": "cho"},
+    ]
+
+
+def test_normalize_sections_label_indices() -> None:
+    out = sc._normalize_sections(["A", "B"], 8, "verse")
+    assert out == [
+        {"start_bar": 0, "end_bar": 1, "tag": "A"},
+        {"start_bar": 1, "end_bar": 8, "tag": "B"},
+    ]
+
+
+def test_normalize_sections_sort_and_clamp() -> None:
+    sections = [{"start_bar": 4, "tag": "B"}, {"start_bar": 0, "tag": "A"}]
+    out = sc._normalize_sections(sections, 8, "sec")
+    assert out == [
+        {"start_bar": 0, "end_bar": 4, "tag": "A"},
+        {"start_bar": 4, "end_bar": 8, "tag": "B"},
+    ]
+
+
+def test_normalize_sections_overlap_adjust() -> None:
+    sections = [
+        {"start_bar": 0, "end_bar": 4, "tag": "A"},
+        {"start_bar": 3, "tag": "B"},
+    ]
+    out = sc._normalize_sections(sections, 12, "sec")
+    assert out == [
+        {"start_bar": 0, "end_bar": 4, "tag": "A"},
+        {"start_bar": 4, "end_bar": 12, "tag": "B"},
+    ]
+
+
+def test_normalize_sections_negative_and_far() -> None:
+    sections = [{"start_bar": -3, "tag": "Neg"}, {"start_bar": 999, "tag": "Far"}]
+    out = sc._normalize_sections(sections, 20, "sec")
+    assert out == [
+        {"start_bar": 0, "end_bar": 20, "tag": "Neg"},
+    ]
+
+
+def test_normalize_sections_verbose_logging(caplog: pytest.LogCaptureFixture) -> None:
+    sections = [
+        {"start_bar": -2, "tag": "neg"},
+        {"start_bar": 1, "end_bar": 1, "tag": "tight"},
+    ]
+    stats: Dict[str, Any] = {"_section_verbose": True}
+    with caplog.at_level(logging.INFO):
+        out = sc._normalize_sections(sections, 4, "sec", stats=stats)
+    assert out
+    messages = [rec.getMessage() for rec in caplog.records]
+    assert any("section normalize input" in msg for msg in messages)
+    assert any("section normalize output" in msg for msg in messages)
+    assert any("sections normalized with adjustments" in msg for msg in messages)
+
+
+def test_write_markers_encoding_ascii_escape() -> None:
+    mapping = {"phrase_note": 36, "phrase_velocity": 96, "cycle_phrase_notes": [], "style_fill": 34}
+    downbeats = [0.0, 1.0, 2.0, 3.0]
+    sections = ["あ", "B", "C"]
+    expected = {
+        "raw": "あ",
+        "ascii": "?",
+        "escape": "\\u3042",
+    }
+    if not hasattr(pretty_midi, "Marker"):
+        class _Marker:
+            def __init__(self, text: str, time: float) -> None:
+                self.text = text
+                self.time = time
+
+        pretty_midi.Marker = _Marker  # type: ignore[attr-defined]
+    for mode, exp in expected.items():
+        pm = pretty_midi.PrettyMIDI()
+        inst = pretty_midi.Instrument(0, name=sc.PHRASE_INST_NAME)
+        pm.instruments.append(inst)
+        pm.markers = []  # type: ignore[attr-defined]
+        stats: Dict[str, Any] = {}
+        sc.finalize_phrase_track(
+            pm,
+            argparse.Namespace(auto_fill="off"),
+            stats,
+            mapping,
+            downbeats=downbeats,
+            write_markers=True,
+            marker_encoding=(mode if mode != "escape" else "ESCAPE"),
+            section_overrides=sections,
+            section_default="verse",
+        )
+        assert pm.markers, mode
+        assert pm.markers[0].text == exp
+        assert pm.markers[1].text == "B"
+
+
 def test_cycle_mode_bar_rest() -> None:
     pm = _dummy_pm()
     chords = [
@@ -406,7 +518,7 @@ def test_section_profiles_override() -> None:
         'verse': {'phrase_pool': {'notes':[24],'weights':[1]}},
         'chorus': {'phrase_pool': {'notes':[36],'weights':[1]}, 'accent_scale':1.2}
     }
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     out = sc.build_sparkle_midi(pm, chords, mapping, 0.5, 'bar', 0.0, 0,
                                 'flat', 120, 0.0, 0.5,
                                 section_profiles=profiles, sections=sections,
@@ -424,7 +536,7 @@ def test_style_layer_every() -> None:
     chords = [sc.ChordSpan(i*2,(i+1)*2,0,'maj') for i in range(4)]
     mapping = {'phrase_note':24,'phrase_velocity':100,'phrase_length_beats':0.5,
                'cycle_phrase_notes':[], 'cycle_start_bar':0, 'cycle_mode':'bar'}
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     out = sc.build_sparkle_midi(pm, chords, mapping, 0.5, 'bar', 0.0, 0,
                                 'flat', 120, 0.0, 0.5, stats=stats)
     units = [(t, stats['downbeats'][i+1] if i+1 < len(stats['downbeats']) else pm.get_end_time())
@@ -472,7 +584,7 @@ def test_density_rules() -> None:
     chords = [sc.ChordSpan(i*2,(i+1)*2,0,'maj') for i in range(4)]
     mapping = {'phrase_note':26,'phrase_velocity':100,'phrase_length_beats':0.5,
                'cycle_phrase_notes':[], 'cycle_start_bar':0, 'cycle_mode':'bar'}
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     out = sc.build_sparkle_midi(pm, chords, mapping,0.5,'bar',0,0,'flat',120,0,0.5,
                                 onset_list=[0,4,1,1], rest_list=[0.8,0.1,0.1,0.1], stats=stats)
     notes = [stats['bar_phrase_notes'].get(i) for i in range(4)]
@@ -488,7 +600,7 @@ def test_fill_cadence() -> None:
     mapping = {'phrase_note':24,'phrase_velocity':100,'phrase_length_beats':0.5,
                'cycle_phrase_notes':[], 'cycle_start_bar':0, 'cycle_mode':'bar',
                'style_fill':34}
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     out = sc.build_sparkle_midi(pm, chords, mapping,0.5,'bar',0,0,'flat',120,0,0.5, stats=stats)
     units = [(t, stats['downbeats'][i+1] if i+1 < len(stats['downbeats']) else pm.get_end_time())
              for i, t in enumerate(stats['downbeats'])]
@@ -497,8 +609,14 @@ def test_fill_cadence() -> None:
                                sections=sections, min_gap_beats=0.5)
     assert cnt == 2
     phrase_inst = [inst for inst in out.instruments if inst.name == sc.PHRASE_INST_NAME][0]
-    starts = {round(n.start,2) for n in phrase_inst.notes if n.pitch==34}
-    assert starts == {units[1][0], units[3][0]}
+    targets = {round(units[1][0], 2), round(units[3][0], 2)}
+    fills = [
+        n
+        for n in phrase_inst.notes
+        if round(n.start, 2) in targets and n.pitch != mapping['phrase_note']
+    ]
+    assert {round(n.start, 2) for n in fills} == targets
+    assert all(n.pitch in {34, 35, 33} for n in fills)
 
 
 @pytest.mark.skipif(not _dummy_pm, reason="_dummy_pm not available")
@@ -507,10 +625,10 @@ def test_swing_shapes() -> None:
     chords = [sc.ChordSpan(0,4,0,'maj')]
     mapping = {'phrase_note':36,'phrase_velocity':100,'phrase_length_beats':0.5,
                'cycle_phrase_notes':[], 'cycle_start_bar':0, 'cycle_mode':'bar'}
-    stats1 = {}
+    stats1 = {"_legacy_bar_pulses_grid": True}
     sc.build_sparkle_midi(pm, chords, mapping,0.5,'bar',0,0,'flat',120,0.5,0.5,
                           stats=stats1, swing_shape='offbeat')
-    stats2 = {}
+    stats2 = {"_legacy_bar_pulses_grid": True}
     sc.build_sparkle_midi(pm, chords, mapping,0.5,'bar',0,0,'flat',120,0.5,0.5,
                           stats=stats2, swing_shape='even')
     pulses1 = [t for _, t in stats1['bar_pulses'][0][:3]]
@@ -648,6 +766,7 @@ def test_finalize_not_duplicated() -> None:
         "bar_velocities": {},
         "downbeats": [0.0, 2.0],
         "bar_count": 1,
+        "_legacy_bar_pulses_grid": True,
     }
     mapping = {"style_stop": 95}
     args = argparse.Namespace(
@@ -742,7 +861,7 @@ def test_stats_triggers_vs_grid() -> None:
         "cycle_phrase_notes": [36],
         "cycle_mode": "bar",
     }
-    stats: dict[str, Any] = {}
+    stats: Dict[str, Any] = {"_legacy_bar_pulses_grid": True}
     out = sc.build_sparkle_midi(
         pm,
         chords,
@@ -820,7 +939,7 @@ def test_bar_width_12_8() -> None:
         "cycle_start_bar": 0,
         "cycle_mode": "bar",
     }
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     sc.build_sparkle_midi(
         pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats
     )
@@ -834,7 +953,7 @@ def test_bar_pulses_12_8_swing_12() -> None:
     chords = [sc.ChordSpan(0, 6, 0, 'maj')]
     mapping = {'phrase_note': 36, 'phrase_velocity': 100, 'phrase_length_beats': 0.5,
                'cycle_phrase_notes': [], 'cycle_start_bar': 0, 'cycle_mode': 'bar'}
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     sc.build_sparkle_midi(pm, chords, mapping, 0.5, 'bar', 0.0, 0, 'flat', 120, 0.0, 4/12,
                           stats=stats)
     assert len(stats['bar_pulses'][0]) == 12
@@ -1017,7 +1136,11 @@ def test_dry_run_logging(tmp_path, caplog) -> None:
     orig = sc.pretty_midi.PrettyMIDI
     sc.pretty_midi.PrettyMIDI = lambda path: _dummy_pm()
     try:
-        with mock.patch.object(sys, "argv", ["prog", "in.mid", "--out", str(out), "--dry-run"]):
+        with mock.patch.object(
+            sys,
+            "argv",
+            ["prog", "in.mid", "--out", str(out), "--dry-run", "--legacy-bar-pulses-grid"],
+        ):
             with caplog.at_level(logging.INFO):
                 sc.main()
         assert "bars=" in caplog.text
@@ -1145,7 +1268,7 @@ def test_top_note_max() -> None:
         "voicing_mode": "stacked",
         "top_note_max": 70,
     }
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     sc.build_sparkle_midi(
         pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats
     )
@@ -1164,7 +1287,7 @@ def test_swing_timings() -> None:
         "cycle_start_bar": 0,
         "cycle_mode": "bar",
     }
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     out = sc.build_sparkle_midi(
         pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.4, 0.5, stats=stats
     )
@@ -1258,7 +1381,18 @@ def test_swing_clip_guard(tmp_path) -> None:
     sc.build_sparkle_midi = fake_build
     try:
         with mock.patch.object(
-            sys, "argv", ["prog", "in.mid", "--out", str(out), "--dry-run", "--swing", "0.999"]
+            sys,
+            "argv",
+            [
+                "prog",
+                "in.mid",
+                "--out",
+                str(out),
+                "--dry-run",
+                "--legacy-bar-pulses-grid",
+                "--swing",
+                "0.999",
+            ],
         ):
             sc.main()
     finally:
@@ -1370,6 +1504,55 @@ def test_auto_fill_once() -> None:
     assert len(notes) == 1
 
 
+def test_insert_style_fill_with_label_sections() -> None:
+    pm = _dummy_pm(8.0)
+    chords = [sc.ChordSpan(i * 2, (i + 1) * 2, 0, 'maj') for i in range(4)]
+    mapping = {'phrase_note': 36, 'phrase_velocity': 100, 'phrase_length_beats': 0.25,
+               'cycle_phrase_notes': [], 'cycle_start_bar': 0, 'cycle_mode': 'bar'}
+    stats: Dict[str, Any] = {"_legacy_bar_pulses_grid": True}
+    out = sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5,
+                                stats=stats)
+    downbeats = stats.get('downbeats') or []
+    units = [(downbeats[i], downbeats[i + 1]) for i in range(len(downbeats) - 1)]
+    cnt = sc.insert_style_fill(out, 'section_end', units, mapping,
+                               sections=['intro', 'verse', 'chorus'], bpm=120.0)
+    assert cnt >= 1
+
+
+def test_insert_style_fill_avoid_overlap() -> None:
+    pm = pretty_midi.PrettyMIDI()
+    inst = pretty_midi.Instrument(0, name=sc.PHRASE_INST_NAME)
+    for bar in range(4):
+        inst.notes.append(pretty_midi.Note(velocity=90, pitch=34, start=bar, end=bar + 0.3))
+    pm.instruments.append(inst)
+    units = [(float(i), float(i + 1)) for i in range(4)]
+    sections = [{"start_bar": i, "end_bar": i + 1, "tag": "sec"} for i in range(4)]
+    mapping = {
+        'phrase_note': 36,
+        'phrase_velocity': 100,
+        'phrase_length_beats': 0.25,
+        'cycle_phrase_notes': [],
+        'style_fill': 34,
+    }
+    cnt = sc.insert_style_fill(
+        pm,
+        'section_end',
+        units,
+        mapping,
+        sections=sections,
+        bpm=120.0,
+        min_gap_beats=0.25,
+        bar_count=4,
+        section_default='sec',
+    )
+    assert cnt == 4
+    new_notes = inst.notes[4:]
+    assert new_notes
+    assert all(n.pitch != 34 for n in new_notes)
+    assert len(new_notes) == 4
+    assert {n.pitch for n in new_notes} == {35}
+
+
 def test_damp_cc_range() -> None:
     guide = _guide_pm([0, 4])
     gmap, cc, units, rest, onset, _ = sc.summarize_guide_midi(guide, 'bar', {'low': 24, 'mid': 26, 'high': 36})
@@ -1434,7 +1617,7 @@ def test_phrase_pool_weighted_seed() -> None:
                'phrase_hold': 'bar', 'phrase_merge_gap': -1.0}
     pool = [(24, 1.0), (26, 3.0)]
     random.seed(1)
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5,
                           phrase_pool=pool, phrase_pick='weighted', stats=stats)
     seq = [stats['bar_phrase_notes'][i] for i in range(4)]
@@ -1459,8 +1642,9 @@ def test_fill_gap_avoid() -> None:
     cnt = sc.insert_style_fill(pm, 'section_end', units, mapping,
                                sections=[{'start_bar': 0, 'end_bar': 1}],
                                bpm=120.0, min_gap_beats=3.0, avoid_pitches={36})
-    assert cnt == 0
-    assert len(inst.notes) == 2
+    assert cnt == 1
+    assert len(inst.notes) == 3
+    assert inst.notes[-1].pitch != 36
 
 
 def test_phrase_change_lead() -> None:
@@ -1531,7 +1715,7 @@ def test_phrase_pool_markov() -> None:
     mapping = {'phrase_note': 36, 'phrase_velocity': 100, 'phrase_length_beats': 0.25,
                'cycle_phrase_notes': [], 'cycle_mode': 'bar', 'phrase_hold': 'bar'}
     cfg = {'notes': [24, 26], 'T': [[0, 1], [1, 0]]}
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5,
                           phrase_pool=sc.parse_phrase_pool_arg(json.dumps(cfg)),
                           phrase_pick='markov', stats=stats)
@@ -1547,7 +1731,7 @@ def test_accent_map() -> None:
     mapping = {'phrase_note': 36, 'phrase_velocity': 100, 'phrase_length_beats': 1.0,
                'cycle_phrase_notes': [], 'cycle_mode': 'bar',
                'accent_map': {'4/4': [1.0, 0.5, 1.0, 0.5], '3/4': [0.2, 0.2, 1.0]}}
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     sc.build_sparkle_midi(pm, chords, mapping, 1.0, 'bar', 0.0, 0, 'flat', 120, 0.0, 0.5,
                           accent_map=mapping['accent_map'], stats=stats)
     v1 = stats['bar_velocities'][0][0]
@@ -1623,7 +1807,7 @@ def test_section_lfo_velocity_and_fill_arc() -> None:
     lfo = sc.SectionLFO(
         bars_period=4, vel_range=(0.5, 1.0), fill_range=(0.0, 1.0), shape="triangle"
     )
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     sc.build_sparkle_midi(
         pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats, section_lfo=lfo
     )
@@ -1680,7 +1864,7 @@ def test_vocal_adapt_density_switch() -> None:
         "cycle_mode": "bar",
     }
     va = sc.VocalAdaptive(dense_onset=2, dense_phrase=40, sparse_phrase=41, onsets=[3, 0])
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     sc.build_sparkle_midi(
         pm, chords, mapping, 1.0, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats, vocal_adapt=va
     )
@@ -1773,7 +1957,7 @@ def test_meter_change_5_4_and_7_8() -> None:
         "cycle_start_bar": 0,
         "cycle_mode": "bar",
     }
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     sc.build_sparkle_midi(
         pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats
     )
@@ -1795,7 +1979,7 @@ def test_meter_change_6_8_to_4_4() -> None:
         "cycle_start_bar": 0,
         "cycle_mode": "bar",
     }
-    stats = {}
+    stats = {"_legacy_bar_pulses_grid": True}
     sc.build_sparkle_midi(
         pm, chords, mapping, 0.5, "bar", 0.0, 0, "flat", 120, 0.0, 0.5, stats=stats
     )
@@ -2318,6 +2502,7 @@ def test_seed_cli_repro(tmp_path) -> None:
         "--report-json",
         str(j1),
         "--dry-run",
+        "--legacy-bar-pulses-grid",
     ]
 
     def fake_pm(*a, **k):
@@ -2331,7 +2516,7 @@ def test_seed_cli_repro(tmp_path) -> None:
     with mock.patch.object(sc.pretty_midi, "PrettyMIDI", side_effect=fake_pm):
         with mock.patch.object(sys, "argv", argv):
             sc.main()
-    argv[-2] = str(j2)
+    argv[argv.index("--report-json") + 1] = str(j2)
     created = []
     with mock.patch.object(sc.pretty_midi, "PrettyMIDI", side_effect=fake_pm):
         with mock.patch.object(sys, "argv", argv):
@@ -2352,6 +2537,7 @@ def test_cli_json_flags(tmp_path) -> None:
         "--cycle-phrase-notes",
         "24",
         "--dry-run",
+        "--legacy-bar-pulses-grid",
         "--section-lfo",
         '{"period":4}',
         "--stable-guard",
@@ -2471,18 +2657,31 @@ def test_marker_encoding_modes() -> None:
 
     def capture_markers(labels: list[str], mode: str) -> list[str]:
         dummy = DummyPM()
+        sections = [
+            {"start_bar": i, "end_bar": i + 1, "tag": label}
+            for i, label in enumerate(labels)
+        ]
+        downbeats = [0.0, 1.0]
         with mock.patch.object(
             pretty_midi,
             "Marker",
             side_effect=lambda text, time: types.SimpleNamespace(text=text, time=time),
             create=True,
         ):
-            sc._write_markers(dummy, True, labels, "intro", [0.0], mode)
+            sc._write_markers(dummy, True, sections, "intro", downbeats, mode)
         return [m.text for m in dummy.markers]
 
-    assert capture_markers(["Intro🎵"], "ascii")[0] == "INTRO"
+    assert capture_markers(["Intro🎵"], "ascii")[0] == "INTRO?"
     assert capture_markers(["✨"], "escape")[0] == "\\u2728"
+    assert capture_markers(["a\u0308"], "escape")[0] == "\\u00c4"
     assert capture_markers(["サビ"], "raw")[0] == "サビ"
+
+
+def test_marker_encoding_unknown_mode() -> None:
+    dummy = types.SimpleNamespace(markers=[])
+    with pytest.raises(SystemExit) as excinfo:
+        sc._write_markers(dummy, True, [], "intro", [0.0, 1.0], "invalid")
+    assert "unknown marker-encoding" in str(excinfo.value)
 
 
 def test_stop_injection_requires_style_and_guides() -> None:
@@ -2626,7 +2825,7 @@ def test_meter_change_stats_consistency() -> None:
         stats=stats,
     )
     assert stats["schema_version"] == "1.1"
-    pulses = stats["bar_pulses"]
+    assert stats["schema"] == "1.1"
     grid = stats["bar_pulse_grid"]
     expected = [
         sc.pulses_per_bar(6, 8, 0.5),
@@ -2637,7 +2836,67 @@ def test_meter_change_stats_consistency() -> None:
     ]
     for i, count in enumerate(expected):
         assert len(grid[i]) == count
-        assert len(pulses[i]) == count
+    assert "bar_pulses" not in stats
+    triggers = stats["bar_triggers"]
+    assert stats["bar_trigger_pulses"] is triggers
+    assert stats["bar_trigger_pulses_compat"] is triggers
     triggers = stats["bar_triggers"]
     actual_hits = sum(len(v) for v in triggers.values())
     assert actual_hits > 0
+
+
+def test_meter_change_stats_legacy_mirror() -> None:
+    class MeterPM:
+        def __init__(self) -> None:
+            self.instruments = [pretty_midi.Instrument(0)]
+            self.time_signature_changes = [
+                types.SimpleNamespace(numerator=6, denominator=8, time=0.0),
+                types.SimpleNamespace(numerator=4, denominator=4, time=3.0),
+            ]
+
+        def get_beats(self):
+            step = 0.5
+            count = int(9.0 / step) + 1
+            return [i * step for i in range(count)]
+
+        def get_downbeats(self):
+            return [0.0, 1.5, 3.0, 5.0, 7.0, 9.0]
+
+        def get_end_time(self):
+            return 9.0
+
+        def get_tempo_changes(self):
+            return [0.0], [120.0]
+
+    pm = MeterPM()
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 96,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [36],
+        "cycle_mode": "bar",
+    }
+    stats: Dict[str, Any] = {"_legacy_bar_pulses_grid": True}
+    chords = [sc.ChordSpan(0.0, 9.0, 0, "maj")]
+    sc.build_sparkle_midi(
+        pm,
+        chords,
+        mapping,
+        0.5,
+        "bar",
+        0.0,
+        0,
+        "flat",
+        120.0,
+        0.0,
+        0.5,
+        stats=stats,
+    )
+    assert stats["schema"] == "1.1"
+    pulses = stats.get("bar_pulses")
+    grid = stats["bar_pulse_grid"]
+    assert pulses is not None
+    assert pulses.keys() == grid.keys()
+    for key, values in grid.items():
+        assert pulses[key] == values
+    assert stats["bar_trigger_pulses"] is stats["bar_triggers"]

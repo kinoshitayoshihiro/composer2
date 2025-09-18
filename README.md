@@ -1744,6 +1744,16 @@ Chords and phrase notes are written to separate instruments so DAWs load them on
 | `--clone-meta-only` | copy tempo/time-signature only |
 | `--dry-run` | log stats without writing output |
 
+### Reported stats keys
+
+JSON reports maintain the legacy ``sections`` label array while also surfacing:
+
+* ``section_labels`` – the canonical per-bar label sequence used by the renderer.
+* ``sections_layout`` – normalised section dictionaries with ``start_bar``/``end_bar``/``tag``.
+
+External tools should migrate to the new keys while continuing to accept ``sections`` for
+backwards compatibility.
+
 Example – vocal-guided chorus fill:
 
 ```bash

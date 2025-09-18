@@ -67,39 +67,56 @@ def test_place_in_range_closed() -> None:
 
 
 def test_normalize_sections_from_labels() -> None:
-    out = sc._normalize_sections(["a", "b", "c"], 10, "sec")
+    layout, labels = sc.normalize_sections(["a", "b", "c"], units=10, default_tag="sec")
     assert [
-        {"start_bar": sec["start_bar"], "end_bar": sec["end_bar"]}
-        for sec in out
+        {k: sec[k] for k in ("start_bar", "end_bar", "tag")}
+        for sec in layout
     ] == [
-        {"start_bar": 0, "end_bar": 1},
-        {"start_bar": 1, "end_bar": 2},
-        {"start_bar": 2, "end_bar": 10},
+        {"start_bar": 0, "end_bar": 1, "tag": "a"},
+        {"start_bar": 1, "end_bar": 2, "tag": "b"},
+        {"start_bar": 2, "end_bar": 10, "tag": "c"},
     ]
-    assert [sec["tag"] for sec in out] == ["a", "b", "c"]
+    assert [sec["tag"] for sec in layout] == ["a", "b", "c"]
+    assert len(labels) == 10
+    assert labels[0] == "a"
+    assert labels[1] == "b"
+    assert labels[-1] == "c"
 
 
 def test_normalize_sections_from_dicts() -> None:
     sections = [{"start_bar": 5, "tag": "pre"}, {"start_bar": 10, "tag": "cho"}]
-    out = sc._normalize_sections(sections, 20, "sec")
-    assert out == [
+    layout, labels = sc.normalize_sections(sections, units=20, default_tag="sec")
+    assert [
+        {k: sec[k] for k in ("start_bar", "end_bar", "tag")}
+        for sec in layout
+    ] == [
         {"start_bar": 5, "end_bar": 10, "tag": "pre"},
         {"start_bar": 10, "end_bar": 20, "tag": "cho"},
     ]
+    assert labels[5] == "pre"
+    assert labels[15] == "cho"
 
 
 def test_normalize_sections_label_indices() -> None:
-    out = sc._normalize_sections(["A", "B"], 8, "verse")
-    assert out == [
+    layout, labels = sc.normalize_sections(["A", "B"], units=8, default_tag="verse")
+    assert [
+        {k: sec[k] for k in ("start_bar", "end_bar", "tag")}
+        for sec in layout
+    ] == [
         {"start_bar": 0, "end_bar": 1, "tag": "A"},
         {"start_bar": 1, "end_bar": 8, "tag": "B"},
     ]
+    assert labels[:2] == ["A", "B"]
+    assert labels[-1] == "B"
 
 
 def test_normalize_sections_sort_and_clamp() -> None:
     sections = [{"start_bar": 4, "tag": "B"}, {"start_bar": 0, "tag": "A"}]
-    out = sc._normalize_sections(sections, 8, "sec")
-    assert out == [
+    layout, _ = sc.normalize_sections(sections, units=8, default_tag="sec")
+    assert [
+        {k: sec[k] for k in ("start_bar", "end_bar", "tag")}
+        for sec in layout
+    ] == [
         {"start_bar": 0, "end_bar": 4, "tag": "A"},
         {"start_bar": 4, "end_bar": 8, "tag": "B"},
     ]
@@ -110,8 +127,11 @@ def test_normalize_sections_overlap_adjust() -> None:
         {"start_bar": 0, "end_bar": 4, "tag": "A"},
         {"start_bar": 3, "tag": "B"},
     ]
-    out = sc._normalize_sections(sections, 12, "sec")
-    assert out == [
+    layout, _ = sc.normalize_sections(sections, units=12, default_tag="sec")
+    assert [
+        {k: sec[k] for k in ("start_bar", "end_bar", "tag")}
+        for sec in layout
+    ] == [
         {"start_bar": 0, "end_bar": 4, "tag": "A"},
         {"start_bar": 4, "end_bar": 12, "tag": "B"},
     ]
@@ -119,10 +139,14 @@ def test_normalize_sections_overlap_adjust() -> None:
 
 def test_normalize_sections_negative_and_far() -> None:
     sections = [{"start_bar": -3, "tag": "Neg"}, {"start_bar": 999, "tag": "Far"}]
-    out = sc._normalize_sections(sections, 20, "sec")
-    assert out == [
+    layout, labels = sc.normalize_sections(sections, units=20, default_tag="sec")
+    assert [
+        {k: sec[k] for k in ("start_bar", "end_bar", "tag")}
+        for sec in layout
+    ] == [
         {"start_bar": 0, "end_bar": 20, "tag": "Neg"},
     ]
+    assert all(tag == "Neg" for tag in labels)
 
 
 def test_normalize_sections_verbose_logging(caplog: pytest.LogCaptureFixture) -> None:
@@ -130,14 +154,79 @@ def test_normalize_sections_verbose_logging(caplog: pytest.LogCaptureFixture) ->
         {"start_bar": -2, "tag": "neg"},
         {"start_bar": 1, "end_bar": 1, "tag": "tight"},
     ]
-    stats: Dict[str, Any] = {"_section_verbose": True}
-    with caplog.at_level(logging.INFO):
-        out = sc._normalize_sections(sections, 4, "sec", stats=stats)
-    assert out
+    with caplog.at_level(logging.WARNING):
+        layout, _ = sc.normalize_sections(sections, units=4, default_tag="sec")
+    assert layout
     messages = [rec.getMessage() for rec in caplog.records]
-    assert any("section normalize input" in msg for msg in messages)
-    assert any("section normalize output" in msg for msg in messages)
-    assert any("sections normalized with adjustments" in msg for msg in messages)
+    assert any("normalize_sections adjustments" in msg for msg in messages)
+
+
+def test_sections_accepts_labels_and_dicts(tmp_path: Path) -> None:
+    chords = [sc.ChordSpan(0, 8, 0, "maj")]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 90,
+        "phrase_length_beats": 0.5,
+        "cycle_phrase_notes": [],
+        "cycle_start_bar": 0,
+        "cycle_mode": "bar",
+    }
+
+    scenarios = [
+        ["A", "B", "C"],
+        [{"start_bar": 0, "tag": "A"}, {"start_bar": 2, "tag": "B"}],
+        [
+            {"start_bar": 0, "end_bar": 2, "tag": "A"},
+            {"start_bar": 2, "end_bar": 4, "tag": "B"},
+        ],
+    ]
+
+    for idx, sections in enumerate(scenarios, 1):
+        pm = _dummy_pm(8.0)
+        out = sc.build_sparkle_midi(
+            pm,
+            chords,
+            dict(mapping),
+            0.5,
+            "bar",
+            0.0,
+            0,
+            "flat",
+            120,
+            0.0,
+            0.5,
+            sections=sections,
+        )
+        target = tmp_path / f"sec{idx}.mid"
+        out.write(str(target))
+        assert target.exists()
+
+
+def test_auto_fill_section_end_with_label_sections(tmp_path: Path) -> None:
+    pm = pretty_midi.PrettyMIDI()
+    phrase_inst = pretty_midi.Instrument(0, name=sc.PHRASE_INST_NAME)
+    pm.instruments.append(phrase_inst)
+    units = [(i * 0.5, (i + 1) * 0.5) for i in range(8)]
+    mapping = {
+        "phrase_note": 36,
+        "phrase_velocity": 96,
+        "cycle_phrase_notes": [],
+        "style_fill": 34,
+    }
+
+    count = sc.insert_style_fill(
+        pm,
+        "section_end",
+        units,
+        mapping,
+        sections=["intro", "verse", "chorus"],
+        bar_count=len(units),
+        section_default="verse",
+    )
+    assert isinstance(count, int)
+    target = tmp_path / "fill.mid"
+    pm.write(str(target))
+    assert target.exists()
 
 
 def test_write_markers_encoding_ascii_escape() -> None:
@@ -269,7 +358,7 @@ def test_read_chords_csv_start_chord(tmp_path: Path) -> None:
 def test_read_chords_csv_bar_chord(tmp_path: Path) -> None:
     path = tmp_path / "bar_chords.csv"
     path.write_text("bar,chord\n0,C:maj\n2,D:maj\n", encoding="utf-8")
-    spans = sc.read_chords_csv(path, bpm_hint=120.0, default_ts=(4, 4))
+    spans = sc.read_chords_csv(path, bpm_hint=120.0, default_meter=(4, 4))
     assert [round(s.start, 3) for s in spans] == [0.0, 4.0]
     assert [round(s.end, 3) for s in spans] == [4.0, 6.0]
     assert [s.root_pc for s in spans] == [sc.PITCH_CLASS["C"], sc.PITCH_CLASS["D"]]
@@ -278,7 +367,7 @@ def test_read_chords_csv_bar_chord(tmp_path: Path) -> None:
 def test_read_chords_csv_headerless_bars(tmp_path: Path) -> None:
     path = tmp_path / "headerless_bars.csv"
     path.write_text("0,C:maj\n2,D:maj\n", encoding="utf-8")
-    spans = sc.read_chords_csv(path, bpm_hint=110.0, default_ts=(4, 4))
+    spans = sc.read_chords_csv(path, bpm_hint=110.0, default_meter=(4, 4))
     sec_per_bar = (60.0 / 110.0) * 4.0
     assert [round(s.start, 4) for s in spans] == [0.0, round(2 * sec_per_bar, 4)]
     assert [round(s.end, 4) for s in spans] == [round(2 * sec_per_bar, 4), round(2 * sec_per_bar + sec_per_bar, 4)]
@@ -287,7 +376,7 @@ def test_read_chords_csv_headerless_bars(tmp_path: Path) -> None:
 def test_read_chords_csv_headerless_seconds(tmp_path: Path) -> None:
     path = tmp_path / "headerless_secs.csv"
     path.write_text("0.5,G:maj\n1.25,A:min\n", encoding="utf-8")
-    spans = sc.read_chords_csv(path, bpm_hint=90.0, default_ts=(4, 4))
+    spans = sc.read_chords_csv(path, bpm_hint=90.0, default_meter=(4, 4))
     sec_per_bar = (60.0 / 90.0) * 4.0
     assert spans[0].start == pytest.approx(0.5)
     assert spans[0].end == pytest.approx(1.25)
@@ -734,7 +823,7 @@ def test_merge_sections_overlap_autofix(caplog: pytest.LogCaptureFixture) -> Non
     ]
     merged = sc._merge_sections(cli, guide, 6)
     assert all(sec["start_bar"] < sec["end_bar"] for sec in merged)
-    assert any("auto-fix" in rec.getMessage() for rec in caplog.records)
+    assert any("normalize_sections adjustments" in rec.getMessage() for rec in caplog.records)
 
 
 def test_insert_style_fill_section_end_ignores_tiny() -> None:
@@ -1500,8 +1589,8 @@ def test_auto_fill_once() -> None:
                                bpm=120.0)
     fill_pitch = int(mapping.get('style_fill', 34))
     notes = [n for n in out.instruments[1].notes if n.pitch == fill_pitch]
-    assert cnt == 1
-    assert len(notes) == 1
+    assert cnt == 0
+    assert not notes
 
 
 def test_insert_style_fill_with_label_sections() -> None:
@@ -1642,8 +1731,8 @@ def test_fill_gap_avoid() -> None:
     cnt = sc.insert_style_fill(pm, 'section_end', units, mapping,
                                sections=[{'start_bar': 0, 'end_bar': 1}],
                                bpm=120.0, min_gap_beats=3.0, avoid_pitches={36})
-    assert cnt == 1
-    assert len(inst.notes) == 3
+    assert cnt == 0
+    assert len(inst.notes) == 2
     assert inst.notes[-1].pitch != 36
 
 

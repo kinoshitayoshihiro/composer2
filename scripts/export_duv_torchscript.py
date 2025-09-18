@@ -1,126 +1,122 @@
-import argparse, json, importlib, torch, os
+import argparse, json, importlib, os, torch
 from torch import nn
 from typing import Any, Dict
 
-def try_import(class_path: str):
-    mod_name, cls_name = class_path.rsplit(".", 1)
-    mod = importlib.import_module(mod_name)
-    return getattr(mod, cls_name)
+SUFFIXES = ('.ts','.pt','.pth','.ckpt','.zip')
 
-def find_module_in_obj(obj: Any):
-    """obj から nn.Module を探して返す（なければ None）"""
-    if isinstance(obj, nn.Module):
-        return obj
+def try_import(cp: str):
+    m, c = cp.rsplit('.', 1)
+    return getattr(__import__(m, fromlist=[c]), c)
+
+def iter_paths(obj: Any):
+    """再帰で文字列パス候補を拾う"""
     if isinstance(obj, dict):
-        # ありがちなキー
-        for k in ("model", "net", "module"):
+        for k, v in obj.items():
+            if isinstance(v, (dict, list, tuple)):
+                yield from iter_paths(v)
+            elif isinstance(v, str) and v.endswith(SUFFIXES):
+                yield v
+
+def resolve(path: str, ckpt_dir: str):
+    """存在しなければ ckpt ディレクトリ起点で補完"""
+    cands = [path, os.path.join(ckpt_dir, path), os.path.join(ckpt_dir, os.path.basename(path))]
+    for c in cands:
+        if os.path.exists(c):
+            return c
+    return None
+
+def find_module(obj: Any):
+    if isinstance(obj, nn.Module): return obj
+    if isinstance(obj, dict):
+        for k in ('model','net','module'):
             v = obj.get(k)
             if isinstance(v, nn.Module):
                 return v
-        # TorchScript のパスが書いてあるならそれを使う
-        for k in ("ts_path", "torchscript", "jit_path"):
-            p = obj.get(k)
-            if isinstance(p, str) and os.path.exists(p):
-                return torch.jit.load(p)
     return None
 
-def maybe_build_from_state_dict(pack: Dict[str, Any], meta: Dict[str, Any], class_path: str|None, init_args: Dict[str,Any]|None):
-    """state_dict からモデルを復元（クラスが必要）"""
-    # state_dict を入れ子も含めて探索
+def maybe_build_from_state_dict(pack: Dict[str, Any], class_path: str|None, init_args: Dict[str,Any]|None):
     sd = None
-    if "state_dict" in pack and isinstance(pack["state_dict"], dict):
-        sd = pack["state_dict"]
-    else:
-        # よくある入れ子 'model' / 'weights' / 'params'
-        for key in ("model", "weights", "params"):
-            v = pack.get(key)
-            if isinstance(v, dict) and "state_dict" in v and isinstance(v["state_dict"], dict):
-                sd = v["state_dict"]; break
+    if isinstance(pack, dict):
+        if 'state_dict' in pack and isinstance(pack['state_dict'], dict):
+            sd = pack['state_dict']
+        else:
+            for key in ('model','weights','params'):
+                v = pack.get(key)
+                if isinstance(v, dict) and 'state_dict' in v and isinstance(v['state_dict'], dict):
+                    sd = v['state_dict']; break
     if sd is None:
-        return None  # 復元対象がない
-
-    # クラスパス候補を収集
-    hp = pack.get("hyper_parameters") or pack.get("hparams") or meta or {}
-    cands = [class_path,
-             hp.get("class_path"), hp.get("target"), hp.get("model_class"),
-             hp.get("cls"), hp.get("import_path")]
+        return None
+    hp = pack.get('hyper_parameters') or pack.get('hparams') or {}
+    cands = [class_path, hp.get('class_path'), hp.get('target'), hp.get('model_class'), hp.get('cls'), hp.get('import_path')]
     cands = [c for c in cands if isinstance(c, str)]
-
-    last_err = None
+    last = None
     for cp in cands:
         try:
             cls = try_import(cp)
             kwargs = {}
-            for key in ("init_args","model_kwargs","kwargs","hparams","config"):
-                if key in hp and isinstance(hp[key], dict):
-                    kwargs.update(hp[key])
-            if isinstance(init_args, dict):
-                kwargs.update(init_args)
+            for key in ('init_args','model_kwargs','kwargs','hparams','config'):
+                if key in hp and isinstance(hp[key], dict): kwargs.update(hp[key])
+            if isinstance(init_args, dict): kwargs.update(init_args)
             m = cls(**kwargs) if kwargs else cls()
-            try:
-                m.load_state_dict(sd, strict=True)
+            try: m.load_state_dict(sd, strict=True)
             except Exception:
-                # 'model.' / 'net.' / 'module.' をはがして再試行
                 from collections import OrderedDict
                 od = OrderedDict()
-                for k, v in sd.items():
-                    for pref in ("model.", "net.", "module."):
-                        if k.startswith(pref):
-                            k = k[len(pref):]
-                            break
-                    od[k] = v
+                for k,v in sd.items():
+                    for pref in ('model.','net.','module.'):
+                        if k.startswith(pref): k = k[len(pref):]; break
+                    od[k]=v
                 m.load_state_dict(od, strict=False)
             return m
         except Exception as e:
-            last_err = e
-
-    raise SystemExit(
-        "state_dict は見つかりましたが、モデルクラスの復元に失敗しました。\n"
-        "  対処: --class でクラスの import パスを与えるか、--init で初期化引数を渡してください。\n"
-        f"  最後のエラー: {last_err}"
-    )
+            last = e
+    raise SystemExit(f"state_dictは見つかったがクラス復元に失敗。--class/--init を指定してください。最後のエラー: {last}")
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--class", dest="class_path", default=None,
-                    help="state_dict-only の場合のモデルクラス import パス")
-    ap.add_argument("--init", dest="init_json", default=None,
-                    help="上記クラスの初期化引数（JSON 文字列）")
+    ap.add_argument('--ckpt', required=True)
+    ap.add_argument('--out', required=True)
+    ap.add_argument('--class', dest='class_path', default=None)
+    ap.add_argument('--init', dest='init_json', default=None)
     args = ap.parse_args()
 
     init_args = json.loads(args.init_json) if args.init_json else None
+    ckpt_path = os.path.abspath(args.ckpt)
+    ckpt_dir  = os.path.dirname(ckpt_path)
+    obj = torch.load(ckpt_path, map_location='cpu')
 
-    obj = torch.load(args.ckpt, map_location="cpu")
-    meta = {}
-    if isinstance(obj, dict):
-        meta = obj.get("meta") or obj.get("hyper_parameters") or obj.get("hparams") or {}
+    # 1) どこかに Module がそのまま入っていないか
+    m = find_module(obj)
+    if m is None and isinstance(obj, dict) and isinstance(obj.get('model'), dict):
+        m = find_module(obj['model'])
 
-    # 1) どこかに Module がそのまま入っていないか探す
-    m = find_module_in_obj(obj)
-    if m is None and isinstance(obj, dict) and isinstance(obj.get("model"), dict):
-        m = find_module_in_obj(obj["model"])
-
-    # 2) Module が見つからない → state_dict から復元を試す
+    # 2) TorchScript パスが埋め込まれていないか（再帰探索＋相対補完）
     if m is None:
-        pack = obj["model"] if isinstance(obj, dict) and isinstance(obj.get("model"), dict) else obj
-        m = maybe_build_from_state_dict(pack, meta, args.class_path, init_args)
+        for pth in iter_paths(obj):
+            rp = resolve(pth, ckpt_dir)
+            if not rp: continue
+            try:
+                m = torch.jit.load(rp, map_location='cpu').eval()
+                print(f"found TorchScript at: {rp}")
+                break
+            except Exception:
+                pass
+
+    # 3) state_dict から復元できないか
+    if m is None:
+        pack = obj.get('model') if isinstance(obj, dict) else obj
+        if pack is None: pack = obj
+        m = maybe_build_from_state_dict(pack, args.class_path, init_args)
 
     if m is None:
-        raise SystemExit("モデルの復元に失敗しました（Module/state_dict 共に見つからず）")
+        raise SystemExit("モデルの復元に失敗（Module/state_dict/TS-path すべて不発）")
 
-    # 3) TorchScript 化（script が難しければ trace に切替を検討）
     m.eval()
     try:
         ts = torch.jit.script(m)
     except Exception as e:
-        raise SystemExit(
-            f"torch.jit.script に失敗しました: {e}\n"
-            "必要なら trace に変更可能です（ダミー入力テンソル形状が必要）。"
-        )
+        raise SystemExit(f"torch.jit.script に失敗: {e}（trace 切替はダミー入力形状が必要）")
     ts.save(args.out)
     print("saved:", args.out)
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

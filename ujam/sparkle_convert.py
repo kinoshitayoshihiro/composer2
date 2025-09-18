@@ -6111,39 +6111,32 @@ def main():
     # Chords
     inline_chord_events: Optional[List[InlineChordEvent]] = None
     if args.chords:
-        parsed_inline = parse_inline_chords(args.chords)
-        if parsed_inline is None:
-            chord_path = Path(args.chords)
-            if chord_path.exists():
-                if chord_path.suffix in {".yaml", ".yml"}:
-                    chords = read_chords_yaml(chord_path)
-                else:
-                    # 既存の TimeSignature を meter_map_cli に反映
-                    meter_map_cli: List[Tuple[float, int, int]] = [
-                        (float(ts.time), int(ts.numerator), int(ts.denominator))
-                        for ts in pm.time_signature_changes
-                    ]
-
-                    # TS が無い場合は --chords-ts のヒントを使用、無ければデフォルト (ts_num/ts_den)
-                    if not meter_map_cli:
-                        chord_ts_hints = (
-                            _parse_chords_ts_hint(getattr(args, "chords_ts", None))
-                            if "chords_ts" in args.__dict__
-                            else None
-                        )
-                        if chord_ts_hints:
-                            meter_map_cli = chord_ts_hints
-                        else:
-                            meter_map_cli = [(0.0, ts_num, ts_den)]
-
-                    # bar_times には downbeats（あれば）を渡す
+        chord_path = Path(args.chords)
+        parsed_inline: Optional[List[InlineChordEvent]] = None
+        if not chord_path.exists():
+            parsed_inline = parse_inline_chords(args.chords)
+        if chord_path.exists():
+            if chord_path.suffix in {".yaml", ".yml"}:
+                chords = read_chords_yaml(chord_path)
+            else:
+                # Build meter map from existing TS or CLI hints
+                meter_map_cli: List[Tuple[float, int, int]] = [
+                    (float(ts.time), int(ts.numerator), int(ts.denominator))
+                    for ts in pm.time_signature_changes
+                ]
+                if not meter_map_cli:
+                    chord_ts_hints = _parse_chords_ts_hint(getattr(args, "chords_ts", None))
+                    if chord_ts_hints:
+                        meter_map_cli = chord_ts_hints
+                    else:
+                        meter_map_cli = [(0.0, ts_num, ts_den)]
+                # Downbeats for compact CSV resolution if available
+                try:
+                    downbeats_chord = list(pm.get_downbeats())
+                except Exception:
                     downbeats_chord = []
-                    try:
-                        downbeats_chord = list(pm.get_downbeats())
-                    except Exception:
-                        downbeats_chord = []
-
-                    # read_chords_csv は簡易版シグネチャに合わせる
+                # Prefer flexible reader; fall back to simple signature if needed
+                try:
                     chords = read_chords_csv(
                         chord_path,
                         bar_times=downbeats_chord if downbeats_chord else None,
@@ -6151,12 +6144,15 @@ def main():
                         bpm_hint=bpm,
                         default_ts=(ts_num, ts_den),
                     )
-
-            else:
-                raise SystemExit(f"--chords path not found or unsupported inline spec: {args.chords}")
-        else:
+                except TypeError:
+                    chords = read_chords_csv(chord_path)
+        elif parsed_inline is not None:
             inline_chord_events = parsed_inline
             chords = []
+        else:
+            raise SystemExit(
+                f"--chords path not found or unsupported inline spec: {args.chords}"
+            )
     else:
         chords = infer_chords_by_bar(pm, ts_num, ts_den)
 

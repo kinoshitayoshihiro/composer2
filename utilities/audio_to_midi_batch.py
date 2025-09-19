@@ -46,9 +46,11 @@ import subprocess
 import sys
 import time
 import unicodedata
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 try:  # Optional dependency
     import numpy as np
@@ -81,14 +83,62 @@ from .controls_spline import ControlCurve  # noqa: E402
 from .controls_spline import tempo_map_from_prettymidi
 from . import pb_math
 
-try:
-    from utilities import cc_utils as cc_utils  # type: ignore  # noqa: F401
-except Exception:  # pragma: no cover - compatibility shim when utilities unavailable
-    class _CCShim:
-        def __getattr__(self, name: str):  # pragma: no cover - diagnostic path
-            raise AttributeError("audio_to_midi_batch.cc_utils not available")
+try:  # pragma: no cover - optional dependency for legacy helpers
+    from . import cc_utils as _legacy_cc_utils  # type: ignore
+except Exception:  # pragma: no cover - fallback when module missing
+    _legacy_cc_utils = None  # type: ignore
 
-    cc_utils = _CCShim()  # type: ignore
+def _noop_cc11(*_args, **_kwargs):  # pragma: no cover - minimal fallback
+    return []
+
+
+def _noop_cc64(*_args, **_kwargs):  # pragma: no cover - minimal fallback
+    return []
+
+
+def _identity_cc(events, *_args, **_kwargs):  # pragma: no cover - minimal fallback
+    """Return events as a plain list for legacy callers expecting list ops."""
+
+    return list(events)
+
+
+cc_utils = SimpleNamespace(  # type: ignore[assignment]
+    energy_to_cc11=(
+        _legacy_cc_utils.energy_to_cc11
+        if _legacy_cc_utils is not None
+        else _noop_cc11
+    ),
+    infer_cc64_from_overlaps=(
+        _legacy_cc_utils.infer_cc64_from_overlaps
+        if _legacy_cc_utils is not None
+        else _noop_cc64
+    ),
+    smooth_cc=(
+        getattr(_legacy_cc_utils, "smooth_cc", _identity_cc)
+        if _legacy_cc_utils is not None
+        else _identity_cc
+    ),
+)
+
+
+def _set_initial_tempo(pm: pretty_midi.PrettyMIDI, bpm: float) -> None:
+    """Best-effort initial tempo setter that avoids PrettyMIDI kwargs."""
+
+    try:
+        scale = 60.0 / (float(bpm) * pm.resolution)
+        pm._tick_scales = [(0, scale)]
+        if hasattr(pm, "_update_tick_to_time"):
+            pm._update_tick_to_time(pm.resolution)
+    except Exception:  # pragma: no cover - PrettyMIDI internals differ per version
+        pass
+
+
+def _filter_kwargs(fn: Callable[..., object], kwargs: dict[str, object]) -> dict[str, object]:
+    """Return ``kwargs`` entries present in ``fn``'s signature and not ``None``."""
+
+    sig = inspect.signature(fn)
+    allowed = set(sig.parameters)
+    return {k: v for k, v in kwargs.items() if k in allowed and v is not None}
 
 
 @dataclass(frozen=True)
@@ -175,12 +225,17 @@ def _emit_pitch_bend_range(
     integer_only: bool = False,
 ) -> None:
     """Insert RPN 0,0 events to set pitch-bend range."""
+    if getattr(inst, "_rpn_written", False):
+        return
     if integer_only:
         bend_range_semitones = math.floor(bend_range_semitones)
     first_pb = min((pb.time for pb in inst.pitch_bends), default=None)
     t_clamped = _rpn_time(float(t), first_pb)
     write_bend_range_rpn(
-        inst, bend_range_semitones, at_time=t_clamped
+        inst,
+        bend_range_semitones,
+        at_time=t_clamped,
+        precision="cent",
     )  # centralize RPN emission
 
 
@@ -569,12 +624,23 @@ def _transcribe_stem(
     cc64_mode: str = "none",
     cc64_gap_beats: float = 0.25,
     cc64_min_dwell_ms: float = 80.0,
+    sustain_threshold: float | None = None,
+    cc_strategy: str | None = None,
+    **_legacy_kwargs: object,
 ) -> StemResult:
     """Transcribe a monophonic WAV file into a MIDI instrument.
 
     Returns the instrument along with an estimated tempo (in BPM) when
     ``auto_tempo`` is enabled. Tempo estimation falls back to ``None`` if it
     cannot be computed."""
+
+    if cc_strategy is not None:
+        cc11_strategy = cc_strategy
+    if sustain_threshold is not None:
+        cc64_gap_beats = sustain_threshold
+
+    if _legacy_kwargs:
+        _legacy_kwargs.clear()
 
     if crepe is None or librosa is None:
         missing = " and ".join(
@@ -793,6 +859,7 @@ def convert_directory(
     cc64_mode: str = "none",
     cc64_gap_beats: float = 0.25,
     cc64_min_dwell_ms: float = 80.0,
+    sustain_threshold: float | None = None,
     controls_post_bend: str = "skip",
 ) -> None:
     """Convert a directory of stems into individual MIDI files.
@@ -806,7 +873,6 @@ def convert_directory(
 
     log_path = dst / "conversion_log.json"
     log_data: dict[str, list[str]] = {}
-    transcribe_params = inspect.signature(_transcribe_stem).parameters
     base_transcribe_kwargs = {
         "min_dur": min_dur,
         "auto_tempo": auto_tempo,
@@ -824,13 +890,14 @@ def convert_directory(
         "cc64_mode": cc64_mode,
         "cc64_gap_beats": cc64_gap_beats,
         "cc64_min_dwell_ms": cc64_min_dwell_ms,
+        "sustain_threshold": sustain_threshold
+        if sustain_threshold is not None
+        else cc64_gap_beats,
     }
     # Tests patch _transcribe_stem with legacy signatures; filter new kwargs for compatibility.
-    filtered_transcribe_kwargs = {
-        k: v
-        for k, v in base_transcribe_kwargs.items()
-        if k in transcribe_params and v is not None
-    }
+    filtered_transcribe_kwargs = _filter_kwargs(
+        _transcribe_stem, base_transcribe_kwargs
+    )
     if resume and log_path.exists():
         try:
             log_data = json.loads(log_path.read_text())
@@ -1027,11 +1094,9 @@ def convert_directory(
                 elif tempo_strategy == "ignore":
                     tempo = None
 
-            pm = (
-                pretty_midi.PrettyMIDI(initial_tempo=float(tempo))
-                if tempo is not None
-                else pretty_midi.PrettyMIDI()
-            )
+            pm = pretty_midi.PrettyMIDI()
+            if tempo is not None:
+                _set_initial_tempo(pm, float(tempo))
             for name, inst, _ in results:
                 _emit_pitch_bend_range(
                     inst, bend_range_semitones, integer_only=bend_integer_range
@@ -1222,11 +1287,9 @@ def convert_directory(
 
             for base, inst, tempo, midi_path in results:
                 use_tempo = locked_tempo if locked_tempo is not None else tempo
-                pm = (
-                    pretty_midi.PrettyMIDI(initial_tempo=float(use_tempo))
-                    if use_tempo is not None
-                    else pretty_midi.PrettyMIDI()
-                )
+                pm = pretty_midi.PrettyMIDI()
+                if use_tempo is not None:
+                    _set_initial_tempo(pm, float(use_tempo))
                 _emit_pitch_bend_range(
                     inst, bend_range_semitones, integer_only=bend_integer_range
                 )
@@ -1631,6 +1694,21 @@ def main(argv: list[str] | None = None) -> None:
         default=80.0,
         help="Minimum sustain on/off duration in milliseconds",
     )
+    parser.add_argument(
+        "--sustain-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Maximum inter-note gap in quarter-note beats to trigger sustain "
+            "(defaults to --cc64-gap-beats when omitted)"
+        ),
+    )
+    parser.add_argument(
+        "--cc64-threshold",
+        dest="cc64_threshold_alias",
+        type=float,
+        help="Deprecated alias for --sustain-threshold",
+    )
     controls = parser.add_argument_group("Continuous Controls")
     controls.add_argument(
         "--emit-cc11",
@@ -1660,16 +1738,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     controls.add_argument(
         "--cc-strategy",
-        choices=["energy", "rms", "none"],
+        "--cc11-strategy",
+        choices=["energy", "rms", "flat", "none"],
         default="energy",
         dest="cc_strategy",
         help="Source for CC11 dynamics",
-    )
-    controls.add_argument(
-        "--cc11-strategy",
-        choices=["energy", "rms", "none"],
-        dest="cc_strategy_alias",
-        help=argparse.SUPPRESS,
     )
     controls.add_argument(
         "--cc11-smoothing-ms",
@@ -1802,20 +1875,18 @@ def main(argv: list[str] | None = None) -> None:
 
     args.controls_channel_map = _parse_ch_map(args.controls_channel_map)
 
-    if getattr(args, "cc_strategy_alias", None) is not None:
-        _warn_once("cc11-strategy", "--cc11-strategy is deprecated; use --cc-strategy")
-        args.cc_strategy = args.cc_strategy_alias
     if getattr(args, "write_rpn_range_alias", None) is not None:
         _warn_once("write-rpn", "--write-rpn is deprecated; use --write-rpn-range")
         args.write_rpn_range = args.write_rpn_range_alias
-    if (
-        getattr(args, "cc64_threshold", None) is not None
-        or getattr(args, "cc64_instruments", None) is not None
-    ):
-        _warn_once(
-            "cc64-threshold",
-            "--cc64-threshold/--cc64-instruments are deprecated; use --cc64-mode heuristic",
+    if getattr(args, "cc64_threshold_alias", None) is not None:
+        warnings.warn(
+            "--cc64-threshold is deprecated; use --sustain-threshold",
+            DeprecationWarning,
+            stacklevel=2,
         )
+        args.sustain_threshold = args.cc64_threshold_alias
+        args.cc64_mode = "heuristic"
+    if args.sustain_threshold is not None and args.cc64_mode == "none":
         args.cc64_mode = "heuristic"
 
     if args.tempo_lock == "value" and args.tempo_lock_value is None:
@@ -1853,6 +1924,7 @@ def main(argv: list[str] | None = None) -> None:
         cc64_mode=args.cc64_mode,
         cc64_gap_beats=args.cc64_gap_beats,
         cc64_min_dwell_ms=args.cc64_min_dwell_ms,
+        sustain_threshold=args.sustain_threshold,
         controls_post_bend=args.controls_post_bend,
     )
 

@@ -29,6 +29,7 @@ import os
 import random
 import warnings
 import gzip
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable, Sequence
@@ -306,13 +307,13 @@ def build_corpus(args: argparse.Namespace, files: Sequence[Path]) -> Dict[str, L
     use_mp = args.num_workers > 1 and embed_model is None
     paths = list(iterator)
     cfg = FastCfg()
-    cfg.drums_only = args.drums_only
-    cfg.min_file_notes = args.min_file_notes
-    cfg.min_file_seconds = args.min_file_seconds
-    cfg.max_file_seconds = args.max_file_seconds
-    cfg.silence_threshold_db = args.silence_threshold_db
-    cfg.silent_fraction = args.silent_fraction
-    cfg.skip_lyrics = args.skip_lyrics
+    cfg.drums_only = getattr(args, "drums_only", False)
+    cfg.min_file_notes = getattr(args, "min_file_notes", 0)
+    cfg.min_file_seconds = getattr(args, "min_file_seconds", 0.0)
+    cfg.max_file_seconds = getattr(args, "max_file_seconds", 0.0)
+    cfg.silence_threshold_db = getattr(args, "silence_threshold_db", -60.0)
+    cfg.silent_fraction = getattr(args, "silent_fraction", 0.95)
+    cfg.skip_lyrics = getattr(args, "skip_lyrics", False)
     if use_mp:
         try:
             with concurrent.futures.ProcessPoolExecutor(max_workers=args.num_workers) as ex:
@@ -508,6 +509,7 @@ class FastCfg:
     # envelope-based fast filter
     silence_threshold_db: float = -60.0
     silent_fraction: float = 0.95
+    skip_lyrics: bool = False
 
 
 # --- skip metrics (already added previously) --------------------------
@@ -754,11 +756,11 @@ def main(argv: list[str] | None = None) -> None:
         "min_notes": args.min_notes,
         "dur_bins": args.dur_bins,
         "vel_bins": args.vel_bins,
-        "embed_offline": bool(args.embed_offline),
-        "tags": args.tags,
-        "min_file_notes": args.min_file_notes,
-        "min_file_seconds": args.min_file_seconds,
-        "max_file_seconds": args.max_file_seconds,
+        "embed_offline": bool(getattr(args, "embed_offline", None)),
+        "tags": getattr(args, "tags", []),
+        "min_file_notes": getattr(args, "min_file_notes", 0),
+        "min_file_seconds": getattr(args, "min_file_seconds", 0.0),
+        "max_file_seconds": getattr(args, "max_file_seconds", 0.0),
         "skipped_too_few_notes": _SKIP_COUNTS.get("too_few_notes", 0),
         "skipped_too_short": _SKIP_COUNTS.get("too_short", 0),
         "skipped_invalid_midi": _SKIP_COUNTS.get("invalid_midi", 0),

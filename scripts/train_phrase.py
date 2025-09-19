@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import csv
 import json
 import logging
 import os
 import random
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -31,16 +33,25 @@ try:  # pragma: no cover - import robustness
     from models.phrase_transformer import PhraseTransformer
 except ModuleNotFoundError:
     repo_root = Path(__file__).resolve().parent.parent
-    if os.environ.get("ALLOW_LOCAL_IMPORT") == "1":
-        if str(repo_root) not in sys.path:
-            sys.path.insert(0, str(repo_root))
-            logging.warning("ALLOW_LOCAL_IMPORT=1, inserted repo root into sys.path")
-        try:
-            from models.phrase_transformer import PhraseTransformer
-        except ModuleNotFoundError:  # pragma: no cover - still failing
-            PhraseTransformer = None  # type: ignore
-    else:  # pragma: no cover - guidance when fallback disabled
-        PhraseTransformer = None  # type: ignore
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+        logging.warning("added repo root to sys.path for local import")
+    from models.phrase_transformer import PhraseTransformer
+
+if not isinstance(PhraseTransformer, type):  # pragma: no cover - defensive
+    raise ModuleNotFoundError("models.phrase_transformer.PhraseTransformer is unavailable")
+
+_TMP_DIRS: list[Path] = []
+
+
+def _register_tmp(path: Path) -> Path:
+    _TMP_DIRS.append(path)
+
+    def _cleanup(p: Path) -> None:
+        shutil.rmtree(p, ignore_errors=True)
+
+    atexit.register(_cleanup, path)
+    return path
 
 
 FIELDS = [
@@ -1279,12 +1290,12 @@ def train_model(
                 plt.xlabel("Recall")
                 plt.ylabel("Precision")
                 plt.tight_layout()
-                fname_pr = out.parent / f"run-{ts}-epoch-{ep + 1}-pr.png"
+                fname_pr = out.parent / f"pr_curve_ep{ep + 1}.png"
                 plt.savefig(fname_pr)
                 plt.close()
                 ConfusionMatrixDisplay.from_predictions(trues, preds_epoch)
                 plt.tight_layout()
-                fname_cm = out.parent / f"run-{ts}-epoch-{ep + 1}-cm.png"
+                fname_cm = out.parent / f"confusion_matrix_ep{ep + 1}.png"
                 plt.savefig(fname_cm)
                 plt.close()
                 viz_files.extend([str(fname_pr), str(fname_cm)])
@@ -1678,35 +1689,34 @@ def main(argv: list[str] | None = None) -> int:
                 rng = random.Random(0)
                 train_rows = rng.sample(train_rows, min(args.sample, len(train_rows)))
                 val_rows = rng.sample(val_rows, min(args.sample, len(val_rows)))
-            with tempfile.TemporaryDirectory() as td:
-                tmp = Path(td)
-                train_csv = tmp / "train.csv"
-                val_csv = tmp / "valid.csv"
-                write_csv(train_rows, train_csv)
-                write_csv(val_rows, val_csv)
-                args.train_csv = train_csv
-                args.val_csv = val_csv
+            tmp = _register_tmp(Path(tempfile.mkdtemp(prefix="train_phrase_")))
+            train_csv = tmp / "train.csv"
+            val_csv = tmp / "valid.csv"
+            write_csv(train_rows, train_csv)
+            write_csv(val_rows, val_csv)
+            args.train_csv = train_csv
+            args.val_csv = val_csv
         except Exception:
-            with tempfile.TemporaryDirectory() as td:
-                tmp = Path(td)
-                train_csv = tmp / "train.csv"
-                val_csv = tmp / "valid.csv"
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "tools.corpus_to_phrase_csv",
-                        "--in",
-                        str(args.data),
-                        "--out-train",
-                        str(train_csv),
-                        "--out-valid",
-                        str(val_csv),
-                    ],
-                    check=True,
-                )
-                args.train_csv = train_csv
-                args.val_csv = val_csv
+            tmp = _register_tmp(Path(tempfile.mkdtemp(prefix="train_phrase_")))
+            train_csv = tmp / "train.csv"
+            val_csv = tmp / "valid.csv"
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "tools.corpus_to_phrase_csv",
+                    "--in",
+                    str(args.data),
+                    "--out-train",
+                    str(train_csv),
+                    "--out-valid",
+                    str(val_csv),
+                ],
+                check=True,
+                env={**os.environ, "ALLOW_LOCAL_IMPORT": "1"},
+            )
+            args.train_csv = train_csv
+            args.val_csv = val_csv
 
     if not args.train_csv or not args.train_csv.is_file():
         raise SystemExit(f"missing train_csv {args.train_csv}")

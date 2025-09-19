@@ -17,7 +17,7 @@ _SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
 
 def _tick_to_time(pm: pretty_midi.PrettyMIDI, tick: float) -> float:
     if hasattr(pm, "tick_to_time"):
-        return pm.tick_to_time(tick)  # type: ignore[arg-type]
+        return pm.tick_to_time(int(round(tick)))  # type: ignore[arg-type]
     return tick / (pm.resolution * 2)
 
 

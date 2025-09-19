@@ -1,12 +1,13 @@
 # --- START OF FILE generator/base_part_generator.py (修正版) ---
 import logging
 import math
+import os
 import random
 import re
 import statistics
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 from music21 import meter, stream
@@ -159,11 +160,15 @@ class BasePartGenerator(ABC):
         self.global_settings = global_settings or {}
         if control_config is None:
             try:
-                from utilities import control_config as _default_cc
+                from utilities.control_config import control_config as _default_cc
             except Exception:
-                from types import SimpleNamespace
-
-                control_config = SimpleNamespace()
+                control_config = SimpleNamespace(
+                    swing_ratio=0.0,
+                    jitter_ms=0.0,
+                    velocity_curve="linear",
+                    enable_cc11=True,
+                    enable_cc64=False,
+                )
             else:
                 control_config = _default_cc
         self.control_config = control_config

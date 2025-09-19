@@ -479,6 +479,37 @@ def _ensure_tempo_and_ticks(
         setattr(pm, "_sparkle_meta_seed_fallback", True)
 
 
+def _clamp_int(value: Any, lo: int, hi: int, default: int) -> int:
+    """Return ``value`` rounded to the nearest int and clamped to ``[lo, hi]``."""
+
+    try:
+        candidate = int(round(value))
+    except Exception:
+        return default
+    if candidate < lo:
+        return lo
+    if candidate > hi:
+        return hi
+    return candidate
+
+
+def _sanitize_midi_for_mido(pm: "pretty_midi.PrettyMIDI") -> None:
+    """Clamp MIDI data bytes so ``pretty_midi.PrettyMIDI.write`` never feeds mido floats."""
+
+    for inst in getattr(pm, "instruments", []) or []:
+        for note in getattr(inst, "notes", []) or []:
+            note.pitch = _clamp_int(note.pitch, 0, 127, 0)
+            note.velocity = _clamp_int(note.velocity, 0, 127, 64)
+        for cc in getattr(inst, "control_changes", []) or []:
+            cc.number = _clamp_int(cc.number, 0, 127, 0)
+            cc.value = _clamp_int(cc.value, 0, 127, 0)
+        for pb in getattr(inst, "pitch_bends", []) or []:
+            pb.pitch = _clamp_int(pb.pitch, -8192, 8191, 0)
+        inst.program = _clamp_int(getattr(inst, "program", 0), 0, 127, 0)
+        if hasattr(inst, "midi_channel") and inst.midi_channel is not None:
+            inst.midi_channel = _clamp_int(inst.midi_channel, 0, 15, 0)
+
+
 def _sanitize_tempi(pm: "pretty_midi.PrettyMIDI") -> None:
     """Clamp PrettyMIDI tempi so PrettyMIDI.write() never exceeds mido's MPQN range."""
 
@@ -7449,6 +7480,7 @@ def main():
                 logging.info("bar %d pulses %s", b_idx, bar_pulses[b_idx])
         return
 
+    _sanitize_midi_for_mido(out_pm)
     out_pm.write(args.out)
     logging.info("Wrote %s", args.out)
 def _parse_chords_ts_hint(s: Optional[str]) -> Optional[List[Tuple[float, int, int]]]:

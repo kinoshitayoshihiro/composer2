@@ -72,6 +72,12 @@ try:  # pragma: no cover - optional dependency
     import pretty_midi  # type: ignore
 except Exception:  # pragma: no cover
     pretty_midi = None  # type: ignore
+
+# pretty_midi がある環境では get_tempo_changes を (bpms, times) に矯正する
+try:  # pragma: no cover - optional dependency
+    from . import pretty_midi_compat as _pmc  # noqa: F401
+except Exception:  # pragma: no cover
+    pass
 import tempfile
 
 # Optional mido — required for training path below
@@ -511,8 +517,17 @@ def convert_wav_to_midi(
         return None
 
 
-def midi_to_events(pm: pretty_midi.PrettyMIDI, tempo: float) -> list[tuple[float, int]]:
-    """Extract ``(beat, pitch)`` tuples from a PrettyMIDI drum track.
+def midi_to_events(
+    pm: pretty_midi.PrettyMIDI,
+    tempo: float,
+    *,
+    allow_pitched_fallback: bool = True,
+) -> list[tuple[float, int]]:
+    """Extract ``(beat, pitch)`` tuples prioritizing drum instruments.
+
+    By default the function remains drum-first, only falling back to pitched
+    instruments when no drum notes exist and ``allow_pitched_fallback`` is
+    enabled.
 
     Parameters
     ----------
@@ -521,21 +536,32 @@ def midi_to_events(pm: pretty_midi.PrettyMIDI, tempo: float) -> list[tuple[float
     tempo
         Tempo in beats-per-minute.  If non-positive or non-finite, a warning
         is emitted and the default 120 BPM is used.
+    allow_pitched_fallback
+        When ``True`` (default), fall back to pitched instruments if no drum
+        notes are present.  When ``False``, only drum notes are considered.
     """
     if not np.isfinite(tempo) or tempo <= 0:
         logger.warning("Non-positive tempo %.2f detected; using default 120 BPM.", tempo)
         tempo = 120.0
     sec_per_beat = 60.0 / tempo
 
-    events: list[tuple[float, int]] = []
+    drum_events: list[tuple[float, int]] = []
+    pitched_events: list[tuple[float, int]] = []
     for inst in pm.instruments:
-        if not inst.is_drum:
-            continue
+        target = drum_events if inst.is_drum else pitched_events
         for n in inst.notes:
             beat = n.start / sec_per_beat
-            events.append((beat, n.pitch))
-    events.sort(key=lambda x: x[0])
-    return events
+            target.append((beat, n.pitch))
+
+    if drum_events:
+        drum_events.sort(key=lambda x: x[0])
+        return drum_events
+
+    if allow_pitched_fallback:
+        pitched_events.sort(key=lambda x: x[0])
+        return pitched_events
+
+    return []
 
 
 def _safe_read_bpm(
@@ -558,7 +584,7 @@ def _safe_read_bpm(
     bpm: float | None = None
     source = "default"
 
-    # pretty_midi_compat ensures pm.get_tempo_changes() returns (bpms, times)
+
     bpms, _times = pm.get_tempo_changes()
     if len(bpms) and math.isfinite(bpms[0]) and bpms[0] > 0:
         bpm = float(bpms[0])

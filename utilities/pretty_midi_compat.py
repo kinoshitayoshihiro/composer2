@@ -5,11 +5,12 @@ return plain Python lists, which breaks pretty_midi.PrettyMIDI.get_end_time()
 because it blindly calls `.tolist()`.
 
 By importing this module once at startup, we monkey-patch the method so it
-*always* returns numpy.ndarray.
+*always* returns numpy.ndarray, and returns in the (bpms, times) order.
 """
 
 from __future__ import annotations
 
+import os as _os
 import numpy as _np
 
 try:  # pragma: no cover - exercised in pretty_midi environments
@@ -84,8 +85,7 @@ else:
             score_second_as_bpms = _bpms_score(second_arr) + _times_score(first_arr)
 
             # Tie-break: prefer the official pretty_midi order (times, bpms),
-            # thus return (bpms, times) when scores are equal.
-            # Return order is ALWAYS (bpms, times) for public callers.
+            # but public callers ALWAYS get (bpms, times).
             if score_second_as_bpms >= score_first_as_bpms:
                 bpms, times = second_arr, first_arr
             else:
@@ -98,10 +98,9 @@ else:
         # PathLike を常に文字列へ（古い mido が Path を file-like と誤解）
         def _safe_write(self, filename):
             try:
-                import os
-                if hasattr(filename, "__fspath__"):
-                    filename = os.fspath(filename)
+                filename = _os.fspath(filename)
             except Exception:
+                # If it isn't PathLike or fspath fails, pass through as-is.
                 pass
             return _orig_write(self, filename)
 

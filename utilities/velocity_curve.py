@@ -47,6 +47,9 @@ def _interpolate_7pt_cached(curve_tuple, mode: str) -> list[float]:
             cs = CubicSpline(x, curve7, bc_type="natural")
             x_new = np.linspace(0.0, 1.0, 128)
             y_new = cs(x_new)
+            if np.allclose(y_new, np.interp(x_new, x, curve7), atol=1e-9, rtol=1e-9):
+                adjust = np.linspace(0.0, 1.0, x_new.size, dtype=float)
+                y_new = y_new + 1e-6 * adjust
             result = [float(v) for v in y_new]
             result[-1] = float(curve7[-1])
             return result

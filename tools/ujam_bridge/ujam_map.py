@@ -5,9 +5,15 @@ from __future__ import annotations
 import argparse
 import csv
 import pathlib
+from types import SimpleNamespace
 from bisect import bisect_right
 from collections import Counter, defaultdict
 from typing import Dict, List
+
+try:  # optional dependency for writing MIDI
+    import mido  # type: ignore
+except Exception:  # pragma: no cover - allow monkeypatch in tests
+    mido = SimpleNamespace(MidiFile=None)  # type: ignore
 
 try:  # optional dependencies
     import pretty_midi  # type: ignore
@@ -79,30 +85,64 @@ def _load_yaml(path: pathlib.Path) -> Dict:
 def _validate_map(data: Dict) -> List[str]:
     """Return a list of problems found in *data* mapping."""
     issues: List[str] = []
-    ks_list = data.get("keyswitches", []) or []
+    key_lookup: dict[str, int] = {}
     names: set[str] = set()
     notes: set[int] = set()
+
+    def _register(name: str | None, note: object, *, require_hold: bool = False, hold=None) -> None:
+        if not isinstance(name, str):
+            issues.append("keyswitch missing name")
+            return
+        if name in names:
+            issues.append(f"duplicate name '{name}'")
+        names.add(name)
+        if not isinstance(note, int):
+            issues.append(f"keyswitch '{name}' missing note")
+            return
+        if note in notes:
+            issues.append(f"duplicate note {note}")
+        notes.add(note)
+        if not 0 <= note <= 127:
+            issues.append(f"keyswitch '{name}' out of range 0..127 (got {note})")
+        key_lookup[name] = note
+        if require_hold and hold is None:
+            issues.append(f"keyswitch '{name}' missing hold")
+
+    ks_list = data.get("keyswitches", []) or []
     for idx, item in enumerate(ks_list):
         if not isinstance(item, dict):
             issues.append(f"keyswitch #{idx} not a mapping")
             continue
-        name = item.get("name")
-        note = item.get("note")
-        hold = item.get("hold")
-        if name in names:
-            issues.append(f"duplicate name '{name}'")
-        if isinstance(name, str):
-            names.add(name)
-        if isinstance(note, int):
-            if note in notes:
-                issues.append(f"duplicate note {note}")
-            if not 0 <= note <= 127:
-                issues.append(f"note {note} out of range 0..127")
-            notes.add(note)
-        else:
-            issues.append(f"keyswitch '{name}' missing note")
-        if hold is None:
-            issues.append(f"keyswitch '{name}' missing hold")
+        _register(item.get("name"), item.get("note"), require_hold=True, hold=item.get("hold"))
+
+    ks_dict = data.get("keyswitch")
+    if isinstance(ks_dict, dict):
+        for name, value in ks_dict.items():
+            _register(name, value, require_hold=False)
+
+    play = data.get("play_range", {}) or {}
+    try:
+        low = int(play.get("low", 0))
+        high = int(play.get("high", 127))
+    except Exception:
+        low, high = 0, 127
+
+    for name, note in key_lookup.items():
+        if note < low or note > high:
+            issues.append(
+                f"keyswitch '{name}' out of range {low}..{high} (got {note})"
+            )
+
+    section_styles = data.get("section_styles", {}) or {}
+    if isinstance(section_styles, dict):
+        for section, names_list in section_styles.items():
+            if not isinstance(names_list, (list, tuple, set)):
+                continue
+            for name in names_list:
+                if name not in key_lookup:
+                    issues.append(
+                        f"section '{section}' references undefined keyswitch '{name}'"
+                    )
     return issues
 
 
@@ -181,11 +221,11 @@ def convert(args: argparse.Namespace) -> None:
     if args.tags:
         sections = _load_sections(pathlib.Path(args.tags))
 
-    pm = pretty_midi.PrettyMIDI(args.in_midi)
+    pm = pretty_midi.PrettyMIDI(str(args.in_midi))
     utils.quantize(pm, int(args.quant), float(args.swing))
     beats_per_bar = pm.time_signature_changes[0].numerator if pm.time_signature_changes else 4
     if args.use_groove_profile:
-        vocal = pretty_midi.PrettyMIDI(args.use_groove_profile)
+        vocal = pretty_midi.PrettyMIDI(str(args.use_groove_profile))
         events = [{"offset": vocal.time_to_tick(n.start) / vocal.resolution} for n in vocal.instruments[0].notes]
         profile = gp.extract_groove_profile(events)  # type: ignore[arg-type]
         utils.apply_groove_profile(
@@ -315,22 +355,21 @@ def convert(args: argparse.Namespace) -> None:
     else:
         out_pm.instruments.append(ks_inst)
         out_pm.instruments.append(perf_inst)
-        out_pm.write(args.out_midi)
-        try:
-            import mido
-
-            mf = mido.MidiFile(args.out_midi)
-            ks_ch = int(args.ks_channel) - 1
-            for track in mf.tracks:
-                name = None
-                for msg in track:
-                    if msg.type == "track_name":
-                        name = msg.name
-                    elif name == "Keyswitches" and msg.type in {"note_on", "note_off"}:
-                        msg.channel = ks_ch
-            mf.save(args.out_midi)
-        except Exception:
-            pass
+        out_pm.write(str(args.out_midi))
+        if getattr(mido, "MidiFile", None) is not None:
+            try:
+                mf = mido.MidiFile(str(args.out_midi))  # type: ignore[attr-defined]
+                ks_ch = int(args.ks_channel) - 1
+                for track in mf.tracks:
+                    name = None
+                    for msg in track:
+                        if msg.type == "track_name":
+                            name = msg.name
+                        elif name == "Keyswitches" and msg.type in {"note_on", "note_off"}:
+                            msg.channel = ks_ch
+                mf.save(str(args.out_midi))
+            except Exception:
+                pass
 
     if ks_hist:
         print("Keyswitch usage:")

@@ -7,6 +7,7 @@ is handled by :mod:`utilities.apply_controls_cli`.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable, Mapping
 
 try:  # optional dependency
@@ -50,36 +51,57 @@ def _sort_events(inst: pretty_midi.Instrument) -> None:
 
 
 def write_bend_range_rpn(
-    inst: pretty_midi.Instrument, range_semitones: float, *, at_time: float = 0.0
+    inst: pretty_midi.Instrument,
+    range_semitones: float,
+    *,
+    at_time: float = 0.0,
+    precision: str = "midi128",
 ) -> None:
-    """Emit bend-range RPN (101,100→6,38) onto ``inst`` at ``at_time``.
+    """Emit bend-range RPN (101/100 → 6/38) using 1/128 semitone steps by default.
 
-    ``at_time`` is clamped to ``>=0``. If an existing RPN 0,0 block is present,
-    its values are updated in place rather than adding a duplicate. The LSB
-    encodes the fractional semitone portion in 1/128th steps.
+    ``precision`` may be set to ``"cent"`` to encode the fractional part in
+    1/100‑semitone increments for legacy pipelines that persisted this layout.
     """
 
+    mode = precision.lower()
+    if mode not in {"midi128", "cent"}:
+        raise ValueError(f"invalid precision '{precision}'")
+    scale = 128.0 if mode == "midi128" else 100.0
+    lsb_max = 127 if mode == "midi128" else 99
+
     t = max(0.0, float(at_time))
-    msb = int(range_semitones)
-    # LSB encodes the fractional semitone in 1/128 steps so that the
-    # resulting bend range maps exactly to ±8191 when combined with PB_MAX.
-    lsb = int(round((range_semitones - msb) * 128))
-    lsb = max(0, min(127, lsb))
+    value = max(0.0, float(range_semitones))
+    msb = int(math.floor(value))
+    frac = value - msb
+    if math.isclose(frac, 0.0, abs_tol=1e-9):
+        lsb = 0
+    else:
+        lsb = int(round(frac * scale))
+    msb = max(0, min(24, msb))
+    lsb = max(0, min(lsb_max, lsb))
 
     ccs = inst.control_changes
+    if not isinstance(ccs, list):
+        ccs = list(ccs)
+        inst.control_changes = ccs
     for i in range(len(ccs) - 2):
         a, b, c = ccs[i : i + 3]
         if (a.number, a.value) == (101, 0) and (b.number, b.value) == (100, 0) and c.number == 6:
             d = ccs[i + 3] if i + 3 < len(ccs) and ccs[i + 3].number == 38 else None
-            cur = c.value + (d.value if d else 0) / 128
+            existing_scale = 100.0
+            if d is not None and d.value > 99:
+                existing_scale = 128.0
+            cur = c.value + (d.value if d else 0) / existing_scale
             inst._rpn_written = True  # type: ignore[attr-defined]
-            if abs(cur - range_semitones) <= 1 / 128:
+            if abs(cur - range_semitones) <= 0.01:
                 inst._rpn_range = cur  # type: ignore[attr-defined]
+                inst._rpn_precision = mode  # type: ignore[attr-defined]
                 return
             c.value = msb
             if d is not None:
                 d.value = lsb
-            inst._rpn_range = range_semitones  # type: ignore[attr-defined]
+            inst._rpn_range = msb + lsb / scale  # type: ignore[attr-defined]
+            inst._rpn_precision = mode  # type: ignore[attr-defined]
             return
 
     ccs.extend(
@@ -91,7 +113,8 @@ def write_bend_range_rpn(
         ]
     )
     inst._rpn_written = True  # type: ignore[attr-defined]
-    inst._rpn_range = range_semitones  # type: ignore[attr-defined]
+    inst._rpn_range = msb + lsb / scale  # type: ignore[attr-defined]
+    inst._rpn_precision = mode  # type: ignore[attr-defined]
 
 
 def _rpn_time(rpn_at: float, first_pb_time: float | None) -> float:
@@ -363,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.dry_run:
         out_path = args.out or args.in_mid
-        pm.write(out_path)
+        pm.write(str(out_path))
     return 0
 
 

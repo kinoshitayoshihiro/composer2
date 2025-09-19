@@ -1,33 +1,28 @@
-import pickle
 from pathlib import Path
-import importlib.util
 import types
-import sys
 
 import pytest
 
 pretty_midi = pytest.importorskip("pretty_midi")
 np = pytest.importorskip("numpy")
 
-_spec = importlib.util.spec_from_file_location(
-    "utilities.groove_sampler_v2",
-    Path(__file__).resolve().parents[1] / "utilities" / "groove_sampler_v2.py",
-)
-assert _spec.loader is not None
-module = importlib.util.module_from_spec(_spec)
-# Provide minimal stubs to avoid heavy package imports
-pkg = types.ModuleType("utilities")
-pkg.loop_ingest = types.SimpleNamespace(load_meta=lambda *a, **k: {})
-pkg.pretty_midi_safe = types.SimpleNamespace(pm_to_mido=lambda pm: pm)
-pkg.aux_vocab = types.SimpleNamespace(AuxVocab=object)
-pkg.groove_sampler = types.SimpleNamespace(_PITCH_TO_LABEL={}, infer_resolution=lambda *a, **k: 480)
-sys.modules["utilities"] = pkg
-sys.modules["utilities.loop_ingest"] = pkg.loop_ingest
-sys.modules["utilities.pretty_midi_safe"] = pkg.pretty_midi_safe
-sys.modules["utilities.aux_vocab"] = pkg.aux_vocab
-sys.modules["utilities.groove_sampler"] = pkg.groove_sampler
-sys.modules["utilities.groove_sampler_v2"] = module
-_spec.loader.exec_module(module)
+@pytest.fixture
+def groove_sampler_v2_module(stub_utilities):
+    module_path = Path(__file__).resolve().parents[1] / "utilities" / "groove_sampler_v2.py"
+    stubs = {
+        "loop_ingest": types.SimpleNamespace(load_meta=lambda *a, **k: {}),
+        "pretty_midi_safe": types.SimpleNamespace(pm_to_mido=lambda pm: pm),
+        "aux_vocab": types.SimpleNamespace(AuxVocab=object),
+        "groove_sampler": types.SimpleNamespace(
+            _PITCH_TO_LABEL={}, infer_resolution=lambda *a, **k: 480
+        ),
+    }
+    with stub_utilities(
+        "utilities.groove_sampler_v2",
+        module_path,
+        submodules=stubs,
+    ) as module:
+        yield module
 
 
 def _make_loop(path: Path, notes: int) -> None:
@@ -41,7 +36,7 @@ def _make_loop(path: Path, notes: int) -> None:
     pm.write(str(path))
 
 
-def test_shard_and_merge(tmp_path: Path) -> None:
+def test_shard_and_merge(groove_sampler_v2_module, tmp_path: Path) -> None:
     good1 = tmp_path / "good1.mid"
     bad1 = tmp_path / "bad1.mid"
     bad2 = tmp_path / "bad2.mid"
@@ -57,7 +52,7 @@ def test_shard_and_merge(tmp_path: Path) -> None:
 
     out0 = tmp_path / "part0.pkl"
     ckpt0 = tmp_path / "ckpt0"
-    res0 = module.train_streaming(
+    res0 = groove_sampler_v2_module.train_streaming(
         shard0,
         output=out0,
         min_bytes=150,
@@ -73,7 +68,7 @@ def test_shard_and_merge(tmp_path: Path) -> None:
 
     out1 = tmp_path / "part1.pkl"
     ckpt1 = tmp_path / "ckpt1"
-    res1 = module.train_streaming(
+    res1 = groove_sampler_v2_module.train_streaming(
         shard1,
         output=out1,
         min_bytes=150,
@@ -87,25 +82,31 @@ def test_shard_and_merge(tmp_path: Path) -> None:
     assert res1["kept"] == 1
     assert res1["counts"][36] == 16
 
-    merged = module.merge_streaming_models([out0, out1], tmp_path / "merged.pkl")
+    merged = groove_sampler_v2_module.merge_streaming_models(
+        [out0, out1], tmp_path / "merged.pkl"
+    )
     assert merged["kept"] == 2
     assert merged["counts"][36] == 32
 
 
-def test_train_modes_equivalent_and_aux_vocab(tmp_path: Path) -> None:
+def test_train_modes_equivalent_and_aux_vocab(
+    groove_sampler_v2_module, tmp_path: Path
+) -> None:
     for i in range(3):
         _make_loop(tmp_path / f"loop{i}.mid", 16)
     aux_path = tmp_path / "aux.json"
-    model_stream = module.train(
+    model_stream = groove_sampler_v2_module.train(
         tmp_path,
         memmap_dir=tmp_path / "mm",
         hash_buckets=256,
         train_mode="stream",
         aux_vocab_path=aux_path,
     )
-    model_mem = module.train(tmp_path, hash_buckets=256, train_mode="inmemory")
+    model_mem = groove_sampler_v2_module.train(
+        tmp_path, hash_buckets=256, train_mode="inmemory"
+    )
     hb = model_mem.hash_buckets
-    h = module._hash_ctx([0, 0]) % hb
+    h = groove_sampler_v2_module._hash_ctx([0, 0]) % hb
     arr1 = model_mem.freq[0][h]
     arr2 = model_stream.freq[0][h]
     p1 = arr1 / arr1.sum()
@@ -114,7 +115,9 @@ def test_train_modes_equivalent_and_aux_vocab(tmp_path: Path) -> None:
     assert aux_path.exists()
 
 
-def test_streaming_resume_checkpoint(tmp_path: Path) -> None:
+def test_streaming_resume_checkpoint(
+    groove_sampler_v2_module, tmp_path: Path
+) -> None:
     paths = []
     for i in range(2):
         p = tmp_path / f"loop{i}.mid"
@@ -122,7 +125,7 @@ def test_streaming_resume_checkpoint(tmp_path: Path) -> None:
         paths.append(p)
     out = tmp_path / "state.pkl"
     ckpt = tmp_path / "ckpt"
-    res1 = module.train_streaming(
+    res1 = groove_sampler_v2_module.train_streaming(
         paths[:1],
         output=out,
         save_every=1,
@@ -130,7 +133,7 @@ def test_streaming_resume_checkpoint(tmp_path: Path) -> None:
         log_every=1,
     )
     assert res1["kept"] == 1
-    res2 = module.train_streaming(
+    res2 = groove_sampler_v2_module.train_streaming(
         paths,
         output=out,
         save_every=1,

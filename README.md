@@ -312,6 +312,27 @@ Optional flags `--tempo`, `--ppq`, `--ts`, and `--program` control the MIDI
 tempo, ticks-per-quarter-note resolution, time signature, and instrument
 program respectively.
 
+### DUV inference helpers
+
+The regression checkpoints ship with lightweight utilities:
+
+```bash
+python -m scripts.eval_duv --csv notes.duv.csv --ckpt ckpt.ckpt --stats-json ckpt.ckpt.stats.json \
+    --batch 64 --device auto --limit 500000 --verbose
+python -m scripts.predict_duv --csv notes.duv.csv --ckpt ckpt.ckpt --stats-json ckpt.ckpt.stats.json \
+    --batch 64 --device auto --out out.mid --filter-program "position > 0" --limit 100000 --verbose
+```
+
+`--limit` bounds how many rows are loaded from the CSV (helpful for giant
+exports), `--verbose` forwards diagnostics from the DUV model, and
+`--filter-program` accepts a pandas query; the DataFrame is automatically
+re-indexed after filtering to keep phrase-level features aligned. Filtering is
+applied before the limit cap, so the scripts run `filter → reset_index →
+head(limit)` to avoid huge offsets when scattering predictions. When optional
+feature columns (e.g. `vel_bucket`, `dur_bucket`, `section`, `mood`) are
+absent, the inference helpers feed zero-filled tensors so checkpoints trained
+with those embeddings still run.
+
 For classification or mixed modes the CSV must include `velocity_bucket` and
 `duration_bucket` columns; accuracy metrics are reported alongside F1/MAE.
 

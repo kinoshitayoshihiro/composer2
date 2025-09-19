@@ -10,11 +10,47 @@ import numpy as np
 import pandas as pd
 import torch
 
-_REQUIRED_COLUMNS = {"pitch", "velocity", "duration", "position"}
+REQUIRED_COLUMNS: set[str] = {"pitch", "velocity", "duration", "position"}
+OPTIONAL_COLUMNS: set[str] = {
+    "bar",
+    "bar_phase",
+    "beat_phase",
+    "section",
+    "mood",
+    "vel_bucket",
+    "dur_bucket",
+    "track_id",
+    "file",
+    "start",
+    "onset",
+}
+
+OPTIONAL_FLOAT32_COLUMNS: set[str] = {"bar_phase", "beat_phase", "start", "onset"}
+OPTIONAL_INT32_COLUMNS: set[str] = {"bar", "track_id", "section", "mood", "vel_bucket", "dur_bucket"}
+CSV_FLOAT32_COLUMNS: set[str] = {
+    "velocity",
+    "duration",
+    "bar_phase",
+    "beat_phase",
+    "start",
+    "onset",
+    "q_onset",
+    "q_duration",
+}
+CSV_INT32_COLUMNS: set[str] = {
+    "pitch",
+    "position",
+    "bar",
+    "track_id",
+    "vel_bucket",
+    "dur_bucket",
+    "section",
+    "mood",
+}
 
 
 def _missing_required(columns: Iterable[str]) -> list[str]:
-    return sorted(_REQUIRED_COLUMNS - set(columns))
+    return sorted(REQUIRED_COLUMNS - set(columns))
 def duv_verbose(flag: bool | None) -> bool:
     env = os.getenv("COMPOSER2_VERBOSE", "")
     if env.lower() not in {"", "0", "false", "no"}:
@@ -50,6 +86,7 @@ def duv_sequence_predict(
 
     core: Any = getattr(model, "core", model)
     max_len = int(getattr(core, "max_len", getattr(model, "max_len", 16)))
+    d_model = int(getattr(core, "d_model", getattr(model, "d_model", 0)))
     has_vel = bool(getattr(model, "has_vel_head", getattr(core, "head_vel_reg", None)))
     has_dur = bool(getattr(model, "has_dur_head", getattr(core, "head_dur_reg", None)))
     if not has_vel and not has_dur:
@@ -69,6 +106,16 @@ def duv_sequence_predict(
         groups = ((None, df),)
 
     missing_optional: set[str] = set()
+
+    preview: dict[str, object] | None = None
+
+    stderr = None
+    if verbose:
+        import sys
+
+        stderr = sys.stderr
+
+    optional_summary_printed = False
 
     for _, group in groups:
         if group.empty:
@@ -124,6 +171,8 @@ def duv_sequence_predict(
         has_vel_bucket = getattr(core, "vel_bucket_emb", None) is not None
         has_dur_bucket = getattr(core, "dur_bucket_emb", None) is not None
 
+        summary: dict[str, str] = {}
+
         if use_bar_beat:
             bar_phase = torch.zeros(1, max_len, dtype=torch.float32, device=device)
             beat_phase = torch.zeros(1, max_len, dtype=torch.float32, device=device)
@@ -133,16 +182,20 @@ def duv_sequence_predict(
                     dtype=torch.float32,
                     device=device,
                 )
+                summary["bar_phase"] = "csv"
             else:
                 missing_optional.add("bar_phase")
+                summary["bar_phase"] = "zero_fill"
             if "beat_phase" in g.columns:
                 beat_phase[:, :length] = torch.as_tensor(
                     g["beat_phase"].to_numpy(dtype="float32", copy=False)[:length],
                     dtype=torch.float32,
                     device=device,
                 )
+                summary["beat_phase"] = "csv"
             else:
                 missing_optional.add("beat_phase")
+                summary["beat_phase"] = "zero_fill"
             feat_dict["bar_phase"] = bar_phase
             feat_dict["beat_phase"] = beat_phase
         if has_section:
@@ -153,8 +206,10 @@ def duv_sequence_predict(
                     dtype=torch.long,
                     device=device,
                 )
+                summary["section"] = "csv"
             else:
                 missing_optional.add("section")
+                summary["section"] = "zero_fill"
             feat_dict["section"] = section
         if has_mood:
             mood = torch.zeros(1, max_len, dtype=torch.long, device=device)
@@ -164,8 +219,10 @@ def duv_sequence_predict(
                     dtype=torch.long,
                     device=device,
                 )
+                summary["mood"] = "csv"
             else:
                 missing_optional.add("mood")
+                summary["mood"] = "zero_fill"
             feat_dict["mood"] = mood
         if has_vel_bucket:
             vel_bucket = torch.zeros(1, max_len, dtype=torch.long, device=device)
@@ -175,8 +232,10 @@ def duv_sequence_predict(
                     dtype=torch.long,
                     device=device,
                 )
+                summary["vel_bucket"] = "csv"
             else:
                 missing_optional.add("vel_bucket")
+                summary["vel_bucket"] = "zero_fill"
             feat_dict["vel_bucket"] = vel_bucket
         if has_dur_bucket:
             dur_bucket = torch.zeros(1, max_len, dtype=torch.long, device=device)
@@ -186,8 +245,10 @@ def duv_sequence_predict(
                     dtype=torch.long,
                     device=device,
                 )
+                summary["dur_bucket"] = "csv"
             else:
                 missing_optional.add("dur_bucket")
+                summary["dur_bucket"] = "zero_fill"
             feat_dict["dur_bucket"] = dur_bucket
 
         mask = torch.zeros(1, max_len, dtype=torch.bool, device=device)
@@ -205,6 +266,17 @@ def duv_sequence_predict(
         else:
             vel_out = outputs
             dur_out = None
+
+        if verbose and preview is None:
+            preview = {
+                "seq_len": int(length),
+                "d_model_effective": d_model or None,
+                "features": sorted(feat_dict),
+            }
+
+        if verbose and not optional_summary_printed and summary and stderr is not None:
+            print({"duv_optional_features": summary}, file=stderr)
+            optional_summary_printed = True
 
         if vel_out is not None:
             v = torch.clamp(vel_out.squeeze(0), 0.0, 1.0).mul(127.0).round().clamp(1.0, 127.0)
@@ -225,6 +297,18 @@ def duv_sequence_predict(
             RuntimeWarning,
         )
 
+    if verbose and preview is not None and stderr is not None:
+        head = [float(v) for v in vel_pred[:8].tolist()]
+        print(
+            {
+                "duv_preview": {
+                    **preview,
+                    "velocity_head": head,
+                }
+            },
+            file=stderr,
+        )
+
     return {
         "velocity": vel_pred,
         "velocity_mask": vel_mask,
@@ -233,4 +317,13 @@ def duv_sequence_predict(
     }
 
 
-__all__ = ["duv_sequence_predict", "duv_verbose"]
+__all__ = [
+    "OPTIONAL_FLOAT32_COLUMNS",
+    "OPTIONAL_INT32_COLUMNS",
+    "OPTIONAL_COLUMNS",
+    "CSV_FLOAT32_COLUMNS",
+    "CSV_INT32_COLUMNS",
+    "REQUIRED_COLUMNS",
+    "duv_sequence_predict",
+    "duv_verbose",
+]

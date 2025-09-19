@@ -11,6 +11,11 @@ sampling without an explicit seed.
 
 from __future__ import annotations
 
+try:
+    from . import pretty_midi_compat as _pmc  # ensure patching side effects
+except Exception:  # pragma: no cover - best effort
+    pass
+
 import gc
 import hashlib
 import json
@@ -578,6 +583,7 @@ def _safe_read_bpm(
 
     bpm: float | None = None
     source = "default"
+
 
     bpms, _times = pm.get_tempo_changes()
     if len(bpms) and math.isfinite(bpms[0]) and bpms[0] > 0:

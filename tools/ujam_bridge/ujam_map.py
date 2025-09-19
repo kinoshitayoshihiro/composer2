@@ -5,15 +5,14 @@ from __future__ import annotations
 import argparse
 import csv
 import pathlib
-from types import SimpleNamespace
 from bisect import bisect_right
 from collections import Counter, defaultdict
 from typing import Dict, List
 
-try:  # optional dependency for writing MIDI
-    import mido  # type: ignore
+try:  # optional dependency for writing MIDI; re-export for tests monkeypatching
+    import mido as mido  # type: ignore
 except Exception:  # pragma: no cover - allow monkeypatch in tests
-    mido = SimpleNamespace(MidiFile=None)  # type: ignore
+    mido = None  # type: ignore[assignment]
 
 try:  # optional dependencies
     import pretty_midi  # type: ignore

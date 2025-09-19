@@ -646,7 +646,9 @@ def test_style_layer_every() -> None:
     units = [(t, stats['downbeats'][i+1] if i+1 < len(stats['downbeats']) else pm.get_end_time())
              for i, t in enumerate(stats['downbeats'])]
     picker = sc.PoolPicker([(36,1)], rng=random.Random(0))
-    sc.insert_style_layer(out, 'every', units, picker, every=2, length_beats=0.5)
+    sc.insert_style_layer(
+        out, 'every', units, picker, every=2, length_beats=0.5, mapping=mapping
+    )
     phrase_inst = [inst for inst in out.instruments if inst.name == sc.PHRASE_INST_NAME][0]
     starts = [round(n.start,2) for n in phrase_inst.notes if n.pitch==36]
     assert 0.0 in starts and 4.0 in starts

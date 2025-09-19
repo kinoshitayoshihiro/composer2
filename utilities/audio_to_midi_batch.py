@@ -75,7 +75,7 @@ try:  # Optional heavy deps
 except Exception:  # pragma: no cover - handled by fallback
     librosa = None  # type: ignore
 
-from .apply_controls import apply_controls, write_bend_range_rpn
+from .apply_controls import apply_controls, write_bend_range_rpn, _rpn_time
 from .controls_spline import ControlCurve  # noqa: E402
 from .controls_spline import tempo_map_from_prettymidi
 from . import pb_math
@@ -167,9 +167,10 @@ def _emit_pitch_bend_range(
     """Insert RPN 0,0 events to set pitch-bend range."""
     if integer_only:
         bend_range_semitones = math.floor(bend_range_semitones)
-    t = max(0.0, float(t))  # clamp to non-negative
+    first_pb = min((pb.time for pb in inst.pitch_bends), default=None)
+    t_clamped = _rpn_time(float(t), first_pb)
     write_bend_range_rpn(
-        inst, bend_range_semitones, at_time=t
+        inst, bend_range_semitones, at_time=t_clamped
     )  # centralize RPN emission
 
 
@@ -1882,4 +1883,4 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

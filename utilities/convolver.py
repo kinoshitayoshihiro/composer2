@@ -16,13 +16,30 @@ from scipy.signal import resample_poly
 # ---------------------------------------------------------------------------#
 # Optional native-deps (失敗しても graceful-degradation)
 # ---------------------------------------------------------------------------#
-try:
-    import soundfile as sf  # type: ignore
+sf = None  # type: ignore[var-annotated]
+_SF_LOAD_ERROR: Exception | None = None
 
-    if not all(hasattr(sf, a) for a in ("read", "write")):
-        raise ImportError
-except Exception:  # pragma: no cover
-    sf = None  # type: ignore
+
+def _load_soundfile():
+    """Return the ``soundfile`` module if available (lazy import)."""
+
+    global sf, _SF_LOAD_ERROR
+    if sf is not None:
+        return sf
+    if _SF_LOAD_ERROR is not None:
+        return None
+    try:
+        import soundfile as _sf  # type: ignore
+
+        if not all(hasattr(_sf, attr) for attr in ("read", "write")):
+            raise ImportError("soundfile missing read/write")
+    except Exception as exc:  # pragma: no cover - optional dependency missing
+        _SF_LOAD_ERROR = exc
+        logging.getLogger(__name__).debug("soundfile import failed: %s", exc)
+        sf = None  # type: ignore[assignment]
+        return None
+    sf = _sf  # type: ignore[assignment]
+    return sf
 
 try:
     import soxr  # type: ignore
@@ -228,9 +245,11 @@ _IR_CACHE_SIZE = int(os.environ.get("CONVOLVER_IR_CACHE", "8"))
 @lru_cache(maxsize=_IR_CACHE_SIZE)
 def load_ir(path: str) -> tuple[np.ndarray, int]:
     """Load IR WAV → (data, sr)."""
-    if sf is None:
+
+    sf_mod = _load_soundfile()
+    if sf_mod is None:
         raise RuntimeError("soundfile is required for load_ir")
-    data, sr = sf.read(path, dtype="float32", always_2d=True)
+    data, sr = sf_mod.read(path, dtype="float32", always_2d=True)
     return data.astype(np.float32), int(sr)
 
 
@@ -306,7 +325,8 @@ def render_with_ir(
 
     Fallbacks gracefully if optional libs are missing.
     """
-    if sf is None:  # pragma: no cover
+    sf_mod = _load_soundfile()
+    if sf_mod is None:  # pragma: no cover
         warnings.warn("soundfile not installed – skipping convolution", RuntimeWarning)
         shutil.copyfile(input_wav, out_wav)
         return Path(out_wav)
@@ -317,7 +337,7 @@ def render_with_ir(
 
     # ------------------------------------------------------------------- load
     try:
-        y, sr = sf.read(inp, always_2d=True)
+        y, sr = sf_mod.read(inp, always_2d=True)
     except Exception as exc:  # pragma: no cover
         logger.warning("Failed to read WAV: %s", exc)
         return out
@@ -329,7 +349,7 @@ def render_with_ir(
         if dither:
             y = _apply_tpdf_dither(y, bit_depth)
         pcm, subtype = _quantize_pcm(y, bit_depth)
-        sf.write(str(out), pcm, sr, subtype=subtype)
+        sf_mod.write(str(out), pcm, sr, subtype=subtype)
         return out
 
     ir, ir_sr = load_ir(str(irp))
@@ -385,7 +405,7 @@ def render_with_ir(
     if dither:
         data = _apply_tpdf_dither(data, bit_depth)
     pcm, subtype = _quantize_pcm(data, bit_depth)
-    sf.write(str(out), pcm, sr, subtype=subtype)
+    sf_mod.write(str(out), pcm, sr, subtype=subtype)
     return out
 
 
@@ -445,7 +465,7 @@ def render_wav(
     """
     from utilities.synth import render_midi  # lazy import
 
-    if sf is None:  # pragma: no cover
+    if _load_soundfile() is None:  # pragma: no cover
         warnings.warn("soundfile not installed – skipping render_wav", RuntimeWarning)
         Path(out_path).touch()
         return Path(out_path)

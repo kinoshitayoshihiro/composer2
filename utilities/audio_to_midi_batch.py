@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import functools
 import json
 import logging
 import math
@@ -134,9 +135,19 @@ def _set_initial_tempo(pm: pretty_midi.PrettyMIDI, bpm: float) -> None:
 
 
 def _filter_kwargs(fn: Callable[..., object], kwargs: dict[str, object]) -> dict[str, object]:
-    """Return ``kwargs`` entries present in ``fn``'s signature and not ``None``."""
+    """Return ``kwargs`` accepted by ``fn`` while dropping ``None`` values."""
 
-    sig = inspect.signature(fn)
+    try:
+        if isinstance(fn, functools.partial):
+            sig = inspect.signature(fn.func)
+        else:
+            sig = inspect.signature(fn)
+    except (TypeError, ValueError):  # pragma: no cover - builtins or C funcs
+        return {k: v for k, v in kwargs.items() if v is not None}
+
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return {k: v for k, v in kwargs.items() if v is not None}
+
     allowed = set(sig.parameters)
     return {k: v for k, v in kwargs.items() if k in allowed and v is not None}
 

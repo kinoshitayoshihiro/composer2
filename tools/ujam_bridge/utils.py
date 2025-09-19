@@ -5,6 +5,7 @@ from typing import List, Dict
 import random
 import bisect
 import os
+import math
 
 import pretty_midi
 
@@ -16,8 +17,22 @@ _SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
 
 
 def _tick_to_time(pm: pretty_midi.PrettyMIDI, tick: float) -> float:
+    """Return PrettyMIDI time for ``tick`` tolerating non-int inputs."""
+
     if hasattr(pm, "tick_to_time"):
-        return pm.tick_to_time(int(round(tick)))  # type: ignore[arg-type]
+        try:
+            if not math.isfinite(tick):
+                ti = 0
+            else:
+                ti = int(round(tick))
+        except Exception:
+            try:
+                ti = int(tick)
+            except Exception:
+                ti = 0
+        if ti < 0:
+            ti = 0
+        return pm.tick_to_time(ti)  # type: ignore[arg-type]
     return tick / (pm.resolution * 2)
 
 

@@ -95,15 +95,14 @@ def run(args: argparse.Namespace) -> int:
         elif col in int32_cols:
             dtype_map[col] = np.int32
 
-limit = max(int(getattr(args, "limit", 0) or 0), 0)
-try:
-    df = pd.read_csv(
-        args.csv,
-        low_memory=False,
-        usecols=lambda c: c in needed_cols,
-        dtype=dtype_map,
-        nrows=limit if limit > 0 else None,
-    )
+    try:
+        df = pd.read_csv(
+            args.csv,
+            low_memory=False,
+            usecols=lambda c: c in needed_cols,
+            dtype=dtype_map,
+            nrows=limit if limit > 0 else None,
+        )
     except ValueError as exc:
         raise ValueError(str(exc)) from exc
 

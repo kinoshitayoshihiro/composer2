@@ -20,13 +20,22 @@ OPTIONAL_COLUMNS: set[str] = {
     "vel_bucket",
     "dur_bucket",
     "track_id",
+    "program",
     "file",
     "start",
     "onset",
 }
 
 OPTIONAL_FLOAT32_COLUMNS: set[str] = {"bar_phase", "beat_phase", "start", "onset"}
-OPTIONAL_INT32_COLUMNS: set[str] = {"bar", "track_id", "section", "mood", "vel_bucket", "dur_bucket"}
+OPTIONAL_INT32_COLUMNS: set[str] = {
+    "bar",
+    "track_id",
+    "section",
+    "mood",
+    "vel_bucket",
+    "dur_bucket",
+    "program",
+}
 CSV_FLOAT32_COLUMNS: set[str] = {
     "velocity",
     "duration",
@@ -46,6 +55,7 @@ CSV_INT32_COLUMNS: set[str] = {
     "dur_bucket",
     "section",
     "mood",
+    "program",
 }
 
 

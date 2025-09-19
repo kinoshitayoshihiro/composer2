@@ -139,6 +139,7 @@ def _write_csv(path: Path) -> None:
             "velocity": [30, 10, 30],
             "duration": [0.5, 0.5, 0.5],
             "start": [0.0, 0.5, 1.0],
+            "program": [0, 0, 1],
         }
     )
     df.to_csv(path, index=False)
@@ -235,6 +236,55 @@ def test_predict_duv_filter_program_resets_index(tmp_path: Path) -> None:
     assert captured[0].index.tolist() == list(range(len(captured[0]))), "DataFrame index was not reset"
     midi = pm.PrettyMIDI(str(args.out))
     assert len(midi.instruments[0].notes) == len(captured[0])
+
+
+def test_predict_duv_preserves_program_column(tmp_path: Path) -> None:
+    csv_path = tmp_path / "notes.csv"
+    _write_csv(csv_path)
+    args = argparse.Namespace(
+        csv=csv_path,
+        ckpt=tmp_path / "model.ckpt",
+        out=tmp_path / "out_program.mid",
+        batch=2,
+        device="cpu",
+        stats_json=tmp_path / "stats.json",
+        num_workers=0,
+        vel_smooth=1,
+        smooth_pred_only=True,
+        dur_quant=None,
+        filter_program="program == 0 and position >= 0",
+        verbose=False,
+        limit=0,
+    )
+    args.stats_json.write_text(json.dumps({"feat_cols": [], "mean": [], "std": []}))
+
+    captured: list[pd.DataFrame] = []
+
+    def _duv_stub(df: pd.DataFrame, *_args, **_kwargs):  # type: ignore[override]
+        captured.append(df.copy())
+        n = len(df)
+        values = np.linspace(10.0, 120.0, num=n, dtype=np.float32) if n else np.zeros(0, dtype=np.float32)
+        mask = np.ones(n, dtype=bool)
+        return {
+            "velocity": values,
+            "velocity_mask": mask,
+            "duration": np.zeros(n, dtype=np.float32),
+            "duration_mask": np.zeros(n, dtype=bool),
+        }
+
+    predict_duv._load_stats = _stub_stats  # type: ignore[attr-defined]
+    predict_duv._duv_sequence_predict = _duv_stub  # type: ignore[attr-defined]
+    predict_duv.MLVelocityModel.load = lambda _path: _StubModel()  # type: ignore[assignment]
+    try:
+        predict_duv.run(args)
+    finally:
+        reload(predict_duv)
+
+    assert captured, "DUV predictor was not invoked"
+    df = captured[0]
+    assert "program" in df.columns
+    assert df["program"].dtype == np.int32
+    assert df["program"].tolist() == [0, 0]
 
 
 def test_eval_duv_filter_and_limit(tmp_path: Path) -> None:

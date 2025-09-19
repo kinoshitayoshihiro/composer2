@@ -18,12 +18,20 @@ import pandas as pd
 import pretty_midi as pm
 import torch
 
-from utilities.duv_infer import duv_sequence_predict, duv_verbose
+from utilities.csv_io import coerce_columns
+from utilities.duv_infer import (
+    CSV_FLOAT32_COLUMNS,
+    CSV_INT32_COLUMNS,
+    OPTIONAL_COLUMNS,
+    OPTIONAL_FLOAT32_COLUMNS,
+    OPTIONAL_INT32_COLUMNS,
+    REQUIRED_COLUMNS,
+    duv_sequence_predict,
+    duv_verbose,
+)
 from utilities.ml_velocity import MLVelocityModel
 
 from .eval_duv import (  # reuse helpers
-    _as_float32,
-    _as_int,
     _ensure_int,
     _duration_predict,
     _get_device,
@@ -57,56 +65,50 @@ def run(args: argparse.Namespace) -> int:
 
     feat_cols = list(stats[0] or [])
     needed_cols = set(feat_cols)
-    needed_cols.update(
-        {
-            "pitch",
-            "velocity",
-            "duration",
-            "position",
-            "bar",
-            "track_id",
-            "file",
-            "start",
-            "onset",
-        }
-    )
-    needed_cols.update({"bar_phase", "beat_phase", "section", "mood", "vel_bucket", "dur_bucket"})
+    needed_cols.update(REQUIRED_COLUMNS)
+    needed_cols.update(OPTIONAL_COLUMNS)
+    needed_cols.update(CSV_FLOAT32_COLUMNS)
+    needed_cols.update(CSV_INT32_COLUMNS)
 
     header = pd.read_csv(args.csv, nrows=0)
     available_cols = set(header.columns)
     dtype_map: dict[str, object] = {}
-    float32_cols = set(feat_cols) | {"velocity", "duration", "bar_phase", "beat_phase", "start", "onset"}
-    int32_cols = {"pitch", "position", "bar", "track_id", "section", "mood", "vel_bucket", "dur_bucket"}
+    float32_cols = set(feat_cols) | set(CSV_FLOAT32_COLUMNS) | set(OPTIONAL_FLOAT32_COLUMNS)
+    int32_cols = set(CSV_INT32_COLUMNS) | (
+        {c for c in REQUIRED_COLUMNS if c not in {"velocity", "duration"}}
+    ) | set(OPTIONAL_INT32_COLUMNS)
     for col in available_cols & needed_cols:
         if col in float32_cols:
             dtype_map[col] = np.float32
         elif col in int32_cols:
             dtype_map[col] = np.int32
 
+    limit = max(int(getattr(args, "limit", 0) or 0), 0)
     try:
         df = pd.read_csv(
             args.csv,
             low_memory=False,
             usecols=lambda c: c in needed_cols,
             dtype=dtype_map,
+            nrows=limit or None,
         )
     except ValueError as exc:
         raise ValueError(str(exc)) from exc
 
+    df = df.reset_index(drop=True)
     if getattr(args, "filter_program", None):
         df = df.query(args.filter_program, engine="python")
+        df = df.reset_index(drop=True)
+    if limit and len(df) > limit:
+        df = df.iloc[:limit].reset_index(drop=True)
+    print({"rows": int(len(df)), "limit": limit or None}, file=sys.stderr)
     if "track_id" not in df.columns and "file" in df.columns:
         df["track_id"] = pd.factorize(df["file"])[0].astype("int32")
-    for c in stats[0] or []:
-        if c in df.columns and df[c].dtype != np.float32:
-            df[c] = _as_float32(df[c])
-    for col in ["velocity", "duration"]:
-        if col in df.columns and df[col].dtype != np.float32:
-            df[col] = _as_float32(df[col])
-    if "bar" in df.columns and df["bar"].dtype != np.int32:
-        df["bar"] = _as_int(df["bar"], "int32")
-    if "position" in df.columns and df["position"].dtype != np.int32:
-        df["position"] = _as_int(df["position"], "int32")
+    float_cols = set(stats[0] or []) | set(CSV_FLOAT32_COLUMNS) | set(OPTIONAL_FLOAT32_COLUMNS)
+    int_cols = set(CSV_INT32_COLUMNS) | (
+        {c for c in REQUIRED_COLUMNS if c not in {"velocity", "duration"}}
+    ) | set(OPTIONAL_INT32_COLUMNS)
+    df = coerce_columns(df, float32=float_cols, int32=int_cols)
 
     device = _get_device(args.device)
     vel_model = MLVelocityModel.load(str(args.ckpt))
@@ -142,7 +144,10 @@ def run(args: argparse.Namespace) -> int:
 
     vel_model = vel_model.to(device).eval()
     verbose = duv_verbose(getattr(args, "verbose", False))
-    duv_preds = _duv_sequence_predict(df, vel_model, device, verbose=verbose)
+    try:
+        duv_preds = _duv_sequence_predict(df, vel_model, device, verbose=verbose)
+    except Exception as exc:
+        raise RuntimeError(f"DUV inference failed (rows={len(df)}): {exc}") from exc
 
     vel_pred: np.ndarray | None
     vel_mask: np.ndarray | None = None
@@ -156,8 +161,7 @@ def run(args: argparse.Namespace) -> int:
         vel_pred[vel_mask] = duv_preds["velocity"].astype("float32", copy=False)[vel_mask]
     else:
         if getattr(vel_model, "requires_duv_feats", False):
-            required = {"pitch", "velocity", "duration", "position"}
-            missing = sorted(required - set(df.columns))
+            missing = sorted(REQUIRED_COLUMNS - set(df.columns))
             detail = f"; missing columns: {', '.join(missing)}" if missing else ""
             raise RuntimeError(
                 "DUV checkpoint requires phrase-level features (pitch, velocity, duration, position) "
@@ -198,6 +202,20 @@ def run(args: argparse.Namespace) -> int:
         dur_pred = np.maximum(grid, np.round(dur_pred / grid) * grid)
     elif grid <= 0:
         print({"dur_quant": "skipped", "grid": float(grid)}, file=sys.stderr)
+
+    if (
+        verbose
+        and vel_pred is not None
+        and (duv_preds is None or not duv_preds["velocity_mask"].any())
+    ):
+        print(
+            {
+                "duv_preview": {
+                    "velocity_head": [float(v) for v in vel_pred[:8].tolist()],
+                }
+            },
+            file=sys.stderr,
+        )
 
     pm_obj = pm.PrettyMIDI()
     inst = pm.Instrument(program=0)
@@ -253,12 +271,21 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
     p.add_argument(
         "--filter-program",
         dest="filter_program",
-        help="Optional pandas query string applied immediately after loading the CSV",
+        help=(
+            "Optional pandas query string applied immediately after loading the CSV (before --limit); "
+            "the DataFrame index is reset"
+        ),
+    )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Optional maximum number of rows to retain after filtering (0 loads all rows)",
     )
     p.add_argument(
         "--verbose",
         action="store_true",
-        help="Emit additional DUV diagnostics including optional zero-filled features",
+        help="Emit additional DUV diagnostics including optional zero-filled feature usage",
     )
     args = p.parse_args(argv)
     return run(args)

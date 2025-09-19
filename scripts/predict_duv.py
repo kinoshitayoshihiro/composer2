@@ -58,6 +58,16 @@ def _median_smooth(x: np.ndarray, k: int) -> np.ndarray:
     return out
 
 
+def _first_group_length(df: pd.DataFrame) -> int:
+    if df.empty:
+        return 0
+    group_cols = [c for c in ("track_id", "bar") if c in df.columns]
+    if group_cols:
+        for _, group in df.groupby(group_cols, sort=False):
+            return int(len(group))
+    return int(len(df))
+
+
 def run(args: argparse.Namespace) -> int:
     stats = _load_stats(args.stats_json, args.ckpt)
     if stats is None:
@@ -69,6 +79,8 @@ def run(args: argparse.Namespace) -> int:
     needed_cols.update(OPTIONAL_COLUMNS)
     needed_cols.update(CSV_FLOAT32_COLUMNS)
     needed_cols.update(CSV_INT32_COLUMNS)
+
+    limit = max(0, int(getattr(args, "limit", 0) or 0))
 
     header = pd.read_csv(args.csv, nrows=0)
     available_cols = set(header.columns)
@@ -83,25 +95,29 @@ def run(args: argparse.Namespace) -> int:
         elif col in int32_cols:
             dtype_map[col] = np.int32
 
-    limit = max(int(getattr(args, "limit", 0) or 0), 0)
-    try:
-        df = pd.read_csv(
-            args.csv,
-            low_memory=False,
-            usecols=lambda c: c in needed_cols,
-            dtype=dtype_map,
-            nrows=limit or None,
-        )
+limit = max(int(getattr(args, "limit", 0) or 0), 0)
+try:
+    df = pd.read_csv(
+        args.csv,
+        low_memory=False,
+        usecols=lambda c: c in needed_cols,
+        dtype=dtype_map,
+        nrows=limit if limit > 0 else None,
+    )
     except ValueError as exc:
         raise ValueError(str(exc)) from exc
 
     df = df.reset_index(drop=True)
+
     if getattr(args, "filter_program", None):
         df = df.query(args.filter_program, engine="python")
         df = df.reset_index(drop=True)
-    if limit and len(df) > limit:
+
+    if limit > 0 and len(df) > limit:
         df = df.iloc[:limit].reset_index(drop=True)
-    print({"rows": int(len(df)), "limit": limit or None}, file=sys.stderr)
+
+    if getattr(args, "verbose", False):
+        print({"rows": int(len(df)), "limit": (limit if limit > 0 else None)}, file=sys.stderr)
     if "track_id" not in df.columns and "file" in df.columns:
         df["track_id"] = pd.factorize(df["file"])[0].astype("int32")
     float_cols = set(stats[0] or []) | set(CSV_FLOAT32_COLUMNS) | set(OPTIONAL_FLOAT32_COLUMNS)
@@ -109,6 +125,8 @@ def run(args: argparse.Namespace) -> int:
         {c for c in REQUIRED_COLUMNS if c not in {"velocity", "duration"}}
     ) | set(OPTIONAL_INT32_COLUMNS)
     df = coerce_columns(df, float32=float_cols, int32=int_cols)
+
+    print({"rows": int(len(df)), "limit": limit}, file=sys.stderr)
 
     device = _get_device(args.device)
     vel_model = MLVelocityModel.load(str(args.ckpt))
@@ -203,15 +221,21 @@ def run(args: argparse.Namespace) -> int:
     elif grid <= 0:
         print({"dur_quant": "skipped", "grid": float(grid)}, file=sys.stderr)
 
-    if (
-        verbose
-        and vel_pred is not None
-        and (duv_preds is None or not duv_preds["velocity_mask"].any())
-    ):
+    if getattr(args, "verbose", False) and vel_pred is not None:
+        seq_len = _first_group_length(df)
+        preview_vals = vel_pred[:8].astype("float32", copy=False).tolist()
+        source = (
+            "dense_fallback"
+            if (duv_preds is None or not duv_preds["velocity_mask"].any())
+            else "duv_sequence"
+            )
         print(
             {
-                "duv_preview": {
-                    "velocity_head": [float(v) for v in vel_pred[:8].tolist()],
+                "preview": {
+                    "seq_len": int(seq_len) if seq_len is not None else None,
+                    "d_model_effective": d_model or None,
+                    "source": source,
+                    "velocity": [float(v) for v in preview_vals],
                 }
             },
             file=sys.stderr,
@@ -281,6 +305,12 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
         type=int,
         default=0,
         help="Optional maximum number of rows to retain after filtering (0 loads all rows)",
+    )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Limit rows loaded from CSV (0 keeps all rows)",
     )
     p.add_argument(
         "--verbose",

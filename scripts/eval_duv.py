@@ -85,6 +85,24 @@ def _get_device(name: str) -> torch.device:
     return torch.device(name)
 
 
+def _as_float32(s: pd.Series) -> pd.Series:
+    return pd.to_numeric(s, errors="coerce").astype("float32")
+
+
+def _as_int(s: pd.Series, dtype: str = "int64") -> pd.Series:
+    return pd.to_numeric(s, errors="coerce").fillna(0).astype(dtype)
+
+
+def _first_group_length(df: pd.DataFrame) -> int:
+    if df.empty:
+        return 0
+    group_cols = [c for c in ("track_id", "bar") if c in df.columns]
+    if group_cols:
+        for _, group in df.groupby(group_cols, sort=False):
+            return int(len(group))
+    return int(len(df))
+
+
 # ---------------------------------------------------------------------------
 # Stats loading / normalisation
 # ---------------------------------------------------------------------------
@@ -208,24 +226,41 @@ def run(args: argparse.Namespace) -> int:
     if stats is None:
         raise SystemExit("missing or invalid stats json")
 
+    # limitの正規化とCSV読込（limit指定があれば先にnrowsで抑える）
     limit = max(int(getattr(args, "limit", 0) or 0), 0)
     df = pd.read_csv(args.csv, low_memory=False, nrows=limit or None)
     df = df.reset_index(drop=True)
+
+    # プログラムフィルタ → reindex
     if getattr(args, "filter_program", None):
         df = df.query(args.filter_program, engine="python")
         df = df.reset_index(drop=True)
+
+    # フィルタ後にも改めてlimit適用（念のため）
     if limit and len(df) > limit:
         df = df.iloc[:limit].reset_index(drop=True)
+
+    # 進捗ログ
     print({"rows": int(len(df)), "limit": limit or None}, file=sys.stderr)
+
+    # track_id が無ければ file から作る
     if "track_id" not in df.columns and "file" in df.columns:
         df["track_id"] = pd.factorize(df["file"])[0].astype("int32")
+
+    # dtypeを揃える：統一キャスト（存在する列のみ適用）
+    # stats[0] は dense 特徴量列（float想定）
     float_cols = set(stats[0] or []) | set(CSV_FLOAT32_COLUMNS) | set(OPTIONAL_FLOAT32_COLUMNS)
     if "beat_bin" in df.columns:
         float_cols.add("beat_bin")
+
+    # int列は基本スキーマ＋必須列（velocity/durationはfloatなので除外）＋オプションint
     int_cols = set(CSV_INT32_COLUMNS) | (
         {c for c in REQUIRED_COLUMNS if c not in {"velocity", "duration"}}
     ) | set(OPTIONAL_INT32_COLUMNS)
+
     df = coerce_columns(df, float32=float_cols, int32=int_cols)
+
+    # …この後の処理へ …
 
     device = _get_device(args.device)
     vel_model = MLVelocityModel.load(str(args.ckpt))
@@ -349,6 +384,7 @@ def run(args: argparse.Namespace) -> int:
         metrics["velocity_mae"] = float(np.mean(np.abs(diff)))
         metrics["velocity_rmse"] = float(np.sqrt(np.mean(diff**2)))
         metrics["velocity_count"] = int(vel_targets.size)
+        constant_pred = bool(vel_values.size) and float(np.ptp(vel_values)) < 1e-6
         if "beat_bin" in df.columns:
             beat_vals = df.loc[vel_mask, "beat_bin"].to_numpy()
             if beat_vals.size:
@@ -361,13 +397,12 @@ def run(args: argparse.Namespace) -> int:
                 metrics["velocity_mae_by_beat"] = by
         metrics["velocity_pearson"] = None
         metrics["velocity_spearman"] = None
-        pred_constant = bool(np.ptp(vel_values) < 1e-6)
-        target_constant = bool(np.ptp(vel_targets) < 1e-6)
-        if pred_constant:
+        target_constant = bool(vel_targets.size) and float(np.ptp(vel_targets)) < 1e-6
+        if constant_pred:
             metrics["velocity_stats_note"] = "constant_prediction"
         if (
             pearsonr is not None
-            and not pred_constant
+            and not constant_pred
             and not target_constant
             and vel_targets.size > 1
         ):
@@ -386,6 +421,20 @@ def run(args: argparse.Namespace) -> int:
             metrics["duration_mae"] = float(np.mean(np.abs(diff)))
             metrics["duration_rmse"] = float(np.sqrt(np.mean(diff**2)))
             metrics["duration_count"] = int(tgt.size)
+
+    if getattr(args, "verbose", False) and vel_pred is not None:
+        seq_len = _first_group_length(df)
+        preview = vel_pred[:8].astype("float32", copy=False).tolist()
+        print(
+            {
+                "preview": {
+                    "seq_len": seq_len,
+                    "d_model_effective": d_model or None,
+                    "velocity": [float(v) for v in preview],
+                }
+            },
+            file=sys.stderr,
+        )
 
     out_text = json.dumps(metrics, ensure_ascii=False)
     print(out_text)

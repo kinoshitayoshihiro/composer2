@@ -53,6 +53,8 @@ import importlib  # noqa: E402
 import importlib.util as importlib_util  # noqa: E402
 from typing import TYPE_CHECKING, Any  # noqa: E402
 
+from .control_config import control_config  # noqa: E402
+
 __all__: list[str] = []
 
 _HAS_MUSIC21 = importlib_util.find_spec("music21") is not None
@@ -91,6 +93,7 @@ from .tempo_utils import beat_to_seconds  # noqa: E402  # isort: skip
 
 __all__.append("beat_to_seconds")
 __all__.append("load_chordmap")
+__all__.append("control_config")
 
 from typing import Any  # noqa: E402
 

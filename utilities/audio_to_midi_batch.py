@@ -33,6 +33,7 @@ used to silence or redirect this output.
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import logging
 import math
@@ -79,6 +80,15 @@ from .apply_controls import apply_controls, write_bend_range_rpn, _rpn_time
 from .controls_spline import ControlCurve  # noqa: E402
 from .controls_spline import tempo_map_from_prettymidi
 from . import pb_math
+
+try:
+    from utilities import cc_utils as cc_utils  # type: ignore  # noqa: F401
+except Exception:  # pragma: no cover - compatibility shim when utilities unavailable
+    class _CCShim:
+        def __getattr__(self, name: str):  # pragma: no cover - diagnostic path
+            raise AttributeError("audio_to_midi_batch.cc_utils not available")
+
+    cc_utils = _CCShim()  # type: ignore
 
 
 @dataclass(frozen=True)
@@ -796,6 +806,31 @@ def convert_directory(
 
     log_path = dst / "conversion_log.json"
     log_data: dict[str, list[str]] = {}
+    transcribe_params = inspect.signature(_transcribe_stem).parameters
+    base_transcribe_kwargs = {
+        "min_dur": min_dur,
+        "auto_tempo": auto_tempo,
+        "enable_bend": enable_bend,
+        "bend_range_semitones": bend_range_semitones,
+        "bend_alpha": bend_alpha,
+        "bend_fixed_base": bend_fixed_base,
+        "cc11_strategy": cc11_strategy,
+        "cc11_map": cc11_map,
+        "cc11_smooth_ms": cc11_smooth_ms,
+        "cc11_gain": cc11_gain,
+        "cc11_hyst_up": cc11_hyst_up,
+        "cc11_hyst_down": cc11_hyst_down,
+        "cc11_min_dt_ms": cc11_min_dt_ms,
+        "cc64_mode": cc64_mode,
+        "cc64_gap_beats": cc64_gap_beats,
+        "cc64_min_dwell_ms": cc64_min_dwell_ms,
+    }
+    # Tests patch _transcribe_stem with legacy signatures; filter new kwargs for compatibility.
+    filtered_transcribe_kwargs = {
+        k: v
+        for k, v in base_transcribe_kwargs.items()
+        if k in transcribe_params and v is not None
+    }
     if resume and log_path.exists():
         try:
             log_data = json.loads(log_path.read_text())
@@ -848,22 +883,7 @@ def convert_directory(
                                 ex.submit(
                                     _transcribe_stem,
                                     wav,
-                                    min_dur=min_dur,
-                                    auto_tempo=auto_tempo,
-                                    enable_bend=enable_bend,
-                                    bend_range_semitones=bend_range_semitones,
-                                    bend_alpha=bend_alpha,
-                                    bend_fixed_base=bend_fixed_base,
-                                    cc11_strategy=cc11_strategy,
-                                    cc11_map=cc11_map,
-                                    cc11_smooth_ms=cc11_smooth_ms,
-                                    cc11_gain=cc11_gain,
-                                    cc11_hyst_up=cc11_hyst_up,
-                                    cc11_hyst_down=cc11_hyst_down,
-                                    cc11_min_dt_ms=cc11_min_dt_ms,
-                                    cc64_mode=cc64_mode,
-                                    cc64_gap_beats=cc64_gap_beats,
-                                    cc64_min_dwell_ms=cc64_min_dwell_ms,
+                                    **filtered_transcribe_kwargs,
                                 ),
                                 start,
                             )
@@ -880,22 +900,7 @@ def convert_directory(
                     start = time.perf_counter()
                     res = _transcribe_stem(
                         wav,
-                        min_dur=min_dur,
-                        auto_tempo=auto_tempo,
-                        enable_bend=enable_bend,
-                        bend_range_semitones=bend_range_semitones,
-                        bend_alpha=bend_alpha,
-                        bend_fixed_base=bend_fixed_base,
-                        cc11_strategy=cc11_strategy,
-                        cc11_map=cc11_map,
-                        cc11_smooth_ms=cc11_smooth_ms,
-                        cc11_gain=cc11_gain,
-                        cc11_hyst_up=cc11_hyst_up,
-                        cc11_hyst_down=cc11_hyst_down,
-                        cc11_min_dt_ms=cc11_min_dt_ms,
-                        cc64_mode=cc64_mode,
-                        cc64_gap_beats=cc64_gap_beats,
-                        cc64_min_dwell_ms=cc64_min_dwell_ms,
+                        **filtered_transcribe_kwargs,
                     )
                     name = _sanitize_name(res.instrument.name)
                     res.instrument.name = name
@@ -1088,22 +1093,7 @@ def convert_directory(
                             ex.submit(
                                 _transcribe_stem,
                                 wav,
-                                min_dur=min_dur,
-                                auto_tempo=auto_tempo,
-                                enable_bend=enable_bend,
-                                bend_range_semitones=bend_range_semitones,
-                                bend_alpha=bend_alpha,
-                                bend_fixed_base=bend_fixed_base,
-                                cc11_strategy=cc11_strategy,
-                                cc11_map=cc11_map,
-                                cc11_smooth_ms=cc11_smooth_ms,
-                                cc11_gain=cc11_gain,
-                                cc11_hyst_up=cc11_hyst_up,
-                                cc11_hyst_down=cc11_hyst_down,
-                                cc11_min_dt_ms=cc11_min_dt_ms,
-                                cc64_mode=cc64_mode,
-                                cc64_gap_beats=cc64_gap_beats,
-                                cc64_min_dwell_ms=cc64_min_dwell_ms,
+                                **filtered_transcribe_kwargs,
                             )
                         ] = (base, midi_path, start)
                     for fut in as_completed(futures):
@@ -1120,22 +1110,7 @@ def convert_directory(
                     start = time.perf_counter()
                     res = _transcribe_stem(
                         wav,
-                        min_dur=min_dur,
-                        auto_tempo=auto_tempo,
-                        enable_bend=enable_bend,
-                        bend_range_semitones=bend_range_semitones,
-                        bend_alpha=bend_alpha,
-                        bend_fixed_base=bend_fixed_base,
-                        cc11_strategy=cc11_strategy,
-                        cc11_map=cc11_map,
-                        cc11_smooth_ms=cc11_smooth_ms,
-                        cc11_gain=cc11_gain,
-                        cc11_hyst_up=cc11_hyst_up,
-                        cc11_hyst_down=cc11_hyst_down,
-                        cc11_min_dt_ms=cc11_min_dt_ms,
-                        cc64_mode=cc64_mode,
-                        cc64_gap_beats=cc64_gap_beats,
-                        cc64_min_dwell_ms=cc64_min_dwell_ms,
+                        **filtered_transcribe_kwargs,
                     )
                     inst = res.instrument
                     tempo = res.tempo

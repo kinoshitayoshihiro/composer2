@@ -11,7 +11,10 @@ try:
     import pretty_midi
 except Exception:  # pragma: no cover - optional dependency
     pretty_midi = None  # type: ignore
-from . import pb_math  # package-relative; adjust sys.path if run as script
+try:
+    from . import pb_math  # package-relative; adjust sys.path if run as script
+except ImportError:  # pragma: no cover - fallback for direct path execution
+    from utilities import pb_math
 
 
 @dataclass

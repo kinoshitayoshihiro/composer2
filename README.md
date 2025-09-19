@@ -320,18 +320,26 @@ The regression checkpoints ship with lightweight utilities:
 python -m scripts.eval_duv --csv notes.duv.csv --ckpt ckpt.ckpt --stats-json ckpt.ckpt.stats.json \
     --batch 64 --device auto --limit 500000 --verbose
 python -m scripts.predict_duv --csv notes.duv.csv --ckpt ckpt.ckpt --stats-json ckpt.ckpt.stats.json \
-    --batch 64 --device auto --out out.mid --filter-program "position > 0" --limit 100000 --verbose
+    --batch 64 --device auto --out out.mid --filter-program "program == 0 and position >= 0" --limit 100000 --verbose
 ```
 
 `--limit` bounds how many rows are loaded from the CSV (helpful for giant
 exports), `--verbose` forwards diagnostics from the DUV model, and
-`--filter-program` accepts a pandas query; the DataFrame is automatically
+`--filter-program` accepts a pandas query (e.g. `program == 0` for piano, `program == 128` for drums);
+the DataFrame is automatically
 re-indexed after filtering to keep phrase-level features aligned. Filtering is
 applied before the limit cap, so the scripts run `filter → reset_index →
 head(limit)` to avoid huge offsets when scattering predictions. When optional
 feature columns (e.g. `vel_bucket`, `dur_bucket`, `section`, `mood`) are
 absent, the inference helpers feed zero-filled tensors so checkpoints trained
 with those embeddings still run.
+
+Program numbers follow the General MIDI convention (`0–127` for instruments,
+`128` for drums, `-1` when unknown). Older CSV exports that predate the new
+column are back-filled with `-1` at load time so program filters simply yield
+zero rows instead of aborting. Phrase-level CSVs produced by
+`tools/corpus_to_phrase_csv.py` expose beat positions as `pos`, whereas rich
+note CSVs (and DUV inference) use `position`.
 
 For classification or mixed modes the CSV must include `velocity_bucket` and
 `duration_bucket` columns; accuracy metrics are reported alongside F1/MAE.

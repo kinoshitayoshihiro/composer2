@@ -3,12 +3,16 @@ from __future__ import annotations
 """Shared helpers for DUV (Duration/Velocity) inference."""
 
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import torch
+from pandas.errors import UndefinedVariableError
+
+DUV_BASE_COLUMNS: set[str] = {"pitch", "velocity", "duration", "position", "bar", "program"}
+DUV_BUCKET_COLUMNS: set[str] = {"velocity_bucket", "duration_bucket"}
 
 REQUIRED_COLUMNS: set[str] = {"pitch", "velocity", "duration", "position"}
 OPTIONAL_COLUMNS: set[str] = {
@@ -61,6 +65,91 @@ CSV_INT32_COLUMNS: set[str] = {
 
 def _missing_required(columns: Iterable[str]) -> list[str]:
     return sorted(REQUIRED_COLUMNS - set(columns))
+
+
+def _coerce_numeric(
+    df: pd.DataFrame,
+    columns: Iterable[str],
+    dtype: str,
+    *,
+    fill_value: int | float | None = 0,
+) -> None:
+    for column in columns:
+        if column in df.columns:
+            series = pd.to_numeric(df[column], errors="coerce")
+            if fill_value is not None:
+                series = series.fillna(fill_value)
+            df[column] = series.astype(dtype, copy=False)
+
+
+def load_duv_dataframe(
+    csv_path: str | os.PathLike[str],
+    *,
+    feature_columns: Sequence[str] | None = None,
+    filter_expr: str | None = None,
+    limit: int = 0,
+    collect_program_hist: bool = False,
+) -> tuple[pd.DataFrame, pd.Series | None]:
+    """Load a DUV CSV with consistent dtypes and optional filtering."""
+
+    header = pd.read_csv(csv_path, nrows=0)
+    available = list(header.columns)
+    available_set = set(available)
+
+    usecols: set[str] = set(feature_columns or ())
+    usecols.update(DUV_BASE_COLUMNS & available_set)
+    usecols.update(DUV_BUCKET_COLUMNS & available_set)
+    usecols.update(OPTIONAL_COLUMNS & available_set)
+    usecols.update(CSV_FLOAT32_COLUMNS & available_set)
+    usecols.update(CSV_INT32_COLUMNS & available_set)
+
+    ordered_cols = [col for col in available if col in usecols]
+
+    df = pd.read_csv(
+        csv_path,
+        low_memory=False,
+        usecols=ordered_cols if ordered_cols else None,
+    )
+
+    if "program" not in df.columns:
+        df["program"] = -1
+
+    _coerce_numeric(df, ["program"], "int16", fill_value=-1)
+    _coerce_numeric(df, ["pitch"], "int16")
+    _coerce_numeric(df, ["velocity"], "int8")
+    _coerce_numeric(df, ["duration"], "float32", fill_value=0.0)
+    _coerce_numeric(df, ["bar", "position"], "int32")
+
+    extra_int32 = (
+        (OPTIONAL_INT32_COLUMNS | CSV_INT32_COLUMNS) - {"pitch", "program", "position", "bar"}
+    )
+    _coerce_numeric(df, extra_int32, "int32")
+
+    float_targets = (
+        set(feature_columns or ())
+        | CSV_FLOAT32_COLUMNS
+        | OPTIONAL_FLOAT32_COLUMNS
+    ) - {"duration", "velocity"}
+    _coerce_numeric(df, float_targets, "float32", fill_value=0.0)
+
+    if filter_expr:
+        try:
+            df = df.query(filter_expr, engine="python")
+        except UndefinedVariableError as exc:
+            raise SystemExit(
+                f"--filter-program referenced missing column: {exc}"
+            ) from exc
+
+    df = df.reset_index(drop=True)
+
+    if limit > 0 and len(df) > limit:
+        df = df.iloc[:limit].reset_index(drop=True)
+
+    program_hist: pd.Series | None = None
+    if collect_program_hist and "program" in df.columns:
+        program_hist = df["program"].value_counts().sort_values(ascending=False)
+
+    return df, program_hist
 def duv_verbose(flag: bool | None) -> bool:
     env = os.getenv("COMPOSER2_VERBOSE", "")
     if env.lower() not in {"", "0", "false", "no"}:

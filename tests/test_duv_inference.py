@@ -12,6 +12,9 @@ np = pytest.importorskip("numpy")
 pd = pytest.importorskip("pandas")
 pm = pytest.importorskip("pretty_midi")
 
+import utilities.duv_infer
+
+
 from scripts import eval_duv, predict_duv
 
 
@@ -283,8 +286,45 @@ def test_predict_duv_preserves_program_column(tmp_path: Path) -> None:
     assert captured, "DUV predictor was not invoked"
     df = captured[0]
     assert "program" in df.columns
-    assert df["program"].dtype == np.int32
+    assert df["program"].dtype == np.int16
     assert df["program"].tolist() == [0, 0]
+
+
+def test_load_duv_dataframe_adds_program(tmp_path: Path) -> None:
+    csv_path = tmp_path / "notes.csv"
+    base = pd.DataFrame(
+        {
+            "pitch": [60, 62, 64],
+            "velocity": [40, 42, 44],
+            "duration": [0.5, 0.5, 0.5],
+            "position": [0, 1, 2],
+            "bar": [0, 0, 0],
+        }
+    )
+    base.to_csv(csv_path, index=False)
+
+    df_all, hist_all = utilities.duv_infer.load_duv_dataframe(
+        csv_path,
+        feature_columns=[],
+        collect_program_hist=True,
+    )
+    assert "program" in df_all.columns
+    assert df_all["program"].dtype == np.int16
+    assert df_all["program"].tolist() == [-1, -1, -1]
+    assert hist_all is not None
+    assert hist_all.to_dict() == {-1: 3}
+
+    df_filtered, hist_filtered = utilities.duv_infer.load_duv_dataframe(
+        csv_path,
+        feature_columns=[],
+        filter_expr="program == 0",
+        collect_program_hist=True,
+    )
+    assert df_filtered.empty
+    assert "program" in df_filtered.columns
+    assert df_filtered["program"].dtype == np.int16
+    assert hist_filtered is not None
+    assert hist_filtered.empty
 
 
 def test_eval_duv_filter_and_limit(tmp_path: Path) -> None:

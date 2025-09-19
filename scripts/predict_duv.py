@@ -53,6 +53,16 @@ def _median_smooth(x: np.ndarray, k: int) -> np.ndarray:
     return out
 
 
+def _first_group_length(df: pd.DataFrame) -> int:
+    if df.empty:
+        return 0
+    group_cols = [c for c in ("track_id", "bar") if c in df.columns]
+    if group_cols:
+        for _, group in df.groupby(group_cols, sort=False):
+            return int(len(group))
+    return int(len(df))
+
+
 def run(args: argparse.Namespace) -> int:
     stats = _load_stats(args.stats_json, args.ckpt)
     if stats is None:
@@ -75,6 +85,8 @@ def run(args: argparse.Namespace) -> int:
     )
     needed_cols.update({"bar_phase", "beat_phase", "section", "mood", "vel_bucket", "dur_bucket"})
 
+    limit = max(0, int(getattr(args, "limit", 0) or 0))
+
     header = pd.read_csv(args.csv, nrows=0)
     available_cols = set(header.columns)
     dtype_map: dict[str, object] = {}
@@ -92,12 +104,19 @@ def run(args: argparse.Namespace) -> int:
             low_memory=False,
             usecols=lambda c: c in needed_cols,
             dtype=dtype_map,
+            nrows=limit if limit > 0 else None,
         )
     except ValueError as exc:
         raise ValueError(str(exc)) from exc
 
+    df = df.reset_index(drop=True)
+
     if getattr(args, "filter_program", None):
         df = df.query(args.filter_program, engine="python")
+        df = df.reset_index(drop=True)
+
+    if limit > 0 and len(df) > limit:
+        df = df.iloc[:limit].reset_index(drop=True)
     if "track_id" not in df.columns and "file" in df.columns:
         df["track_id"] = pd.factorize(df["file"])[0].astype("int32")
     for c in stats[0] or []:
@@ -110,6 +129,8 @@ def run(args: argparse.Namespace) -> int:
         df["bar"] = _as_int(df["bar"], "int32")
     if "position" in df.columns and df["position"].dtype != np.int32:
         df["position"] = _as_int(df["position"], "int32")
+
+    print({"rows": int(len(df)), "limit": limit}, file=sys.stderr)
 
     device = _get_device(args.device)
     vel_model = MLVelocityModel.load(str(args.ckpt))
@@ -209,6 +230,20 @@ def run(args: argparse.Namespace) -> int:
     elif grid <= 0:
         print({"dur_quant": "skipped", "grid": float(grid)}, file=sys.stderr)
 
+    if getattr(args, "verbose", False):
+        seq_len = _first_group_length(df)
+        preview = vel_pred[:8].astype("float32", copy=False).tolist()
+        print(
+            {
+                "preview": {
+                    "seq_len": seq_len,
+                    "d_model_effective": d_model or None,
+                    "velocity": [float(v) for v in preview],
+                }
+            },
+            file=sys.stderr,
+        )
+
     pm_obj = pm.PrettyMIDI()
     inst = pm.Instrument(program=0)
     start_col = "start" if "start" in df.columns else "onset"
@@ -264,6 +299,12 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
         "--filter-program",
         dest="filter_program",
         help="Optional pandas query string applied immediately after loading the CSV",
+    )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Limit rows loaded from CSV (0 keeps all rows)",
     )
     p.add_argument(
         "--verbose",

@@ -67,7 +67,6 @@ from fractions import Fraction
 from functools import lru_cache
 import collections
 import itertools
-import sys
 import types
 from dataclasses import dataclass
 from pathlib import Path
@@ -168,6 +167,151 @@ def pulses_per_bar(num: int, den: int, unit: float) -> int:
     bar_beats = num * (4.0 / den)
     total = int(round(bar_beats / unit))
     return max(1, total)
+
+
+def _safe_int(val: Any) -> Optional[int]:
+    """Return ``int(val)`` if possible; otherwise ``None``."""
+
+    if isinstance(val, bool):  # pragma: no cover - defensive
+        return int(val)
+    try:
+        return int(val)
+    except Exception:
+        return None
+
+
+def _note_name_to_midi(tok: str) -> Optional[int]:
+    """Resolve note names like ``C3`` (including Unicode accidentals) to MIDI ints."""
+
+    if not isinstance(tok, str):
+        return None
+    token = tok.strip()
+    if not token:
+        return None
+    match = NOTE_RE.match(token)
+    if not match:
+        return None
+    name_raw, octave_raw = match.group(1), match.group(2)
+    try:
+        octave = int(octave_raw)
+    except Exception:
+        return None
+    name = name_raw.replace("♭", "b").replace("♯", "#")
+    base = {
+        "C": 0,
+        "C#": 1,
+        "Db": 1,
+        "D": 2,
+        "D#": 3,
+        "Eb": 3,
+        "E": 4,
+        "E#": 5,
+        "Fb": 4,
+        "F": 5,
+        "F#": 6,
+        "Gb": 6,
+        "G": 7,
+        "G#": 8,
+        "Ab": 8,
+        "A": 9,
+        "A#": 10,
+        "Bb": 10,
+        "B": 11,
+        "Cb": 11,
+        "B#": 0,
+    }
+    if name not in base:
+        return None
+    return base[name] + (octave + 1) * 12
+
+
+def _resolve_pitch_token(tok: Any, mapping: Optional[Dict[str, Any]] = None) -> Optional[int]:
+    """Resolve various pitch token forms to an integer MIDI pitch."""
+
+    value = tok
+
+    if isinstance(value, dict) and "pitch" in value:
+        value = value.get("pitch")
+
+    if hasattr(value, "pitch"):
+        pitch_attr = getattr(value, "pitch")
+        resolved = _safe_int(pitch_attr)
+        if resolved is not None:
+            return resolved
+        value = pitch_attr
+
+    if isinstance(value, (int, float)):
+        try:
+            iv = int(round(float(value)))
+        except Exception:
+            iv = None
+        if iv is not None:
+            return max(0, min(127, iv))
+
+    resolved = _safe_int(value)
+    if resolved is not None:
+        return resolved
+
+    if isinstance(value, str):
+        token = value.strip()
+        num_val = _safe_int(token)
+        if num_val is not None:
+            return num_val
+
+        alias = NOTE_ALIASES.get(token)
+        if alias is not None:
+            alias_resolved = _resolve_pitch_token(alias, None)
+            if alias_resolved is not None:
+                return alias_resolved
+
+        note_val = _note_name_to_midi(token)
+        if note_val is not None:
+            return note_val
+
+        if mapping:
+            for key in (
+                "phrase_note_map",
+                "phrase_aliases",
+                "aliases",
+                "note_aliases",
+                "phrase_token_pitch",
+            ):
+                mp = mapping.get(key)
+                if isinstance(mp, dict) and token in mp:
+                    mapped = _resolve_pitch_token(mp[token], None)
+                    if mapped is not None:
+                        return mapped
+
+    return None
+
+
+def build_avoid_set(
+    mapping: Dict[str, Any], explicit_avoid: Optional[Iterable[Any]] = None
+) -> Set[int]:
+    """Return a set of MIDI pitches to avoid based on mapping/explicit tokens."""
+
+    tokens: List[Any] = []
+
+    def _extend(source: Any) -> None:
+        if source is None:
+            return
+        if isinstance(source, (list, tuple, set)):
+            tokens.extend(source)
+        else:
+            tokens.append(source)
+
+    _extend(mapping.get("phrase_note"))
+    _extend(mapping.get("cycle_phrase_notes"))
+    _extend(mapping.get("style_fill"))
+    if explicit_avoid is not None:
+        _extend(list(explicit_avoid))
+
+    resolved: Set[int] = set()
+    for tok in tokens:
+        val = _resolve_pitch_token(tok, mapping)
+        if val is not None:
+            resolved.add(val)
+    return resolved
 
 
 def _seed_tick_tables(pm: "pretty_midi.PrettyMIDI", qpm: float) -> bool:
@@ -947,6 +1091,8 @@ def parse_midi_note(token: str) -> int:
 
 
 def parse_int_or(x, default: int) -> int:
+    """Parse ``x`` as int, returning ``default`` for ``None`` or invalid values."""
+
     if x is None:
         return default
     try:
@@ -963,21 +1109,24 @@ def validate_midi_note(v: int) -> int:
     return v
 
 
-def parse_note_token(tok: Union[str, int], *, warn_unknown: bool = False) -> Optional[int]:
-    """Normalize note token to MIDI int or None for rests."""
+def parse_note_token(
+    tok: Union[str, int], *, warn_unknown: bool = False, mapping: Optional[Dict[str, Any]] = None
+) -> Optional[int]:
+    """Normalize note token to a MIDI int or ``None`` for rests.
+
+    If ``mapping`` is provided, alias dictionaries such as ``phrase_note_map`` and
+    ``note_aliases`` are consulted. With ``mapping=None`` only built-in aliases and
+    literal MIDI/note-name forms are resolved.
+    """
     if isinstance(tok, str):
         t = tok.strip()
         if t.lower() in {"rest", "silence", ""}:
             return None
-        aliases = NOTE_ALIASES or {}
-        if not aliases:
-            root_mod = sys.modules.get("sparkle_convert")
-            if root_mod is not None:
-                aliases = getattr(root_mod, "NOTE_ALIASES", {}) or {}
-        if t in aliases:
-            return int(aliases[t])
+        resolved = _resolve_pitch_token(t, mapping)
+        if resolved is not None:
+            return validate_midi_note(resolved)
         try:
-            return parse_midi_note(t)
+            return validate_midi_note(parse_midi_note(t))
         except SystemExit:
             if warn_unknown:
                 logging.warning("unknown note alias: %s", tok)
@@ -986,19 +1135,15 @@ def parse_note_token(tok: Union[str, int], *, warn_unknown: bool = False) -> Opt
     if tok is None:
         return None
     try:
+        resolved = _resolve_pitch_token(tok, mapping)
+        if resolved is not None:
+            return validate_midi_note(resolved)
         return validate_midi_note(int(tok))
     except Exception as e:  # pragma: no cover - unlikely
+        if warn_unknown:
+            logging.warning("unknown note alias: %s", tok)
+            return None
         raise SystemExit(f"Invalid note token: {tok}") from e
-
-
-def parse_int_or(x, default: int) -> int:
-    """Parse int safely (None → default, invalid → default)."""
-    if x is None:
-        return default
-    try:
-        return int(str(x).strip())
-    except Exception:
-        return default
 
 
 def clip_note_interval(start_t: float, end_t: float, *, eps: float = EPS) -> Tuple[float, float]:
@@ -2048,14 +2193,36 @@ def insert_style_fill(
             break
     if phrase_inst is None or not units:
         return 0
-    pitch = mapping.get("style_fill")
-    if pitch is None:
-        pitch = 34
-        used_notes = {mapping.get("phrase_note")}
-        used_notes.update(n for n in mapping.get("cycle_phrase_notes", []) if n is not None)
-        if pitch in used_notes:
-            pitch = 35
-    pitch = int(pitch)
+    style_fill_raw = mapping.get("style_fill")
+
+    explicit_avoid: Optional[Iterable[Any]] = None
+    if avoid_pitches is not None:
+        explicit_avoid = list(avoid_pitches)
+    avoid_set = build_avoid_set(mapping, explicit_avoid)
+
+    pitch_resolved = _resolve_pitch_token(style_fill_raw, mapping)
+    if pitch_resolved is None:
+        fallback = _resolve_pitch_token(mapping.get("phrase_note"), mapping)
+        if fallback is None:
+            fallback = 36
+        try:
+            fallback_int = int(round(float(fallback)))
+        except Exception:
+            fallback_int = 36
+        fallback_int = max(0, min(127, fallback_int))
+        if fallback_int in avoid_set:
+            replacement: Optional[int] = None
+            for candidate in range(fallback_int, 128):
+                if candidate not in avoid_set:
+                    replacement = candidate
+                    break
+            if replacement is None:
+                fallback_int = 36
+            else:
+                fallback_int = replacement
+        pitch = fallback_int
+    else:
+        pitch = max(0, min(127, int(pitch_resolved)))
     seed_bpm = float(bpm) if bpm is not None else 120.0
     if not math.isfinite(seed_bpm) or seed_bpm <= 0.0:
         seed_bpm = 120.0
@@ -2100,20 +2267,6 @@ def insert_style_fill(
         span = beat_times[idx + 1] - beat_times[idx]
         return idx + (t - beat_times[idx]) / span
 
-    avoid_set: Set[int]
-    derived: Set[int] = set()
-    if avoid_pitches is None:
-        for key, val in mapping.items():
-            if "phrase_note" in key or "cycle_phrase_notes" in key:
-                if isinstance(val, int):
-                    derived.add(int(val))
-                elif isinstance(val, (list, tuple, set)):
-                    for item in val:
-                        if isinstance(item, int):
-                            derived.add(int(item))
-        avoid_set = derived
-    else:
-        avoid_set = {int(p) for p in avoid_pitches}
     if avoid_pitches is None and avoid_set and pitch not in avoid_set:
         avoid_overlap = {pitch}
     else:
@@ -2138,7 +2291,9 @@ def insert_style_fill(
             continue
         if not math.isfinite(note_end):
             note_end = note_start
-        note_pitch = int(getattr(note_obj, "pitch", 0))
+        note_pitch = _resolve_pitch_token(note_obj, mapping)
+        if note_pitch is None:
+            continue
         note_start_b = time_to_beat(note_start)
         note_end_b = time_to_beat(note_end)
         data = (note_pitch, note_start, note_end, note_start_b, note_end_b)
@@ -2176,10 +2331,10 @@ def insert_style_fill(
     section_unit_count = bar_count if bar_count is not None else len(units)
     section_layout: List[Dict[str, Any]] = []
     if sections:
-        raw_sections = sections
+        raw_sections = list(sections) if not isinstance(sections, list) else sections
         stats_target = stats_ref if isinstance(stats_ref, dict) else None
         layout, _labels = normalize_sections(
-            sections,
+            raw_sections,
             bar_count=section_unit_count,
             default_tag=section_default,
             stats=stats_target,
@@ -2284,7 +2439,9 @@ def insert_style_fill(
                     length = beat_to_time(start_b + fill_length_beats) - start
                     conflict = False
                     for note_obj in phrase_inst.notes:
-                        note_pitch = int(getattr(note_obj, "pitch", 0))
+                        note_pitch = _resolve_pitch_token(note_obj, mapping)
+                        if note_pitch is None:
+                            continue
                         if note_pitch in avoid_overlap:
                             if start < note_obj.end + EPS and note_obj.start < start + length - EPS:
                                 conflict = True
@@ -2733,7 +2890,7 @@ def finalize_phrase_track(
             toks = [t.strip() for t in args.fill_avoid_pitches.split(",") if t.strip()]
             avoid = set()
             for tok in toks:
-                val = parse_note_token(tok)
+                val = parse_note_token(tok, mapping=mapping)
                 if val is None:
                     raise SystemExit("fill-avoid-pitches cannot include 'rest'")
                 avoid.add(val)
@@ -2947,14 +3104,21 @@ def validate_vocal_adapt_cfg(cfg: Dict) -> Dict:
     return cfg
 
 
-def validate_style_inject_cfg(cfg: Dict) -> Dict:
+def validate_style_inject_cfg(cfg: Dict, mapping: Optional[Dict[str, Any]] = None) -> Dict:
     if not isinstance(cfg, dict):
         raise SystemExit("style_inject must be object")
     if int(cfg.get("period", 0)) < 1:
         raise SystemExit("style_inject.period must be >=1")
     note = cfg.get("note")
-    if note is None or not (0 <= int(note) <= 127):
+    if note is None:
         raise SystemExit("style_inject.note 0..127 required")
+    resolved_note = _resolve_pitch_token(note, mapping)
+    if resolved_note is None:
+        parsed = parse_note_token(note, mapping=mapping, warn_unknown=True)
+        if parsed is None:
+            raise SystemExit("style_inject.note must be MIDI note token")
+        resolved_note = parsed
+    cfg["note"] = validate_midi_note(int(resolved_note))
     if float(cfg.get("duration_beats", 0)) <= 0:
         raise SystemExit("style_inject.duration_beats must be >0")
     if "min_gap_beats" in cfg and float(cfg["min_gap_beats"]) < 0:
@@ -2962,9 +3126,18 @@ def validate_style_inject_cfg(cfg: Dict) -> Dict:
     if "avoid_pitches" in cfg:
         if not isinstance(cfg["avoid_pitches"], list):
             raise SystemExit("style_inject.avoid_pitches must be list")
+        resolved: List[int] = []
         for n in cfg["avoid_pitches"]:
-            if not (0 <= int(n) <= 127):
-                raise SystemExit("style_inject.avoid_pitches entries must be 0..127")
+            resolved_note = _resolve_pitch_token(n, mapping)
+            if resolved_note is None:
+                parsed = parse_note_token(n, mapping=mapping, warn_unknown=True)
+                if parsed is None:
+                    raise SystemExit(
+                        "style_inject.avoid_pitches entries must be MIDI note tokens"
+                    )
+                resolved_note = parsed
+            resolved.append(validate_midi_note(int(resolved_note)))
+        cfg["avoid_pitches"] = resolved
     return cfg
 
 
@@ -6083,7 +6256,7 @@ def main():
         default=None,
         help=(
             "JSON list: labels [\"A\",\"B\",...] or dicts [{\"start_bar\":0,\"end_bar\":8,\"tag\":\"A\"}]. "
-            "Priority: CLI > mapping > guide. Missing end_bar is backfilled; overlaps auto-fixed with warnings."
+            "Values are normalized into contiguous bar ranges before fill planning (priority: CLI > mapping > guide)."
         ),
     )
 
@@ -6664,7 +6837,7 @@ def main():
     if args.style_inject is not None:
         style_cfg = parse_json_arg("--style-inject", args.style_inject, STYLE_INJECT_SCHEMA)
     if style_cfg:
-        style_cfg = validate_style_inject_cfg(style_cfg)
+        style_cfg = validate_style_inject_cfg(style_cfg, mapping)
         mapping["style_inject"] = style_cfg
 
     spw = None

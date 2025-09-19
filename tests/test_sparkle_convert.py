@@ -2983,7 +2983,7 @@ def test_meter_change_stats_consistency() -> None:
     }
     stats: dict[str, Any] = {"_legacy_bar_pulses_grid": False}
     chords = [sc.ChordSpan(0.0, 9.0, 0, "maj")]
-    sc.build_sparkle_midi(
+    pm_out = sc.build_sparkle_midi(
         pm,
         chords,
         mapping,
@@ -3015,9 +3015,15 @@ def test_meter_change_stats_consistency() -> None:
     triggers = stats["bar_triggers"]
     assert stats["bar_trigger_pulses"] is triggers
     assert stats["bar_trigger_pulses_compat"] is triggers
-    triggers = stats["bar_triggers"]
     actual_hits = sum(len(v) for v in triggers.values())
     assert actual_hits > 0
+    phrase_inst = None
+    for inst in pm_out.instruments:
+        if inst.name == sc.PHRASE_INST_NAME:
+            phrase_inst = inst
+            break
+    assert phrase_inst is not None
+    assert actual_hits == len(phrase_inst.notes)
 
 
 def test_meter_change_stats_legacy_mirror() -> None:

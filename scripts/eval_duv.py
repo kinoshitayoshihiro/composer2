@@ -84,6 +84,16 @@ def _as_int(s: pd.Series, dtype: str = "int64") -> pd.Series:
     return pd.to_numeric(s, errors="coerce").fillna(0).astype(dtype)
 
 
+def _first_group_length(df: pd.DataFrame) -> int:
+    if df.empty:
+        return 0
+    group_cols = [c for c in ("track_id", "bar") if c in df.columns]
+    if group_cols:
+        for _, group in df.groupby(group_cols, sort=False):
+            return int(len(group))
+    return int(len(df))
+
+
 # ---------------------------------------------------------------------------
 # Stats loading / normalisation
 # ---------------------------------------------------------------------------
@@ -207,7 +217,15 @@ def run(args: argparse.Namespace) -> int:
     if stats is None:
         raise SystemExit("missing or invalid stats json")
 
-    df = pd.read_csv(args.csv, low_memory=False)
+    limit = max(0, int(getattr(args, "limit", 0) or 0))
+
+    df = pd.read_csv(args.csv, low_memory=False, nrows=limit if limit > 0 else None)
+    df = df.reset_index(drop=True)
+    if getattr(args, "filter_program", None):
+        df = df.query(args.filter_program, engine="python")
+        df = df.reset_index(drop=True)
+    if limit > 0 and len(df) > limit:
+        df = df.iloc[:limit].reset_index(drop=True)
     if "track_id" not in df.columns and "file" in df.columns:
         df["track_id"] = pd.factorize(df["file"])[0].astype("int32")
     for c in stats[0] or []:
@@ -220,7 +238,7 @@ def run(args: argparse.Namespace) -> int:
         df["bar"] = _as_int(df["bar"], "int32")
     if "position" in df.columns:
         df["position"] = _as_int(df["position"], "int32")
-    df = df.reset_index(drop=True)
+    print({"rows": int(len(df)), "limit": limit}, file=sys.stderr)
 
     device = _get_device(args.device)
     vel_model = MLVelocityModel.load(str(args.ckpt))
@@ -328,6 +346,7 @@ def run(args: argparse.Namespace) -> int:
         metrics["velocity_mae"] = float(np.mean(np.abs(diff)))
         metrics["velocity_rmse"] = float(np.sqrt(np.mean(diff**2)))
         metrics["velocity_count"] = int(vel_targets.size)
+        constant_pred = bool(vel_values.size) and float(np.ptp(vel_values)) < 1e-6
         if "beat_bin" in df.columns:
             beat_vals = df.loc[vel_mask, "beat_bin"].to_numpy()
             if beat_vals.size:
@@ -338,7 +357,11 @@ def run(args: argparse.Namespace) -> int:
                         np.mean(np.abs(vel_values[sel] - vel_targets[sel]))
                     )
                 metrics["velocity_mae_by_beat"] = by
-        if pearsonr is not None and vel_targets.size > 1:
+        if constant_pred:
+            print("constant prediction detected", file=sys.stderr)
+            metrics["velocity_pearson"] = float("nan")
+            metrics["velocity_spearman"] = float("nan")
+        elif pearsonr is not None and vel_targets.size > 1:
             metrics["velocity_pearson"] = float(pearsonr(vel_values, vel_targets)[0])
             metrics["velocity_spearman"] = float(spearmanr(vel_values, vel_targets)[0])
 
@@ -354,6 +377,20 @@ def run(args: argparse.Namespace) -> int:
             metrics["duration_mae"] = float(np.mean(np.abs(diff)))
             metrics["duration_rmse"] = float(np.sqrt(np.mean(diff**2)))
             metrics["duration_count"] = int(tgt.size)
+
+    if getattr(args, "verbose", False) and vel_pred is not None:
+        seq_len = _first_group_length(df)
+        preview = vel_pred[:8].astype("float32", copy=False).tolist()
+        print(
+            {
+                "preview": {
+                    "seq_len": seq_len,
+                    "d_model_effective": d_model or None,
+                    "velocity": [float(v) for v in preview],
+                }
+            },
+            file=sys.stderr,
+        )
 
     out_text = json.dumps(metrics, ensure_ascii=False)
     print(out_text)
@@ -384,6 +421,17 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
         help="Quantise durations to the given fraction (e.g. 1/16); omit to keep predictions",
     )
     p.add_argument("--num-workers", dest="num_workers", type=int)
+    p.add_argument(
+        "--filter-program",
+        dest="filter_program",
+        help="Optional pandas query string applied immediately after loading the CSV",
+    )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Limit rows loaded from CSV (0 keeps all rows)",
+    )
     p.add_argument(
         "--verbose",
         action="store_true",

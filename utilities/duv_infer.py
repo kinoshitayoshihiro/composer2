@@ -34,6 +34,8 @@ def duv_sequence_predict(
     if not getattr(model, "requires_duv_feats", False):
         return None
 
+    df = df.reset_index(drop=True)
+
     missing = _missing_required(df.columns)
     if missing:
         raise RuntimeError(
@@ -76,7 +78,7 @@ def duv_sequence_predict(
         if length == 0:
             continue
         g = g.iloc[:length]
-        idx = g.index.to_numpy()
+        idx = g.index.to_numpy(dtype=np.int64, copy=False)
 
         pitch_vals = torch.as_tensor(
             g["pitch"].to_numpy(dtype="int64", copy=False)[:length],

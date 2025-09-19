@@ -148,6 +148,7 @@ class BasePartGenerator(ABC):
         portamento_ms: float | None = None,
         vibrato_shape: str = "sine",
         controls: dict | None = None,
+        control_config=None,  # SimpleNamespace-compatible (utilities.control_config) defaults for CCs
         **kwargs,
     ):
         # optional contextual parameters; shim for backwards compatibility
@@ -156,6 +157,15 @@ class BasePartGenerator(ABC):
         emotion = kwargs.pop("emotion", None)
 
         self.global_settings = global_settings or {}
+        if control_config is None:
+            try:
+                from utilities import control_config as _default_cc
+            except Exception:
+                from types import SimpleNamespace
+
+                control_config = SimpleNamespace()
+            else:
+                control_config = _default_cc
         self.control_config = control_config
         self.part_name = kwargs.get("part_name")
         self.default_instrument = default_instrument

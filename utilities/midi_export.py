@@ -28,10 +28,19 @@ from music21.midi import translate
 from utilities.pretty_midi_safe import new_pm as PrettyMIDI
 
 
+def _set_initial_tempo(pm: "pretty_midi.PrettyMIDI", bpm: float) -> None:
+    """Set the base tempo of ``pm`` using PrettyMIDI's internal tick scales."""
+
+    scale = 60.0 / (float(bpm) * pm.resolution)
+    pm._tick_scales = [(0, scale)]
+    pm._update_tick_to_time(pm.resolution)
+
+
 def write_demo_bar(path: str | Path) -> Path:
     """Write a deterministic 4-beat MIDI bar for tests."""
     out_path = Path(path)
-    pm = PrettyMIDI(tempo=120)
+    pm = PrettyMIDI()
+    _set_initial_tempo(pm, 120.0)
     inst = pretty_midi.Instrument(program=0)
     qlen = 0.5  # quarter note length in seconds at 120 BPM
     for i in range(4):
@@ -127,7 +136,8 @@ def export_song(
     """
 
     out_path = Path(out_path)
-    master = PrettyMIDI(tempo=fixed_tempo)
+    master = PrettyMIDI()
+    _set_initial_tempo(master, fixed_tempo)
     all_tempos: list[tuple[float, float]] = []
     tempo_tuple: tuple[tuple[float, float], ...] | None = None
 

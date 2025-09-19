@@ -20,7 +20,7 @@ try:  # optional dependency
 except Exception:  # pragma: no cover
     np = None  # type: ignore
 import pretty_midi
-from utilities import pb_math
+from . import pb_math
 
 __all__ = [
     "ControlCurve",

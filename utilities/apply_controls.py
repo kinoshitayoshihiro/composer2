@@ -61,6 +61,8 @@ def write_bend_range_rpn(
 
     t = max(0.0, float(at_time))
     msb = int(range_semitones)
+    # LSB encodes the fractional semitone in 1/128 steps so that the
+    # resulting bend range maps exactly to ±8191 when combined with PB_MAX.
     lsb = int(round((range_semitones - msb) * 128))
     lsb = max(0, min(127, lsb))
 

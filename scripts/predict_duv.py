@@ -304,13 +304,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
         "--limit",
         type=int,
         default=0,
-        help="Optional maximum number of rows to retain after filtering (0 loads all rows)",
-    )
-    p.add_argument(
-        "--limit",
-        type=int,
-        default=0,
-        help="Limit rows loaded from CSV (0 keeps all rows)",
+        help=(
+            "Optional maximum number of rows to load; applied during CSV read and after filtering "
+            "(0 keeps all rows)"
+        ),
     )
     p.add_argument(
         "--verbose",

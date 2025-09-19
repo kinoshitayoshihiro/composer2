@@ -72,6 +72,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Union, Set, Any, Callable, Iterable, Sequence, Type
 from textwrap import dedent
+from collections.abc import Mapping
 
 # ujam/sparkle_convert.py のトップレベル付近
 from .io import read_chords_yaml  # ← 追加
@@ -137,8 +138,13 @@ __all__ = [
 
 NOTE_RE = re.compile(r"^([A-G][b#]?)(-?\d+)$")
 
-NOTE_ALIASES: Dict[str, int] = {}
-NOTE_ALIAS_INV: Dict[int, str] = {}
+_DEFAULT_NOTE_ALIASES: Dict[str, int] = {
+    "open_1_8": 24,
+    "muted_1_8": 25,
+    "open_1_16": 26,
+}
+NOTE_ALIASES: Dict[str, int] = dict(_DEFAULT_NOTE_ALIASES)
+NOTE_ALIAS_INV: Dict[int, str] = {v: k for k, v in NOTE_ALIASES.items()}
 
 EPS = 1e-9
 MAX_ITERS = 1024
@@ -283,6 +289,204 @@ def _resolve_pitch_token(tok: Any, mapping: Optional[Dict[str, Any]] = None) -> 
                         return mapped
 
     return None
+
+
+def resolve_phrase_alias(name_or_int: Any, mapping: Optional[Dict[str, Any]] = None) -> Optional[int]:
+    """Resolve phrase tokens from mapping pools or aliases to concrete MIDI pitches."""
+
+    resolved = _resolve_pitch_token(name_or_int, mapping)
+    if resolved is not None:
+        return resolved
+
+    if not isinstance(name_or_int, str):
+        return None
+
+    token = name_or_int.strip()
+    if not token:
+        return None
+
+    def _iter_pool_entries(pool: Any) -> Iterable[Tuple[List[str], Any]]:
+        if pool is None:
+            return
+        if isinstance(pool, dict):
+            for key in ("pool", "notes", "entries"):
+                if key in pool:
+                    yield from _iter_pool_entries(pool[key])
+            # treat mapping of name -> value directly
+            for key, value in pool.items():
+                if key in {"pool", "notes", "weights", "entries", "T"}:
+                    continue
+                if isinstance(key, str):
+                    yield [key], value
+        elif isinstance(pool, list):
+            for item in pool:
+                if isinstance(item, dict):
+                    names: List[str] = []
+                    for name_key in ("name", "label", "alias", "token", "id"):
+                        val = item.get(name_key)
+                        if isinstance(val, str) and val.strip():
+                            names.append(val.strip())
+                    pitch_val = item.get("note")
+                    if pitch_val is None:
+                        pitch_val = item.get("pitch")
+                    if pitch_val is None:
+                        pitch_val = item.get("value")
+                    if pitch_val is not None:
+                        yield names or [str(pitch_val)], pitch_val
+                elif isinstance(item, (tuple, list)) and item:
+                    first = item[0]
+                    names = [str(first)] if isinstance(first, str) else []
+                    yield names or [str(first)], first
+                else:
+                    yield [str(item)], item
+
+    if mapping:
+        pool_cfg = mapping.get("phrase_pool")
+        for names, target in _iter_pool_entries(pool_cfg):
+            for name in names:
+                if name.strip() == token:
+                    candidate = _resolve_pitch_token(target, mapping)
+                    if candidate is not None:
+                        return candidate
+        phrase_map = mapping.get("phrase_aliases")
+        if isinstance(phrase_map, dict):
+            for alias_name, value in phrase_map.items():
+                if isinstance(alias_name, str) and alias_name.strip() == token:
+                    candidate = _resolve_pitch_token(value, mapping)
+                    if candidate is not None:
+                        return candidate
+
+    return None
+
+
+def finalize_song_length(
+    pm_out: "pretty_midi.PrettyMIDI",
+    downbeats: Optional[Sequence[float]],
+    sections: Optional[Sequence[Any]],
+    fallback_end: Optional[float],
+) -> Tuple[Optional[float], int]:
+    """Clamp instrument note ends to the computed song end time."""
+
+    def _extract_end_bar(items: Optional[Sequence[Any]]) -> Optional[int]:
+        if not items:
+            return None
+        for entry in reversed(list(items)):
+            if isinstance(entry, Mapping):
+                end_bar = entry.get("end_bar")
+                if end_bar is None:
+                    continue
+                try:
+                    idx = int(end_bar)
+                except Exception:
+                    continue
+                if idx >= 0:
+                    return idx
+        return None
+
+    downbeats_list: List[float] = []
+    if downbeats:
+        for t in downbeats:
+            try:
+                downbeats_list.append(float(t))
+            except Exception:
+                continue
+
+    song_end_time: Optional[float] = None
+    end_bar = _extract_end_bar(sections)
+    if end_bar is not None and downbeats_list:
+        if end_bar >= len(downbeats_list):
+            logging.warning(
+                "finalize_song_length: section end bar %d exceeds downbeats %d; clamping",
+                end_bar,
+                len(downbeats_list) - 1,
+            )
+            end_bar = len(downbeats_list) - 1
+        if end_bar >= 0:
+            song_end_time = downbeats_list[end_bar]
+    elif fallback_end is not None and math.isfinite(fallback_end):
+        song_end_time = float(fallback_end)
+    elif downbeats_list:
+        song_end_time = downbeats_list[-1]
+
+    if song_end_time is None or not math.isfinite(song_end_time):
+        return (None, 0)
+
+    clamp_to = max(0.0, song_end_time - EPS)
+    notes_clipped = 0
+    for inst in getattr(pm_out, "instruments", []) or []:
+        for note in getattr(inst, "notes", []) or []:
+            try:
+                start = float(getattr(note, "start", 0.0))
+                end = float(getattr(note, "end", start))
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(end):
+                continue
+            if end > clamp_to + EPS:
+                note.end = clamp_to if clamp_to >= start else start
+                notes_clipped += 1
+    if notes_clipped:
+        logging.info(
+            "finalize_song_length: clipped %d note(s) at %.3fs",
+            notes_clipped,
+            song_end_time,
+        )
+    return (song_end_time, notes_clipped)
+
+
+def _coerce_note_alias_map(source: Any) -> Dict[str, Any]:
+    """Return a dict copy of ``source`` if it behaves like a mapping."""
+
+    if isinstance(source, Mapping):
+        try:
+            return dict(source)
+        except Exception:
+            return {str(k): source[k] for k in source}
+    if hasattr(source, "items"):
+        try:
+            return dict(source.items())
+        except Exception:
+            pass
+    if isinstance(source, list):
+        try:
+            return {str(k): v for k, v in source}
+        except Exception:
+            pass
+    return {}
+
+
+def _current_note_alias_maps() -> Tuple[Dict[str, Any], Dict[int, str]]:
+    """Return (alias_by_name, alias_by_midi) using current globals."""
+
+    global NOTE_ALIAS_INV
+    alias_map = dict(_DEFAULT_NOTE_ALIASES)
+    override_map = _coerce_note_alias_map(NOTE_ALIASES)
+    if override_map:
+        alias_map.update(override_map)
+    inv_source = NOTE_ALIAS_INV
+    if isinstance(inv_source, Mapping):
+        alias_inv: Dict[int, str] = dict(inv_source)
+    elif hasattr(inv_source, "items"):
+        try:
+            alias_inv = dict(inv_source.items())
+        except Exception:
+            alias_inv = {}
+    else:
+        alias_inv = {}
+
+    updated = False
+    for name, target in alias_map.items():
+        midi_val = _resolve_pitch_token(target, None)
+        if midi_val is None:
+            continue
+        if midi_val not in alias_inv:
+            alias_inv[midi_val] = name
+            updated = True
+
+    if updated:
+        NOTE_ALIAS_INV = alias_inv
+
+    return alias_map, alias_inv
 
 
 def build_avoid_set(
@@ -1153,6 +1357,17 @@ def parse_note_token(
         t = tok.strip()
         if t.lower() in {"rest", "silence", ""}:
             return None
+        alias_map, alias_inv = _current_note_alias_maps()
+        alias_val = alias_map.get(t)
+        if alias_val is None:
+            for midi_val, alias_name in alias_inv.items():
+                if alias_name == t:
+                    alias_val = midi_val
+                    break
+        if alias_val is not None:
+            resolved_alias = _resolve_pitch_token(alias_val, None)
+            if resolved_alias is not None:
+                return validate_midi_note(resolved_alias)
         resolved = _resolve_pitch_token(t, mapping)
         if resolved is not None:
             return validate_midi_note(resolved)
@@ -2231,29 +2446,56 @@ def insert_style_fill(
         explicit_avoid = list(avoid_pitches)
     avoid_set = build_avoid_set(mapping, explicit_avoid)
 
-    pitch_resolved = _resolve_pitch_token(style_fill_raw, mapping)
-    if pitch_resolved is None:
-        fallback = _resolve_pitch_token(mapping.get("phrase_note"), mapping)
-        if fallback is None:
-            fallback = 36
+    pitch_value: Optional[int] = None
+    pitch_source = "style"
+    candidates = (
+        style_fill_raw,
+        mapping.get("style_fill"),
+        34,
+        mapping.get("phrase_note"),
+    )
+    for idx, candidate in enumerate(candidates):
+        if candidate is None:
+            continue
+        resolved = resolve_phrase_alias(candidate, mapping)
+        if resolved is None:
+            try:
+                resolved = int(round(float(candidate)))
+            except Exception:
+                continue
         try:
-            fallback_int = int(round(float(fallback)))
+            pitch_value = int(round(float(resolved)))
         except Exception:
-            fallback_int = 36
-        fallback_int = max(0, min(127, fallback_int))
-        if fallback_int in avoid_set:
-            replacement: Optional[int] = None
-            for candidate in range(fallback_int, 128):
-                if candidate not in avoid_set:
-                    replacement = candidate
-                    break
-            if replacement is None:
-                fallback_int = 36
-            else:
-                fallback_int = replacement
-        pitch = fallback_int
-    else:
-        pitch = max(0, min(127, int(pitch_resolved)))
+            continue
+        pitch_value = max(0, min(127, pitch_value))
+        if idx <= 1:
+            pitch_source = "style"
+        elif idx == 2:
+            pitch_source = "default"
+        else:
+            pitch_source = "fallback"
+        break
+
+    if pitch_value is None:
+        logging.warning(
+            "insert_style_fill: unable to resolve style note %r; skipping", style_fill_raw
+        )
+        return 0
+
+    pitch = pitch_value
+    pitch = max(0, min(127, pitch))
+    if pitch_source != "style" and pitch in avoid_set:
+        replacement: Optional[int] = None
+        for candidate in range(pitch, 128):
+            if candidate not in avoid_set:
+                replacement = candidate
+                break
+        if replacement is None:
+            logging.warning(
+                "insert_style_fill: all pitches avoided for %r; skipping", style_fill_raw
+            )
+            return 0
+        pitch = replacement
     seed_bpm = float(bpm) if bpm is not None else 120.0
     if not math.isfinite(seed_bpm) or seed_bpm <= 0.0:
         seed_bpm = 120.0
@@ -2675,6 +2917,7 @@ def insert_style_layer(
     every: int = 4,
     length_beats: float = 0.5,
     bpm: float = 120.0,
+    mapping: Optional[Dict[str, Any]] = None,
 ) -> int:
     if mode == "off" or picker is None or not units:
         return 0
@@ -2734,9 +2977,29 @@ def insert_style_layer(
         start = units[b_idx][0]
         start_b = b_idx  # approximate
         length = beat_to_time(start_b + length_beats) - start
-        pitch = picker.pick()
+        raw_pitch = picker.pick()
+        pitch_val = resolve_phrase_alias(raw_pitch, mapping)
+        if pitch_val is None:
+            logging.warning(
+                "insert_style_layer: skipping bar %d unresolved pitch %r", b_idx, raw_pitch
+            )
+            continue
+        try:
+            pitch = int(round(float(pitch_val)))
+        except Exception:
+            logging.warning(
+                "insert_style_layer: skipping bar %d invalid pitch %r", b_idx, raw_pitch
+            )
+            continue
+        pitch = max(0, min(127, pitch))
+        velocity = 100
         phrase_inst.notes.append(
-            pretty_midi.Note(velocity=100, pitch=pitch, start=start, end=start + length)
+            pretty_midi.Note(
+                velocity=int(velocity),
+                pitch=int(pitch),
+                start=float(start),
+                end=float(start + length),
+            )
         )
         count += 1
     return count
@@ -2874,6 +3137,7 @@ def finalize_phrase_track(
     )
 
     bar_count = max(0, len(downbeats) - 1) if downbeats else 0
+    normalized_sections: List[Dict[str, Any]] = []
     sections_candidate: Optional[Sequence[Any]] = None
     for candidate in (
         section_overrides,
@@ -3560,37 +3824,73 @@ def parse_chords_ts_arg(spec: Optional[str]) -> List[Tuple[int, int, int]]:
     if not spec:
         return []
     hint_map: Dict[int, Tuple[int, int]] = {}
-    tokens = [tok.strip() for tok in spec.split(",") if tok.strip()]
+    tokens: List[str] = []
+    text = spec.strip()
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except Exception as exc:
+            logging.warning("--chords-ts JSON parse failed: %s", exc)
+            return []
+        if isinstance(parsed, list):
+            for item in parsed:
+                if isinstance(item, str):
+                    tokens.append(item.strip())
+                else:
+                    logging.warning("--chords-ts ignoring non-string entry %r", item)
+        else:
+            logging.warning("--chords-ts JSON must be an array of strings")
+            return []
+    else:
+        tokens = [tok.strip() for tok in text.split(",") if tok.strip()]
+
     for idx, token in enumerate(tokens):
+        if not token:
+            continue
         meter_txt, bar_txt = token, "0"
         if "@" in token:
             meter_txt, bar_txt = token.split("@", 1)
         meter_txt = meter_txt.strip()
         bar_txt = bar_txt.strip()
         if not meter_txt or "/" not in meter_txt:
-            raise SystemExit(
-                f"--chords-ts entry {idx} ('{token}') must be NUM/DEN@bar (e.g., 12/8@0)"
+            logging.warning(
+                "--chords-ts entry %d ('%s') must be NUM/DEN@bar; skipping", idx, token
             )
+            continue
         num_txt, den_txt = meter_txt.split("/", 1)
         try:
             num = int(num_txt)
             den = int(den_txt)
-        except ValueError as exc:
-            raise SystemExit(
-                f"--chords-ts entry {idx} ('{token}') has non-integer meter"
-            ) from exc
+        except Exception as exc:
+            logging.warning(
+                "--chords-ts entry %d ('%s') has non-integer meter (%s); skipping",
+                idx,
+                token,
+                exc,
+            )
+            continue
         if num <= 0 or den <= 0:
-            raise SystemExit(f"--chords-ts entry {idx} ('{token}') requires positive meter")
+            logging.warning(
+                "--chords-ts entry %d ('%s') requires positive meter; skipping", idx, token
+            )
+            continue
         try:
             bar = int(bar_txt) if bar_txt else 0
-        except ValueError as exc:
-            raise SystemExit(
-                f"--chords-ts entry {idx} ('{token}') has invalid bar index"
-            ) from exc
-        if bar < 0:
-            raise SystemExit(
-                f"--chords-ts entry {idx} ('{token}') must use non-negative bar index"
+        except Exception as exc:
+            logging.warning(
+                "--chords-ts entry %d ('%s') has invalid bar index (%s); skipping",
+                idx,
+                token,
+                exc,
             )
+            continue
+        if bar < 0:
+            logging.warning(
+                "--chords-ts entry %d ('%s') must use non-negative bar index; skipping",
+                idx,
+                token,
+            )
+            continue
         hint_map[bar] = (num, den)
     return [(bar, vals[0], vals[1]) for bar, vals in sorted(hint_map.items())]
 
@@ -3943,7 +4243,7 @@ def generate_mapping_template(full: bool) -> str:
             + "\n"
         )
 
-class ChordCsvError(ValueError):
+class ChordCsvError(SystemExit, ValueError):
     """Raised when a chord CSV cannot be parsed."""
 
 
@@ -3955,6 +4255,7 @@ class _CompactChordRow:
     start_beat: Fraction = Fraction(0)
     end_bar: Optional[int] = None
     raw_symbol: str = ""
+    length_beats: Optional[Fraction] = None
 
 
 _QUALITY_TOKEN_MAP: Dict[str, str] = {
@@ -4134,7 +4435,7 @@ def _parse_bar_chord_rows(
 ) -> List[_CompactChordRow]:
     """Parse compact chord rows into structured entries."""
 
-    allowed = {"bar", "chord", "bar_start", "bar_end", "beat"}
+    allowed = {"bar", "chord", "bar_start", "bar_end", "beat", "beats"}
     if header:
         header = [cell.strip().lower() for cell in header]
         if header:
@@ -4148,6 +4449,13 @@ def _parse_bar_chord_rows(
         columns = list(header)
     else:
         columns = ["bar", "chord"]
+        for raw_row in rows:
+            cells = [cell.strip() for cell in raw_row]
+            if not any(cells):
+                continue
+            if len(cells) >= 3 and cells[2]:
+                columns = ["bar", "chord", "beats"]
+            break
 
     if not columns or "chord" not in columns:
         raise ChordCsvError(f"{path}: chord CSV must include a 'chord' column")
@@ -4163,15 +4471,17 @@ def _parse_bar_chord_rows(
             continue
         cells[0] = cells[0].lstrip("\ufeff")
         if len(cells) < len(columns):
-            raise ChordCsvError(
-                f"{path} line {line_no}: expected {len(columns)} value(s) matching {columns}"
-            )
+            cells = cells + [""] * (len(columns) - len(cells))
         if len(cells) > len(columns):
             extras = cells[len(columns) :]
             if any(extras):
-                raise ChordCsvError(
-                    f"{path} line {line_no}: unexpected extra columns {extras}"
+                logging.warning(
+                    "%s line %d: skipping row with unexpected extra columns %s",
+                    path,
+                    line_no,
+                    extras,
                 )
+                continue
             cells = cells[: len(columns)]
 
         row_map = dict(zip(columns, cells))
@@ -4229,6 +4539,17 @@ def _parse_bar_chord_rows(
                 )
         last_pos = pos
 
+        beats_len_token = row_map.get("beats")
+        length_beats: Optional[Fraction] = None
+        if beats_len_token:
+            try:
+                length_beats = _parse_fraction_token(
+                    beats_len_token, path=path, line_no=line_no
+                )
+            except ChordCsvError as exc:
+                logging.warning(str(exc))
+                continue
+
         parsed.append(
             _CompactChordRow(
                 line_no=line_no,
@@ -4237,6 +4558,7 @@ def _parse_bar_chord_rows(
                 start_beat=start_beat,
                 end_bar=end_bar,
                 raw_symbol=chord_txt.strip(),
+                length_beats=length_beats,
             )
         )
 
@@ -4313,8 +4635,11 @@ class _BarTimeline:
                     ) from exc
                 if not initial or ft > initial[-1] + EPS:
                     initial.append(ft)
+        self._explicit_boundaries = bool(initial)
         if not initial:
             initial = [0.0]
+        if not bar_times:
+            self._explicit_boundaries = False
         self._boundaries = initial
 
     def _beat_to_time(self, beat_pos: float) -> float:
@@ -4408,6 +4733,9 @@ class _BarTimeline:
     def meter_for(self, bar_index: int, start_time: float) -> Tuple[int, int]:
         return self._meter_for(bar_index, start_time)
 
+    def uses_explicit_bar_times(self) -> bool:
+        return self._explicit_boundaries
+
 def read_chords_csv(
     path: Path,
     *,
@@ -4418,6 +4746,8 @@ def read_chords_csv(
     bpm_hint: Optional[float] = None,
     default_meter: Tuple[int, int] = (4, 4),
     strict: bool = False,
+    sections: Optional[Sequence[Mapping[str, Any]]] = None,
+    song_end_bar: Optional[int] = None,
 ) -> List["ChordSpan"]:
     """Load chord spans from CSV supporting explicit and compact layouts.
 
@@ -4440,6 +4770,50 @@ def read_chords_csv(
         return []
     raw_text = raw_text.replace("，", ",")
     raw_text = raw_text.lstrip("\ufeff")
+
+    def _guard(
+        func: Callable[..., List["ChordSpan"]], *args, **kwargs
+    ) -> List["ChordSpan"]:
+        try:
+            return func(*args, **kwargs)
+        except ChordCsvError:
+            raise
+
+    def _sections_end_cap(src: Optional[Sequence[Mapping[str, Any]]]) -> Optional[int]:
+        if not src:
+            return None
+        best: Optional[int] = None
+        for item in src:
+            if not isinstance(item, Mapping):
+                continue
+            end_bar = item.get("end_bar")
+            if end_bar is None:
+                continue
+            try:
+                idx = int(end_bar)
+            except Exception:
+                continue
+            if idx < 0:
+                continue
+            best = idx if best is None else max(best, idx)
+        return best
+
+    section_cap: Optional[int] = None
+    sec_from_sections = _sections_end_cap(sections)
+    if sec_from_sections is not None:
+        section_cap = sec_from_sections
+    if song_end_bar is not None:
+        try:
+            song_end_bar_int = int(song_end_bar)
+        except Exception:
+            song_end_bar_int = None
+        else:
+            if song_end_bar_int is not None and song_end_bar_int >= 0:
+                section_cap = (
+                    song_end_bar_int
+                    if section_cap is None
+                    else max(section_cap, song_end_bar_int)
+                )
 
     reader = csv.reader(io.StringIO(raw_text))
     rows_with_line: List[Tuple[int, List[str]]] = [
@@ -4621,7 +4995,9 @@ def read_chords_csv(
             spans.append(span)
         return spans
 
-    def _compact_to_spans(rows: List[_CompactChordRow]) -> List[ChordSpan]:
+    def _compact_to_spans(
+        rows: List[_CompactChordRow], section_end_bar: Optional[int] = None
+    ) -> List[ChordSpan]:
         if not rows:
             return []
         timeline = _BarTimeline(
@@ -4657,23 +5033,69 @@ def read_chords_csv(
             starts.append(start_time)
 
         spans: List[ChordSpan] = []
+        cap_time: Optional[float] = None
+        if section_end_bar is not None:
+            try:
+                cap_time = timeline.start_time(int(section_end_bar))
+            except (ValueError, ChordCsvError) as exc:
+                logging.warning("%s: invalid section end bar %s (%s)", path, section_end_bar, exc)
+                cap_time = None
         for idx, row in enumerate(rows):
             start_time = starts[idx]
             end_time: float
+            bar_start_abs = timeline.start_time(row.start_bar)
+            bar_duration = timeline.end_time(row.start_bar) - bar_start_abs
             if row.end_bar is not None:
                 end_time = timeline.start_time(row.end_bar)
             elif idx + 1 < len(starts):
                 end_time = starts[idx + 1]
             else:
                 end_time = timeline.end_time(row.start_bar)
+                if row.start_beat is not None and timeline.uses_explicit_bar_times():
+                    bar_start = timeline.start_time(row.start_bar)
+                    offset = max(0.0, start_time - bar_start)
+                    next_bar_start = timeline.start_time(row.start_bar + 1)
+                    end_time = next_bar_start + offset
+            if row.length_beats is not None and row.end_bar is None:
+                try:
+                    num, den = timeline.meter_for(row.start_bar, start_time)
+                except ChordCsvError:
+                    num, den = 4, 4
+                beats_per_bar = float(num) if num else 1.0
+                if beats_per_bar <= 0:
+                    beats_per_bar = 1.0
+                if bar_duration <= 0.0:
+                    duration_candidate = 0.0
+                else:
+                    duration_candidate = float(row.length_beats) * (bar_duration / beats_per_bar)
+                candidate_end = start_time + duration_candidate
+                if candidate_end > start_time + EPS:
+                    end_time = min(end_time, candidate_end)
+                else:
+                    logging.warning(
+                        "%s line %d: beats duration produced non-positive span; skipping", path, row.line_no
+                    )
+                    continue
             if end_time <= start_time + EPS:
                 raise ChordCsvError(
                     f"{path} line {row.line_no}: chord duration must be positive"
                 )
+            if cap_time is not None and end_time > cap_time + EPS:
+                if start_time >= cap_time - EPS:
+                    logging.warning(
+                        "%s line %d: chord start beyond section end; skipping", path, row.line_no
+                    )
+                    continue
+                logging.warning(
+                    "%s line %d: chord truncated at section end", path, row.line_no
+                )
+                end_time = cap_time
             try:
                 root_pc, quality = parse_chord_symbol(row.symbol)
             except ValueError as exc:
-                raise ChordCsvError(f"{path} line {row.line_no}: {exc}") from exc
+                raise ChordCsvError(
+                    f"{path} line {row.line_no}: token {idx} ({row.symbol!r}) {exc}"
+                ) from exc
             span = ChordSpan(start_time, end_time, root_pc, quality)
             display = row.raw_symbol or row.symbol
             setattr(span, "symbol", display)
@@ -4706,7 +5128,7 @@ def read_chords_csv(
                 path=path,
                 header=header_cells,
             )
-            return _compact_to_spans(compact_rows)
+            return _guard(_compact_to_spans, compact_rows, section_cap)
         raise ChordCsvError(
             f"{path}: unsupported chord CSV header {header_cells}"
         )
@@ -4721,7 +5143,7 @@ def read_chords_csv(
             start_line=first_line_no,
             path=path,
         )
-        return _compact_to_spans(compact_rows)
+        return _guard(_compact_to_spans, compact_rows, section_cap)
 
     def _symbol_plain(cells: List[str]) -> str:
         if len(cells) < 2:
@@ -4867,6 +5289,42 @@ def build_sparkle_midi(
     rng = rng_human or rng
     if rng is None:
         rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
+
+    def _merge_end_hint(
+        current: Optional[float], candidate: Optional[float]
+    ) -> Optional[float]:
+        if candidate is None:
+            return current
+        if current is None:
+            return candidate
+        return max(current, candidate)
+
+    def _trim_downbeat_grid(grid: List[float], end_time: Optional[float]) -> List[float]:
+        if not grid or end_time is None or not math.isfinite(end_time):
+            return grid
+        target = max(end_time, grid[0])
+        trimmed: List[float] = []
+        for t in grid:
+            if t <= target + EPS:
+                trimmed.append(t)
+            else:
+                break
+        if not trimmed:
+            trimmed = [grid[0]]
+        if trimmed[-1] < target - EPS:
+            trimmed.append(target)
+        else:
+            trimmed[-1] = target
+        return trimmed
+
+    song_end_hint: Optional[float] = None
+    try:
+        pm_input_end = float(pm_in.get_end_time())
+    except Exception:
+        pm_input_end = None
+    if chords:
+        chord_end = max((c.end for c in chords), default=None)
+        song_end_hint = _merge_end_hint(song_end_hint, chord_end)
 
     def _duck(bar_idx: int, vel: int) -> int:
         if vocal_ducking > 0 and vocal_adapt and vocal_adapt.dense_phrase is not None:
@@ -5081,6 +5539,12 @@ def build_sparkle_midi(
         span = beat_times[idx + 1] - beat_times[idx]
         return idx + (t - beat_times[idx]) / span
 
+    if guide_units:
+        guide_end = max((beat_to_time(end) for _, end in guide_units), default=None)
+        song_end_hint = _merge_end_hint(song_end_hint, guide_end)
+    if song_end_hint is None:
+        song_end_hint = pm_input_end
+
     unit_starts: List[float] = [u[0] for u in guide_units] if guide_units else []
 
     def maybe_merge_gap(inst, pitch, start_t, *, bar_start=None, chord_start=None):
@@ -5128,6 +5592,7 @@ def build_sparkle_midi(
         beat_to_time,
         time_to_beat,
     )
+    downbeats = _trim_downbeat_grid(downbeats, song_end_hint)
     meter_times = [mt for mt, _, _ in meter_map]
     if cycle_notes and (len(downbeats) - 1) < 2 and cycle_mode == "bar":
         logging.info("cycle disabled; using fixed phrase_note=%d", phrase_note)
@@ -5139,7 +5604,11 @@ def build_sparkle_midi(
         stats.setdefault("warnings", [])
         stats["schema_version"] = "1.1"
         stats["schema"] = "1.1"
-        stats["downbeats"] = downbeats
+        stats["downbeats"] = list(downbeats)
+        if song_end_hint is not None and math.isfinite(song_end_hint):
+            stats["song_end_hint"] = float(song_end_hint)
+        if downbeats:
+            stats["downbeats_last"] = float(downbeats[-1])
         # Dict[bar_index, List[(beat_position_in_beats, absolute_time_seconds)]]
         # capturing the meter-derived reference grid per bar. Stored as floats to
         # ease JSON export without further casting. ``bar_triggers`` records the
@@ -6081,14 +6550,36 @@ def build_sparkle_midi(
     _legato_merge_chords(chord_inst, chord_merge_gap)
     out.instruments.append(chord_inst)
     out.instruments.append(phrase_inst)
+    sections_for_clamp = locals().get("normalized_sections")
+    fallback_end = song_end_hint if song_end_hint is not None else pm_input_end
+    song_end_time, notes_clipped = finalize_song_length(
+        out, downbeats, sections_for_clamp, fallback_end
+    )
     if clone_meta_only and logging.getLogger().isEnabledFor(logging.INFO):
         logging.info("clone_meta_only tempo/time-signature via %s API", meta_src)
     if stats is not None:
         stats["pulse_count"] = len(phrase_inst.notes)
-        stats["bar_count"] = len(downbeats)
+        stats["bar_count"] = max(0, len(downbeats) - 1)
+        if song_end_hint is not None and math.isfinite(song_end_hint):
+            stats["song_end_hint"] = float(song_end_hint)
+        if downbeats:
+            stats["downbeats_last"] = float(downbeats[-1])
+        if song_end_time is not None and math.isfinite(song_end_time):
+            stats["song_end_time"] = float(song_end_time)
+        else:
+            stats["song_end_time"] = None
+        stats["notes_clipped"] = stats.get("notes_clipped", 0) + notes_clipped
     _sanitize_tempi(out)
     _ensure_tempo_and_ticks(out, seed_bpm, out.time_signature_changes)
+    if stats is not None:
+        try:
+            stats["out_end_time"] = float(out.get_end_time())
+        except Exception:
+            stats["out_end_time"] = None
     return out
+
+
+_BUILD_SPARKLE_MIDI_IMPL = build_sparkle_midi
 
 
 def main():
@@ -7478,28 +7969,59 @@ def main():
         if args.verbose and bar_pulses:
             for b_idx in sorted(bar_pulses.keys()):
                 logging.info("bar %d pulses %s", b_idx, bar_pulses[b_idx])
+        globals()["build_sparkle_midi"] = _BUILD_SPARKLE_MIDI_IMPL
         return
 
     _sanitize_midi_for_mido(out_pm)
     out_pm.write(args.out)
     logging.info("Wrote %s", args.out)
+    globals()["build_sparkle_midi"] = _BUILD_SPARKLE_MIDI_IMPL
 def _parse_chords_ts_hint(s: Optional[str]) -> Optional[List[Tuple[float, int, int]]]:
     if not s:
         return None
     out: List[Tuple[float, int, int]] = []
-    for tok in s.split(","):
-        tok = tok.strip()
+    tokens: List[str] = []
+    text = s.strip()
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except Exception as exc:
+            logging.warning("--chords-ts hint JSON parse failed: %s", exc)
+            return None
+        if isinstance(parsed, list):
+            for item in parsed:
+                if isinstance(item, str):
+                    tokens.append(item.strip())
+                else:
+                    logging.warning("--chords-ts hint ignoring non-string entry %r", item)
+        else:
+            logging.warning("--chords-ts hint JSON must be array of strings")
+            return None
+    else:
+        tokens = [tok.strip() for tok in text.split(",") if tok.strip()]
+
+    for tok in tokens:
         if not tok:
             continue
-        # accept 12/8@0 or 4/4 (implicitly @0)
         if "@" in tok:
             sig, at = tok.split("@", 1)
-            t = float(at.strip())
+            try:
+                t = float(at.strip())
+            except Exception as exc:
+                logging.warning("--chords-ts hint ignoring %r (%s)", tok, exc)
+                continue
         else:
             sig, t = tok, 0.0
+        if "/" not in sig:
+            logging.warning("--chords-ts hint token %r missing '/'", tok)
+            continue
         num_str, den_str = sig.split("/", 1)
-        num = int(num_str.strip())
-        den = int(den_str.strip())
+        try:
+            num = int(num_str.strip())
+            den = int(den_str.strip())
+        except Exception as exc:
+            logging.warning("--chords-ts hint ignoring %r (%s)", tok, exc)
+            continue
         out.append((float(t), num, den))
     # sort by start time
     out.sort(key=lambda x: x[0])

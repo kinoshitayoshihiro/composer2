@@ -92,6 +92,14 @@ def write_bend_range_rpn(
     inst._rpn_range = range_semitones  # type: ignore[attr-defined]
 
 
+def _rpn_time(rpn_at: float, first_pb_time: float | None) -> float:
+    """Clamp RPN timestamps to non-negative and before the first pitch bend."""
+
+    if first_pb_time is None:
+        return max(0.0, float(rpn_at))
+    return max(0.0, min(float(rpn_at), float(first_pb_time) - 1e-9))
+
+
 _CC_MAP = {"cc11": 11, "cc64": 64}
 
 
@@ -145,11 +153,8 @@ def apply_controls(
                     new_pb[0].time = start
                     new_pb[-1].time = end
                 if write_rpn and not getattr(inst, "_rpn_written", False):
-                    if not inst.pitch_bends:
-                        t = max(0.0, rpn_at)  # clamp to ≥0 for DAW compatibility
-                    else:
-                        first_pb = min(pb.time for pb in inst.pitch_bends)
-                        t = max(0.0, min(rpn_at, first_pb - 1e-9))  # before first PB
+                    first_pb = min((pb.time for pb in inst.pitch_bends), default=None)
+                    t = _rpn_time(rpn_at, first_pb)
                     write_bend_range_rpn(inst, bend_range_semitones, at_time=t)
             elif name in _CC_MAP:
                 cc_num = _CC_MAP[name]

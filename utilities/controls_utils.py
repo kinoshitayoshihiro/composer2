@@ -14,6 +14,21 @@ from utilities.audio_to_midi_batch import _coerce_controller_times
 from utilities import pb_math
 
 
+def norm_to_pitchwheel(v: float) -> int:
+    """Convert ``[-1..1]`` normalized values to 14-bit pitch-bend ints (returns ``int``)."""
+
+    return int(pb_math.norm_to_pb(v))
+
+
+def semitone_to_pitchwheel(semi: float, bend_range: float) -> int:
+    """Convert ``semi`` within ``±bend_range`` to 14-bit pitch-bend ints (returns ``int``)."""
+
+    if bend_range <= 0:
+        return 0
+    clamped = max(-bend_range, min(bend_range, semi))
+    return int(pb_math.semi_to_pb(clamped, bend_range))
+
+
 def _tri(phase: float) -> float:
     """Return triangle wave value for ``phase`` (radians)."""
     return 2.0 / math.pi * math.asin(math.sin(phase))

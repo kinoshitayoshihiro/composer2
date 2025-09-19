@@ -20,7 +20,7 @@ try:  # optional dependency
 except Exception:  # pragma: no cover
     np = None  # type: ignore
 import pretty_midi
-from . import pb_math
+from utilities import pb_math
 
 __all__ = [
     "ControlCurve",
@@ -326,6 +326,26 @@ def _resample(t_knots, v_knots, sample_rate_hz: float):
     return grid, vals
 
 
+def _uniform_indices(length: int, target: int) -> list[int]:
+    """Return evenly spaced indices keeping first/last and removing duplicates."""
+
+    if target >= length:
+        return list(range(length))
+    if length == 0:
+        return []
+    target = max(2, target)
+    step = (length - 1) / (target - 1)
+    raw = [0] + [int(round(i * step)) for i in range(1, target - 1)] + [length - 1]
+    out: list[int] = []
+    for idx in raw:
+        idx = max(0, min(length - 1, idx))
+        if not out or idx != out[-1]:
+            out.append(idx)
+    if out[-1] != length - 1:
+        out.append(length - 1)
+    return out
+
+
 def _dedupe_int(times, values, *, time_eps: float, keep_last: bool = False):
     out_t: list[float] = [float(times[0])]
     out_v: list[int] = [int(values[0])]
@@ -597,10 +617,11 @@ class ControlCurve:
                 t = list(cc.times)
                 v = list(cc.values)
             else:
-                step = (len(t) - 1) / (max_events - 1)
-                idxs = [int(round(i * step)) for i in range(max_events)]
-                t = [t[i] for i in idxs]
-                v = [v[i] for i in idxs]
+                t_list = t.tolist() if hasattr(t, "tolist") else list(t)
+                v_list = v.tolist() if hasattr(v, "tolist") else list(v)
+                idxs = _uniform_indices(len(t_list), max_events)
+                t = [t_list[i] for i in idxs]
+                v = [v_list[i] for i in idxs]
         # clamp + round to MIDI domain
         vals = round_int(clip(v, 0, 127))
         t, vals = _dedupe_int(t, vals, time_eps=time_eps, keep_last=True)
@@ -627,10 +648,11 @@ class ControlCurve:
             fv.append(int(vals[-1]))
             t, vals = ft, fv
         if max_events is not None and len(vals) > max_events:
-            step = (len(vals) - 1) / (max_events - 1)
-            idxs = [int(round(i * step)) for i in range(max_events)]
-            t = [t[i] for i in idxs]
-            vals = [int(vals[i]) for i in idxs]
+            t_list = t.tolist() if hasattr(t, "tolist") else list(t)
+            val_list = vals.tolist() if hasattr(vals, "tolist") else list(vals)
+            idxs = _uniform_indices(len(val_list), max_events)
+            t = [t_list[i] for i in idxs]
+            vals = [int(val_list[i]) for i in idxs]
         for tt, vv in zip(t, vals):
             inst.control_changes.append(
                 pretty_midi.ControlChange(
@@ -726,10 +748,11 @@ class ControlCurve:
                 t = list(cc.times)
                 v = list(cc.values)
             else:
-                step = (len(t) - 1) / (max_events - 1)
-                idxs = [int(round(i * step)) for i in range(max_events)]
-                t = [t[i] for i in idxs]
-                v = [v[i] for i in idxs]
+                t_list = t.tolist() if hasattr(t, "tolist") else list(t)
+                v_list = v.tolist() if hasattr(v, "tolist") else list(v)
+                idxs = _uniform_indices(len(t_list), max_events)
+                t = [t_list[i] for i in idxs]
+                v = [v_list[i] for i in idxs]
         # convert to 14-bit domain
         if units == "normalized":
             vals = pb_math.norm_to_pb(v)
@@ -749,10 +772,11 @@ class ControlCurve:
                 fv.append(int(vals[-1]))
             t, vals = ft, fv
         if max_events is not None and len(vals) > max_events:
-            step = (len(vals) - 1) / (max_events - 1)
-            idxs = [int(round(i * step)) for i in range(max_events)]
-            t = [t[i] for i in idxs]
-            vals = [int(vals[i]) for i in idxs]
+            t_list = t.tolist() if hasattr(t, "tolist") else list(t)
+            val_list = vals.tolist() if hasattr(vals, "tolist") else list(vals)
+            idxs = _uniform_indices(len(val_list), max_events)
+            t = [t_list[i] for i in idxs]
+            vals = [int(val_list[i]) for i in idxs]
         if self.ensure_zero_at_edges and len(vals) > 0:
             orig_len = len(vals)
             if vals[0] != 0:

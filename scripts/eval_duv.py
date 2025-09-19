@@ -44,6 +44,7 @@ from utilities.duv_infer import (
     OPTIONAL_INT32_COLUMNS,
     REQUIRED_COLUMNS,
     duv_sequence_predict,
+    load_duv_dataframe,
     duv_verbose,
 )
 from utilities.ml_duration import DurationTransformer
@@ -226,22 +227,21 @@ def run(args: argparse.Namespace) -> int:
     if stats is None:
         raise SystemExit("missing or invalid stats json")
 
-    # limitの正規化とCSV読込（limit指定があれば先にnrowsで抑える）
+    # limitの正規化とCSV読込（filter→reset_index→head(limit) を helper 側で実施）
     limit = max(int(getattr(args, "limit", 0) or 0), 0)
-    df = pd.read_csv(args.csv, low_memory=False, nrows=limit or None)
-    df = df.reset_index(drop=True)
-
-    # プログラムフィルタ → reindex
-    if getattr(args, "filter_program", None):
-        df = df.query(args.filter_program, engine="python")
-        df = df.reset_index(drop=True)
-
-    # フィルタ後にも改めてlimit適用（念のため）
-    if limit and len(df) > limit:
-        df = df.iloc[:limit].reset_index(drop=True)
+    df, program_hist = load_duv_dataframe(
+        args.csv,
+        feature_columns=list(stats[0] or []),
+        filter_expr=getattr(args, "filter_program", None),
+        limit=limit,
+        collect_program_hist=getattr(args, "verbose", False),
+    )
 
     # 進捗ログ
     print({"rows": int(len(df)), "limit": limit or None}, file=sys.stderr)
+    if getattr(args, "verbose", False) and program_hist is not None and not program_hist.empty:
+        top = program_hist.head(10)
+        print({"program_top": top.to_dict()}, file=sys.stderr)
 
     # track_id が無ければ file から作る
     if "track_id" not in df.columns and "file" in df.columns:
@@ -249,7 +249,11 @@ def run(args: argparse.Namespace) -> int:
 
     # dtypeを揃える：統一キャスト（存在する列のみ適用）
     # stats[0] は dense 特徴量列（float想定）
-    float_cols = set(stats[0] or []) | set(CSV_FLOAT32_COLUMNS) | set(OPTIONAL_FLOAT32_COLUMNS)
+    float_cols = (
+        set(stats[0] or [])
+        | (set(CSV_FLOAT32_COLUMNS) - {"velocity"})
+        | set(OPTIONAL_FLOAT32_COLUMNS)
+    )
     if "beat_bin" in df.columns:
         float_cols.add("beat_bin")
 
@@ -257,6 +261,8 @@ def run(args: argparse.Namespace) -> int:
     int_cols = set(CSV_INT32_COLUMNS) | (
         {c for c in REQUIRED_COLUMNS if c not in {"velocity", "duration"}}
     ) | set(OPTIONAL_INT32_COLUMNS)
+    int_cols.discard("pitch")
+    int_cols.discard("program")
 
     df = coerce_columns(df, float32=float_cols, int32=int_cols)
 

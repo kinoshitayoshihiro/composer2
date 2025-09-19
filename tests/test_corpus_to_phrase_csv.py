@@ -51,11 +51,21 @@ def test_corpus_to_csv(tmp_path: Path) -> None:
             rows = list(csv.DictReader(f))
         assert rows, f"{csv_path} empty"
         header = rows[0].keys()
-        required = {"pitch", "velocity", "duration", "pos", "boundary", "bar", "instrument"}
+        required = {
+            "pitch",
+            "velocity",
+            "duration",
+            "pos",
+            "boundary",
+            "bar",
+            "instrument",
+            "program",
+        }
         assert required.issubset(header)
     with out_train.open() as f:
         rows = list(csv.DictReader(f))
     assert rows[1]["boundary"] == "1"
+    assert {row["program"] for row in rows} == {"0"}
 
 
 def test_from_corpus(tmp_path: Path) -> None:
@@ -97,6 +107,8 @@ def test_from_corpus(tmp_path: Path) -> None:
         with csv_path.open() as f:
             rows = list(csv.DictReader(f))
         assert rows
+        assert "program" in rows[0]
+        assert rows[0]["program"] == "-1"
 
 
 def test_unknown_instrument_fallback(tmp_path: Path) -> None:

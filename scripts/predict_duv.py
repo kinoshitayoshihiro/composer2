@@ -17,7 +17,6 @@ import numpy as np
 import pandas as pd
 import pretty_midi as pm
 import torch
-from pandas.errors import UndefinedVariableError
 
 from utilities.csv_io import coerce_columns
 from utilities.duv_infer import (
@@ -28,6 +27,7 @@ from utilities.duv_infer import (
     OPTIONAL_INT32_COLUMNS,
     REQUIRED_COLUMNS,
     duv_sequence_predict,
+    load_duv_dataframe,
     duv_verbose,
 )
 from utilities.ml_velocity import MLVelocityModel
@@ -75,60 +75,34 @@ def run(args: argparse.Namespace) -> int:
         raise SystemExit("missing or invalid stats json")
 
     feat_cols = list(stats[0] or [])
-    needed_cols = set(feat_cols)
-    needed_cols.update(REQUIRED_COLUMNS)
-    needed_cols.update(OPTIONAL_COLUMNS)
-    needed_cols.update(CSV_FLOAT32_COLUMNS)
-    needed_cols.update(CSV_INT32_COLUMNS)
 
     limit = max(0, int(getattr(args, "limit", 0) or 0))
 
-    header = pd.read_csv(args.csv, nrows=0)
-    available_cols = set(header.columns)
-    dtype_map: dict[str, object] = {}
-    float32_cols = set(feat_cols) | set(CSV_FLOAT32_COLUMNS) | set(OPTIONAL_FLOAT32_COLUMNS)
-    int32_cols = set(CSV_INT32_COLUMNS) | (
-        {c for c in REQUIRED_COLUMNS if c not in {"velocity", "duration"}}
-    ) | set(OPTIONAL_INT32_COLUMNS)
-    for col in available_cols & needed_cols:
-        if col in float32_cols:
-            dtype_map[col] = np.float32
-        elif col in int32_cols:
-            dtype_map[col] = np.int32
-
-    try:
-        df = pd.read_csv(
-            args.csv,
-            low_memory=False,
-            usecols=lambda c: c in needed_cols,
-            dtype=dtype_map,
-            nrows=limit if limit > 0 else None,
-        )
-    except ValueError as exc:
-        raise ValueError(str(exc)) from exc
-
-    df = df.reset_index(drop=True)
-
-    if getattr(args, "filter_program", None):
-        try:
-            df = df.query(args.filter_program, engine="python")
-        except UndefinedVariableError as exc:
-            raise SystemExit(
-                f"--filter-program referenced missing column: {exc}"
-            ) from exc
-        df = df.reset_index(drop=True)
-
-    if limit > 0 and len(df) > limit:
-        df = df.iloc[:limit].reset_index(drop=True)
+    df, program_hist = load_duv_dataframe(
+        args.csv,
+        feature_columns=feat_cols,
+        filter_expr=getattr(args, "filter_program", None),
+        limit=limit,
+        collect_program_hist=getattr(args, "verbose", False),
+    )
 
     if getattr(args, "verbose", False):
         print({"rows": int(len(df)), "limit": (limit if limit > 0 else None)}, file=sys.stderr)
+        if program_hist is not None and not program_hist.empty:
+            top = program_hist.head(10)
+            print({"program_top": top.to_dict()}, file=sys.stderr)
     if "track_id" not in df.columns and "file" in df.columns:
         df["track_id"] = pd.factorize(df["file"])[0].astype("int32")
-    float_cols = set(stats[0] or []) | set(CSV_FLOAT32_COLUMNS) | set(OPTIONAL_FLOAT32_COLUMNS)
+    float_cols = (
+        set(stats[0] or [])
+        | (set(CSV_FLOAT32_COLUMNS) - {"velocity"})
+        | set(OPTIONAL_FLOAT32_COLUMNS)
+    )
     int_cols = set(CSV_INT32_COLUMNS) | (
         {c for c in REQUIRED_COLUMNS if c not in {"velocity", "duration"}}
     ) | set(OPTIONAL_INT32_COLUMNS)
+    int_cols.discard("pitch")
+    int_cols.discard("program")
     df = coerce_columns(df, float32=float_cols, int32=int_cols)
 
     print({"rows": int(len(df)), "limit": limit}, file=sys.stderr)
@@ -302,7 +276,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
         dest="filter_program",
         help=(
             "Optional pandas query string applied immediately after loading the CSV (before --limit); "
-            "the DataFrame index is reset"
+            "the DataFrame index is reset (e.g. program == 0 and position >= 0)"
         ),
     )
     p.add_argument(

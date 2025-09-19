@@ -24,6 +24,7 @@ class NoteRow:
     bar: int
     position: int
     velocity: int
+    program: int
     chord_symbol: str
     articulation: str
     q_onset: float
@@ -211,6 +212,12 @@ def scan_midi_files(
 
         def process(event_writer=None):
             for track_idx, inst in enumerate(pm.instruments):
+                is_drum = bool(getattr(inst, "is_drum", False))
+                try:
+                    prog_raw = int(getattr(inst, "program", -1))
+                except Exception:
+                    prog_raw = -1
+                prog_val = 128 if is_drum else (prog_raw if prog_raw >= 0 else -1)
                 cc_times: List[float] = []
                 cc_vals: List[int] = []
                 cc11_times: List[float] = []
@@ -315,6 +322,7 @@ def scan_midi_files(
                             bar=bar,
                             position=position,
                             velocity=note.velocity,
+                            program=prog_val,
                             chord_symbol="",
                             articulation="",
                             q_onset=q_onset,
@@ -381,6 +389,7 @@ def build_note_csv(
         "bar",
         "position",
         "velocity",
+        "program",
         "chord_symbol",
         "articulation",
         "q_onset",

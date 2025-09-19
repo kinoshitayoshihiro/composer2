@@ -36,6 +36,7 @@ FIELDS = [
     "boundary",
     "bar",
     "instrument",
+    "program",
     "song_id",
     "velocity_bucket",
     "duration_bucket",
@@ -130,10 +131,16 @@ def midi_to_rows(
             # Fallback: if conversion fails, keep as-is (best-effort)
             sections_beats = [(float(t), str(s)) for (t, s) in sections]
 
-    notes: list[tuple[float, float, int, int, str]] = []
+    notes: list[tuple[float, float, int, int, str, int]] = []
     inst_match = False
     for inst in pm.instruments:
         name = inst.name or pretty_midi.program_to_instrument_name(inst.program)
+        is_drum = bool(getattr(inst, "is_drum", False))
+        try:
+            prog_raw = int(getattr(inst, "program", -1))
+        except Exception:
+            prog_raw = -1
+        prog_val = 128 if is_drum else (prog_raw if prog_raw >= 0 else -1)
         # Instrument selection logic:
         # 1) Prefer explicit instrument filters (substring/regex) against the MIDI track name.
         # 2) If those do not match but the file/folder path hints match the instrument, fall back to including.
@@ -162,7 +169,7 @@ def midi_to_rows(
             end_tick = pm.time_to_tick(n.end)
             start_beats = start_tick / ticks_per_beat
             dur_beats = (end_tick - start_tick) / ticks_per_beat
-            notes.append((start_beats, dur_beats, n.pitch, n.velocity, name))
+            notes.append((start_beats, dur_beats, n.pitch, n.velocity, name, prog_val))
     notes.sort()
 
     rows: list[dict[str, object]] = []
@@ -170,7 +177,7 @@ def midi_to_rows(
     prev_bar = None
     prev_section = None
 
-    for start, dur, pitch, vel, name in notes:
+    for start, dur, pitch, vel, name, prog_val in notes:
         bar = int(start // 4)
         pos = int((start % 4) * ticks_per_beat)
         boundary = 0
@@ -196,6 +203,7 @@ def midi_to_rows(
             "boundary": boundary,
             "bar": bar,
             "instrument": name,
+            "program": prog_val,
             "velocity_bucket": -1,
             "duration_bucket": -1,
         }
@@ -386,6 +394,8 @@ def corpus_mode(
                 if program is None and "program" in meta:
                     program = meta["program"]
                 prog_int = int(program) if program is not None else None
+                is_drum = bool(obj.get("is_drum") or meta.get("is_drum"))
+                prog_value = 128 if is_drum else (prog_int if prog_int is not None else -1)
                 # Support two corpus formats:
                 # 1) "samples" JSONL with explicit per-note fields (pitch/velocity/duration/...)
                 # 2) Token corpora with NOTE_x and DUV_d_v (or D_/V_) sequences
@@ -547,6 +557,7 @@ def corpus_mode(
                                 "boundary": boundary_flag,
                                 "bar": bar_idx,
                                 "instrument": name,
+                                "program": prog_value,
                                 "velocity_bucket": -1,
                                 "duration_bucket": -1,
                             }
@@ -607,6 +618,8 @@ def corpus_mode(
                 track_hist[track.lower()] += 1
                 if prog_int is not None:
                     prog_hist[prog_int] += 1
+                elif is_drum:
+                    prog_hist[128] += 1
                 note_count = int(
                     obj.get("note_count")
                     or (len(obj.get("notes", [])) if isinstance(obj.get("notes"), list) else 1)
@@ -671,6 +684,7 @@ def corpus_mode(
                     "boundary": obj.get("boundary", 0),
                     "bar": obj.get("bar", 0),
                     "instrument": name,
+                    "program": prog_value,
                     "velocity_bucket": -1,
                     "duration_bucket": -1,
                 }

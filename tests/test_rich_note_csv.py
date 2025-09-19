@@ -53,6 +53,8 @@ def test_bar_position_4_4(tmp_path):
     build_note_csv(tmp_path, out)
     with out.open() as f:
         rows = list(csv.DictReader(f))
+    assert rows[0]["program"] == "0"
+    assert rows[1]["program"] == "0"
     assert rows[0]["bar"] == "0" and rows[0]["position"] == "0"
     assert rows[1]["bar"] == "1" and rows[1]["position"] == "0"
 
@@ -66,6 +68,7 @@ def test_bar_position_3_4(tmp_path):
         rows = list(csv.DictReader(f))
     assert rows[0]["bar"] == "0" and rows[0]["position"] == "0"
     assert rows[1]["bar"] == "1" and rows[1]["position"] == "0"
+    assert {row["program"] for row in rows} == {"0"}
 
 
 def test_cc_bend_flags(tmp_path):
@@ -75,10 +78,10 @@ def test_cc_bend_flags(tmp_path):
     build_note_csv(tmp_path, out1, include_cc=False, include_bend=False)
     with out1.open() as f:
         header = next(csv.reader(f))
-    assert "CC64" not in header and "bend" not in header
+    assert "CC64" not in header and "bend" not in header and "program" in header
 
     out2 = tmp_path / "with.csv"
     build_note_csv(tmp_path, out2)
     with out2.open() as f:
         header2 = next(csv.reader(f))
-    assert "CC64" in header2 and "bend" in header2
+    assert "CC64" in header2 and "bend" in header2 and "program" in header2

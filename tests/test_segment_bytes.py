@@ -8,6 +8,33 @@ from .torch_stub import _stub_torch
 
 _stub_torch()
 
+try:
+    import torch
+
+    _StubTensor = torch.tensor([0]).__class__
+    if _StubTensor.__module__.startswith("tests.torch_stub"):
+        if not hasattr(_StubTensor, "bool"):
+            def _tensor_bool(self):
+                return self
+
+            _StubTensor.bool = _tensor_bool  # type: ignore[attr-defined]
+
+        if _StubTensor.__getitem__ is list.__getitem__:
+            def _tensor_getitem(self, idx):
+                if isinstance(idx, _StubTensor):
+                    idx = [bool(v) for v in idx]
+                    values = [value for value, flag in zip(self, idx) if flag]
+                    return _StubTensor(values)
+
+                value = list.__getitem__(self, idx)
+                if isinstance(value, list):
+                    return _StubTensor(value)
+                return value
+
+            _StubTensor.__getitem__ = _tensor_getitem  # type: ignore[assignment]
+except Exception:  # pragma: no cover - defensive
+    pass
+
 
 def _stub_pandas() -> None:
     if importlib.util.find_spec("pandas") is not None:
@@ -59,14 +86,24 @@ _stub_numpy()
 
 tp_mod = ModuleType("scripts.train_phrase")
 tp_mod.PhraseLSTM = object
-sys.modules["scripts.train_phrase"] = tp_mod
+_previous_train_phrase = sys.modules.get("scripts.train_phrase")
 
 pt_mod = ModuleType("models.phrase_transformer")
 pt_mod.PhraseTransformer = object
 sys.modules.setdefault("models", ModuleType("models"))
 sys.modules["models.phrase_transformer"] = pt_mod
 
-from scripts.segment_phrase import segment_bytes  # noqa: E402
+_segment_bytes = None
+try:
+    sys.modules["scripts.train_phrase"] = tp_mod
+    from scripts.segment_phrase import segment_bytes as _segment_bytes  # noqa: E402
+finally:
+    if _previous_train_phrase is not None:
+        sys.modules["scripts.train_phrase"] = _previous_train_phrase
+    else:
+        sys.modules.pop("scripts.train_phrase", None)
+
+segment_bytes = _segment_bytes
 
 
 class DummyModel:
@@ -74,7 +111,7 @@ class DummyModel:
         import torch
 
         n = len(feats["pitch_class"][0])
-        return torch.tensor([[0.1 * i for i in range(1, n + 1)]])
+        return {"boundary": torch.tensor([[0.1 * i for i in range(1, n + 1)]])}
 
 
 def _stub_miditoolkit() -> None:

@@ -10,12 +10,15 @@ By importing this module once at startup, we monkey-patch the method so it
 
 from __future__ import annotations
 
+import os as _os
+
 import numpy as _np
 import pretty_midi as _pm
 
 # If someone else already patched it, don't stack.
 if not getattr(_pm.PrettyMIDI.get_tempo_changes, "_composer2_patched", False):
     _orig_get_tempo_changes = _pm.PrettyMIDI.get_tempo_changes
+    _orig_write = _pm.PrettyMIDI.write
 
     def _safe_get_tempo_changes(self):
         bpms, times = _orig_get_tempo_changes(self)
@@ -28,3 +31,14 @@ if not getattr(_pm.PrettyMIDI.get_tempo_changes, "_composer2_patched", False):
 
     _safe_get_tempo_changes._composer2_patched = True  # type: ignore[attr-defined]
     _pm.PrettyMIDI.get_tempo_changes = _safe_get_tempo_changes  # type: ignore[assignment]
+
+    def _safe_write(self, filename):
+        try:
+            filename = _os.fspath(filename)
+        except TypeError:
+            pass
+        except Exception:
+            pass
+        return _orig_write(self, filename)
+
+    _pm.PrettyMIDI.write = _safe_write  # type: ignore[assignment]

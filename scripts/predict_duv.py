@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pretty_midi as pm
 import torch
+from pandas.errors import UndefinedVariableError
 
 from utilities.csv_io import coerce_columns
 from utilities.duv_infer import (
@@ -109,7 +110,12 @@ def run(args: argparse.Namespace) -> int:
     df = df.reset_index(drop=True)
 
     if getattr(args, "filter_program", None):
-        df = df.query(args.filter_program, engine="python")
+        try:
+            df = df.query(args.filter_program, engine="python")
+        except UndefinedVariableError as exc:
+            raise SystemExit(
+                f"--filter-program referenced missing column: {exc}"
+            ) from exc
         df = df.reset_index(drop=True)
 
     if limit > 0 and len(df) > limit:

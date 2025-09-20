@@ -66,6 +66,15 @@ def _ensure_tempo(pm: pretty_midi.PrettyMIDI, bpm: float, tempo_source: str) -> 
 def _analyze(path: Path):
     logger.info("Analyzing %s", path)
     pm = pretty_midi.PrettyMIDI(str(path))
+    try:
+        tempi, _times = pm.get_tempo_changes()
+        if len(tempi) == 0 or not float(tempi[0]) > 0:
+            scale = 60.0 / (120.0 * pm.resolution)
+            pm._tick_scales = [(0, scale)]
+            if hasattr(pm, "_update_tick_to_time"):
+                pm._update_tick_to_time(pm.resolution)
+    except Exception:
+        pass
     bpm = _safe_read_bpm(pm, default_bpm=120.0, fold_halves=False)
     source = getattr(_safe_read_bpm, "last_source", "file")
     if source == "default":

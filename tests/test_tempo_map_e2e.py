@@ -1,7 +1,8 @@
 from pathlib import Path
 
-import pretty_midi
 import pytest
+
+pretty_midi = pytest.importorskip("pretty_midi")
 
 from utilities import beat_to_seconds as _beat_to_seconds  # noqa: F401
 from utilities.midi_export import export_song
@@ -47,7 +48,10 @@ def test_tempo_map_e2e(tmp_path: Path) -> None:
         out_path=out,
     )
     assert out.exists()
-    bpms, _times = pm.get_tempo_changes()
+    bpms, times = pm.get_tempo_changes()
+    times_list = times.tolist() if hasattr(times, "tolist") else list(times)
+    assert times_list[0] == pytest.approx(0.0)
+    assert all(t >= 0 for t in times_list)
     assert [round(b) for b in bpms] == [120, 90, 140]
     # Reload file so tempo map affects timing
     pm2 = pretty_midi.PrettyMIDI(str(out))

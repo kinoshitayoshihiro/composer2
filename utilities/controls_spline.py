@@ -291,7 +291,7 @@ def tempo_map_from_events(
 def tempo_map_from_prettymidi(pm: pretty_midi.PrettyMIDI) -> Callable[[float], float]:
     """Return a tempo map callable derived from a PrettyMIDI object."""
 
-    times, bpms = pm.get_tempo_changes()
+    bpms, times = pm.get_tempo_changes()
     beats = [pm.time_to_beat(t) for t in times]
     events = list(zip(beats, bpms))
     return tempo_map_from_events(events)

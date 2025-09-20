@@ -66,5 +66,5 @@ def test_inject_default_tempo(tmp_path):
     make_midi(path, tempo=False)
     train(tmp_path, n=1, inject_default_tempo=100.0)
     pm = pretty_midi.PrettyMIDI(str(path))
-    _, tempi = pm.get_tempo_changes()
+    tempi, _ = pm.get_tempo_changes()
     assert pytest.approx(tempi[0]) == 100.0

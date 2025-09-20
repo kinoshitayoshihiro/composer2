@@ -183,7 +183,7 @@ def _ensure_tempo(pm: pretty_midi.PrettyMIDI, default_bpm: float = 120.0) -> pre
     """
 
     injected = False
-    times, tempi = pm.get_tempo_changes()
+    tempi, _times = pm.get_tempo_changes()
     if len(tempi):
         _ensure_tempo.injected = False  # type: ignore[attr-defined]
         return pm
@@ -656,7 +656,7 @@ def _resolve_tempo(
 
     bpm: float | None = None
     source = "unknown"
-    times, tempi = pm.get_tempo_changes()
+    tempi, _times = pm.get_tempo_changes()
     if len(tempi) and math.isfinite(tempi[0]):
         bpm = float(tempi[0])
         source = "pretty_midi"

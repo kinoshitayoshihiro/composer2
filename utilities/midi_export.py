@@ -33,6 +33,7 @@ def _set_initial_tempo(pm: "pretty_midi.PrettyMIDI", bpm: float) -> None:
 
     scale = 60.0 / (float(bpm) * pm.resolution)
     pm._tick_scales = [(0, scale)]
+    setattr(pm, "_composer2_injected_tempo", True)
     pm._update_tick_to_time(pm.resolution)
 
 

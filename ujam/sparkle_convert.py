@@ -194,6 +194,7 @@ def _note_name_to_midi(tok: str) -> Optional[int]:
     token = tok.strip()
     if not token:
         return None
+    token = unicodedata.normalize("NFKC", token)
     token = (
         token.replace("♭", "b")
         .replace("♯", "#")

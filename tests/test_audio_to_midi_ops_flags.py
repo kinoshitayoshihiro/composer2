@@ -69,8 +69,12 @@ class TestOpsFlags:
         wav = tmp_path / "p.wav"
         _write_wav(wav, audio)
         inst = pretty_midi.Instrument(program=0, name="Piano")
-        inst.notes.append(pretty_midi.Note(60, 0.0, 1.0))
-        inst.notes.append(pretty_midi.Note(62, 0.5, 1.5))
+        inst.notes.append(
+            pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=1.0)
+        )
+        inst.notes.append(
+            pretty_midi.Note(velocity=100, pitch=62, start=0.5, end=1.5)
+        )
         args = argparse.Namespace(
             emit_cc11=False,
             emit_cc64=True,

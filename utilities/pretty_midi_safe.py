@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 import tempfile
 from typing import Any
 
@@ -27,7 +28,35 @@ def pm_to_mido(pm: pretty_midi.PrettyMIDI):
             pm.write(tmp_path)
         else:  # pragma: no cover - extremely old pretty_midi
             raise RuntimeError("PrettyMIDI.write unavailable in this environment")
-        return mido.MidiFile(tmp_path)
+        midi = mido.MidiFile(tmp_path)
+        try:
+            from mido import MetaMessage, MidiTrack, bpm2tempo
+        except Exception:  # pragma: no cover - optional dependency subset missing
+            return midi
+
+        initial_bpm: float | None = None
+        try:
+            _, tempi = pm.get_tempo_changes()
+            if len(tempi) > 0:
+                initial_bpm = float(tempi[0])
+        except Exception:
+            initial_bpm = None
+        if not initial_bpm or not math.isfinite(initial_bpm) or initial_bpm <= 0:
+            initial_bpm = float(getattr(pm, "initial_tempo", 120.0) or 120.0)
+
+        tempo_msg = MetaMessage("set_tempo", tempo=bpm2tempo(initial_bpm), time=0)
+        if midi.tracks:
+            track0 = midi.tracks[0]
+        else:  # pragma: no cover - ensure track exists
+            track0 = MidiTrack()
+            midi.tracks.append(track0)
+
+        for msg in track0:
+            if getattr(msg, "type", "") == "set_tempo":
+                break
+        else:
+            track0.insert(0, tempo_msg)
+        return midi
     finally:
         try:
             os.remove(tmp_path)

@@ -802,6 +802,10 @@ class ControlCurve:
                     vals.append(0)
                 else:
                     vals[-1] = 0
+        if max_events is not None and len(vals) > max_events:
+            idxs = _uniform_indices(len(vals), max_events)
+            t = [t[i] for i in idxs]
+            vals = [int(vals[i]) for i in idxs]
         for tt, vv in zip(t, vals):
             inst.pitch_bends.append(
                 pretty_midi.PitchBend(pitch=int(vv), time=float(tt + self.offset_sec + time_offset))

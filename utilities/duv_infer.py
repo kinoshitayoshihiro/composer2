@@ -63,6 +63,27 @@ CSV_INT32_COLUMNS: set[str] = {
 }
 
 
+def _mask_any(mask: object) -> bool:
+    if mask is None:
+        return False
+    try:
+        if isinstance(mask, torch.Tensor):
+            return bool(torch.any(mask).item())
+    except Exception:
+        pass
+    try:
+        if isinstance(mask, np.ndarray):
+            return bool(np.any(mask))
+    except Exception:
+        pass
+    any_method = getattr(mask, "any", None)
+    if callable(any_method):
+        result = any_method()
+        item = getattr(result, "item", None)
+        return bool(item() if callable(item) else result)
+    return bool(mask)
+
+
 def _missing_required(columns: Iterable[str]) -> list[str]:
     return sorted(REQUIRED_COLUMNS - set(columns))
 
@@ -423,6 +444,7 @@ __all__ = [
     "CSV_FLOAT32_COLUMNS",
     "CSV_INT32_COLUMNS",
     "REQUIRED_COLUMNS",
+    "_mask_any",
     "duv_sequence_predict",
     "duv_verbose",
 ]

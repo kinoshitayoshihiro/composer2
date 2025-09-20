@@ -13,8 +13,8 @@ def check_midi_tempos(root_dir="midi_output"):
         total_files += 1
         try:
             m = pm.PrettyMIDI(str(p))
-            tempi, times = m.get_tempo_changes()
-            
+            times, tempi = m.get_tempo_changes()
+
             # ケース判定
             if len(tempi) == 0:
                 bad.append({

@@ -71,7 +71,10 @@ def _register_tmp(path: Path, *, cleanup: Callable[[], None] | None = None) -> P
 
 
 def _make_tempdir(prefix: str) -> Path:
-    td = tempfile.TemporaryDirectory(prefix=prefix)
+    try:
+        td = tempfile.TemporaryDirectory(prefix=prefix)
+    except TypeError:
+        td = tempfile.TemporaryDirectory()
     cleanup: Callable[[], None] | None = getattr(td, "cleanup", None)
     name: str | None = getattr(td, "name", None)
 
@@ -914,9 +917,15 @@ def train_model(
             vals = ds_train.group_tags[tag]
             freq = Counter(vals)
             weights = [1.0 / freq[v] for v in vals]
-            sampler = torch.utils.data.WeightedRandomSampler(
-                weights, len(weights), replacement=True
-            )
+            try:
+                sampler = torch.utils.data.WeightedRandomSampler(
+                    weights, len(weights), replacement=True
+                )
+            except TypeError:
+                sampler = torch.utils.data.WeightedRandomSampler(
+                    weights, len(weights), True
+                )
+            logging.debug("inv_freq weight head %s", [round(w, 6) for w in weights[:3]])
             weight_map = {v: 1.0 / freq[v] for v in freq}
             weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
             logging.info("top tag weights %s", weight_stats)

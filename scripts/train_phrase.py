@@ -15,6 +15,7 @@ import tempfile
 import types
 import time
 import warnings
+import inspect
 from collections import Counter
 from contextlib import nullcontext
 from pathlib import Path
@@ -1047,7 +1048,7 @@ def train_model(
             use_local_stats=use_local_stats,
         )
     else:
-        model = PhraseTransformer(
+        ctor_kwargs = dict(
             d_model=d_model,
             max_len=max_len,
             section_vocab_size=len(section_vocab) + 1 if section_vocab else 0,
@@ -1063,6 +1064,21 @@ def train_model(
             dropout=dropout,
             use_sinusoidal_posenc=use_sinusoidal_posenc,
         )
+        try:
+            sig = inspect.signature(PhraseTransformer.__init__)
+        except (TypeError, ValueError):
+            sig = None
+        if sig is not None:
+            params = sig.parameters.values()
+            has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+            if not has_var_kw:
+                allowed = {
+                    p.name
+                    for p in params
+                    if p.name != "self" and p.kind != inspect.Parameter.VAR_POSITIONAL
+                }
+                ctor_kwargs = {k: v for k, v in ctor_kwargs.items() if k in allowed}
+        model = PhraseTransformer(**ctor_kwargs)
     model = model.to(device)
     # Initialize boundary head bias to dataset prior logit to avoid extreme initial saturation
     try:

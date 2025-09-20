@@ -63,19 +63,32 @@ def _import_phrase_transformer() -> type:
         )
         return PhraseTransformer
 
+    def _promote(pt: object | None, module: types.ModuleType | None = None) -> type | None:
+        if pt is object:
+            class PTProxy(object):
+                pass
+
+            logging.warning("Promoting bare 'object' to PTProxy to allow monkeypatching.")
+            if module is not None:
+                setattr(module, "PhraseTransformer", PTProxy)
+            return PTProxy
+        if isinstance(pt, type):
+            return pt
+        return None
+
     # 1) Prefer stubs injected via sys.modules
     module = sys.modules.get("models.phrase_transformer")
     if module is not None:
-        pt = getattr(module, "PhraseTransformer", None)
-        if isinstance(pt, type):
-            return pt
+        promoted = _promote(getattr(module, "PhraseTransformer", None), module)
+        if promoted is not None:
+            return promoted
 
     # 2) Attempt regular import (optionally extending sys.path)
     try:  # pragma: no cover
         module = importlib.import_module("models.phrase_transformer")
-        pt = getattr(module, "PhraseTransformer", None)
-        if isinstance(pt, type):
-            return pt
+        promoted = _promote(getattr(module, "PhraseTransformer", None), module)
+        if promoted is not None:
+            return promoted
     except ModuleNotFoundError:
         repo_root = Path(__file__).resolve().parent.parent
         if os.environ.get("ALLOW_LOCAL_IMPORT") == "1" and str(repo_root) not in sys.path:
@@ -83,9 +96,9 @@ def _import_phrase_transformer() -> type:
             logging.warning("added repo root to sys.path for local import")
             try:
                 module = importlib.import_module("models.phrase_transformer")
-                pt = getattr(module, "PhraseTransformer", None)
-                if isinstance(pt, type):
-                    return pt
+                promoted = _promote(getattr(module, "PhraseTransformer", None), module)
+                if promoted is not None:
+                    return promoted
             except Exception:  # pragma: no cover
                 pass
         return _install_and_return_stub()

@@ -62,35 +62,39 @@ CSV_INT32_COLUMNS: set[str] = {
     "program",
 }
 
-def _mask_any(x: object) -> bool:
-    """Reduce *x* to a single boolean, handling torch/numpy gracefully."""
+def _mask_any(x: object):
+    """Reduce *x* to a single truthy scalar with robust semantics.
+    Always returns a numpy.bool_ so callers may safely call .item()."""
+
+    _np = np if "np" in globals() else None
 
     if x is None:
-        return False
+        return (_np.bool_(False) if _np is not None else False)
 
     try:
-        import torch  # type: ignore[import-not-found]
-
         t = torch.as_tensor(x)
-        return bool(t.any().item())
+        val = bool(t.any().item())
+        return (_np.bool_(val) if _np is not None else val)
     except Exception:
         pass
 
+    if _np is not None:
+        try:
+            return _np.bool_(_np.any(x))
+        except Exception:
+            pass
+
     try:
-        import numpy as np  # type: ignore[import-not-found]
-
-        return bool(np.any(x))
+        val = any(bool(v) for v in x)  # type: ignore[arg-type]
+        return (_np.bool_(val) if _np is not None else val)
     except Exception:
-        pass
-
-    try:
-        return any(bool(v) for v in x)  # type: ignore[arg-type]
-    except Exception:
-        return bool(x)
+        val = bool(x)
+        return (_np.bool_(val) if _np is not None else val)
 
 
-def mask_any(mask: object) -> bool:
-    """Backward compatible wrapper for :func:`_mask_any`."""
+def mask_any(mask: object):
+    """Backward compatible wrapper for :func:`_mask_any`.
+    Intentionally returns numpy.bool_ (when available) to support ``.item()``."""
 
     return _mask_any(mask)
 

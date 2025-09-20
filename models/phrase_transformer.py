@@ -1,34 +1,34 @@
+"""Minimal Transformer encoder for phrase-level embeddings with legacy compat."""
+
 from __future__ import annotations
 
-import math
+from typing import Any, Optional
 
 import torch
 from torch import nn
 
 
-class PositionalEncoding(nn.Module):  # type: ignore[misc]
-    def __init__(self, d_model: int, max_len: int = 512) -> None:
-        super().__init__()
-        pos = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div = torch.exp(
-            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
-        )
-        pe = torch.zeros(max_len, d_model)
-        pe[:, 0::2] = torch.sin(pos * div)
-        pe[:, 1::2] = torch.cos(pos * div)
-        self.register_buffer("pe", pe.unsqueeze(0))
+def _build_positional_encoding(max_len: int, d_model: int) -> torch.Tensor:
+    """Create sinusoidal positional encodings of shape ``(max_len, d_model)``."""
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.pe[:, : x.size(1)]
+    position = torch.arange(max_len, dtype=torch.float32).unsqueeze(1)
+    div_term = torch.exp(
+        torch.arange(0, d_model, 2, dtype=torch.float32)
+        * (-torch.log(torch.tensor(10000.0)) / d_model)
+    )
+    pe = torch.zeros(max_len, d_model, dtype=torch.float32)
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+    return pe
 
 
-class PhraseTransformer(nn.Module):  # type: ignore[misc]
-    """Simple transformer encoder for phrase segmentation."""
+class PhraseTransformer(nn.Module):
+    """Lightweight Transformer encoder used for phrase embedding."""
 
     def __init__(
         self,
-        d_model: int = 512,
-        max_len: int = 128,
+        d_model: int,
+        max_len: int,
         *,
         section_vocab_size: int = 0,
         mood_vocab_size: int = 0,
@@ -47,56 +47,57 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
         super().__init__()
         self.d_model = d_model
         self.max_len = max_len
-        self.pitch_emb = nn.Embedding(12, d_model // 4)
-        self.pos_emb = nn.Embedding(max_len, d_model // 4)
-        self.dur_proj = nn.Linear(1, d_model // 4)
-        self.vel_proj = nn.Linear(1, d_model // 4)
-        extra_dim = 0
-        # Optional bar/beat phase projections (to match some checkpoints)
-        self.use_bar_beat = bool(use_bar_beat)
-        if self.use_bar_beat:
-            self.barpos_proj = nn.Linear(1, d_model // 8)
-            self.beatpos_proj = nn.Linear(1, d_model // 8)
-            extra_dim += (d_model // 8) * 2
-        else:
-            self.barpos_proj = None
-            self.beatpos_proj = None
-        if section_vocab_size:
-            self.section_emb = nn.Embedding(section_vocab_size, 16)
-            extra_dim += 16
-        else:
-            self.section_emb = None
-        if mood_vocab_size:
-            self.mood_emb = nn.Embedding(mood_vocab_size, 16)
-            extra_dim += 16
-        else:
-            self.mood_emb = None
-        if vel_bucket_size:
-            self.vel_bucket_emb = nn.Embedding(vel_bucket_size, 8)
-            extra_dim += 8
-        else:
-            self.vel_bucket_emb = None
-        if dur_bucket_size:
-            self.dur_bucket_emb = nn.Embedding(dur_bucket_size, 8)
-            extra_dim += 8
-        else:
-            self.dur_bucket_emb = None
-        self.feat_proj = nn.Linear(d_model + extra_dim, d_model)
-        self.in_norm = nn.LayerNorm(d_model)
-        self.use_cls = True
-        self.cls = nn.Parameter(torch.zeros(1, 1, d_model))
-        enc_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=nhead, batch_first=True, dropout=dropout
+        self.section_vocab_size = section_vocab_size
+        self.mood_vocab_size = mood_vocab_size
+        self.vel_bucket_size = vel_bucket_size
+        self.dur_bucket_size = dur_bucket_size
+        self.use_bar_beat = use_bar_beat
+        self.duv_mode = duv_mode
+        self.vel_bins = vel_bins
+        self.dur_bins = dur_bins
+        self.nhead = nhead
+        self.num_layers = num_layers
+        self.dropout_p = dropout
+        self.use_sinusoidal_posenc = use_sinusoidal_posenc
+        self.pitch_vocab_size = pitch_vocab_size
+
+        self.token_embed = nn.Embedding(128, d_model, padding_idx=0)
+        self.section_embed = (
+            nn.Embedding(section_vocab_size, d_model) if section_vocab_size > 0 else None
         )
-        # PyTorch 2.1+ exposes nested-tensor optimization in TransformerEncoder.
-        # On Apple MPS this path can crash or be unimplemented; disable when available.
-        try:  # prefer explicit disable when supported
+        self.mood_embed = (
+            nn.Embedding(mood_vocab_size, d_model) if mood_vocab_size > 0 else None
+        )
+        self.vel_embed = (
+            nn.Embedding(vel_bucket_size, d_model) if vel_bucket_size > 0 else None
+        )
+        self.dur_embed = (
+            nn.Embedding(dur_bucket_size, d_model) if dur_bucket_size > 0 else None
+        )
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=4 * d_model,
+            dropout=dropout,
+            batch_first=True,
+        )
+        try:
             self.encoder = nn.TransformerEncoder(
-                enc_layer, num_layers=num_layers, enable_nested_tensor=False
+                encoder_layer, num_layers=num_layers, enable_nested_tensor=False
             )
-        except TypeError:  # older torch without the kwarg
-            self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
-        self.pos_enc = PositionalEncoding(d_model, max_len + 1) if use_sinusoidal_posenc else None
+        except TypeError:  # pragma: no cover - older torch
+            self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.dropout = nn.Dropout(dropout)
+        if use_sinusoidal_posenc:
+            pos_enc = _build_positional_encoding(max_len + 1, d_model)
+        else:
+            pos_enc = torch.zeros(max_len + 1, d_model, dtype=torch.float32)
+        self.register_buffer("positional_encoding", pos_enc, persistent=False)
+
+        self.in_norm = nn.Identity()
+        self.feat_proj = nn.Identity()
         self.out_norm = nn.LayerNorm(d_model)
         self.head_boundary = nn.Linear(d_model, 1)
         self.head_vel_reg = (
@@ -106,106 +107,315 @@ class PhraseTransformer(nn.Module):  # type: ignore[misc]
             nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
         )
         self.head_vel_cls = (
-            nn.Linear(d_model, vel_bins) if duv_mode in {"cls", "both"} else None
+            nn.Linear(d_model, vel_bins)
+            if duv_mode in {"cls", "both"} and vel_bins > 0
+            else None
         )
         self.head_dur_cls = (
-            nn.Linear(d_model, dur_bins) if duv_mode in {"cls", "both"} else None
+            nn.Linear(d_model, dur_bins)
+            if duv_mode in {"cls", "both"} and dur_bins > 0
+            else None
         )
         self.head_pitch = nn.Linear(d_model, pitch_vocab_size)
 
+        self.use_cls = True
+        self.cls = nn.Parameter(torch.zeros(1, 1, d_model))
+
+    def _first_device(self, *tensors: torch.Tensor | None) -> torch.device:
+        for tensor in tensors:
+            if isinstance(tensor, torch.Tensor):
+                return tensor.device
+        for param in self.parameters():
+            return param.device
+        return torch.device("cpu")
+
+    def _infer_shape(self, batch: dict[str, Any]) -> tuple[int, int]:
+        for key in (
+            "section",
+            "mood",
+            "velocity_bucket",
+            "vel_bucket",
+            "duration_bucket",
+            "dur_bucket",
+            "tokens",
+            "pitch",
+            "pitch_class",
+            "position",
+            "velocity",
+            "duration",
+            "bar_phase",
+            "beat_phase",
+        ):
+            value = batch.get(key)
+            if isinstance(value, torch.Tensor) and value.dim() >= 2:
+                return value.size(0), value.size(1)
+        length_hint = batch.get("lengths")
+        if isinstance(length_hint, torch.Tensor) and length_hint.numel() > 0:
+            max_len = max(int(length_hint.max().item()), 1)
+            return int(length_hint.size(0)), max_len
+        if isinstance(length_hint, (list, tuple)) and len(length_hint) > 0:
+            return len(length_hint), max(int(max(length_hint)), 1)
+        single_length = batch.get("length")
+        if isinstance(single_length, torch.Tensor):
+            return 1, max(int(single_length.item()), 1)
+        if isinstance(single_length, int):
+            return 1, max(single_length, 1)
+        return 1, 1
+
+    def _prepare_ids(
+        self, ids: Optional[torch.Tensor], target_shape: torch.Size, vocab_size: int
+    ) -> Optional[torch.Tensor]:
+        if ids is None:
+            return None
+        ids = ids.to(torch.long)
+        if ids.dim() == 0:
+            ids = ids.view(1, 1)
+        if ids.dim() == 1:
+            ids = ids.unsqueeze(0)
+        if ids.size(0) == 1 and target_shape[0] > 1:
+            ids = ids.expand(target_shape[0], -1)
+        if ids.shape != target_shape:
+            if ids.size(0) != target_shape[0]:
+                return None
+            if ids.size(1) < target_shape[1]:
+                pad = torch.zeros(
+                    ids.size(0),
+                    target_shape[1] - ids.size(1),
+                    dtype=ids.dtype,
+                    device=ids.device,
+                )
+                ids = torch.cat([ids, pad], dim=1)
+            else:
+                ids = ids[:, : target_shape[1]]
+        return ids.clamp_(min=0, max=max(vocab_size - 1, 0))
+
+    def _select_mask(
+        self, batch: dict[str, Any], shape: torch.Size
+    ) -> Optional[torch.Tensor]:
+        for key in (
+            "src_key_padding_mask",
+            "key_padding_mask",
+            "attention_mask",
+            "padding_mask",
+            "mask",
+        ):
+            mask = batch.get(key)
+            if isinstance(mask, torch.Tensor):
+                mask = mask.to(torch.bool)
+                if mask.dim() == 1:
+                    mask = mask.unsqueeze(0)
+                if mask.size(0) == 1 and shape[0] > 1:
+                    mask = mask.expand(shape[0], -1)
+                if mask.shape != shape:
+                    if mask.size(0) != shape[0]:
+                        continue
+                    if mask.size(1) < shape[1]:
+                        pad = torch.ones(
+                            mask.size(0),
+                            shape[1] - mask.size(1),
+                            dtype=torch.bool,
+                            device=mask.device,
+                        )
+                        mask = torch.cat([mask, pad], dim=1)
+                    else:
+                        mask = mask[:, : shape[1]]
+                return mask
+        return None
+
     def forward(
-        self, feats: dict[str, torch.Tensor], mask: torch.Tensor
+        self, *args: Any, **batch: Any
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
+        """Encode token sequences or legacy feature dicts."""
+
+        if args and isinstance(args[0], dict):
+            feats = args[0]
+            mask = args[1] if len(args) > 1 else None
+            return self._forward_legacy(feats, mask, **batch)
+
+        return self._forward_tokens(*args, **batch)
+
+    def _resolve_tokens(
+        self,
+        *args: Any,
+        **batch: Any,
+    ) -> tuple[torch.Tensor, torch.device]:
+        tokens: Optional[torch.Tensor] = None
+        if args:
+            first = args[0]
+            if isinstance(first, torch.Tensor):
+                tokens = first
+        if tokens is None:
+            tokens = batch.get("tokens")
+        if tokens is None:
+            tokens = batch.get("pitch")
+
+        tensor_values = tuple(value for value in batch.values() if isinstance(value, torch.Tensor))
+
+        if tokens is None or not isinstance(tokens, torch.Tensor):
+            device = self._first_device(None, *tensor_values)
+            batch_size, seq_len = self._infer_shape(batch)
+            tokens = torch.zeros((batch_size, seq_len), dtype=torch.long, device=device)
+        else:
+            device = self._first_device(tokens, *tensor_values)
+            tokens = tokens.to(device=device, dtype=torch.long)
+            vocab_mask = (tokens >= 0) & (tokens < self.token_embed.num_embeddings)
+            tokens = torch.where(
+                vocab_mask, tokens, torch.zeros_like(tokens, dtype=tokens.dtype)
+            )
+        return tokens, device
+
+    def _forward_tokens(self, *args: Any, **batch: Any) -> torch.Tensor:
+        tokens, device = self._resolve_tokens(*args, **batch)
+        batch_size, seq_len = tokens.size(0), tokens.size(1)
+
+        base = self.token_embed(tokens)
+
+        if self.section_embed is not None:
+            section_ids = self._prepare_ids(
+                batch.get("section"), tokens.shape, self.section_vocab_size
+            )
+            if section_ids is not None:
+                base = base + self.section_embed(section_ids.to(device))
+        if self.mood_embed is not None:
+            mood_ids = self._prepare_ids(
+                batch.get("mood"), tokens.shape, self.mood_vocab_size
+            )
+            if mood_ids is not None:
+                base = base + self.mood_embed(mood_ids.to(device))
+        if self.vel_embed is not None:
+            vel_ids = batch.get("vel_bucket")
+            if vel_ids is None:
+                vel_ids = batch.get("velocity_bucket")
+            vel_ids_prepared = self._prepare_ids(vel_ids, tokens.shape, self.vel_bucket_size)
+            if vel_ids_prepared is not None:
+                base = base + self.vel_embed(vel_ids_prepared.to(device))
+        if self.dur_embed is not None:
+            dur_ids = batch.get("dur_bucket")
+            if dur_ids is None:
+                dur_ids = batch.get("duration_bucket")
+            dur_ids_prepared = self._prepare_ids(dur_ids, tokens.shape, self.dur_bucket_size)
+            if dur_ids_prepared is not None:
+                base = base + self.dur_embed(dur_ids_prepared.to(device))
+
+        pos_enc = self._ensure_posenc(seq_len + 1, device)
+        base = base + pos_enc[:seq_len].unsqueeze(0)
+        base = self.dropout(base)
+
+        # NOTE: src_key_padding_mask expects True where tokens are padding.
+        mask = self._select_mask(batch, tokens.shape)
+        hidden = self.encoder(base, src_key_padding_mask=mask)
+        return hidden
+
+    def _forward_legacy(
+        self,
+        feats: dict[str, Any],
+        mask: Optional[torch.Tensor] = None,
+        **extra: Any,
     ) -> dict[str, torch.Tensor]:
-        pos_ids = feats["position"].clamp(max=self.max_len - 1)
-        dur = self.dur_proj(feats["duration"].unsqueeze(-1))
-        vel = self.vel_proj(feats["velocity"].unsqueeze(-1))
-        pc = self.pitch_emb(feats["pitch_class"] % 12)
-        pos = self.pos_emb(pos_ids)
-        parts = [dur, vel, pc, pos]
-        if self.use_bar_beat and self.barpos_proj is not None and self.beatpos_proj is not None and "bar_phase" in feats and "beat_phase" in feats:
-            bp = self.barpos_proj(feats["bar_phase"].unsqueeze(-1))
-            bt = self.beatpos_proj(feats["beat_phase"].unsqueeze(-1))
-            parts.extend([bp, bt])
-        if self.section_emb is not None and "section" in feats:
-            parts.append(self.section_emb(feats["section"]))
-        if self.mood_emb is not None and "mood" in feats:
-            parts.append(self.mood_emb(feats["mood"]))
-        if self.vel_bucket_emb is not None and "vel_bucket" in feats:
-            parts.append(self.vel_bucket_emb(feats["vel_bucket"]))
-        if self.dur_bucket_emb is not None and "dur_bucket" in feats:
-            parts.append(self.dur_bucket_emb(feats["dur_bucket"]))
-        x = torch.cat(parts, dim=-1)
-        x = self.feat_proj(x)
-        x = self.in_norm(x)
-        cls = self.cls.expand(x.size(0), 1, -1)
-        x = torch.cat([cls, x], dim=1)
-        x = x * math.sqrt(self.d_model)
-        if self.pos_enc is not None:
-            x = self.pos_enc(x)
-        pad_mask = torch.cat(
-            [torch.ones(mask.size(0), 1, dtype=torch.bool, device=mask.device), mask],
-            dim=1,
+        tokens = feats.get("pitch")
+        if tokens is None:
+            tokens = feats.get("pitch_class")
+
+        padding_mask = None
+        if isinstance(mask, torch.Tensor):
+            padding_mask = mask
+            if padding_mask.dtype != torch.bool:
+                padding_mask = padding_mask != 0
+            padding_mask = ~padding_mask
+
+        hidden = self._forward_tokens(
+            tokens=tokens,
+            section=feats.get("section"),
+            mood=feats.get("mood"),
+            vel_bucket=feats.get("vel_bucket"),
+            velocity_bucket=feats.get("velocity_bucket"),
+            dur_bucket=feats.get("dur_bucket"),
+            duration_bucket=feats.get("duration_bucket"),
+            src_key_padding_mask=padding_mask,
+            lengths=feats.get("lengths"),
+            length=feats.get("length"),
+            **extra,
         )
-        h = self.encoder(x, src_key_padding_mask=~pad_mask)
-        h = h[:, 1:]
-        h = self.out_norm(h)
-        outputs: dict[str, torch.Tensor] = {}
-        outputs["boundary"] = self.head_boundary(h).squeeze(-1)
+
+        if hidden.size(1) == 0:
+            hidden = torch.zeros(
+                hidden.size(0),
+                1,
+                self.d_model,
+                device=hidden.device,
+                dtype=hidden.dtype,
+            )
+        h = self.out_norm(hidden)
+
+        out: dict[str, torch.Tensor] = {
+            "boundary": self.head_boundary(h).squeeze(-1),
+            "pitch_logits": self.head_pitch(h),
+        }
         if self.head_vel_reg is not None:
-            outputs["vel_reg"] = self.head_vel_reg(h).squeeze(-1)
+            out["vel_reg"] = self.head_vel_reg(h).squeeze(-1)
         if self.head_dur_reg is not None:
-            outputs["dur_reg"] = self.head_dur_reg(h).squeeze(-1)
+            out["dur_reg"] = self.head_dur_reg(h).squeeze(-1)
         if self.head_vel_cls is not None:
-            outputs["vel_cls"] = self.head_vel_cls(h)
+            out["vel_cls"] = self.head_vel_cls(h)
         if self.head_dur_cls is not None:
-            outputs["dur_cls"] = self.head_dur_cls(h)
-        outputs["pitch_logits"] = self.head_pitch(h)
-        return outputs
+            out["dur_cls"] = self.head_dur_cls(h)
+        return out
 
-    # --- simple generation stubs -------------------------------------------------
-    def encode_seed(self, seq: list[dict] | None = None):  # type: ignore[override]
-        """Encode seed events into generation state.
+    def _ensure_posenc(self, need_len: int, device: torch.device) -> torch.Tensor:
+        if need_len > self.positional_encoding.size(0):
+            if self.use_sinusoidal_posenc:
+                return _build_positional_encoding(need_len, self.d_model).to(device)
+            return torch.zeros(need_len, self.d_model, device=device)
+        return self.positional_encoding[:need_len].to(device)
 
-        Parameters
-        ----------
-        seq:
-            Optional list of events with ``pitch``, ``velocity`` and
-            ``duration_beats`` keys.
+    def __repr__(self) -> str:
+        return (
+            "PhraseTransformer("
+            f"d_model={self.d_model}, "
+            f"layers={self.num_layers}, "
+            f"nhead={self.nhead}, "
+            f"sin_posenc={self.use_sinusoidal_posenc}, "
+            f"sec={self.section_vocab_size}, "
+            f"mood={self.mood_vocab_size}, "
+            f"vel={self.vel_bucket_size}, "
+            f"dur={self.dur_bucket_size}, "
+            f"duv_mode='{self.duv_mode}'"
+            ")"
+        )
 
-        Returns
-        -------
-        dict
-            Mutable state used by :meth:`step` and :meth:`update_state`.
-        """
+    def encode_seed(self, seq: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
+        """Return a minimal generation state stub."""
+
         return {"seq": list(seq or [])}
 
-    def _event_to_feats(self, ev: dict, pos: int) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
-        device = self.cls.device
-        feats = {
-            "pitch_class": torch.tensor(
-                [[int(ev.get("pitch", 0)) % 12]], device=device
-            ),
-            "velocity": torch.tensor([[float(ev.get("velocity", 0.0))]], device=device),
-            "duration": torch.tensor([[float(ev.get("duration_beats", 0.0))]], device=device),
-            "position": torch.tensor([[pos]], device=device),
-        }
-        mask = torch.ones(1, 1, dtype=torch.bool, device=device)
-        return feats, mask
+    def step(self, state: Optional[dict[str, Any]] = None) -> dict[str, torch.Tensor]:
+        """Return dummy logits for generation workflows."""
 
-    def step(self, state=None) -> dict[str, torch.Tensor]:  # type: ignore[override]
-        """Generate logits for the next event given *state*."""
         if state is None:
             state = self.encode_seed([])
-        pos = len(state["seq"]) % self.max_len
-        prev = state["seq"][-1] if state["seq"] else {}
-        feats, mask = self._event_to_feats(prev, pos)
-        out = self.forward(feats, mask)
-        return {k: v[0, 0] if v.ndim == 3 else v[0] for k, v in out.items()}
+        device = self.cls.device
+        h = torch.zeros(1, 1, self.d_model, device=device)
+        out = {
+            "boundary": self.head_boundary(h).view(1),
+            "pitch_logits": self.head_pitch(h).view(1, -1),
+        }
+        if self.head_vel_reg is not None:
+            out["vel_reg"] = self.head_vel_reg(h).view(1)
+        if self.head_dur_reg is not None:
+            out["dur_reg"] = self.head_dur_reg(h).view(1)
+        if self.head_vel_cls is not None:
+            out["vel_cls"] = self.head_vel_cls(h).view(1, -1)
+        if self.head_dur_cls is not None:
+            out["dur_cls"] = self.head_dur_cls(h).view(1, -1)
+        return out
 
-    def update_state(self, state, ev: dict | None = None):  # type: ignore[override]
-        """Append *ev* to state and return it."""
-        if ev is not None:
-            state["seq"].append(ev)
+    def update_state(
+        self, state: dict[str, Any], event: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        """Append the provided event to the generation state."""
+
+        if event is not None:
+            state.setdefault("seq", []).append(event)
         return state
 
 

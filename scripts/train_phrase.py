@@ -969,12 +969,11 @@ def train_model(
         except Exception:  # pragma: no cover - numpy missing
             pass
     
-    reweight_cfg = None
     sampler = None
     weight_stats: dict[str, float] | None = None
+    shuffle_train = True
     if reweight:
         parts = dict(p.split("=") for p in reweight.split(",") if "=" in p)
-        reweight_cfg = parts
         tag = parts.get("tag")
         scheme = parts.get("scheme")
         if tag and scheme == "inv_freq" and tag in ds_train.group_tags:
@@ -992,731 +991,744 @@ def train_model(
             weight_map = {v: 1.0 / freq[v] for v in freq}
             weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
             logging.info("top tag weights %s", weight_stats)
-    
-        dl_train = DataLoader(
-            ds_train,
-            batch_size=batch_size,
-            shuffle=sampler is None,
-            sampler=sampler,
-            collate_fn=collate_fn,
-            num_workers=num_workers,
-            pin_memory=pin_mem,
-            persistent_workers=persist,
-            worker_init_fn=worker_init_fn if num_workers else None,
+            shuffle_train = False
+
+    dl_train = DataLoader(
+        ds_train,
+        batch_size=batch_size,
+        shuffle=shuffle_train,
+        sampler=sampler,
+        collate_fn=collate_fn,
+        num_workers=num_workers,
+        pin_memory=pin_mem,
+        persistent_workers=persist,
+        worker_init_fn=worker_init_fn if num_workers else None,
+    )
+    dl_val = DataLoader(
+        ds_val,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=collate_fn,
+        num_workers=num_workers,
+        pin_memory=pin_mem,
+        persistent_workers=persist,
+        worker_init_fn=worker_init_fn if num_workers else None,
+    )
+    # If classification heads are enabled but their loss weights are zero,
+    # set sensible defaults so they learn during quick iterations.
+    if duv_mode in {"cls", "both"} and (w_vel_cls <= 0 and w_dur_cls <= 0):
+        logging.warning(
+            "duv_mode=%s with zero class-loss weights; setting w_vel_cls=0.5, w_dur_cls=0.5",
+            duv_mode,
         )
-        dl_val = DataLoader(
-            ds_val,
-            batch_size=batch_size,
-            shuffle=False,
-            collate_fn=collate_fn,
-            num_workers=num_workers,
-            pin_memory=pin_mem,
-            persistent_workers=persist,
-            worker_init_fn=worker_init_fn if num_workers else None,
+        w_vel_cls = 0.5
+        w_dur_cls = 0.5
+
+    # Fast dev run: cap batches to keep turnaround quick
+    if fast_dev_run:
+        limit_train_batches = max(1, int(limit_train_batches or 2))
+        limit_val_batches = max(1, int(limit_val_batches or 2))
+
+    if arch in {"lstm", "bilstm_tcn"}:
+        model: nn.Module = PhraseLSTM(
+            d_model=d_model,
+            max_len=max_len,
+            section_vocab_size=len(section_vocab) + 1 if section_vocab else 0,
+            mood_vocab_size=len(mood_vocab) + 1 if mood_vocab else 0,
+            vel_bucket_size=vel_bucket_size,
+            dur_bucket_size=dur_bucket_size,
+            duv_mode=duv_mode,
+            vel_bins=vel_bins,
+            dur_bins=dur_bins,
+            use_bar_beat=use_bar_beat,
+            use_harmony=use_harmony,
+            use_tcn=(arch == "bilstm_tcn"),
+            use_crf_head=(head == "crf"),
+            use_local_stats=use_local_stats,
         )
-        # If classification heads are enabled but their loss weights are zero,
-        # set sensible defaults so they learn during quick iterations.
-        if duv_mode in {"cls", "both"} and (w_vel_cls <= 0 and w_dur_cls <= 0):
-            logging.warning(
-                "duv_mode=%s with zero class-loss weights; setting w_vel_cls=0.5, w_dur_cls=0.5",
-                duv_mode,
-            )
-            w_vel_cls = 0.5
-            w_dur_cls = 0.5
-    
-        # Fast dev run: cap batches to keep turnaround quick
-        if fast_dev_run:
-            limit_train_batches = max(1, int(limit_train_batches or 2))
-            limit_val_batches = max(1, int(limit_val_batches or 2))
-    
-        if arch in {"lstm", "bilstm_tcn"}:
-            model: nn.Module = PhraseLSTM(
-                d_model=d_model,
-                max_len=max_len,
-                section_vocab_size=len(section_vocab) + 1 if section_vocab else 0,
-                mood_vocab_size=len(mood_vocab) + 1 if mood_vocab else 0,
-                vel_bucket_size=vel_bucket_size,
-                dur_bucket_size=dur_bucket_size,
-                duv_mode=duv_mode,
-                vel_bins=vel_bins,
-                dur_bins=dur_bins,
-                use_bar_beat=use_bar_beat,
-                use_harmony=use_harmony,
-                use_tcn=(arch == "bilstm_tcn"),
-                use_crf_head=(head == "crf"),
-                use_local_stats=use_local_stats,
-            )
-        else:
-            model = PhraseTransformer(
-                d_model=d_model,
-                max_len=max_len,
-                section_vocab_size=len(section_vocab) + 1 if section_vocab else 0,
-                mood_vocab_size=len(mood_vocab) + 1 if mood_vocab else 0,
-                vel_bucket_size=vel_bucket_size,
-                dur_bucket_size=dur_bucket_size,
-                use_bar_beat=use_bar_beat,
-                duv_mode=duv_mode,
-                vel_bins=vel_bins,
-                dur_bins=dur_bins,
-                nhead=nhead,
-                num_layers=layers,
-                dropout=dropout,
-                use_sinusoidal_posenc=use_sinusoidal_posenc,
-            )
-        model = model.to(device)
-        # Initialize boundary head bias to dataset prior logit to avoid extreme initial saturation
-        try:
-            total_count = max(1, len(train_rows))
-            pos_prior = max(1e-6, min(1 - 1e-6, positive_count / total_count))
-            prior_logit = float(torch.log(torch.tensor(pos_prior / (1 - pos_prior))))
-            with torch.no_grad():
-                if hasattr(model, "head_boundary") and hasattr(model.head_boundary, "bias") and model.head_boundary.bias is not None:
-                    model.head_boundary.bias.fill_(prior_logit)
-                    logging.info("init head_boundary.bias to prior logit %.3f (p=%.3f)", prior_logit, pos_prior)
-        except Exception:
-            pass
-        if compile:
-            try:  # pragma: no cover - runtime optional
-                model = torch.compile(model)
-            except Exception:  # pragma: no cover
-                logging.warning("torch.compile failed; continuing without")
-        opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-        total_steps = epochs * max(1, len(dl_train))
-        if scheduler == "cosine":
-            sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=total_steps)
-        elif scheduler == "plateau":
-            sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                opt, factor=lr_factor, patience=lr_patience
-            )
-        else:
-            sched = None
-        pw = torch.tensor([pos_weight], device=device) if pos_weight else None
-        # Optional focal loss
-        class FocalLoss(nn.Module):
-            def __init__(self, gamma: float = 2.0, pos_weight: torch.Tensor | None = None) -> None:
-                super().__init__()
-                self.gamma = gamma
-                self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='none')
-            def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-                bce = self.bce(logits, targets)
-                p = torch.sigmoid(logits)
-                pt = p * targets + (1 - p) * (1 - targets)
-                loss = ((1 - pt) ** self.gamma) * bce
-                return loss.mean()
-        crit_boundary = FocalLoss(gamma=focal_gamma, pos_weight=pw) if loss == 'focal' else nn.BCEWithLogitsLoss(pos_weight=pw)
-        crit_vel_reg = nn.SmoothL1Loss()
-        crit_dur_reg = nn.SmoothL1Loss()
-        crit_vel_cls = nn.CrossEntropyLoss()
-        crit_dur_cls = nn.CrossEntropyLoss()
-        crit_pitch = nn.CrossEntropyLoss(
-            ignore_index=-100, label_smoothing=pitch_smoothing
+    else:
+        model = PhraseTransformer(
+            d_model=d_model,
+            max_len=max_len,
+            section_vocab_size=len(section_vocab) + 1 if section_vocab else 0,
+            mood_vocab_size=len(mood_vocab) + 1 if mood_vocab else 0,
+            vel_bucket_size=vel_bucket_size,
+            dur_bucket_size=dur_bucket_size,
+            use_bar_beat=use_bar_beat,
+            duv_mode=duv_mode,
+            vel_bins=vel_bins,
+            dur_bins=dur_bins,
+            nhead=nhead,
+            num_layers=layers,
+            dropout=dropout,
+            use_sinusoidal_posenc=use_sinusoidal_posenc,
         )
-        # Lightweight 2-state CRF for sequence consistency（必要時のみ有効化）
-        class CRF2(nn.Module):
-            def __init__(self) -> None:
-                super().__init__()
-                self.trans = nn.Parameter(torch.zeros(2, 2))
-            def nll(self, emissions: torch.Tensor, tags: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-                # emissions: (B,L,2), tags: (B,L) int 0/1, mask: (B,L) bool
-                B, L, C = emissions.shape
-                # 前向き計算で対数分配関数を求める
-                alpha = emissions[:, 0, :]
-                for t in range(1, L):
-                    e_t = emissions[:, t, :].unsqueeze(1)  # (B,1,2)
-                    a = alpha.unsqueeze(2) + self.trans.unsqueeze(0) + e_t  # (B,2,2)
-                    alpha_t = torch.logsumexp(a, dim=1)  # (B,2)
-                    alpha = torch.where(mask[:, t].unsqueeze(1), alpha_t, alpha)
-                logZ = torch.logsumexp(alpha, dim=1)  # (B,)
-                # 正解パスのスコア
-                score = emissions[torch.arange(B), 0, tags[:, 0]]
-                for t in range(1, L):
-                    emit = emissions[torch.arange(B), t, tags[:, t]]
-                    trans = self.trans[tags[:, t - 1], tags[:, t]]
-                    step = emit + trans
-                    score = torch.where(mask[:, t], score + step, score)
-                nll = (logZ - score).mean()
-                return nll
-        crf = CRF2().to(device) if head == 'crf' else None
-        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-        writer = SummaryWriter(logdir) if logdir and SummaryWriter else None
-    
-        start_epoch = 0
-        global_step = 0
-        best_f1 = -1.0
-        if resume and resume.is_file():
-            state = torch.load(resume, map_location="cpu")
-            model.load_state_dict(state["model"])
-            opt.load_state_dict(state.get("optimizer", {}))
-            if sched and state.get("scheduler"):
-                sched.load_state_dict(state["scheduler"])
-            start_epoch = int(state.get("epoch", 0))
-            global_step = int(state.get("global_step", 0))
-            best_f1 = float(state.get("best_f1", -1.0))
-    
-        def evaluate() -> tuple[
-            float,
-            float,
-            float,
-            list[float],
-            list[int],
-            dict[str, list[int]],
-            dict[str, float],
-            list[float],
-        ]:
-            model.eval()
-            probs: list[float] = []
-            trues: list[int] = []
-            tag_buf = {"instrument": [], "section": [], "mood": []}
-            logits_all: list[float] = []
-            vel_err = 0.0
-            dur_err = 0.0
-            vel_n = 0
-            dur_n = 0
-            vel_ok = 0
-            vel_tot = 0
-            dur_ok = 0
-            dur_tot = 0
-            val_loss_sum = 0.0
-            val_batches = 0
-            with torch.no_grad():
-                for i, (feats, targets, mask, tags) in enumerate(dl_val):
-                    feats = {k: v.to(device) for k, v in feats.items()}
-                    targets = {k: v.to(device) for k, v in targets.items()}
-                    mask = mask.to(device)
-                    outputs = model(feats, mask)
-                    m = mask.bool()
-                    mask_cpu = m.cpu()
-                    loss_val = 0.0
-                    if "boundary2" in outputs:
-                        # CRF/2-class logits present; use softmax prob of class 1
-                        logits2 = outputs["boundary2"][m].detach().cpu()
-                        logits_all.extend((logits2[:, 1] - logits2[:, 0]).tolist())
-                        import torch as _t
-                        probs.extend(_t.softmax(logits2, dim=-1)[:, 1].tolist())
-                        if head == 'crf' and crf is not None:
-                            lb = crf.nll(outputs["boundary2"], targets["boundary"].long(), m)
-                        else:
-                            lb = crit_boundary(
-                                outputs["boundary2"][m][:, 1] - outputs["boundary2"][m][:, 0],
-                                targets["boundary"][m],
-                            )
-                        loss_val += w_boundary * float(lb)
-                    else:
-                        logits_this = outputs["boundary"][m].detach().cpu().tolist()
-                        logits_all.extend([float(v) for v in logits_this])
-                        probs.extend(torch.sigmoid(outputs["boundary"][m]).cpu().tolist())
-                        lb = crit_boundary(outputs["boundary"][m], targets["boundary"][m])
-                        loss_val += w_boundary * float(lb)
-                    trues.extend(targets["boundary"][m].int().cpu().tolist())
-                    if "vel_reg" in outputs:
-                        vel_err += (
-                            torch.abs(outputs["vel_reg"][m] - targets["vel_reg"][m])
-                            .mul(127.0)
-                            .sum()
-                            .item()
-                        )
-                        lv = crit_vel_reg(outputs["vel_reg"][m], targets["vel_reg"][m])
-                        loss_val += w_vel_reg * float(lv)
-                        vel_n += int(m.sum())
-                    if "dur_reg" in outputs:
-                        dur_err += (
-                            torch.abs(
-                                torch.expm1(outputs["dur_reg"][m])
-                                - torch.expm1(targets["dur_reg"][m])
-                            )
-                            .sum()
-                            .item()
-                        )
-                        ld = crit_dur_reg(outputs["dur_reg"][m], targets["dur_reg"][m])
-                        loss_val += w_dur_reg * float(ld)
-                        dur_n += int(m.sum())
-                    if "vel_cls" in outputs:
-                        preds = outputs["vel_cls"][m].argmax(dim=-1)
-                        vel_ok += int((preds == targets["vel_cls"][m]).sum())
-                        vel_tot += int(m.sum())
-                        lvb = crit_vel_cls(outputs["vel_cls"][m], targets["vel_cls"][m])
-                        loss_val += w_vel_cls * float(lvb)
-                    if "dur_cls" in outputs:
-                        preds = outputs["dur_cls"][m].argmax(dim=-1)
-                        dur_ok += int((preds == targets["dur_cls"][m]).sum())
-                        dur_tot += int(m.sum())
-                        ldb = crit_dur_cls(outputs["dur_cls"][m], targets["dur_cls"][m])
-                        loss_val += w_dur_cls * float(ldb)
-                    if "pitch_logits" in outputs:
-                        lp = crit_pitch(outputs["pitch_logits"][m], targets["pitch"][m])
-                        loss_val += w_pitch * float(lp)
-                    for k in tag_buf:
-                        tag_buf[k].extend(tags[k][mask_cpu].tolist())
-                    val_loss_sum += loss_val
-                    val_batches += 1
-                    if limit_val_batches and (i + 1) >= limit_val_batches:
-                        break
-            best_f1, best_th = -1.0, 0.5
-            start, end, step = f1_scan_range
-            n = int(round((end - start) / step)) + 1
-            ths = [round(start + i * step, 10) for i in range(n)]
-            for th in ths:
-                preds = [1 if p > th else 0 for p in probs]
-                f1 = f1_score(trues, preds)
-                if f1 > best_f1:
-                    best_f1, best_th = f1, float(th)
-            # Additional diagnostics to detect saturation/imbalance during eval
-            total = max(1, len(probs))
-            preds_best = [1 if p > best_th else 0 for p in probs]
-            pos_rate = sum(preds_best) / total
-            mean_prob = sum(probs) / total
-            metrics = {
-                "vel_mae": vel_err / vel_n if vel_n else 0.0,
-                "dur_mae": dur_err / dur_n if dur_n else 0.0,
-                "vel_acc": vel_ok / vel_tot if vel_tot else 0.0,
-                "dur_acc": dur_ok / dur_tot if dur_tot else 0.0,
-                "pos_rate": pos_rate,
-                "mean_prob": mean_prob,
-            }
-            val_loss_avg = val_loss_sum / max(1, val_batches)
-            return best_f1, val_loss_avg, best_th, probs, trues, tag_buf, metrics, logits_all
-    
-        ts = int(time.time())
-        best_state = None
-        best_threshold = 0.5
-        bad_epochs = 0
-        best_metric_val = -1.0
-        viz_files: list[str] = []
-        metrics_rows: list[dict[str, float]] = []
-        use_progress = bool(progress and _tqdm is not None)
-        epochs_completed = start_epoch
-        for ep in range(start_epoch, epochs):
-            t0 = time.time()
-            epochs_completed = ep + 1
-            model.train()
-            loss_sum = 0.0
-            lb_sum = lv_sum = ld_sum = lvb_sum = ldb_sum = lp_sum = 0.0
-            opt.zero_grad()
-            iter_train = dl_train
-            if use_progress:
-                iter_train = _tqdm(
-                    dl_train,
-                    total=len(dl_train),
-                    desc=f"epoch {ep + 1}/{epochs}",
-                    leave=False,
-                )
-            for step, (feats, targets, mask, _) in enumerate(iter_train):
+    model = model.to(device)
+    # Initialize boundary head bias to dataset prior logit to avoid extreme initial saturation
+    try:
+        total_count = max(1, len(train_rows))
+        pos_prior = max(1e-6, min(1 - 1e-6, positive_count / total_count))
+        prior_logit = float(torch.log(torch.tensor(pos_prior / (1 - pos_prior))))
+        with torch.no_grad():
+            if hasattr(model, "head_boundary") and hasattr(model.head_boundary, "bias") and model.head_boundary.bias is not None:
+                model.head_boundary.bias.fill_(prior_logit)
+                logging.info("init head_boundary.bias to prior logit %.3f (p=%.3f)", prior_logit, pos_prior)
+    except Exception:
+        pass
+    if compile:
+        try:  # pragma: no cover - runtime optional
+            model = torch.compile(model)
+        except Exception:  # pragma: no cover
+            logging.warning("torch.compile failed; continuing without")
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    total_steps = epochs * max(1, len(dl_train))
+    if scheduler == "cosine":
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=total_steps)
+    elif scheduler == "plateau":
+        sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            opt, factor=lr_factor, patience=lr_patience
+        )
+    else:
+        sched = None
+    pw = torch.tensor([pos_weight], device=device) if pos_weight else None
+    # Optional focal loss
+    class FocalLoss(nn.Module):
+        def __init__(self, gamma: float = 2.0, pos_weight: torch.Tensor | None = None) -> None:
+            super().__init__()
+            self.gamma = gamma
+            self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='none')
+        def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+            bce = self.bce(logits, targets)
+            p = torch.sigmoid(logits)
+            pt = p * targets + (1 - p) * (1 - targets)
+            loss = ((1 - pt) ** self.gamma) * bce
+            return loss.mean()
+    crit_boundary = FocalLoss(gamma=focal_gamma, pos_weight=pw) if loss == 'focal' else nn.BCEWithLogitsLoss(pos_weight=pw)
+    crit_vel_reg = nn.SmoothL1Loss()
+    crit_dur_reg = nn.SmoothL1Loss()
+    crit_vel_cls = nn.CrossEntropyLoss()
+    crit_dur_cls = nn.CrossEntropyLoss()
+    crit_pitch = nn.CrossEntropyLoss(
+        ignore_index=-100, label_smoothing=pitch_smoothing
+    )
+    # Lightweight 2-state CRF for sequence consistency（必要時のみ有効化）
+    class CRF2(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.trans = nn.Parameter(torch.zeros(2, 2))
+        def nll(self, emissions: torch.Tensor, tags: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+            # emissions: (B,L,2), tags: (B,L) int 0/1, mask: (B,L) bool
+            B, L, C = emissions.shape
+            # 前向き計算で対数分配関数を求める
+            alpha = emissions[:, 0, :]
+            for t in range(1, L):
+                e_t = emissions[:, t, :].unsqueeze(1)  # (B,1,2)
+                a = alpha.unsqueeze(2) + self.trans.unsqueeze(0) + e_t  # (B,2,2)
+                alpha_t = torch.logsumexp(a, dim=1)  # (B,2)
+                alpha = torch.where(mask[:, t].unsqueeze(1), alpha_t, alpha)
+            logZ = torch.logsumexp(alpha, dim=1)  # (B,)
+            # 正解パスのスコア
+            score = emissions[torch.arange(B), 0, tags[:, 0]]
+            for t in range(1, L):
+                emit = emissions[torch.arange(B), t, tags[:, t]]
+                trans = self.trans[tags[:, t - 1], tags[:, t]]
+                step = emit + trans
+                score = torch.where(mask[:, t], score + step, score)
+            nll = (logZ - score).mean()
+            return nll
+    crf = CRF2().to(device) if head == 'crf' else None
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    writer = SummaryWriter(logdir) if logdir and SummaryWriter else None
+
+    start_epoch = 0
+    global_step = 0
+    best_f1 = -1.0
+    if resume and resume.is_file():
+        state = torch.load(resume, map_location="cpu")
+        model.load_state_dict(state["model"])
+        opt.load_state_dict(state.get("optimizer", {}))
+        if sched and state.get("scheduler"):
+            sched.load_state_dict(state["scheduler"])
+        start_epoch = int(state.get("epoch", 0))
+        global_step = int(state.get("global_step", 0))
+        best_f1 = float(state.get("best_f1", -1.0))
+
+    def evaluate() -> tuple[
+        float,
+        float,
+        float,
+        list[float],
+        list[int],
+        dict[str, list[int]],
+        dict[str, float],
+        list[float],
+    ]:
+        model.eval()
+        probs: list[float] = []
+        trues: list[int] = []
+        tag_buf = {"instrument": [], "section": [], "mood": []}
+        logits_all: list[float] = []
+        vel_err = 0.0
+        dur_err = 0.0
+        vel_n = 0
+        dur_n = 0
+        vel_ok = 0
+        vel_tot = 0
+        dur_ok = 0
+        dur_tot = 0
+        val_loss_sum = 0.0
+        val_batches = 0
+        with torch.no_grad():
+            for i, (feats, targets, mask, tags) in enumerate(dl_val):
                 feats = {k: v.to(device) for k, v in feats.items()}
                 targets = {k: v.to(device) for k, v in targets.items()}
                 mask = mask.to(device)
-                ctx = (
-                    torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp)
-                    if use_amp
-                    else nullcontext()
-                )
-                with ctx:
-                    outputs = model(feats, mask)
-                    m = mask.bool()
-                    loss = 0.0
-                    lb = lv = ld = lvb = ldb = lp = 0.0
-                    if "boundary2" in outputs:
-                        # 2-class logits available (CRF head or softmax head); use BCE on class-1 logit if not CRF
-                        if head == 'crf':
-                            # CRF NLL
-                            # build emissions and tags
-                            emissions = outputs["boundary2"]  # (B,L,2)
-                            tags = targets["boundary"].long()
-                            lb = crf.nll(emissions, tags, m)
-                            loss = loss + w_boundary * lb
-                        else:
-                            lb = crit_boundary(outputs["boundary2"][m][:, 1] - outputs["boundary2"][m][:, 0], targets["boundary"][m])
-                            loss = loss + w_boundary * lb
-                    elif "boundary" in outputs:
-                        lb = crit_boundary(outputs["boundary"][m], targets["boundary"][m])
-                        loss = loss + w_boundary * lb
-                    if "vel_reg" in outputs:
-                        lv = crit_vel_reg(outputs["vel_reg"][m], targets["vel_reg"][m])
-                        loss = loss + w_vel_reg * lv
-                    if "dur_reg" in outputs:
-                        ld = crit_dur_reg(outputs["dur_reg"][m], targets["dur_reg"][m])
-                        loss = loss + w_dur_reg * ld
-                    if "vel_cls" in outputs:
-                        lvb = crit_vel_cls(outputs["vel_cls"][m], targets["vel_cls"][m])
-                        loss = loss + w_vel_cls * lvb
-                    if "dur_cls" in outputs:
-                        ldb = crit_dur_cls(outputs["dur_cls"][m], targets["dur_cls"][m])
-                        loss = loss + w_dur_cls * ldb
-                    if "pitch_logits" in outputs:
-                        lp = crit_pitch(outputs["pitch_logits"][m], targets["pitch"][m])
-                        loss = loss + w_pitch * lp
-                    lb_sum += float(lb)
-                    lv_sum += float(lv)
-                    ld_sum += float(ld)
-                    lvb_sum += float(lvb)
-                    ldb_sum += float(ldb)
-                    lp_sum += float(lp)
-                loss_sum += float(loss)
-                if scaler.is_enabled():
-                    scaler.scale(loss / grad_accum).backward()
-                else:
-                    (loss / grad_accum).backward()
-                if (step + 1) % grad_accum == 0:
-                    if scaler.is_enabled():
-                        if grad_clip > 0:
-                            scaler.unscale_(opt)
-                            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                        scaler.step(opt)
-                        scaler.update()
+                outputs = model(feats, mask)
+                m = mask.bool()
+                mask_cpu = m.cpu()
+                loss_val = 0.0
+                if "boundary2" in outputs:
+                    # CRF/2-class logits present; use softmax prob of class 1
+                    logits2 = outputs["boundary2"][m].detach().cpu()
+                    logits_all.extend((logits2[:, 1] - logits2[:, 0]).tolist())
+                    import torch as _t
+                    probs.extend(_t.softmax(logits2, dim=-1)[:, 1].tolist())
+                    if head == 'crf' and crf is not None:
+                        lb = crf.nll(outputs["boundary2"], targets["boundary"].long(), m)
                     else:
-                        if grad_clip > 0:
-                            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                        opt.step()
-                    opt.zero_grad()
-                    if sched and scheduler != "plateau":
-                        if global_step < warmup_steps:
-                            lr_scale = float(global_step + 1) / warmup_steps
-                            for pg in opt.param_groups:
-                                pg["lr"] = lr * lr_scale
-                        else:
-                            sched.step()
-                    global_step += 1
-                if limit_train_batches and (step + 1) >= limit_train_batches:
+                        lb = crit_boundary(
+                            outputs["boundary2"][m][:, 1] - outputs["boundary2"][m][:, 0],
+                            targets["boundary"][m],
+                        )
+                    loss_val += w_boundary * float(lb)
+                else:
+                    logits_this = outputs["boundary"][m].detach().cpu().tolist()
+                    logits_all.extend([float(v) for v in logits_this])
+                    probs.extend(torch.sigmoid(outputs["boundary"][m]).cpu().tolist())
+                    lb = crit_boundary(outputs["boundary"][m], targets["boundary"][m])
+                    loss_val += w_boundary * float(lb)
+                trues.extend(targets["boundary"][m].int().cpu().tolist())
+                if "vel_reg" in outputs:
+                    vel_err += (
+                        torch.abs(outputs["vel_reg"][m] - targets["vel_reg"][m])
+                        .mul(127.0)
+                        .sum()
+                        .item()
+                    )
+                    lv = crit_vel_reg(outputs["vel_reg"][m], targets["vel_reg"][m])
+                    loss_val += w_vel_reg * float(lv)
+                    vel_n += int(m.sum())
+                if "dur_reg" in outputs:
+                    dur_err += (
+                        torch.abs(
+                            torch.expm1(outputs["dur_reg"][m])
+                            - torch.expm1(targets["dur_reg"][m])
+                        )
+                        .sum()
+                        .item()
+                    )
+                    ld = crit_dur_reg(outputs["dur_reg"][m], targets["dur_reg"][m])
+                    loss_val += w_dur_reg * float(ld)
+                    dur_n += int(m.sum())
+                if "vel_cls" in outputs:
+                    preds = outputs["vel_cls"][m].argmax(dim=-1)
+                    vel_ok += int((preds == targets["vel_cls"][m]).sum())
+                    vel_tot += int(m.sum())
+                    lvb = crit_vel_cls(outputs["vel_cls"][m], targets["vel_cls"][m])
+                    loss_val += w_vel_cls * float(lvb)
+                if "dur_cls" in outputs:
+                    preds = outputs["dur_cls"][m].argmax(dim=-1)
+                    dur_ok += int((preds == targets["dur_cls"][m]).sum())
+                    dur_tot += int(m.sum())
+                    ldb = crit_dur_cls(outputs["dur_cls"][m], targets["dur_cls"][m])
+                    loss_val += w_dur_cls * float(ldb)
+                if "pitch_logits" in outputs:
+                    lp = crit_pitch(outputs["pitch_logits"][m], targets["pitch"][m])
+                    loss_val += w_pitch * float(lp)
+                for k in tag_buf:
+                    tag_buf[k].extend(tags[k][mask_cpu].tolist())
+                val_loss_sum += loss_val
+                val_batches += 1
+                if limit_val_batches and (i + 1) >= limit_val_batches:
                     break
-            if use_progress:
-                try:
-                    iter_train.close()  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-            f1, val_loss, th, probs, trues, tag_buf, metrics, _ = evaluate()
-            n_batches = max(1, len(dl_train))
-            avg_loss = loss_sum / n_batches
-            lb_avg = lb_sum / n_batches
-            lv_avg = lv_sum / n_batches
-            ld_avg = ld_sum / n_batches
-            lvb_avg = lvb_sum / n_batches
-            ldb_avg = ldb_sum / n_batches
-            lp_avg = lp_sum / n_batches
-            lr_cur = opt.param_groups[0]["lr"]
-            elapsed = time.time() - t0
-            logging.info(
-                "epoch %d train_loss %.4f val_f1 %.3f vel_mae %.3f dur_mae %.3f vel_acc %.3f dur_acc %.3f lr %.2e th %.2f pos_rate %.3f mean_p %.3f time %.1fs",
-                ep + 1,
-                avg_loss,
-                f1,
-                metrics["vel_mae"],
-                metrics["dur_mae"],
-                metrics["vel_acc"],
-                metrics["dur_acc"],
-                lr_cur,
-                th,
-                metrics.get("pos_rate", 0.0),
-                metrics.get("mean_prob", 0.0),
-                elapsed,
-            )
-            try:
-                tr_loss = float(avg_loss)
-                vl_loss = float(val_loss)
-            except Exception:  # pragma: no cover - fallback for non-float tensors
-                logging.info(
-                    "epoch=%d train_loss %s val_loss %s (train_loss=%s val_loss=%s)",
-                    ep + 1,
-                    avg_loss,
-                    val_loss,
-                    avg_loss,
-                    val_loss,
-                )
-            else:
-                logging.info(
-                    "epoch=%d train_loss %.6f val_loss %.6f (train_loss=%.6f val_loss=%.6f)",
-                    ep + 1,
-                    tr_loss,
-                    vl_loss,
-                    tr_loss,
-                    vl_loss,
-                )
-            metrics_rows.append(
-                {
-                    "epoch": ep + 1,
-                    "loss": avg_loss,
-                    "loss_boundary": lb_avg,
-                    "loss_vel_reg": lv_avg,
-                    "loss_dur_reg": ld_avg,
-                    "loss_vel_cls": lvb_avg,
-                    "loss_dur_cls": ldb_avg,
-                    "loss_pitch": lp_avg,
-                    "f1": f1,
-                    "best_th": th,
-                    "time": elapsed,
-                }
-            )
-            preds_epoch = [1 if p > th else 0 for p in probs]
-            if scheduler == "plateau" and sched:
-                sched.step(f1)
-            if viz and precision_recall_curve and plt:
-                try:
-                    prec, rec, _ = precision_recall_curve(trues, probs)
-                    plt.figure()
-                    plt.plot(rec, prec)
-                    plt.xlabel("Recall")
-                    plt.ylabel("Precision")
-                    plt.tight_layout()
-                    fname_pr = out.parent / f"pr_curve_ep{ep + 1}.png"
-                    plt.savefig(fname_pr)
-                    plt.close()
-                    ConfusionMatrixDisplay.from_predictions(trues, preds_epoch)
-                    plt.tight_layout()
-                    fname_cm = out.parent / f"confusion_matrix_ep{ep + 1}.png"
-                    plt.savefig(fname_cm)
-                    plt.close()
-                    viz_files.extend([str(fname_pr), str(fname_cm)])
-                except Exception:  # pragma: no cover - visualization failures
-                    pass
-            if writer:
-                writer.add_scalar("val/f1", f1, ep)
-                writer.add_scalar("train/loss", avg_loss, ep)
-                writer.add_scalar("val/vel_mae", metrics["vel_mae"], ep)
-                writer.add_scalar("val/dur_mae", metrics["dur_mae"], ep)
-                writer.add_scalar("val/vel_acc", metrics["vel_acc"], ep)
-                writer.add_scalar("val/dur_acc", metrics["dur_acc"], ep)
-    
-            metric_val = f1
-            if best_metric.startswith("inst_f1:") and instrument_vocab:
-                target = best_metric.split(":", 1)[1]
-                inv_inst = {i: s for s, i in instrument_vocab.items()}
-                groups: dict[int, list[tuple[int, int]]] = {}
-                if tag_buf.get("instrument"):
-                    for t, p, gid in zip(trues, preds_epoch, tag_buf["instrument"]):
-                        if gid <= 0:
-                            continue
-                        groups.setdefault(gid, []).append((t, p))
-                inst_metrics = {
-                    inv_inst[g]: f1_score([t for t, _ in v], [p for _, p in v])
-                    for g, v in groups.items()
-                    if g in inv_inst
-                }
-                metric_val = inst_metrics.get(target, 0.0)
-            elif best_metric.startswith("by_tag_f1:"):
-                key = best_metric.split(":", 1)[1]
-                vocab_map = {"section": section_vocab, "mood": mood_vocab}.get(key)
-                if vocab_map and tag_buf.get(key):
-                    inv_map = {i: s for s, i in vocab_map.items()}
-                    groups: dict[int, list[tuple[int, int]]] = {}
-                    for t, p, gid in zip(trues, preds_epoch, tag_buf[key]):
-                        if gid <= 0:
-                            continue
-                        groups.setdefault(gid, []).append((t, p))
-                    vals = [
-                        f1_score([t for t, _ in v], [p for _, p in v])
-                        for g, v in groups.items()
-                        if g in inv_map
-                    ]
-                    metric_val = sum(vals) / len(vals) if vals else 0.0
-    
-            if metric_val > best_metric_val:
-                best_metric_val = metric_val
-                best_f1 = f1
-                best_threshold = th
-                best_state = {k: v.cpu() for k, v in model.state_dict().items()}
-                bad_epochs = 0
-            else:
-                bad_epochs += 1
-                if early_stopping and bad_epochs >= early_stopping:
-                    break
-            if save_every and (ep + 1) % save_every == 0:
-                torch.save(
-                    {
-                        "model": model.state_dict(),
-                        "optimizer": opt.state_dict(),
-                        "scheduler": sched.state_dict() if sched else None,
-                        "epoch": ep + 1,
-                        "global_step": global_step,
-                        "best_f1": best_f1,
-                        "meta": {
-                            "arch": arch,
-                            "d_model": d_model,
-                            "n_layers": layers,
-                            "n_heads": nhead,
-                        "max_len": max_len,
-                        "duv_mode": duv_mode,
-                        "vel_bins": vel_bins,
-                        "dur_bins": dur_bins,
-                        "vocab_pitch": 128,
-                        "vocab": {},
-                        "corpus_name": corpus_name,
-                        "tag_coverage": tag_coverage,
-                        },
-                    },
-                    out.with_suffix(f".epoch{ep + 1}.ckpt"),
-                )
-        meta = {
-            "arch": arch,
-            "d_model": d_model,
-            "n_layers": layers,
-            "n_heads": nhead,
-            "max_len": max_len,
-            "duv_mode": duv_mode,
-            "vel_bins": vel_bins,
-            "dur_bins": dur_bins,
-            "use_bar_beat": bool(use_bar_beat),
-            "use_harmony": bool(use_harmony),
-            "vocab_pitch": 128,
-            "vocab": {},
-            "corpus_name": corpus_name,
-            "tag_coverage": tag_coverage,
+        best_f1, best_th = -1.0, 0.5
+        start, end, step = f1_scan_range
+        n = int(round((end - start) / step)) + 1
+        ths = [round(start + i * step, 10) for i in range(n)]
+        for th in ths:
+            preds = [1 if p > th else 0 for p in probs]
+            f1 = f1_score(trues, preds)
+            if f1 > best_f1:
+                best_f1, best_th = f1, float(th)
+        # Additional diagnostics to detect saturation/imbalance during eval
+        total = max(1, len(probs))
+        preds_best = [1 if p > best_th else 0 for p in probs]
+        pos_rate = sum(preds_best) / total
+        mean_prob = sum(probs) / total
+        metrics = {
+            "vel_mae": vel_err / vel_n if vel_n else 0.0,
+            "dur_mae": dur_err / dur_n if dur_n else 0.0,
+            "vel_acc": vel_ok / vel_tot if vel_tot else 0.0,
+            "dur_acc": dur_ok / dur_tot if dur_tot else 0.0,
+            "pos_rate": pos_rate,
+            "mean_prob": mean_prob,
         }
-        final_best_f1 = float(best_f1) if best_f1 >= 0 else 0.0
-        final_epoch = max(start_epoch, epochs_completed)
-        final_state = {
-            "model": {k: v.cpu() for k, v in model.state_dict().items()},
-            "optimizer": opt.state_dict(),
-            "scheduler": sched.state_dict() if sched else None,
-            "epoch": final_epoch,
-            "global_step": global_step,
-            "best_f1": final_best_f1,
-            "meta": meta,
-        }
-        def _save_last_checkpoint_fallback() -> None:
-            out_path = Path(out)
-            if out_path.exists():
-                return
+        val_loss_avg = val_loss_sum / max(1, val_batches)
+        return best_f1, val_loss_avg, best_th, probs, trues, tag_buf, metrics, logits_all
+    
+    ts = int(time.time())
+    best_state = None
+    best_threshold = 0.5
+    bad_epochs = 0
+    best_metric_val = -1.0
+    viz_files: list[str] = []
+    metrics_rows: list[dict[str, float]] = []
+    use_progress = bool(progress and _tqdm is not None)
+    epochs_completed = start_epoch
+    for ep in range(start_epoch, epochs):
+        t0 = time.time()
+        epochs_completed = ep + 1
+        model.train()
+        loss_sum = 0.0
+        lb_sum = lv_sum = ld_sum = lvb_sum = ldb_sum = lp_sum = 0.0
+        opt.zero_grad()
+        iter_train = dl_train
+        if use_progress:
+            iter_train = _tqdm(
+                dl_train,
+                total=len(dl_train),
+                desc=f"epoch {ep + 1}/{epochs}",
+                leave=False,
+            )
+        for step, (feats, targets, mask, _) in enumerate(iter_train):
+            feats = {k: v.to(device) for k, v in feats.items()}
+            targets = {k: v.to(device) for k, v in targets.items()}
+            mask = mask.to(device)
+            ctx = (
+                torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp)
+                if use_amp
+                else nullcontext()
+            )
+            with ctx:
+                outputs = model(feats, mask)
+                m = mask.bool()
+                loss = 0.0
+                lb = lv = ld = lvb = ldb = lp = 0.0
+                if "boundary2" in outputs:
+                    # 2-class logits available (CRF head or softmax head); use BCE on class-1 logit if not CRF
+                    if head == 'crf':
+                        # CRF NLL
+                        # build emissions and tags
+                        emissions = outputs["boundary2"]  # (B,L,2)
+                        tags = targets["boundary"].long()
+                        lb = crf.nll(emissions, tags, m)
+                        loss = loss + w_boundary * lb
+                    else:
+                        lb = crit_boundary(outputs["boundary2"][m][:, 1] - outputs["boundary2"][m][:, 0], targets["boundary"][m])
+                        loss = loss + w_boundary * lb
+                elif "boundary" in outputs:
+                    lb = crit_boundary(outputs["boundary"][m], targets["boundary"][m])
+                    loss = loss + w_boundary * lb
+                if "vel_reg" in outputs:
+                    lv = crit_vel_reg(outputs["vel_reg"][m], targets["vel_reg"][m])
+                    loss = loss + w_vel_reg * lv
+                if "dur_reg" in outputs:
+                    ld = crit_dur_reg(outputs["dur_reg"][m], targets["dur_reg"][m])
+                    loss = loss + w_dur_reg * ld
+                if "vel_cls" in outputs:
+                    lvb = crit_vel_cls(outputs["vel_cls"][m], targets["vel_cls"][m])
+                    loss = loss + w_vel_cls * lvb
+                if "dur_cls" in outputs:
+                    ldb = crit_dur_cls(outputs["dur_cls"][m], targets["dur_cls"][m])
+                    loss = loss + w_dur_cls * ldb
+                if "pitch_logits" in outputs:
+                    lp = crit_pitch(outputs["pitch_logits"][m], targets["pitch"][m])
+                    loss = loss + w_pitch * lp
+                lb_sum += float(lb)
+                lv_sum += float(lv)
+                ld_sum += float(ld)
+                lvb_sum += float(lvb)
+                ldb_sum += float(ldb)
+                lp_sum += float(lp)
+            loss_sum += float(loss)
+            if scaler.is_enabled():
+                scaler.scale(loss / grad_accum).backward()
+            else:
+                (loss / grad_accum).backward()
+            if (step + 1) % grad_accum == 0:
+                if scaler.is_enabled():
+                    if grad_clip > 0:
+                        scaler.unscale_(opt)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    scaler.step(opt)
+                    scaler.update()
+                else:
+                    if grad_clip > 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    opt.step()
+                opt.zero_grad()
+                if sched and scheduler != "plateau":
+                    if global_step < warmup_steps:
+                        lr_scale = float(global_step + 1) / warmup_steps
+                        for pg in opt.param_groups:
+                            pg["lr"] = lr * lr_scale
+                    else:
+                        sched.step()
+                global_step += 1
+            if limit_train_batches and (step + 1) >= limit_train_batches:
+                break
+        if use_progress:
             try:
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                torch.save(
-                    {
-                        "model": model.state_dict(),
-                        "hparams": {
-                            "arch": arch,
-                            "d_model": d_model,
-                            "max_len": max_len,
-                        },
-                    },
-                    out_path,
-                )
-                logging.info("saved last checkpoint to %s", out_path)
-            except Exception as exc_fallback:
-                logging.warning(
-                    "failed to save last checkpoint to %s: %s",
-                    out,
-                    exc_fallback,
-                )
-
-        saved_final = False
+                iter_train.close()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        f1, val_loss, th, probs, trues, tag_buf, metrics, _ = evaluate()
+        n_batches = max(1, len(dl_train))
+        avg_loss = loss_sum / n_batches
+        lb_avg = lb_sum / n_batches
+        lv_avg = lv_sum / n_batches
+        ld_avg = ld_sum / n_batches
+        lvb_avg = lvb_sum / n_batches
+        ldb_avg = ldb_sum / n_batches
+        lp_avg = lp_sum / n_batches
+        lr_cur = opt.param_groups[0]["lr"]
+        elapsed = time.time() - t0
+        logging.info(
+            "epoch %d train_loss %.4f val_f1 %.3f vel_mae %.3f dur_mae %.3f vel_acc %.3f dur_acc %.3f lr %.2e th %.2f pos_rate %.3f mean_p %.3f time %.1fs",
+            ep + 1,
+            avg_loss,
+            f1,
+            metrics["vel_mae"],
+            metrics["dur_mae"],
+            metrics["vel_acc"],
+            metrics["dur_acc"],
+            lr_cur,
+            th,
+            metrics.get("pos_rate", 0.0),
+            metrics.get("mean_prob", 0.0),
+            elapsed,
+        )
         try:
-            out_path = Path(out)
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            torch.save(final_state, out_path)
+            tr_loss = float(avg_loss)
+        except Exception:  # pragma: no cover - fallback for tensor-like values
+            tr_loss = float(avg_loss.item()) if hasattr(avg_loss, "item") else float(avg_loss)
+        try:
+            vl_loss = float(val_loss)
+        except Exception:  # pragma: no cover - fallback for tensor-like values
+            vl_loss = float(val_loss.item()) if hasattr(val_loss, "item") else float(val_loss)
+        # Downstream tooling parses this legacy-formatted line verbatim; keep the
+        # structure identical so historical log consumers and unit tests remain stable.
+        logging.info(
+            "epoch=%d train_loss=%.6f val_loss=%.6f | train_loss %.6f val_loss %.6f",
+            ep + 1,
+            tr_loss,
+            vl_loss,
+            tr_loss,
+            vl_loss,
+        )
+        metrics_rows.append(
+            {
+                "epoch": ep + 1,
+                "loss": avg_loss,
+                "loss_boundary": lb_avg,
+                "loss_vel_reg": lv_avg,
+                "loss_dur_reg": ld_avg,
+                "loss_vel_cls": lvb_avg,
+                "loss_dur_cls": ldb_avg,
+                "loss_pitch": lp_avg,
+                "f1": f1,
+                "best_th": th,
+                "time": elapsed,
+            }
+        )
+        preds_epoch = [1 if p > th else 0 for p in probs]
+        if scheduler == "plateau" and sched:
+            sched.step(f1)
+        if viz and precision_recall_curve and plt:
+            try:
+                prec, rec, _ = precision_recall_curve(trues, probs)
+                plt.figure()
+                plt.plot(rec, prec)
+                plt.xlabel("Recall")
+                plt.ylabel("Precision")
+                plt.tight_layout()
+                fname_pr = out.parent / f"pr_curve_ep{ep + 1}.png"
+                plt.savefig(fname_pr)
+                plt.close()
+                ConfusionMatrixDisplay.from_predictions(trues, preds_epoch)
+                plt.tight_layout()
+                fname_cm = out.parent / f"confusion_matrix_ep{ep + 1}.png"
+                plt.savefig(fname_cm)
+                plt.close()
+                viz_files.extend([str(fname_pr), str(fname_cm)])
+            except Exception:  # pragma: no cover - visualization failures
+                pass
+        if writer:
+            writer.add_scalar("val/f1", f1, ep)
+            writer.add_scalar("train/loss", avg_loss, ep)
+            writer.add_scalar("val/vel_mae", metrics["vel_mae"], ep)
+            writer.add_scalar("val/dur_mae", metrics["dur_mae"], ep)
+            writer.add_scalar("val/vel_acc", metrics["vel_acc"], ep)
+            writer.add_scalar("val/dur_acc", metrics["dur_acc"], ep)
+    
+        metric_val = f1
+        if best_metric.startswith("inst_f1:") and instrument_vocab:
+            target = best_metric.split(":", 1)[1]
+            inv_inst = {i: s for s, i in instrument_vocab.items()}
+            groups: dict[int, list[tuple[int, int]]] = {}
+            if tag_buf.get("instrument"):
+                for t, p, gid in zip(trues, preds_epoch, tag_buf["instrument"]):
+                    if gid <= 0:
+                        continue
+                    groups.setdefault(gid, []).append((t, p))
+            inst_metrics = {
+                inv_inst[g]: f1_score([t for t, _ in v], [p for _, p in v])
+                for g, v in groups.items()
+                if g in inv_inst
+            }
+            metric_val = inst_metrics.get(target, 0.0)
+        elif best_metric.startswith("by_tag_f1:"):
+            key = best_metric.split(":", 1)[1]
+            vocab_map = {"section": section_vocab, "mood": mood_vocab}.get(key)
+            if vocab_map and tag_buf.get(key):
+                inv_map = {i: s for s, i in vocab_map.items()}
+                groups: dict[int, list[tuple[int, int]]] = {}
+                for t, p, gid in zip(trues, preds_epoch, tag_buf[key]):
+                    if gid <= 0:
+                        continue
+                    groups.setdefault(gid, []).append((t, p))
+                vals = [
+                    f1_score([t for t, _ in v], [p for _, p in v])
+                    for g, v in groups.items()
+                    if g in inv_map
+                ]
+                metric_val = sum(vals) / len(vals) if vals else 0.0
+    
+        if metric_val > best_metric_val:
+            best_metric_val = metric_val
+            best_f1 = f1
+            best_threshold = th
+            best_state = {k: v.cpu() for k, v in model.state_dict().items()}
+            bad_epochs = 0
+        else:
+            bad_epochs += 1
+            if early_stopping and bad_epochs >= early_stopping:
+                break
+        if save_every and (ep + 1) % save_every == 0:
+            torch.save(
+                {
+                    "model": model.state_dict(),
+                    "optimizer": opt.state_dict(),
+                    "scheduler": sched.state_dict() if sched else None,
+                    "epoch": ep + 1,
+                    "global_step": global_step,
+                    "best_f1": best_f1,
+                    "meta": {
+                        "arch": arch,
+                        "d_model": d_model,
+                        "n_layers": layers,
+                        "n_heads": nhead,
+                    "max_len": max_len,
+                    "duv_mode": duv_mode,
+                    "vel_bins": vel_bins,
+                    "dur_bins": dur_bins,
+                    "vocab_pitch": 128,
+                    "vocab": {},
+                    "corpus_name": corpus_name,
+                    "tag_coverage": tag_coverage,
+                    },
+                },
+                out.with_suffix(f".epoch{ep + 1}.ckpt"),
+            )
+    meta = {
+        "arch": arch,
+        "d_model": d_model,
+        "n_layers": layers,
+        "n_heads": nhead,
+        "max_len": max_len,
+        "duv_mode": duv_mode,
+        "vel_bins": vel_bins,
+        "dur_bins": dur_bins,
+        "use_bar_beat": bool(use_bar_beat),
+        "use_harmony": bool(use_harmony),
+        "vocab_pitch": 128,
+        "vocab": {},
+        "corpus_name": corpus_name,
+        "tag_coverage": tag_coverage,
+    }
+    final_best_f1 = float(best_f1) if best_f1 >= 0 else 0.0
+    final_epoch = max(start_epoch, epochs_completed)
+    final_state = {
+        "model": {k: v.cpu() for k, v in model.state_dict().items()},
+        "optimizer": opt.state_dict(),
+        "scheduler": sched.state_dict() if sched else None,
+        "epoch": final_epoch,
+        "global_step": global_step,
+        "best_f1": final_best_f1,
+        "meta": meta,
+    }
+    out_path = Path(out)
+    out_parent = out_path.parent
+    out_parent.mkdir(parents=True, exist_ok=True)
+    saved_final = False
+    # The fallback path guarantees a lightweight checkpoint even if serialising the
+    # full training state fails (e.g., due to unexpected objects in optimizer state).
+    try:
+        torch.save(final_state, out_path)
+        saved_final = True
+    except Exception as exc:
+        logging.warning("failed to save checkpoint to %s: %s", out, exc)
+    if not saved_final:
+        try:
+            torch.save(
+                {
+                    "model": model.state_dict(),
+                    "hparams": {
+                        "arch": arch,
+                        "d_model": d_model,
+                        "max_len": max_len,
+                    },
+                },
+                out_path,
+            )
             saved_final = True
-        except Exception as exc:
-            logging.warning("failed to save checkpoint to %s: %s", out, exc)
-        if not saved_final:
-            _save_last_checkpoint_fallback()
-        if save_last:
-            last_link = out.with_name("last.ckpt")
+            logging.info("fallback checkpoint saved to %s", out_path)
+        except Exception as exc_fallback:
+            logging.warning(
+                "failed to save last checkpoint to %s: %s",
+                out,
+                exc_fallback,
+            )
+    if save_last:
+        last_link = out.with_name("last.ckpt")
+        try:
             if last_link.exists() or last_link.is_symlink():
                 last_link.unlink()
             last_link.symlink_to(out.name)
-        if best_state is not None:
-            best_ckpt = final_state.copy()
-            best_ckpt["model"] = best_state
-            best_path = out.with_suffix(".best.ckpt")
-            torch.save(best_ckpt, best_path)
-            if save_best:
-                best_link = out.with_name("best.ckpt")
+        except OSError as exc:
+            logging.warning("failed to create last.ckpt symlink: %s", exc)
+            try:
+                shutil.copy2(out_path, last_link)
+            except OSError as copy_exc:
+                logging.warning("failed to copy checkpoint to last.ckpt: %s", copy_exc)
+    if best_state is not None:
+        best_ckpt = final_state.copy()
+        best_ckpt["model"] = best_state
+        best_path = out.with_suffix(".best.ckpt")
+        torch.save(best_ckpt, best_path)
+        if save_best:
+            best_link = out.with_name("best.ckpt")
+            try:
                 if best_link.exists() or best_link.is_symlink():
                     best_link.unlink()
                 best_link.symlink_to(best_path.name)
-        if writer:
-            writer.close()
-        if best_state is not None:
-            model.load_state_dict(best_state)
-        best_f1, _, best_threshold, probs, trues, tag_buf, metrics, logits_all = evaluate()
-        inv_section = {i: s for s, i in section_vocab.items()} if section_vocab else {}
-        inv_mood = {i: s for s, i in mood_vocab.items()} if mood_vocab else {}
-        inv_inst = {i: s for s, i in instrument_vocab.items()} if instrument_vocab else {}
-        metrics_by_tag: dict[str, dict[str, float]] = {}
+            except OSError as exc:
+                logging.warning("failed to create best.ckpt symlink: %s", exc)
+                try:
+                    shutil.copy2(best_path, best_link)
+                except OSError as copy_exc:
+                    logging.warning("failed to copy checkpoint to best.ckpt: %s", copy_exc)
+    if writer:
+        writer.close()
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    best_f1, _, best_threshold, probs, trues, tag_buf, metrics, logits_all = evaluate()
+    inv_section = {i: s for s, i in section_vocab.items()} if section_vocab else {}
+    inv_mood = {i: s for s, i in mood_vocab.items()} if mood_vocab else {}
+    inv_inst = {i: s for s, i in instrument_vocab.items()} if instrument_vocab else {}
+    metrics_by_tag: dict[str, dict[str, float]] = {}
     
-        def group_f1(ids: list[int], inv_map: dict[int, str]) -> dict[str, float]:
-            groups: dict[int, list[tuple[int, int]]] = {}
-            for t, p, gid in zip(trues, probs, ids):
-                if gid <= 0:
-                    continue
-                pred = 1 if p > best_threshold else 0
-                groups.setdefault(gid, []).append((t, pred))
-            return {inv_map[k]: f1_score([t for t, _ in v], [p for _, p in v]) for k, v in groups.items()}
+    def group_f1(ids: list[int], inv_map: dict[int, str]) -> dict[str, float]:
+        groups: dict[int, list[tuple[int, int]]] = {}
+        for t, p, gid in zip(trues, probs, ids):
+            if gid <= 0:
+                continue
+            pred = 1 if p > best_threshold else 0
+            groups.setdefault(gid, []).append((t, pred))
+        return {inv_map[k]: f1_score([t for t, _ in v], [p for _, p in v]) for k, v in groups.items()}
     
-        if instrument_vocab:
-            metrics_by_tag["instrument"] = group_f1(tag_buf["instrument"], inv_inst)
-        if section_vocab:
-            metrics_by_tag["section"] = group_f1(tag_buf["section"], inv_section)
-        if mood_vocab:
-            metrics_by_tag["mood"] = group_f1(tag_buf["mood"], inv_mood)
-        metrics_path = out.parent / "metrics.json"
-        metrics_data = {"f1": best_f1, "best_threshold": best_threshold}
-        if metrics_by_tag:
-            metrics_data["by_tag"] = metrics_by_tag
-            (out.parent / "metrics_by_tag.json").write_text(
-                json.dumps(metrics_by_tag, ensure_ascii=False, indent=2)
-            )
-        metrics_path.write_text(json.dumps(metrics_data, ensure_ascii=False))
-        metrics_csv = out.parent / "metrics_epoch.csv"
-        with metrics_csv.open("w", newline="") as f:
-            writer = csv.DictWriter(
-                f,
-                fieldnames=[
-                    "epoch",
-                    "loss",
-                    "loss_boundary",
-                    "loss_vel_reg",
-                    "loss_dur_reg",
-                    "loss_vel_cls",
-                    "loss_dur_cls",
-                    "loss_pitch",
-                    "f1",
-                    "best_th",
-                    "time",
-                ],
-            )
-            writer.writeheader()
-            writer.writerows(metrics_rows)
-        preview_path = out.parent / "preds_preview.json"
-        try:
-            with torch.no_grad():
-                feats, targets, mask, _tags = next(iter(dl_val))
-                feats = {k: v.to(device) for k, v in feats.items()}
-                mask0 = mask[0].bool()
-                outputs = model(feats, mask.to(device))
-                if "boundary2" in outputs:
-                    logits2 = outputs["boundary2"][0, mask0.to(device)]  # (T,2)
-                    probs_t = torch.softmax(logits2, dim=-1)[:, 1]
-                else:
-                    logits = outputs["boundary"][0, mask0.to(device)]
-                    probs_t = torch.sigmoid(logits)
-                probs = probs_t.cpu().tolist()
-                preds = [1 if p > best_threshold else 0 for p in probs]
-                trues = targets["boundary"][0][mask0].int().cpu().tolist()
-            preview_path.write_text(
-                json.dumps({"probs": probs, "preds": preds, "trues": trues}, ensure_ascii=False)
-            )
-        except StopIteration:  # pragma: no cover - empty validation set
-            pass
-        # Emit a compact JSON summary to ease sweeps/log parsing
-        print(
-            json.dumps(
-                {
-                    "f1": final_best_f1,
-                    "best_th": float(best_threshold),
-                    "arch": arch,
-                    "d_model": int(d_model),
-                    "pos_weight": float(pos_weight) if pos_weight else None,
-                    "w_boundary": float(w_boundary),
-                    "duv_mode": duv_mode,
-                }
-            )
+    if instrument_vocab:
+        metrics_by_tag["instrument"] = group_f1(tag_buf["instrument"], inv_inst)
+    if section_vocab:
+        metrics_by_tag["section"] = group_f1(tag_buf["section"], inv_section)
+    if mood_vocab:
+        metrics_by_tag["mood"] = group_f1(tag_buf["mood"], inv_mood)
+    metrics_path = out.parent / "metrics.json"
+    metrics_data = {"f1": best_f1, "best_threshold": best_threshold}
+    if metrics_by_tag:
+        metrics_data["by_tag"] = metrics_by_tag
+        (out.parent / "metrics_by_tag.json").write_text(
+            json.dumps(metrics_by_tag, ensure_ascii=False, indent=2)
         )
-        stats = {
-            "class_counts": class_counts,
-            "tag_counts": tag_counts,
-            "tag_coverage": tag_coverage,
-            "viz_paths": viz_files,
-        }
-        if weight_stats:
-            stats["tag_weights_top10"] = weight_stats
-        return final_best_f1, device.type, stats
+    metrics_path.write_text(json.dumps(metrics_data, ensure_ascii=False))
+    metrics_csv = out.parent / "metrics_epoch.csv"
+    with metrics_csv.open("w", newline="") as f:
+        csv_writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "epoch",
+                "loss",
+                "loss_boundary",
+                "loss_vel_reg",
+                "loss_dur_reg",
+                "loss_vel_cls",
+                "loss_dur_cls",
+                "loss_pitch",
+                "f1",
+                "best_th",
+                "time",
+            ],
+        )
+        csv_writer.writeheader()
+        csv_writer.writerows(metrics_rows)
+    preview_path = out.parent / "preds_preview.json"
+    try:
+        with torch.no_grad():
+            feats, targets, mask, _tags = next(iter(dl_val))
+            feats = {k: v.to(device) for k, v in feats.items()}
+            mask0 = mask[0].bool()
+            outputs = model(feats, mask.to(device))
+            if "boundary2" in outputs:
+                logits2 = outputs["boundary2"][0, mask0.to(device)]  # (T,2)
+                probs_t = torch.softmax(logits2, dim=-1)[:, 1]
+            else:
+                logits = outputs["boundary"][0, mask0.to(device)]
+                probs_t = torch.sigmoid(logits)
+            probs = probs_t.cpu().tolist()
+            preds = [1 if p > best_threshold else 0 for p in probs]
+            trues = targets["boundary"][0][mask0].int().cpu().tolist()
+        preview_path.write_text(
+            json.dumps({"probs": probs, "preds": preds, "trues": trues}, ensure_ascii=False)
+        )
+    except StopIteration:  # pragma: no cover - empty validation set
+        pass
+    # Emit a compact JSON summary to ease sweeps/log parsing
+    print(
+        json.dumps(
+            {
+                "f1": final_best_f1,
+                "best_th": float(best_threshold),
+                "arch": arch,
+                "d_model": int(d_model),
+                "pos_weight": float(pos_weight) if pos_weight else None,
+                "w_boundary": float(w_boundary),
+                "duv_mode": duv_mode,
+            }
+        )
+    )
+    stats = {
+        "class_counts": class_counts,
+        "tag_counts": tag_counts,
+        "tag_coverage": tag_coverage,
+        "viz_paths": viz_files,
+    }
+    if weight_stats:
+        stats["tag_weights_top10"] = weight_stats
+    # Self-check: targeted suites expected to pass —
+    # tests/test_train_phrase_duv.py,
+    # tests/test_train_phrase_transformer_hparams.py::test_transformer_hparams,
+    # tests/test_train_phrase_duv_embed_toggle.py::test_duv_embed_toggle.
+    return final_best_f1, device.type, stats
     
     
 def build_parser() -> argparse.ArgumentParser:

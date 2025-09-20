@@ -26,7 +26,24 @@ from dataclasses import dataclass
 from typing import Callable, List, Tuple, Optional
 
 import numpy as np
-from scipy.signal import find_peaks, get_window
+try:
+    from scipy.signal import find_peaks, get_window
+except ImportError:  # 簡易フォールバック
+    def get_window(name, N, fftbins=True):
+        return np.hanning(N)
+
+    def find_peaks(x, height=None, distance=1):
+        x = np.asarray(x)
+        thr = -np.inf if height is None else float(height)
+        idx = []
+        last = -10**9
+        dist = max(1, int(distance))
+        for i in range(1, len(x) - 1):
+            if x[i] >= thr and x[i] > x[i - 1] and x[i] >= x[i + 1] and (i - last) >= dist:
+                idx.append(i)
+                last = i
+        peaks = np.array(idx, dtype=int)
+        return peaks, {"peak_heights": x[peaks] if len(peaks) else np.array([])}
 from pydub import AudioSegment
 import pretty_midi
 

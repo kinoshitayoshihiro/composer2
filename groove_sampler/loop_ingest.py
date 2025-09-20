@@ -31,7 +31,7 @@ def _iter_midi(path: Path) -> Iterator[tuple[int, str, int, int]]:
     """Yield quantised events from a MIDI file."""
 
     pm = pretty_midi.PrettyMIDI(str(path))
-    tempo = pm.get_tempo_changes()[1]
+    tempo = pm.get_tempo_changes()[0]
     bpm = float(tempo[0]) if tempo.size else 120.0
     sec_per_beat = 60.0 / bpm
 

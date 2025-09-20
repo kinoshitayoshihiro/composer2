@@ -117,39 +117,23 @@ def apply_tempo_map(
             pm._tick_scales.append((int(round(tick)), last_scale))
         pm._update_tick_to_time(int(round(tick)) + 1)
 
-
-def export_song(
-    bars: int,
-    *,
-    tempo_map: list[tuple[float, float]] | None = None,
-    generators: dict[str, Callable[..., PrettyMIDI]],
-    fixed_tempo: float = 120.0,
-    out_path: str | Path = "song.mid",
-    sections: list[dict[str, Any]] | None = None,
-) -> PrettyMIDI:
-    """Generate multiple parts and export a merged MIDI file.
-
-    When ``sections`` are provided each section may include a ``tempo_map`` key
-    containing ``[(beat, bpm), ...]`` pairs. Generated parts for that section are
-    offset by the cumulative beat position and all tempo change events are
-    applied once to the master ``PrettyMIDI`` object.
-    """
-
     out_path = Path(out_path)
-    master = PrettyMIDI(initial_tempo=float(fixed_tempo or 120.0))
-    _set_initial_tempo(master, fixed_tempo)
+    # 初期テンポを一度だけ確定（None/0ガード込み）
+    base_tempo = float(fixed_tempo or 120.0)
+    master = PrettyMIDI(initial_tempo=base_tempo)
+    _set_initial_tempo(master, base_tempo)
     all_tempos: list[tuple[float, float]] = []
     tempo_tuple: tuple[tuple[float, float], ...] | None = None
 
     if sections:
         beat_offset = 0.0
-        sec_per_beat = 60.0 / fixed_tempo
+        sec_per_beat = 60.0 / base_tempo
 
         for sec in sections:
-            vm = vocal_sync.analyse_section(sec, tempo_bpm=fixed_tempo)
+            vm = vocal_sync.analyse_section(sec, tempo_bpm=base_tempo)
             sec_pms: list[PrettyMIDI] = []
             for name, gen in (generators or {}).items():
-                sec_pms.append(gen(sec, fixed_tempo, vocal_metrics=vm))
+                sec_pms.append(gen(sec, base_tempo, vocal_metrics=vm))
 
             # determine section duration from generated parts
             sec_duration = 0.0
@@ -188,7 +172,7 @@ def export_song(
             beat_offset += sec_beats
     else:
         for name, gen in (generators or {}).items():
-            pm = gen(bars, fixed_tempo)
+            pm = gen(bars, base_tempo)
             for inst in pm.instruments:
                 master.instruments.append(copy.deepcopy(inst))
         all_tempos = list(tempo_map or [])

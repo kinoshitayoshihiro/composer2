@@ -163,7 +163,7 @@ if TYPE_CHECKING:
 
 
 def _infer_score_bpm(pm: PrettyMIDI) -> float:
-    changes, tempi = pm.get_tempo_changes()
+    tempi, _times = pm.get_tempo_changes()
     if len(tempi) == 0:
         raise ValueError("score_bpm is required if MIDI has no tempo map")
     return float(tempi[0])

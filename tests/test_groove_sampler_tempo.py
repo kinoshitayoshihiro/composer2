@@ -65,6 +65,6 @@ def test_train_inject_default_tempo(tmp_path: Path):
     assert model.files_scanned == 1
     assert model.total_events > 0
     pm2 = pretty_midi.PrettyMIDI(str(midi_path))
-    _t, tempi = pm2.get_tempo_changes()
+    tempi, _t = pm2.get_tempo_changes()
     assert len(tempi) == 0
 

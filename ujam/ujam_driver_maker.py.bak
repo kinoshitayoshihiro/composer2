@@ -197,7 +197,7 @@ def main():
     beats = 4
     if os.path.splitext(args.input)[1].lower() in [".mid", ".midi"]:
         src = pm.PrettyMIDI(args.input)
-        tempos = src.get_tempo_changes()[1]
+        tempos = src.get_tempo_changes()[0]
         if len(tempos):
             tempo = float(tempos[0])
         inst_src = max(src.instruments, key=lambda i: len(i.notes))

@@ -207,27 +207,13 @@ def _section_for_bar(bar: int, sections: Dict[int, str]) -> str | None:
             break
     return current
 
-
-def convert(args: argparse.Namespace) -> None:
-    from . import utils
-    mapping_path = pathlib.Path(args.mapping)
-    mapping = _load_yaml(mapping_path)
-    keymap: Dict[str, int] = mapping.get("keyswitch", {})
-    play_low = int(mapping.get("play_range", {}).get("low", 0))
-    play_high = int(mapping.get("play_range", {}).get("high", 127))
-    section_styles: Dict[str, List[str]] = mapping.get("section_styles", {})
-
-    pattern_lib = _load_patterns()
-
-    sections: Dict[int, str] = {}
-    if args.tags:
-        sections = _load_sections(pathlib.Path(args.tags))
-
     pm = pretty_midi.PrettyMIDI(str(args.in_midi))
     # 初期テンポ注入（無テンポや非正テンポの救済）
     try:
-        _times, bpms = pm.get_tempo_changes()
-        if len(bpms) == 0 or not float(bpms[0]) > 0:
+        # pretty_midi.get_tempo_changes() は (times, tempi) を返す
+        times, tempi = pm.get_tempo_changes()
+        if len(tempi) == 0 or not (float(tempi[0]) > 0):
+            # 120 BPM を仮定して tick→sec のスケールを初期化
             scale = 60.0 / (120.0 * pm.resolution)
             pm._tick_scales = [(0, scale)]
             if hasattr(pm, "_update_tick_to_time"):

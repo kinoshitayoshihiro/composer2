@@ -16,7 +16,7 @@ import warnings
 from collections import Counter
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 # Optional torch (tests monkeypatch a shim module)
 try:  # pragma: no cover - optional dependency
@@ -35,6 +35,12 @@ except Exception:  # pragma: no cover - tqdm missing
 plt = None  # type: ignore
 
 
+try:  # pragma: no cover - optional dependency for tests/CLI
+    import torch as torch  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover - torch may be unavailable for docs builds
+    torch = None  # type: ignore[assignment]
+
+
 # local import guard so the script works without an editable install
 try:  # pragma: no cover - import robustness
     from models.phrase_transformer import PhraseTransformer
@@ -51,14 +57,34 @@ if not isinstance(PhraseTransformer, type):  # pragma: no cover - defensive
 _TMP_DIRS: list[Path] = []
 
 
-def _register_tmp(path: Path) -> Path:
+def _register_tmp(path: Path, *, cleanup: Callable[[], None] | None = None) -> Path:
     _TMP_DIRS.append(path)
 
-    def _cleanup(p: Path) -> None:
-        shutil.rmtree(p, ignore_errors=True)
+    if cleanup is None:
+        def _cleanup(p: Path) -> None:
+            shutil.rmtree(p, ignore_errors=True)
 
-    atexit.register(_cleanup, path)
+        atexit.register(_cleanup, path)
+    else:
+        atexit.register(cleanup)
     return path
+
+
+def _make_tempdir(prefix: str) -> Path:
+    td = tempfile.TemporaryDirectory(prefix=prefix)
+    cleanup: Callable[[], None] | None = getattr(td, "cleanup", None)
+    name: str | None = getattr(td, "name", None)
+
+    if name is None and hasattr(td, "__enter__"):
+        name = td.__enter__()
+    if cleanup is None and hasattr(td, "__exit__"):
+        def _cleanup(tmp=td) -> None:
+            tmp.__exit__(None, None, None)
+
+        cleanup = _cleanup
+    if name is None:
+        raise RuntimeError("TemporaryDirectory did not provide a filesystem path")
+    return _register_tmp(Path(name), cleanup=cleanup)
 
 
 FIELDS = [
@@ -275,6 +301,10 @@ def train_model(
 
     import importlib
 
+    global torch  # type: ignore
+    if torch is None:  # pragma: no cover - fallback for optional import
+        torch = importlib.import_module("torch")  # type: ignore[assignment]
+
     try:  # optional deps for viz
         from sklearn.metrics import precision_recall_curve, ConfusionMatrixDisplay
     except Exception:  # pragma: no cover - optional
@@ -292,7 +322,6 @@ def train_model(
         except Exception:
             logging.warning("matplotlib not installed; skipping --viz")
 
-    torch = importlib.import_module("torch")
     from torch import nn
     from torch.utils.data import DataLoader, Dataset
     try:  # optional
@@ -1696,7 +1725,7 @@ def main(argv: list[str] | None = None) -> int:
                 rng = random.Random(0)
                 train_rows = rng.sample(train_rows, min(args.sample, len(train_rows)))
                 val_rows = rng.sample(val_rows, min(args.sample, len(val_rows)))
-            tmp = _register_tmp(Path(tempfile.mkdtemp(prefix="train_phrase_")))
+            tmp = _make_tempdir("train_phrase_")
             train_csv = tmp / "train.csv"
             val_csv = tmp / "valid.csv"
             write_csv(train_rows, train_csv)
@@ -1704,7 +1733,7 @@ def main(argv: list[str] | None = None) -> int:
             args.train_csv = train_csv
             args.val_csv = val_csv
         except Exception:
-            tmp = _register_tmp(Path(tempfile.mkdtemp(prefix="train_phrase_")))
+            tmp = _make_tempdir("train_phrase_")
             train_csv = tmp / "train.csv"
             val_csv = tmp / "valid.csv"
             subprocess.run(

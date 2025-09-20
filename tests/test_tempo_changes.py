@@ -1,5 +1,9 @@
 import sitecustomize  # noqa: F401  # ensure tempo patch
-from pretty_midi import PrettyMIDI
+
+import pytest
+
+pretty_midi = pytest.importorskip("pretty_midi")
+PrettyMIDI = pretty_midi.PrettyMIDI
 
 
 def test_tempo_changes() -> None:
@@ -20,6 +24,9 @@ def test_tempo_changes() -> None:
         pm._tick_scales.append((int(round(tick)), last_scale))
     pm._update_tick_to_time(int(round(tick)) + 1)
 
-    assert len(pm.get_tempo_changes()[0]) == 2
-    assert pm.get_tempo_changes()[0][0] == 120
-    assert pm.get_tempo_changes()[0][1] == 140
+    bpms, times = pm.get_tempo_changes()
+    times_list = times.tolist() if hasattr(times, "tolist") else list(times)
+    assert len(bpms) == 2
+    assert times_list == pytest.approx([0.0, 30.0])
+    assert bpms[0] == pytest.approx(120)
+    assert bpms[1] == pytest.approx(140)

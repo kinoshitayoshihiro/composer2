@@ -61,6 +61,10 @@ def test_resolve_pitch_token_note_name_and_alias():
 def test_note_name_to_midi_unicode_accidentals():
     assert sc._note_name_to_midi("C♭3") == 47
     assert sc._note_name_to_midi("F♯2") == 42
+    assert sc._note_name_to_midi("C♯4") == 61
+    assert sc._note_name_to_midi("Ｄ♭4") == 61
+    assert sc._note_name_to_midi("Ｅ♭2") == 39
+    assert sc._note_name_to_midi("Ｆ♯5") == 78
 
 
 def test_style_inject_alias_resolves_and_inserts():

@@ -1,16 +1,6 @@
 """Optional runtime tweaks for tests and compatibility."""
 
 import os
-import sys
-
-if sys.platform != "win32":
-    try:
-        import multiprocessing as _mp
-
-        if "fork" in _mp.get_all_start_methods():
-            _mp.set_start_method("fork", force=True)
-    except Exception:  # pragma: no cover - best effort on unsupported platforms
-        pass
 
 if os.getenv("COMPOSER2_ENABLE_NUMPY_SHIM") == "1":
     try:

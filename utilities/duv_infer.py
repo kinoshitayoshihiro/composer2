@@ -63,6 +63,34 @@ CSV_INT32_COLUMNS: set[str] = {
 }
 
 
+def mask_any(mask: object) -> bool:
+    """Return ``True`` when *mask* contains any truthy entry."""
+
+    if mask is None:
+        return False
+    if isinstance(mask, torch.Tensor):
+        return bool(torch.any(mask).item())
+    if isinstance(mask, np.ndarray):
+        return bool(np.any(mask))
+    any_method = getattr(mask, "any", None)
+    if callable(any_method):
+        result = any_method()
+        if isinstance(result, torch.Tensor):
+            return bool(torch.any(result).item())
+        if isinstance(result, np.ndarray):
+            return bool(np.any(result))
+        if isinstance(result, (bool, np.bool_)):
+            return bool(result)
+        item = getattr(result, "item", None)
+        if callable(item):
+            try:
+                return bool(item())
+            except Exception:
+                pass
+        return bool(result)
+    return bool(mask)
+
+
 def _missing_required(columns: Iterable[str]) -> list[str]:
     return sorted(REQUIRED_COLUMNS - set(columns))
 
@@ -396,7 +424,7 @@ def duv_sequence_predict(
             RuntimeWarning,
         )
 
-    if verbose and preview is not None and stderr is not None:
+    if verbose and preview is not None and stderr is not None and mask_any(vel_mask):
         head = [float(v) for v in vel_pred[:8].tolist()]
         print(
             {
@@ -423,6 +451,7 @@ __all__ = [
     "CSV_FLOAT32_COLUMNS",
     "CSV_INT32_COLUMNS",
     "REQUIRED_COLUMNS",
+    "mask_any",
     "duv_sequence_predict",
     "duv_verbose",
 ]

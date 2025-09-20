@@ -26,6 +26,7 @@ from utilities.duv_infer import (
     OPTIONAL_FLOAT32_COLUMNS,
     OPTIONAL_INT32_COLUMNS,
     REQUIRED_COLUMNS,
+    _mask_any,
     duv_sequence_predict,
     load_duv_dataframe,
     duv_verbose,
@@ -44,32 +45,6 @@ from .eval_duv import (  # reuse helpers
 
 
 _duv_sequence_predict = duv_sequence_predict
-
-
-def _mask_any(mask: object) -> bool:
-    if mask is None:
-        return False
-    if isinstance(mask, torch.Tensor):
-        return bool(torch.any(mask).item())
-    if isinstance(mask, np.ndarray):
-        return bool(np.any(mask))
-    any_method = getattr(mask, "any", None)
-    if callable(any_method):
-        result = any_method()
-        if isinstance(result, torch.Tensor):
-            return bool(torch.any(result).item())
-        if isinstance(result, np.ndarray):
-            return bool(np.any(result))
-        if isinstance(result, (bool, np.bool_)):
-            return bool(result)
-        item = getattr(result, "item", None)
-        if callable(item):
-            try:
-                return bool(item())
-            except Exception:
-                pass
-        return bool(result)
-    return bool(mask)
 
 
 def _median_smooth(x: np.ndarray, k: int) -> np.ndarray:

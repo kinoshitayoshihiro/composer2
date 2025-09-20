@@ -180,6 +180,7 @@ class StemResult:
     tempo: float | None
 
 
+
 def _transcribe_stem(
     path: Path,
     *,
@@ -237,6 +238,7 @@ def _transcribe_stem(
             exc,
         )
         return _minimal_stem(path, min_dur=min_dur, auto_tempo=auto_tempo)
+
 
 
 def _warn_once(key: str, msg: str) -> None:
@@ -895,6 +897,9 @@ def _transcribe_stem_impl(
         path.name,
     )
     return StemResult(inst, tempo)
+
+
+_invoke_transcribe = _transcribe_stem
 
 
 def _iter_song_dirs(src: Path, exts: list[str]) -> list[Path]:

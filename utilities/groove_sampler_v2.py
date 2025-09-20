@@ -595,10 +595,16 @@ def _safe_read_bpm(
     source = "default"
 
 
-    _times, bpms = pm.get_tempo_changes()
+    times, bpms = pm.get_tempo_changes()
+    times_seq = times.tolist() if hasattr(times, "tolist") else list(times)
     if len(bpms) and math.isfinite(bpms[0]) and bpms[0] > 0:
         bpm = float(bpms[0])
         source = "pretty_midi"
+        if len(bpms) == 1:
+            t0 = float(times_seq[0]) if times_seq else 0.0
+            if abs(t0) <= 1e-6 and abs(bpm - float(default_bpm)) <= 1e-6:
+                bpm = float(default_bpm)
+                source = "default"
     elif mido is not None:  # pragma: no branch - optional dependency
         try:
             midi = pm_to_mido(pm)
@@ -621,19 +627,17 @@ def _safe_read_bpm(
         source = "default"
 
     if fold_halves:
-        buckets = [60, 90, 120, 150, 180]
+        bpm = float(bpm)
+        while bpm < 60.0:
+            bpm *= 2.0
+        while bpm > 180.0:
+            bpm /= 2.0
+        buckets = [60.0, 90.0, 120.0, 150.0, 180.0]
         tol = 0.05
-        best_base = bpm
-        best_diff = float("inf")
         for base in buckets:
-            for mult in (1, 0.5, 2):
-                cand = base * mult
-                diff = abs(bpm - cand) / cand
-                if diff < best_diff:
-                    best_diff = diff
-                    best_base = base
-        if best_diff <= tol:
-            bpm = float(best_base)
+            if abs(bpm - base) / base <= tol:
+                bpm = float(base)
+                break
 
     _safe_read_bpm.last_source = source  # type: ignore[attr-defined]
     return float(bpm)

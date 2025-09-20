@@ -7,6 +7,7 @@ import csv
 import pathlib
 from bisect import bisect_right
 from collections import Counter, defaultdict
+from types import SimpleNamespace
 from typing import Dict, List
 
 try:  # optional dependency for writing MIDI; re-export for tests monkeypatching
@@ -22,8 +23,8 @@ try:  # optional dependency
     import yaml  # type: ignore
 except Exception:  # pragma: no cover
     yaml = None  # type: ignore
-import groove_profile as gp
 
+import groove_profile as gp
 from . import utils
 
 __all__ = [
@@ -34,10 +35,323 @@ __all__ = [
     "main",
 ]
 
-
 PATTERN_PATH = pathlib.Path(__file__).with_name("patterns") / "strum_library.yaml"
 MAP_DIR = pathlib.Path(__file__).with_name("maps")
 KS_MIN, KS_MAX = 36, 88
+
+
+
+def convert(args: SimpleNamespace) -> None:
+    """Convert a generic MIDI file into a UJAM-friendly arrangement."""
+
+    if pretty_midi is None or mido is None:
+        raise SystemExit("pretty_midi/mido not available")
+
+    in_path = pathlib.Path(getattr(args, "in_midi"))
+    out_path = pathlib.Path(getattr(args, "out_midi"))
+
+    map_data: Dict[str, object] | None = None
+    mapping_arg = getattr(args, "mapping", None)
+    if mapping_arg:
+        map_path = pathlib.Path(str(mapping_arg))
+        if map_path.is_file():
+            map_data = _load_yaml(map_path)
+
+    if map_data is None:
+        plugin = getattr(args, "plugin", None)
+        if plugin:
+            map_data = load_map(str(plugin))
+        else:
+            raise SystemExit("mapping path or plugin name required")
+
+    problems = _validate_map(map_data)
+    if problems:
+        raise ValueError(", ".join(problems))
+
+    keymap: Dict[str, int] = {}
+    ks_entries = map_data.get("keyswitches", []) if isinstance(map_data, dict) else []
+    if isinstance(ks_entries, list):
+        for entry in ks_entries:
+            if isinstance(entry, dict):
+                name = entry.get("name")
+                note = entry.get("note")
+                if isinstance(name, str) and isinstance(note, int):
+                    keymap[name] = int(note)
+
+    ks_dict = map_data.get("keyswitch") if isinstance(map_data, dict) else None
+    if isinstance(ks_dict, dict):
+        for name, note in ks_dict.items():
+            if isinstance(name, str) and isinstance(note, int):
+                keymap[name] = int(note)
+
+    for name, note in keymap.items():
+        if not (KS_MIN <= int(note) <= KS_MAX):
+            raise ValueError(
+                f"keyswitch '{name}' out of range {KS_MIN}..{KS_MAX} (got {note})"
+            )
+
+    play = map_data.get("play_range", {}) if isinstance(map_data, dict) else {}
+    try:
+        play_low = int(play.get("low", KS_MIN))
+    except Exception:
+        play_low = KS_MIN
+    try:
+        play_high = int(play.get("high", KS_MAX))
+    except Exception:
+        play_high = KS_MAX
+    play_low = max(0, min(127, play_low))
+    play_high = max(play_low, min(127, play_high))
+
+    section_styles = map_data.get("section_styles", {}) if isinstance(map_data, dict) else {}
+    if not isinstance(section_styles, dict):
+        section_styles = {}
+
+    pattern_lib = _load_patterns()
+    if not isinstance(pattern_lib, dict):
+        pattern_lib = {}
+
+    sections: Dict[int, str] = {}
+    tags_arg = getattr(args, "tags", None)
+    if tags_arg:
+        tag_path = pathlib.Path(str(tags_arg))
+        if tag_path.is_file():
+            sections = _load_sections(tag_path)
+
+    pm = pretty_midi.PrettyMIDI(str(in_path))
+    try:
+        times, tempi = pm.get_tempo_changes()
+        times_seq = times.tolist() if hasattr(times, "tolist") else list(times)
+        if len(tempi) == 0 or not (float(tempi[0]) > 0):
+            scale = 60.0 / (120.0 * pm.resolution)
+            pm._tick_scales = [(0, scale)]
+            if hasattr(pm, "_update_tick_to_time"):
+                pm._update_tick_to_time(pm.resolution)
+        elif len(tempi) == 1:
+            t0 = float(times_seq[0]) if times_seq else 0.0
+            if t0 > 0.0 and getattr(pm, "_tick_scales", None) is None:
+                scale = 60.0 / (float(tempi[0]) * pm.resolution)
+                pm._tick_scales = [(0, scale)]
+                if hasattr(pm, "_update_tick_to_time"):
+                    pm._update_tick_to_time(pm.resolution)
+    except Exception:
+        pass
+
+    utils.quantize(pm, int(getattr(args, "quant", 120)), float(getattr(args, "swing", 0.0)))
+    beats_per_bar = (
+        pm.time_signature_changes[0].numerator if pm.time_signature_changes else 4
+    )
+
+    groove_profile_path = getattr(args, "use_groove_profile", None)
+    if groove_profile_path:
+        vocal_pm = pretty_midi.PrettyMIDI(str(groove_profile_path))
+        if vocal_pm.instruments:
+            events = [
+                {
+                    "offset": vocal_pm.time_to_tick(n.start) / vocal_pm.resolution,
+                }
+                for n in vocal_pm.instruments[0].notes
+            ]
+            profile = gp.extract_groove_profile(events)  # type: ignore[arg-type]
+            utils.apply_groove_profile(
+                pm,
+                profile,
+                beats_per_bar=beats_per_bar,
+                clip_head_ms=float(getattr(args, "groove_clip_head", 10.0)),
+                clip_other_ms=float(getattr(args, "groove_clip_other", 35.0)),
+            )
+
+    utils.humanize(pm, float(getattr(args, "humanize", 0.0)))
+
+    downbeats = list(pm.get_downbeats())
+    if not downbeats:
+        downbeats = [0.0]
+    ts_changes = pm.time_signature_changes
+    ts_idx = 0
+    bar_beats: Dict[int, int] = {}
+    for i, db in enumerate(downbeats):
+        while ts_idx + 1 < len(ts_changes) and ts_changes[ts_idx + 1].time <= db:
+            ts_idx += 1
+        bar_beats[i] = ts_changes[ts_idx].numerator if ts_changes else beats_per_bar
+
+    if not pm.instruments:
+        raise ValueError("input MIDI has no instruments to convert")
+
+    instrument = pm.instruments[0]
+    chord_blocks = _group_chords(instrument.notes)
+
+    bar_blocks: Dict[int, List[Dict]] = defaultdict(list)
+    all_blocks: List[Dict] = []
+    prev_beat: float | None = None
+    prev_strum: str | None = None
+    for block in chord_blocks:
+        if not block:
+            continue
+        start = block[0].start
+        duration = min(n.end - n.start for n in block)
+        beat = pm.time_to_tick(start) / pm.resolution
+        bar = max(0, bisect_right(downbeats, start) - 1)
+        bar_start_tick = pm.time_to_tick(downbeats[bar])
+        beat_in_bar = (pm.time_to_tick(start) - bar_start_tick) / pm.resolution
+        if prev_beat is None or beat_in_bar < 0.1 or (beat - prev_beat) > 1.5:
+            strum = "D"
+        else:
+            strum = "U" if prev_strum != "U" else "D"
+        pitches = [n.pitch for n in block]
+        info = {
+            "start": start,
+            "duration": duration,
+            "pitches": pitches,
+            "strum": strum,
+            "beat": beat,
+            "bar": bar,
+        }
+        all_blocks.append(info)
+        prev_beat = beat
+        prev_strum = strum
+
+    for i, info in enumerate(all_blocks):
+        next_start = all_blocks[i + 1]["start"] if i + 1 < len(all_blocks) else info["start"] + info["duration"]
+        info["next_start"] = next_start
+        bar_blocks[info["bar"]].append(info)
+
+    out_pm = pretty_midi.PrettyMIDI(resolution=pm.resolution)
+    ks_inst = pretty_midi.Instrument(program=0, name="Keyswitches")
+    ks_channel = max(0, min(15, int(getattr(args, "ks_channel", 16)) - 1))
+    ks_inst.midi_channel = ks_channel
+    perf_inst = pretty_midi.Instrument(program=instrument.program, name="Performance")
+
+    ks_hist: Counter[int] = Counter()
+    clamp_notes = 0
+    total_notes = 0
+    approx: List[str] = []
+    csv_rows: List[Dict[str, object]] = []
+    last_sent: tuple[int, ...] | None = None
+    emitted_at: dict[int, float] = {}
+    bar_index = 0
+
+    def _emit_keyswitch(pitch: int, when: float) -> bool:
+        if getattr(args, "no_redundant_ks", False):
+            prev = emitted_at.get(pitch)
+            if prev is not None and abs(prev - when) <= 1e-6:
+                return False
+        ks_inst.notes.append(
+            pretty_midi.Note(
+                velocity=int(getattr(args, "ks_vel", 100)),
+                pitch=pitch,
+                start=when,
+                end=when + 0.05,
+            )
+        )
+        ks_hist[pitch] += 1
+        emitted_at[pitch] = when
+        return True
+
+    periodic = max(0, int(getattr(args, "periodic_ks", 0)))
+    ks_lead = float(getattr(args, "ks_lead", 60.0))
+    ks_headroom = float(getattr(args, "ks_headroom", 10.0)) / 1000.0
+    section_mode = getattr(args, "section_aware", "off")
+
+    for bar in sorted(bar_blocks):
+        blocks = bar_blocks[bar]
+        bar_start = downbeats[bar]
+        pattern = " ".join(b["strum"] for b in blocks)
+        ks_notes = pattern_to_keyswitches(pattern, pattern_lib, keymap)
+        if not ks_notes:
+            approx.append(pattern)
+            ks_notes = []
+            for b in blocks:
+                ks_notes.extend(pattern_to_keyswitches(b["strum"], pattern_lib, keymap))
+        ks_tuple = tuple(ks_notes)
+        send = True
+        if getattr(args, "no_redundant_ks", False) and last_sent == ks_tuple:
+            send = False
+        if periodic > 0 and bar_index % periodic != 0:
+            send = False
+        if send:
+            ks_time = max(0.0, bar_start - (ks_lead + 20.0) / 1000.0)
+            emitted_any = False
+            if section_mode == "on" and sections:
+                sec = _section_for_bar(bar, sections)
+                if sec:
+                    for name in section_styles.get(sec, []):
+                        pitch = keymap.get(name)
+                        if pitch is not None:
+                            emitted_any |= _emit_keyswitch(pitch, ks_time)
+            for pitch in ks_notes:
+                emitted_any |= _emit_keyswitch(pitch, ks_time)
+            if emitted_any:
+                last_sent = ks_tuple
+        for b in blocks:
+            chord = utils.chordify(b["pitches"], (play_low, play_high))
+            total_notes += len(b["pitches"])
+            clamp_notes += sum(1 for p in b["pitches"] if p < play_low or p > play_high)
+            end_time = b["start"] + b["duration"]
+            next_start = b.get("next_start", end_time)
+            if next_start - ks_headroom < end_time:
+                end_time = next_start - ks_headroom
+            if end_time < b["start"]:
+                end_time = b["start"]
+            for p in chord:
+                perf_inst.notes.append(
+                    pretty_midi.Note(velocity=100, pitch=p, start=b["start"], end=end_time)
+                )
+            if getattr(args, "dry_run", False):
+                csv_rows.append({"start": b["start"], "chord": chord, "keyswitches": ks_notes})
+        bar_index += 1
+
+    if getattr(args, "dry_run", False):
+        csv_path = out_path.with_suffix(".csv")
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["start", "chord", "keyswitches"])
+            for row in csv_rows:
+                writer.writerow(
+                    [
+                        f"{row['start']:.3f}",
+                        " ".join(map(str, row["chord"])),
+                        " ".join(map(str, row["keyswitches"])),
+                    ]
+                )
+    else:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_pm.instruments.append(ks_inst)
+        out_pm.instruments.append(perf_inst)
+        out_pm.write(str(out_path))
+        if getattr(mido, "MidiFile", None) is not None:
+            try:
+                mf = mido.MidiFile(str(out_path))  # type: ignore[attr-defined]
+                ks_track_index = None
+                for idx, track in enumerate(mf.tracks):
+                    track_name = None
+                    for msg in track:
+                        if msg.type == "track_name":
+                            track_name = msg.name
+                            break
+                    if track_name == "Keyswitches":
+                        ks_track_index = idx
+                        break
+                if ks_track_index is not None:
+                    ks_track = mf.tracks[ks_track_index]
+                    for msg in ks_track:
+                        if msg.type in {"note_on", "note_off"}:
+                            msg.channel = ks_channel
+                    if ks_track_index != 0:
+                        del mf.tracks[ks_track_index]
+                        mf.tracks.insert(0, ks_track)
+                    mf.save(str(out_path))
+            except Exception:
+                pass
+
+    if ks_hist:
+        print("Keyswitch usage:")
+        for pitch, count in sorted(ks_hist.items()):
+            print(f"  {pitch}: {count}")
+    if total_notes:
+        pct = (clamp_notes / total_notes) * 100.0
+        print(f"Clamped notes: {clamp_notes}/{total_notes} ({pct:.1f}%)")
+    if approx:
+        print("Approximate patterns for bars:", ", ".join(approx))
 
 
 def pattern_to_keyswitches(pattern: str, library: Dict[str, List[str]], keymap: Dict[str, int]) -> List[int]:
@@ -95,6 +409,8 @@ def _load_yaml(path: pathlib.Path) -> Dict:
 def _validate_map(data: Dict) -> List[str]:
     """Return a list of problems found in *data* mapping."""
     issues: List[str] = []
+    range_issues: List[str] = []
+    undefined_refs: List[str] = []
     key_lookup: dict[str, int] = {}
     names: set[str] = set()
     notes: set[int] = set()
@@ -141,8 +457,8 @@ def _validate_map(data: Dict) -> List[str]:
 
     for name, note in key_lookup.items():
         if note < ks_low or note > ks_high:
-            issues.append(
-                f"keyswitch '{name}' out of range {ks_low}..{ks_high} (got {note})"
+            range_issues.append(
+                f"keyswitch '{name}' out of range {KS_MIN}..{KS_MAX} (got {note})"
             )
 
     section_styles = data.get("section_styles", {}) or {}
@@ -152,9 +468,11 @@ def _validate_map(data: Dict) -> List[str]:
                 continue
             for name in names_list:
                 if name not in key_lookup:
-                    issues.append(
+                    undefined_refs.append(
                         f"section '{section}' references undefined keyswitch '{name}'"
                     )
+    issues.extend(undefined_refs)
+    issues.extend(range_issues)
     return issues
 
 

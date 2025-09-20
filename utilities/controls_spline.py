@@ -752,9 +752,15 @@ class ControlCurve:
                 t.insert(0, t[0])
                 vals.insert(0, 0)
             if vals[-1] != 0:
-                t.append(t[-1])
-                vals.append(0)
+                if orig_len == 1:
+                    vals[-1] = 0
+                elif orig_len == 2:
+                    t.append(t[-1])
+                    vals.append(0)
+                else:
+                    vals[-1] = 0
         if max_events is not None and len(vals) > max_events:
+            # support list or numpy arrays without changing caller behavior
             t_list = t.tolist() if hasattr(t, "tolist") else list(t)
             val_list = vals.tolist() if hasattr(vals, "tolist") else list(vals)
             idxs = _uniform_indices(len(val_list), max_events)
@@ -762,8 +768,12 @@ class ControlCurve:
             vals = [int(val_list[i]) for i in idxs]
         for tt, vv in zip(t, vals):
             inst.pitch_bends.append(
-                pretty_midi.PitchBend(pitch=int(vv), time=float(tt + self.offset_sec + time_offset))
+                pretty_midi.PitchBend(
+                    pitch=int(vv),
+                    time=float(tt + self.offset_sec + time_offset),
+                )
             )
+
 
     # ---- utils ------------------------------------------------------
     @staticmethod

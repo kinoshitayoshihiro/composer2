@@ -99,8 +99,9 @@ def apply_tempo_map(
     if tempo_map is None:
         return
     tempo_map = sorted((float(b), float(t)) for b, t in tempo_map)
+    tempo_tuple = tuple(tempo_map)
     tempi = [int(round(bpm)) for _, bpm in tempo_map]
-    times = [tempo_utils.beat_to_seconds(b, tempo_map) for b, _ in tempo_map]
+    times = [tempo_utils.beat_to_seconds(b, tempo_tuple) for b, _ in tempo_map]
 
     # PrettyMIDI has no public API to set tempo changes. We directly update
     # ``_tick_scales`` which ``set_tempo_changes`` would normally modify.
@@ -117,7 +118,17 @@ def apply_tempo_map(
             pm._tick_scales.append((int(round(tick)), last_scale))
         pm._update_tick_to_time(int(round(tick)) + 1)
 
-    out_path = Path(out_path)
+
+def export_song(
+    bars: int,
+    *,
+    tempo_map: list[tuple[float, float]] | None = None,
+    generators: dict[str, Callable[..., PrettyMIDI]] | None = None,
+    fixed_tempo: float = 120.0,
+    sections: list[dict[str, Any]] | None = None,
+    out_path: str | Path | None = None,
+) -> PrettyMIDI:
+    path_obj = Path(out_path) if out_path is not None else None
     # 初期テンポを一度だけ確定（None/0ガード込み）
     base_tempo = float(fixed_tempo or 120.0)
     master = PrettyMIDI(initial_tempo=base_tempo)
@@ -186,7 +197,8 @@ def apply_tempo_map(
         if all_tempos:
             apply_tempo_map(master, all_tempos)
 
-    master.write(str(out_path))
+    if path_obj is not None:
+        master.write(str(path_obj))
     return master
 
 

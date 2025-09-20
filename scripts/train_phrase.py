@@ -71,6 +71,13 @@ def _register_tmp(path: Path, *, cleanup: Callable[[], None] | None = None) -> P
 
 
 def _make_tempdir(prefix: str) -> Path:
+    """Return a TemporaryDirectory path while tolerating patched factories.
+
+    Some unit tests monkeypatch :func:`tempfile.TemporaryDirectory` with a
+    zero-argument callable.  In that scenario passing ``prefix=`` raises a
+    ``TypeError``.  Fall back to a positional invocation so the shim can be
+    exercised while keeping the real behaviour for normal runs."""
+
     try:
         td = tempfile.TemporaryDirectory(prefix=prefix)
     except TypeError:
@@ -895,40 +902,39 @@ def train_model(
     pin_mem = device.type == "cuda" or pin_memory
     persist = device.type == "cuda" and num_workers > 0
 
-    def worker_init_fn(worker_id: int) -> None:
-        seed = torch.initial_seed() % 2**32
-        torch.manual_seed(seed + worker_id)
-        random.seed(seed + worker_id)
-        try:  # optional numpy seeding
-            import numpy as _np  # type: ignore
+def worker_init_fn(worker_id: int) -> None:
+    seed = torch.initial_seed() % 2**32
+    torch.manual_seed(seed + worker_id)
+    random.seed(seed + worker_id)
+    try:  # optional numpy seeding
+        import numpy as _np  # type: ignore
+        _np.random.seed(seed + worker_id)
+    except Exception:  # pragma: no cover - numpy missing
+        pass
 
-            _np.random.seed(seed + worker_id)
-        except Exception:  # pragma: no cover - numpy missing
-            pass
-    reweight_cfg = None
-    sampler = None
-    weight_stats: dict[str, float] | None = None
-    if reweight:
-        parts = dict(p.split("=") for p in reweight.split(",") if "=" in p)
-        reweight_cfg = parts
-        tag = parts.get("tag")
-        scheme = parts.get("scheme")
-        if tag and scheme == "inv_freq" and tag in ds_train.group_tags:
-            vals = ds_train.group_tags[tag]
-            freq = Counter(vals)
-            weights = [1.0 / freq[v] for v in vals]
-            try:
-                sampler = torch.utils.data.WeightedRandomSampler(
-                    weights, len(weights), replacement=True
-                )
-            except TypeError:
-                sampler = torch.utils.data.WeightedRandomSampler(
-                    weights, len(weights), True
-                )
-            logging.debug("inv_freq weight head %s", [round(w, 6) for w in weights[:3]])
-            weight_map = {v: 1.0 / freq[v] for v in freq}
-            weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
-            logging.info("top tag weights %s", weight_stats)
+reweight_cfg = None
+sampler = None
+weight_stats: dict[str, float] | None = None
+if reweight:
+    parts = dict(p.split("=") for p in reweight.split(",") if "=" in p)
+    reweight_cfg = parts
+    tag = parts.get("tag")
+    scheme = parts.get("scheme")
+    if tag and scheme == "inv_freq" and tag in ds_train.group_tags:
+        vals = ds_train.group_tags[tag]
+        freq = Counter(vals)
+        weights = [1.0 / freq[v] for v in vals]
+        try:
+            sampler = torch.utils.data.WeightedRandomSampler(
+                weights, len(weights), replacement=True
+            )
+        except TypeError:
+            # older torch versions may require positional form for 'replacement'
+            sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights), True)
+        logging.debug("inv_freq weight head %s", [round(w, 6) for w in weights[:3]])
+        weight_map = {v: 1.0 / freq[v] for v in freq}
+        weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
+        logging.info("top tag weights %s", weight_stats)
 
     dl_train = DataLoader(
         ds_train,

@@ -46,6 +46,32 @@ from .eval_duv import (  # reuse helpers
 _duv_sequence_predict = duv_sequence_predict
 
 
+def _mask_any(mask: object) -> bool:
+    if mask is None:
+        return False
+    if isinstance(mask, torch.Tensor):
+        return bool(torch.any(mask).item())
+    if isinstance(mask, np.ndarray):
+        return bool(np.any(mask))
+    any_method = getattr(mask, "any", None)
+    if callable(any_method):
+        result = any_method()
+        if isinstance(result, torch.Tensor):
+            return bool(torch.any(result).item())
+        if isinstance(result, np.ndarray):
+            return bool(np.any(result))
+        if isinstance(result, (bool, np.bool_)):
+            return bool(result)
+        item = getattr(result, "item", None)
+        if callable(item):
+            try:
+                return bool(item())
+            except Exception:
+                pass
+        return bool(result)
+    return bool(mask)
+
+
 def _median_smooth(x: np.ndarray, k: int) -> np.ndarray:
     if k <= 1:
         return x
@@ -148,7 +174,7 @@ def run(args: argparse.Namespace) -> int:
 
     vel_pred: np.ndarray | None
     vel_mask: np.ndarray | None = None
-    if duv_preds is not None and duv_preds["velocity_mask"].any():
+    if duv_preds is not None and _mask_any(duv_preds["velocity_mask"]):
         vel_mask = duv_preds["velocity_mask"]
         base = df.get("velocity")
         if base is not None:
@@ -176,14 +202,14 @@ def run(args: argparse.Namespace) -> int:
 
     if args.vel_smooth > 1:
         smoothed = _median_smooth(vel_pred.copy(), args.vel_smooth)
-        if args.smooth_pred_only and vel_mask is not None and vel_mask.any():
+        if args.smooth_pred_only and _mask_any(vel_mask):
             vel_pred[vel_mask] = smoothed[vel_mask]
         else:
             vel_pred = smoothed
     vel_pred = np.clip(vel_pred, 1, 127)
 
     dur_pred: np.ndarray | None = None
-    if duv_preds is not None and duv_preds["duration_mask"].any():
+    if duv_preds is not None and _mask_any(duv_preds["duration_mask"]):
         base = df.get("duration")
         if base is not None:
             dur_pred = base.to_numpy(dtype="float32", copy=False).copy()
@@ -205,7 +231,7 @@ def run(args: argparse.Namespace) -> int:
         preview_vals = vel_pred[:8].astype("float32", copy=False).tolist()
         source = (
             "dense_fallback"
-            if (duv_preds is None or not duv_preds["velocity_mask"].any())
+            if duv_preds is None or not _mask_any(duv_preds["velocity_mask"])
             else "duv_sequence"
             )
         print(

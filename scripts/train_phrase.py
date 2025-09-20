@@ -71,7 +71,17 @@ def _register_tmp(path: Path, *, cleanup: Callable[[], None] | None = None) -> P
 
 
 def _make_tempdir(prefix: str) -> Path:
-    td = tempfile.TemporaryDirectory(prefix=prefix)
+    """Return a TemporaryDirectory path while tolerating patched factories.
+
+    Some unit tests monkeypatch :func:`tempfile.TemporaryDirectory` with a
+    zero-argument callable.  In that scenario passing ``prefix=`` raises a
+    ``TypeError``.  Fall back to a positional invocation so the shim can be
+    exercised while keeping the real behaviour for normal runs."""
+
+    try:
+        td = tempfile.TemporaryDirectory(prefix=prefix)
+    except TypeError:
+        td = tempfile.TemporaryDirectory()
     cleanup: Callable[[], None] | None = getattr(td, "cleanup", None)
     name: str | None = getattr(td, "name", None)
 
@@ -914,9 +924,11 @@ def train_model(
             vals = ds_train.group_tags[tag]
             freq = Counter(vals)
             weights = [1.0 / freq[v] for v in vals]
-            sampler = torch.utils.data.WeightedRandomSampler(
-                weights, len(weights), replacement=True
-            )
+            sampler_factory = torch.utils.data.WeightedRandomSampler
+            try:
+                sampler = sampler_factory(weights, len(weights), replacement=True)
+            except TypeError:
+                sampler = sampler_factory(weights, len(weights), True)
             weight_map = {v: 1.0 / freq[v] for v in freq}
             weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
             logging.info("top tag weights %s", weight_stats)

@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/drumstem_to_midi.py
+# hypothesis_version: 6.138.15
+
+[-36.0, 0.0, 1e-12, 0.001, 0.02, 0.04, 0.05, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0, 2.0, 3.0, 4.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 127, 150, 200, 400, 1500, 4000, 5000, 10000, 12000, 16000, 44100, '--bpm', '--gate', '--hihat', '--hop-ms', '--humanize-ms', '--kick', '--min-sep-ms', '--snare', '--sr', '--tight', '--win-ms', '0..1（1=機械的/0=やや人間味）', 'A#1', 'A#2', 'A1', 'Ab1', 'B1', 'Bb1', 'C#1', 'C#2', 'C1', 'C2', 'D#1', 'D#2', 'D1', 'D2', 'Db1', 'Drums', 'E1', 'E2', 'Eb1', 'F#1', 'F#2', 'F1', 'G#1', 'G#2', 'G1', 'Gb1', '__main__', 'audio', 'gate_db', 'hann', 'hihat', 'kick', 'left', 'out', 'peak_heights', 'snare', 'タイミング微揺らぎ最大値', '最小オンセット間隔']

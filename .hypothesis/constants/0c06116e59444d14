@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/scripts/scan_loops.py
+# hypothesis_version: 6.138.15
+
+[4.0, 60.0, 120.0, '*.mid', '--out', '--root', '.mid', 'Analyzing %s', '\\bfill\\b', '__main__', '_update_tick_to_time', 'bars', 'bpm', 'bytes', 'data/loops', 'default', 'drum', 'file', 'is_fill', 'is_meta', 'keep_drum', 'keep_pitched', 'last_source', 'loop_inventory.csv', 'notes', 'path', 'set_tempo', 'tempo_injected', 'tempo_source', 'time_signature', 'uniq_pitches', 'w']

@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/generator/base_part_generator.py
+# hypothesis_version: 6.138.15
+
+[0.0, 0.001, 0.01, 0.05, 0.08, 0.1, 0.2, 0.25, 0.4, 0.9, 1.0, 1.1, 1.2, 2.0, 60.0, 120.0, 127.0, 1000.0, 127, '-', '/', '1', '4/4', 'None', 'UnknownSection', '_', '_measure_duration', 'auto', 'bowed', 'cc', 'cc11_depth', 'cc11_shape', 'custom_params', 'default_subtle', 'duration_model', 'effect_envelope', 'emotion', 'enable', 'enable_cc11', 'enable_sustain', 'extra_cc', 'flat', 'fx_envelope', 'global_settings', 'heuristic', 'high', 'intensity', 'key', 'lh', 'low', 'major', 'medium', 'metadata', 'ml_velocity_model', 'model_dump', 'musical_intent', 'offset_profile', 'offset_profile_lh', 'offset_profile_rh', 'pad', 'part', 'part_name', 'part_params', 'pluck', 'predict', 'q_length', 'rh', 'section_name', 'shared_tracks', 'sine', 'sustain_mode', 'swing_ratio', 'template_name', 'tempo', 'time', 'time_signature', 'val', 'velocity_model', 'very_high']

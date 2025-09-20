@@ -114,6 +114,12 @@ def mask_any(mask: object) -> bool:
     # Fallback: plain truthiness
     return bool(mask)
 
+
+def _mask_any(mask: object) -> bool:
+    """Compatibility alias for :func:`mask_any`."""
+
+    return mask_any(mask)
+
 def _missing_required(columns: Iterable[str]) -> list[str]:
     return sorted(REQUIRED_COLUMNS - set(columns))
 
@@ -475,6 +481,7 @@ __all__ = [
     "CSV_INT32_COLUMNS",
     "REQUIRED_COLUMNS",
     "mask_any",
+    "_mask_any",
     "duv_sequence_predict",
     "duv_verbose",
 ]

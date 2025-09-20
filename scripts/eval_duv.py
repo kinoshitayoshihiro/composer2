@@ -54,6 +54,32 @@ from utilities.ml_velocity import MLVelocityModel
 _duv_sequence_predict = duv_sequence_predict
 
 
+def _mask_any(mask: object) -> bool:
+    if mask is None:
+        return False
+    if isinstance(mask, torch.Tensor):
+        return bool(torch.any(mask).item())
+    if isinstance(mask, np.ndarray):
+        return bool(np.any(mask))
+    any_method = getattr(mask, "any", None)
+    if callable(any_method):
+        result = any_method()
+        if isinstance(result, torch.Tensor):
+            return bool(torch.any(result).item())
+        if isinstance(result, np.ndarray):
+            return bool(np.any(result))
+        if isinstance(result, (bool, np.bool_)):
+            return bool(result)
+        item = getattr(result, "item", None)
+        if callable(item):
+            try:
+                return bool(item())
+            except Exception:
+                pass
+        return bool(result)
+    return bool(mask)
+
+
 def _ensure_int(value: object, default: int) -> int:
     try:
         return int(value)
@@ -314,7 +340,7 @@ def run(args: argparse.Namespace) -> int:
 
     vel_pred: np.ndarray | None = None
     vel_mask: np.ndarray | None = None
-    if duv_preds is not None and duv_preds["velocity_mask"].any():
+    if duv_preds is not None and _mask_any(duv_preds["velocity_mask"]):
         vel_pred = duv_preds["velocity"].astype("float32", copy=False)
         vel_mask = duv_preds["velocity_mask"]
     else:
@@ -346,7 +372,7 @@ def run(args: argparse.Namespace) -> int:
     if (
         verbose
         and vel_pred is not None
-        and (duv_preds is None or not duv_preds["velocity_mask"].any())
+        and (duv_preds is None or not _mask_any(duv_preds["velocity_mask"]))
     ):
         print(
             {
@@ -361,7 +387,7 @@ def run(args: argparse.Namespace) -> int:
     dur_pred: np.ndarray | None = None
     dur_target_seq: np.ndarray | None = None
     dur_mask: np.ndarray | None = None
-    if duv_preds is not None and "duration" in df.columns and duv_preds["duration_mask"].any():
+    if duv_preds is not None and "duration" in df.columns and _mask_any(duv_preds["duration_mask"]):
         dur_pred = duv_preds["duration"].astype("float32", copy=False)
         dur_target_seq = df["duration"].to_numpy(dtype="float32", copy=False)
         dur_mask = duv_preds["duration_mask"]
@@ -383,7 +409,7 @@ def run(args: argparse.Namespace) -> int:
 
     metrics: dict[str, object] = {}
 
-    if vel_pred is not None and vel_mask is not None and vel_mask.any():
+    if vel_pred is not None and vel_mask is not None and _mask_any(vel_mask):
         vel_targets = y_vel[vel_mask]
         vel_values = vel_pred[vel_mask]
         diff = vel_values - vel_targets

@@ -194,6 +194,12 @@ def _note_name_to_midi(tok: str) -> Optional[int]:
     token = tok.strip()
     if not token:
         return None
+    token = (
+        token.replace("♭", "b")
+        .replace("♯", "#")
+        .replace("ｂ", "b")
+        .replace("＃", "#")
+    )
     match = NOTE_RE.match(token)
     if not match:
         return None

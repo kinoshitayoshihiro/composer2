@@ -136,20 +136,21 @@ def export_song(
     """
 
     out_path = Path(out_path)
-    master = PrettyMIDI()
-    _set_initial_tempo(master, fixed_tempo)
+    base_tempo = float(fixed_tempo or 120.0)
+    master = PrettyMIDI(initial_tempo=base_tempo)
+    _set_initial_tempo(master, base_tempo)
     all_tempos: list[tuple[float, float]] = []
     tempo_tuple: tuple[tuple[float, float], ...] | None = None
 
     if sections:
         beat_offset = 0.0
-        sec_per_beat = 60.0 / fixed_tempo
+        sec_per_beat = 60.0 / base_tempo
 
         for sec in sections:
-            vm = vocal_sync.analyse_section(sec, tempo_bpm=fixed_tempo)
+            vm = vocal_sync.analyse_section(sec, tempo_bpm=base_tempo)
             sec_pms: list[PrettyMIDI] = []
             for name, gen in (generators or {}).items():
-                sec_pms.append(gen(sec, fixed_tempo, vocal_metrics=vm))
+                sec_pms.append(gen(sec, base_tempo, vocal_metrics=vm))
 
             # determine section duration from generated parts
             sec_duration = 0.0
@@ -188,7 +189,7 @@ def export_song(
             beat_offset += sec_beats
     else:
         for name, gen in (generators or {}).items():
-            pm = gen(bars, fixed_tempo)
+            pm = gen(bars, base_tempo)
             for inst in pm.instruments:
                 master.instruments.append(copy.deepcopy(inst))
         all_tempos = list(tempo_map or [])

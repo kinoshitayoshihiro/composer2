@@ -545,6 +545,15 @@ def process_path(midi_path: Path, ns: FastCfg) -> List[Sample]:
     except Exception:
         _inc_skip("invalid_midi")
         return []
+    try:
+        tempi, _times = pm.get_tempo_changes()
+        if len(tempi) == 0 or not float(tempi[0]) > 0:
+            scale = 60.0 / (120.0 * pm.resolution)
+            pm._tick_scales = [(0, scale)]
+            if hasattr(pm, "_update_tick_to_time"):
+                pm._update_tick_to_time(pm.resolution)
+    except Exception:
+        pass
     mid = pm_to_mido(pm)
     beats_per_bar, ts_str = get_time_signature(mid)
 

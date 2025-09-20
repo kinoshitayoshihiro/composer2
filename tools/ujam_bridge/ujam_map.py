@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 from typing import Dict, List
 
 try:  # optional dependency for writing MIDI; re-export for tests monkeypatching
-    import mido as mido  # type: ignore
+    import mido  # type: ignore
 except Exception:  # pragma: no cover - allow monkeypatch in tests
     mido = None  # type: ignore[assignment]
 
@@ -221,6 +221,15 @@ def convert(args: argparse.Namespace) -> None:
         sections = _load_sections(pathlib.Path(args.tags))
 
     pm = pretty_midi.PrettyMIDI(str(args.in_midi))
+    try:
+        tempi, _times = pm.get_tempo_changes()
+        if len(tempi) == 0 or not float(tempi[0]) > 0:
+            scale = 60.0 / (120.0 * pm.resolution)
+            pm._tick_scales = [(0, scale)]
+            if hasattr(pm, "_update_tick_to_time"):
+                pm._update_tick_to_time(pm.resolution)
+    except Exception:
+        pass
     utils.quantize(pm, int(args.quant), float(args.swing))
     beats_per_bar = pm.time_signature_changes[0].numerator if pm.time_signature_changes else 4
     if args.use_groove_profile:

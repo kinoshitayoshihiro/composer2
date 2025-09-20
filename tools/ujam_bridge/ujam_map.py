@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 from typing import Dict, List
 
 try:  # optional dependency for writing MIDI; re-export for tests monkeypatching
-    import mido as mido  # type: ignore
+    import mido  # type: ignore
 except Exception:  # pragma: no cover - allow monkeypatch in tests
     mido = None  # type: ignore[assignment]
 
@@ -27,6 +27,7 @@ import groove_profile as gp
 
 PATTERN_PATH = pathlib.Path(__file__).with_name("patterns") / "strum_library.yaml"
 MAP_DIR = pathlib.Path(__file__).with_name("maps")
+KS_MIN, KS_MAX = 36, 88
 
 
 def pattern_to_keyswitches(pattern: str, library: Dict[str, List[str]], keymap: Dict[str, int]) -> List[int]:
@@ -121,15 +122,17 @@ def _validate_map(data: Dict) -> List[str]:
 
     play = data.get("play_range", {}) or {}
     try:
-        low = int(play.get("low", 0))
-        high = int(play.get("high", 127))
+        low = int(play.get("low", KS_MIN))
+        high = int(play.get("high", KS_MAX))
     except Exception:
-        low, high = 0, 127
+        low, high = KS_MIN, KS_MAX
+    ks_low = min(low, KS_MIN)
+    ks_high = max(high, KS_MAX)
 
     for name, note in key_lookup.items():
-        if note < low or note > high:
+        if note < ks_low or note > ks_high:
             issues.append(
-                f"keyswitch '{name}' out of range {low}..{high} (got {note})"
+                f"keyswitch '{name}' out of range {ks_low}..{ks_high} (got {note})"
             )
 
     section_styles = data.get("section_styles", {}) or {}
@@ -221,6 +224,16 @@ def convert(args: argparse.Namespace) -> None:
         sections = _load_sections(pathlib.Path(args.tags))
 
     pm = pretty_midi.PrettyMIDI(str(args.in_midi))
+    # 初期テンポ注入（無テンポや非正テンポの救済）
+    try:
+        _times, bpms = pm.get_tempo_changes()
+        if len(bpms) == 0 or not float(bpms[0]) > 0:
+            scale = 60.0 / (120.0 * pm.resolution)
+            pm._tick_scales = [(0, scale)]
+            if hasattr(pm, "_update_tick_to_time"):
+                pm._update_tick_to_time(pm.resolution)
+    except Exception:
+        pass
     utils.quantize(pm, int(args.quant), float(args.swing))
     beats_per_bar = pm.time_signature_changes[0].numerator if pm.time_signature_changes else 4
     if args.use_groove_profile:

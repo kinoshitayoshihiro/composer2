@@ -1409,16 +1409,22 @@ def train_model(
                 elapsed,
             )
             try:
+                tr_loss = float(avg_loss)
+                va_loss = float(val_loss)
                 logging.info(
-                    "epoch=%d train_loss=%.6f val_loss=%.6f",
+                    "epoch=%d train_loss=%.6f val_loss=%.6f | train_loss %.6f val_loss %.6f",
                     ep + 1,
-                    float(avg_loss),
-                    float(val_loss),
+                    tr_loss,
+                    va_loss,
+                    tr_loss,
+                    va_loss,
                 )
             except Exception:
                 logging.info(
-                    "epoch=%d train_loss=%s val_loss=%s",
+                    "epoch=%d train_loss=%s val_loss=%s | train_loss %s val_loss %s",
                     ep + 1,
+                    avg_loss,
+                    val_loss,
                     avg_loss,
                     val_loss,
                 )

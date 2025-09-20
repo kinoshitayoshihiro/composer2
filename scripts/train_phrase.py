@@ -1410,23 +1410,24 @@ def train_model(
             )
             try:
                 tr_loss = float(avg_loss)
-                va_loss = float(val_loss)
+                vl_loss = float(val_loss)
+            except Exception:  # pragma: no cover - fallback for non-float tensors
                 logging.info(
-                    "epoch=%d train_loss=%.6f val_loss=%.6f | train_loss %.6f val_loss %.6f",
+                    "epoch=%d train_loss %s val_loss %s (train_loss=%s val_loss=%s)",
                     ep + 1,
-                    tr_loss,
-                    va_loss,
-                    tr_loss,
-                    va_loss,
+                    avg_loss,
+                    val_loss,
+                    avg_loss,
+                    val_loss,
                 )
-            except Exception:
+            else:
                 logging.info(
-                    "epoch=%d train_loss=%s val_loss=%s | train_loss %s val_loss %s",
+                    "epoch=%d train_loss %.6f val_loss %.6f (train_loss=%.6f val_loss=%.6f)",
                     ep + 1,
-                    avg_loss,
-                    val_loss,
-                    avg_loss,
-                    val_loss,
+                    tr_loss,
+                    vl_loss,
+                    tr_loss,
+                    vl_loss,
                 )
             metrics_rows.append(
                 {
@@ -1569,12 +1570,41 @@ def train_model(
             "best_f1": final_best_f1,
             "meta": meta,
         }
+        def _save_last_checkpoint_fallback() -> None:
+            out_path = Path(out)
+            if out_path.exists():
+                return
+            try:
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(
+                    {
+                        "model": model.state_dict(),
+                        "hparams": {
+                            "arch": arch,
+                            "d_model": d_model,
+                            "max_len": max_len,
+                        },
+                    },
+                    out_path,
+                )
+                logging.info("saved last checkpoint to %s", out_path)
+            except Exception as exc_fallback:
+                logging.warning(
+                    "failed to save last checkpoint to %s: %s",
+                    out,
+                    exc_fallback,
+                )
+
+        saved_final = False
         try:
             out_path = Path(out)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(final_state, out_path)
+            saved_final = True
         except Exception as exc:
             logging.warning("failed to save checkpoint to %s: %s", out, exc)
+        if not saved_final:
+            _save_last_checkpoint_fallback()
         if save_last:
             last_link = out.with_name("last.ckpt")
             if last_link.exists() or last_link.is_symlink():

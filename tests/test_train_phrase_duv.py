@@ -75,12 +75,22 @@ def _write_csv(path: Path) -> None:
 
 
 def _losses_from_caplog(caplog):
-    pattern = re.compile(r"train_loss ([0-9.]+)")
+    pattern = re.compile(r"train_loss\s+([0-9]*\.?[0-9]+)(?=.*\bval_f1\b)")
+    epoch_pattern = re.compile(r"epoch(?:=|\s)(\d+)")
     losses = []
+    seen_epochs = set()
     for r in caplog.records:
-        m = pattern.search(r.message)
-        if m:
-            losses.append(float(m.group(1)))
+        message = r.message
+        match = pattern.search(message)
+        if not match:
+            continue
+        epoch_match = epoch_pattern.search(message)
+        if epoch_match:
+            epoch = int(epoch_match.group(1))
+            if epoch in seen_epochs:
+                continue
+            seen_epochs.add(epoch)
+        losses.append(float(match.group(1)))
     return losses
 
 

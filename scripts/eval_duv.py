@@ -20,6 +20,7 @@ for calling code to consume.
 """
 
 import argparse
+import logging
 import json
 import os
 import sys
@@ -169,18 +170,72 @@ def _parse_quant(step_str: str | None, meta: dict) -> float:
 # Duration utilities
 # ---------------------------------------------------------------------------
 
-def _load_duration_model(path: Path) -> DurationTransformer:
-    obj = torch.load(path, map_location="cpu")
-    if isinstance(obj, dict) and "state_dict" in obj:
-        hparams = obj.get("hyper_parameters") or obj.get("hparams", {})
-        d_model = int(hparams.get("d_model", 64))
-        max_len = int(hparams.get("max_len", 16))
-        model = DurationTransformer(d_model=d_model, max_len=max_len)
-        model.load_state_dict(obj["state_dict"], strict=False)
+class _NoopDurationModel:
+    """Fallback duration model used when a checkpoint is unavailable.
+
+    Supports ``.to()`` / ``.eval()`` chaining while behaving as a no-op callable.
+    """
+
+    max_len = 0
+
+    def to(self, *_args, **_kwargs):  # pragma: no cover - trivial passthrough
+        return self
+
+    def eval(self):  # pragma: no cover - trivial passthrough
+        return self
+
+    def __call__(self, *_args, **_kwargs):  # pragma: no cover - unused in tests
+        return None
+
+
+def _load_duration_model(path: Path | None) -> DurationTransformer | _NoopDurationModel:
+    try:
+        ckpt_path = Path(path) if path is not None else None
+    except TypeError:
+        ckpt_path = None
+
+    if ckpt_path is None or not ckpt_path.exists():
+        logging.info("duration model ckpt missing; using Noop model")
+        return _NoopDurationModel()
+
+    try:
+        obj = torch.load(ckpt_path, map_location="cpu")
+    except FileNotFoundError:
+        logging.info("duration model ckpt not found; using Noop model")
+        return _NoopDurationModel()
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.warning("duration model load failed (%s); using Noop model", exc)
+        return _NoopDurationModel()
+
+    if isinstance(obj, dict):
+        direct = obj.get("duration_model") or obj.get("model")
+        if isinstance(direct, torch.nn.Module):
+            return direct.eval()
+        if isinstance(direct, dict):
+            try:
+                model = DurationTransformer()
+                model.load_state_dict(direct, strict=False)
+                return model.eval()
+            except Exception as exc:  # pragma: no cover - defensive
+                logging.warning("duration model dict load failed (%s); using Noop model", exc)
+                return _NoopDurationModel()
+        if direct is not None:
+            return direct
+        if "state_dict" in obj:
+            hparams = obj.get("hyper_parameters") or obj.get("hparams", {})
+            d_model = int(hparams.get("d_model", 64))
+            max_len = int(hparams.get("max_len", 16))
+            model = DurationTransformer(d_model=d_model, max_len=max_len)
+            model.load_state_dict(obj["state_dict"], strict=False)
+            return model.eval()
+
+    try:
+        model = DurationTransformer()
+        model.load_state_dict(obj, strict=False)
         return model.eval()
-    model = DurationTransformer()
-    model.load_state_dict(obj, strict=False)
-    return model.eval()
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.warning("duration model state_dict load failed (%s); using Noop model", exc)
+        return _NoopDurationModel()
 
 
 def _duration_predict(df: pd.DataFrame, model: DurationTransformer) -> tuple[np.ndarray, np.ndarray]:
@@ -303,6 +358,10 @@ def run(args: argparse.Namespace) -> int:
     )
 
     vel_model = vel_model.to(device).eval()
+    need_duration = bool(heads.get("dur_reg") or heads.get("dur_cls"))
+    duration_model: DurationTransformer | _NoopDurationModel = _NoopDurationModel()
+    if need_duration:
+        duration_model = _load_duration_model(args.ckpt).to(device)
     verbose = duv_verbose(getattr(args, "verbose", False))
     try:
         duv_preds = _duv_sequence_predict(df, vel_model, device, verbose=verbose)
@@ -371,10 +430,15 @@ def run(args: argparse.Namespace) -> int:
         dur_target_seq = df["duration"].to_numpy(dtype="float32", copy=False)
         dur_mask = duv_preds["duration_mask"]
     else:
-        if "duration" in df.columns and "bar" in df.columns and "position" in df.columns and "pitch" in df.columns:
-            dmodel = _load_duration_model(args.ckpt)
-            dmodel = dmodel.to(device)
-            pred_dur, tgt_dur = _duration_predict(df, dmodel)
+        if (
+            need_duration
+            and not isinstance(duration_model, _NoopDurationModel)
+            and "duration" in df.columns
+            and "bar" in df.columns
+            and "position" in df.columns
+            and "pitch" in df.columns
+        ):
+            pred_dur, tgt_dur = _duration_predict(df, duration_model)
             if pred_dur.size and tgt_dur.size:
                 dur_pred = pred_dur.astype("float32", copy=False)
                 dur_target_seq = tgt_dur.astype("float32", copy=False)

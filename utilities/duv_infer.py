@@ -392,8 +392,13 @@ def duv_sequence_predict(
             outputs = model(feat_dict, mask=mask)
 
         if isinstance(outputs, dict):
-            vel_out = outputs.get("velocity") or outputs.get("vel_reg")
-            dur_out = outputs.get("duration") or outputs.get("dur_reg")
+            # NOTE: Tensor に ``or`` を使うと真偽値変換で失敗するため、キーが無い場合だけフォールバック
+            vel_out = outputs.get("velocity", None)
+            if vel_out is None:
+                vel_out = outputs.get("vel_reg", None)
+            dur_out = outputs.get("duration", None)
+            if dur_out is None:
+                dur_out = outputs.get("dur_reg", None)
         elif isinstance(outputs, (tuple, list)):
             vel_out = outputs[0] if len(outputs) > 0 else None
             dur_out = outputs[1] if len(outputs) > 1 else None

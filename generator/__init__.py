@@ -24,7 +24,18 @@ music21 の Part オブジェクトを生成して返します。
 from .base_part_generator import BasePartGenerator
 from .bass_generator import BassGenerator
 from .chord_voicer import ChordVoicer
-from .drum_generator import DrumGenerator
+# Heavy generators rely on optional data science deps (pandas, etc.).
+# Import them lazily so lightweight unit tests can run without those extras.
+try:  # pragma: no cover - optional dependency shims
+    from .drum_generator import DrumGenerator
+except ModuleNotFoundError as exc:  # pragma: no cover
+    class DrumGenerator:  # type: ignore
+        """Placeholder that signals missing optional dependencies."""
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise ModuleNotFoundError(
+                "DrumGenerator requires optional dependencies (e.g. pandas)."
+            ) from exc
 from .guitar_generator import GuitarGenerator  # ファイル名が guitar_generator.py であることを確認
 from .melody_generator import MelodyGenerator
 from .modular_composer_stub import ModularComposer
@@ -39,7 +50,16 @@ from .strings_generator import (
     EXEC_STYLE_TREMOLO,
 )
 from .vocal_generator import VocalGenerator
-from modular_composer.perc_generator import PercGenerator
+try:  # pragma: no cover - optional dependency shims
+    from modular_composer.perc_generator import PercGenerator
+except ModuleNotFoundError as exc:  # pragma: no cover
+    class PercGenerator:  # type: ignore
+        """Placeholder that signals missing optional dependencies."""
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise ModuleNotFoundError(
+                "PercGenerator requires optional dependencies."
+            ) from exc
 from .arranger import Arranger
 
 __all__ = [

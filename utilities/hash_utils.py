@@ -53,11 +53,21 @@ def murmur32(data: bytes, seed: int = 0) -> int:
     return h1 & 0xFFFFFFFF
 
 
-def hash_ctx(context_events: Sequence[int], aux: Tuple[int, int, int]) -> int:
+def hash_ctx(
+    context_events: Sequence[int], aux: Tuple[int, int, int] | None = None
+) -> int:
     """Hash a sequence of context events together with auxiliary IDs."""
 
+    aux_vals: Sequence[int]
+    if aux is None:
+        aux_vals = ()
+    else:
+        aux_vals = aux
+    # NOTE: ``H`` packs 16-bit unsigned values, matching the historic hash
+    # format.  TODO: switch to 32-bit packing if future models emit IDs above
+    # 65535 so the hash remains stable.
     data = struct.pack(
-        f"<{len(context_events) + len(aux)}H",
-        *list(context_events) + list(aux),
+        f"<{len(context_events) + len(aux_vals)}H",
+        *list(context_events) + list(aux_vals),
     )
     return murmur32(data) & 0xFFFFFFFF

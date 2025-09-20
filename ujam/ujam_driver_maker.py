@@ -362,7 +362,7 @@ def main():
     beats = args.beats_per_bar
     if not is_audio_input:
         src = pm.PrettyMIDI(args.input)
-        tempos = src.get_tempo_changes()[0]
+        tempos = src.get_tempo_changes()[1]
         if len(tempos):
             tempo = float(tempos[0])
         inst_src = max(src.instruments, key=lambda i: len(i.notes))

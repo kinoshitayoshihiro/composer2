@@ -80,7 +80,7 @@ def build_beat_map(pm: "pretty_midi.PrettyMIDI") -> tuple[Callable[[float], floa
     except Exception:
         pass
     if tempo_est is None:
-        tempi, _times = pm.get_tempo_changes()
+        _times, tempi = pm.get_tempo_changes()
         if len(tempi) and math.isfinite(float(tempi[0])) and float(tempi[0]) > 0:
             tempo_est = float(tempi[0])
         else:

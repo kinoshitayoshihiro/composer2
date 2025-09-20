@@ -140,7 +140,7 @@ def eval_metrics(midi: Path, ref_midi: Path | None) -> None:
     """
 
     pm = pretty_midi.PrettyMIDI(str(midi))
-    tempi, _ = pm.get_tempo_changes()
+    _times, tempi = pm.get_tempo_changes()
     bpm = float(tempi[0]) if len(tempi) > 0 and tempi[0] > 0 else 120.0
     if bpm == 0:
         bpm = 120.0
@@ -307,7 +307,7 @@ def evaluate_cmd(midi: Path, ref_midi: Path | None) -> None:
     """Compute evaluation metrics for ``midi``."""
 
     pm = pretty_midi.PrettyMIDI(str(midi))
-    tempi, _ = pm.get_tempo_changes()
+    _times, tempi = pm.get_tempo_changes()
     bpm = float(tempi[0]) if len(tempi) > 0 and tempi[0] > 0 else 120.0
     if bpm == 0:
         bpm = 120.0

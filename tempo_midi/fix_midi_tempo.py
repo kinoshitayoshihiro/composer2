@@ -12,7 +12,7 @@ def fix_midi_tempos(src_dir="midi_output", dst_dir="midi_output_fixed", default_
     DST.mkdir(parents=True, exist_ok=True)
     
     def needs_fix(m: pm.PrettyMIDI) -> bool:
-        tempi, _ = m.get_tempo_changes()
+        _times, tempi = m.get_tempo_changes()
         return (len(tempi) == 0) or (float(tempi[0]) <= 0)
     
     fixed_count = 0

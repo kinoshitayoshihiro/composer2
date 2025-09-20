@@ -10,7 +10,7 @@ import pretty_midi
 
 @lru_cache(maxsize=8)
 def _tempo_segments(pm: pretty_midi.PrettyMIDI) -> tuple[np.ndarray, np.ndarray]:
-    tempos, times = pm.get_tempo_changes()
+    times, tempos = pm.get_tempo_changes()
     return np.asarray(tempos, dtype=float), np.asarray(times, dtype=float)
 
 
@@ -25,7 +25,7 @@ def get_end_time(pm: pretty_midi.PrettyMIDI) -> float:
     times = [i.get_end_time() for i in pm.instruments]
     for events in meta_events:
         times.extend(e.time for e in events)
-    tempo_times = pm.get_tempo_changes()[1]
+    tempo_times = pm.get_tempo_changes()[0]
     times.extend(list(tempo_times))
     return max(times) if times else 0.0
 

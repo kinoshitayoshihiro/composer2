@@ -186,7 +186,7 @@ def humanize(pm: pretty_midi.PrettyMIDI, amount: float, *, rng: random.Random | 
         return
     if rng is None:
         rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
-    tempo_bpm, _times = pm.get_tempo_changes()
+    _times, tempo_bpm = pm.get_tempo_changes()
     bpm = float(tempo_bpm[0]) if len(tempo_bpm) else 120.0
     jitter = (5.0 * amount, 10.0 * amount)
     wrappers: List[Dict[str, float]] = []

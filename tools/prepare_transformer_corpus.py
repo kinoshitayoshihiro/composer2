@@ -84,7 +84,7 @@ def build_beat_map(
         logger.debug("estimate_tempo failed for %s: %s", path, e)
     fallback = False
     if tempo_est is None:
-        tempi, _times = pm.get_tempo_changes()
+        _times, tempi = pm.get_tempo_changes()
         if len(tempi) and math.isfinite(float(tempi[0])) and float(tempi[0]) > 0:
             tempo_est = float(tempi[0])
         else:
@@ -546,7 +546,7 @@ def process_path(midi_path: Path, ns: FastCfg) -> List[Sample]:
         _inc_skip("invalid_midi")
         return []
     try:
-        tempi, _times = pm.get_tempo_changes()
+        _times, tempi = pm.get_tempo_changes()
         if len(tempi) == 0 or not float(tempi[0]) > 0:
             scale = 60.0 / (120.0 * pm.resolution)
             pm._tick_scales = [(0, scale)]

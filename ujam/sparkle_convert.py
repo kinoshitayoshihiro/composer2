@@ -623,9 +623,9 @@ def _ensure_tempo_and_ticks(
         setattr(pm, "_sparkle_ts_seeded", True)
 
     try:
-        tempi_seq, tempo_times = pm.get_tempo_changes()
+        tempo_times, tempi_seq = pm.get_tempo_changes()
     except Exception:
-        tempi_seq, tempo_times = [], []
+        tempo_times, tempi_seq = [], []
 
     def _has_items(obj: Any) -> bool:
         if obj is None:
@@ -734,9 +734,9 @@ def _sanitize_tempi(pm: "pretty_midi.PrettyMIDI") -> None:
             return [seq]
 
     try:
-        raw_tempi, raw_times = pm.get_tempo_changes()
+        raw_times, raw_tempi = pm.get_tempo_changes()
     except Exception:
-        raw_tempi, raw_times = [], []
+        raw_times, raw_tempi = [], []
 
     raw_time_list: List[float] = []
     for item in _as_list(raw_times):
@@ -5199,7 +5199,7 @@ def infer_chords_by_bar(pm: "pretty_midi.PrettyMIDI", ts_num=4, ts_den=4) -> Lis
 
 
 def ensure_tempo(pm: "pretty_midi.PrettyMIDI", fallback_bpm: Optional[float]) -> float:
-    tempi = pm.get_tempo_changes()[0]
+    tempi = pm.get_tempo_changes()[1]
     if len(tempi):
         return float(tempi[0])
     if fallback_bpm is None:
@@ -5361,7 +5361,7 @@ def build_sparkle_midi(
     ) -> str:
         used_private = False
         try:
-            tempos, times = src_pm.get_tempo_changes()
+            times, tempos = src_pm.get_tempo_changes()
         except Exception:
             times, tempos = [], []
 

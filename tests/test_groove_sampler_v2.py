@@ -114,7 +114,7 @@ def test_convert_wav_auto_tempo(
 
     pm = groove_sampler_v2_module.convert_wav_to_midi(tmp_path / "loop.wav")
     assert pm is not None
-    tempi, _times = pm.get_tempo_changes()
+    _times, tempi = pm.get_tempo_changes()
     assert pytest.approx(tempi[0], abs=1e-6) == 128.0
 
 
@@ -142,7 +142,7 @@ def test_convert_wav_tempo_fallback(
     monkeypatch.setattr(builtins, "__import__", fake_import)
     pm = groove_sampler_v2_module.convert_wav_to_midi(tmp_path / "loop.wav")
     assert pm is not None
-    tempi, _times = pm.get_tempo_changes()
+    _times, tempi = pm.get_tempo_changes()
     assert pytest.approx(tempi[0], abs=1e-6) == 120.0
 
 
@@ -161,6 +161,6 @@ def test_convert_wav_fixed_bpm(
         tmp_path / "loop.wav", fixed_bpm=90
     )
     assert pm is not None
-    tempi, _times = pm.get_tempo_changes()
+    _times, tempi = pm.get_tempo_changes()
     assert pytest.approx(tempi[0], abs=1e-6) == 90.0
 

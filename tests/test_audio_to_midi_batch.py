@@ -215,7 +215,7 @@ def test_tempo_written(tmp_path, monkeypatch):
     audio_to_midi_batch.main([str(song_dir), str(out_dir), "--auto-tempo"])
     midi_path = out_dir / song_dir.name / "a.mid"
     pm = pretty_midi.PrettyMIDI(str(midi_path))
-    tempi, _ = pm.get_tempo_changes()
+    _times, tempi = pm.get_tempo_changes()
     assert tempi[0] == pytest.approx(100.0)
 
 
@@ -248,12 +248,12 @@ def test_auto_tempo_flag(tmp_path, monkeypatch):
 
     audio_to_midi_batch.main([str(song_dir), str(out_auto), "--auto-tempo"])
     pm = pretty_midi.PrettyMIDI(str(out_auto / song_dir.name / "a.mid"))
-    tempi, _ = pm.get_tempo_changes()
+    _times, tempi = pm.get_tempo_changes()
     assert tempi[0] == pytest.approx(150.0)
 
     audio_to_midi_batch.main([str(song_dir), str(out_off), "--no-auto-tempo"])
     pm2 = pretty_midi.PrettyMIDI(str(out_off / song_dir.name / "a.mid"))
-    tempi2, _ = pm2.get_tempo_changes()
+    _times2, tempi2 = pm2.get_tempo_changes()
     assert tempi2[0] == pytest.approx(120.0)
 
 
@@ -404,7 +404,7 @@ def test_tempo_strategy(tmp_path, monkeypatch, strategy, expected):
         ]
     )
     pm = pretty_midi.PrettyMIDI(str(out_dir / f"{song_dir.name}.mid"))
-    tempi, _ = pm.get_tempo_changes()
+    _times, tempi = pm.get_tempo_changes()
     assert tempi[0] == pytest.approx(expected)
 
 
@@ -539,7 +539,7 @@ def test_tempo_lock_anchor_fold_halves(tmp_path, monkeypatch):
     midi_dir = out_dir / song_dir.name
     tempos = set()
     for p in midi_dir.glob("*.mid"):
-        tempi, _ = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
+        _times, tempi = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
         tempos.add(round(float(tempi[0]), 1))
     assert tempos == {round(110.3, 1)}
 
@@ -577,7 +577,7 @@ def test_tempo_lock_median_fold_halves(tmp_path, monkeypatch):
     midi_dir = out_dir / song_dir.name
     tempos_out = set()
     for p in midi_dir.glob("*.mid"):
-        tempi, _ = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
+        _times, tempi = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
         tempos_out.add(round(float(tempi[0]), 1))
     assert tempos_out == {round(110.3, 1)}
 
@@ -613,7 +613,7 @@ def test_tempo_lock_value(tmp_path, monkeypatch):
     midi_dir = out_dir / song_dir.name
     tempos = set()
     for p in midi_dir.glob("*.mid"):
-        tempi, _ = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
+        _times, tempi = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
         tempos.add(int(round(float(tempi[0]))))
     assert tempos == {128}
 
@@ -642,7 +642,7 @@ def test_tempo_lock_none_default(tmp_path, monkeypatch):
     midi_dir = out_dir / song_dir.name
     tempos_out = set()
     for p in midi_dir.glob("*.mid"):
-        tempi, _ = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
+        _times, tempi = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
         tempos_out.add(int(round(float(tempi[0]))))
     assert tempos_out == {100, 150}
 
@@ -678,5 +678,5 @@ def test_tempo_lock_merge_anchor(tmp_path, monkeypatch):
         ]
     )
     midi_path = out_dir / f"{song_dir.name}.mid"
-    tempi, _ = pretty_midi.PrettyMIDI(str(midi_path)).get_tempo_changes()
+    _times, tempi = pretty_midi.PrettyMIDI(str(midi_path)).get_tempo_changes()
     assert round(float(tempi[0]), 1) == round(110.3, 1)

@@ -66,14 +66,14 @@ def _midi_bar_range(path: Path) -> tuple[int, int]:
     end_time = max(n.end for n in notes)
 
     # ``pretty_midi`` in this repository has a patched ``get_tempo_changes`` that
-    # returns ``(tempi, times)`` instead of ``(times, tempi)``.  Detect both
+    # returns ``(times, tempi)``.  Detect both
     # orderings to remain compatible if upstream behaviour changes.
     a, b = pm.get_tempo_changes()
     a = list(a)
     b = list(b)
     if a and a[0] <= 1e-6 and all(x <= y for x, y in zip(a, a[1:])):
         tempo_times, tempi = a, b
-    else:  # patched ordering
+    else:  # legacy ordering
         tempi, tempo_times = a, b
     if not tempo_times:
         tempo_times = [0.0]

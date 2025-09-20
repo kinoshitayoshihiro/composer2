@@ -31,7 +31,7 @@ def load_events(path: Path) -> list[dict[str, object]]:
     """Return note events with basic hand splitting."""
 
     pm = pretty_midi.PrettyMIDI(str(path))
-    tempi, _times = pm.get_tempo_changes()
+    _times, tempi = pm.get_tempo_changes()
     tempo = float(tempi[0]) if len(tempi) else 120.0
     if tempo <= 0:
         tempo = 120.0

@@ -289,8 +289,26 @@ def _section_for_bar(bar: int, sections: Dict[int, str]) -> str | None:
     total_notes = 0
     approx: List[str] = []
     csv_rows: List[Dict[str, object]] = []
-    last_ks: List[int] | None = None
+    last_sent: tuple[int, ...] | None = None
+    emitted_at: dict[int, float] = {}
     bar_index = 0
+
+    def _emit_keyswitch(pitch: int, when: float) -> bool:
+        if args.no_redundant_ks:
+            prev = emitted_at.get(pitch)
+            if prev is not None and abs(prev - when) <= 1e-6:
+                return False
+        ks_inst.notes.append(
+            pretty_midi.Note(
+                velocity=int(args.ks_vel),
+                pitch=pitch,
+                start=when,
+                end=when + 0.05,
+            )
+        )
+        ks_hist[pitch] += 1
+        emitted_at[pitch] = when
+        return True
 
     for bar in sorted(bar_blocks):
         blocks = bar_blocks[bar]
@@ -302,30 +320,27 @@ def _section_for_bar(bar: int, sections: Dict[int, str]) -> str | None:
             ks_notes = []
             for b in blocks:
                 ks_notes.extend(pattern_to_keyswitches(b["strum"], pattern_lib, keymap))
+        ks_tuple = tuple(ks_notes)
         send = True
-        if args.no_redundant_ks and last_ks == ks_notes:
+        if args.no_redundant_ks and last_sent == ks_tuple:
             send = False
-        if args.periodic_ks and bar_index % int(args.periodic_ks) == 0:
-            send = True
+        periodic = int(args.periodic_ks)
+        if periodic > 0 and bar_index % periodic != 0:
+            send = False
         if send:
             ks_time = max(0.0, bar_start - (float(args.ks_lead) + 20.0) / 1000.0)
-            sec: str | None = None
+            emitted_any = False
             if args.section_aware == "on" and sections:
                 sec = _section_for_bar(bar, sections)
                 if sec:
                     for name in section_styles.get(sec, []):
                         pitch = keymap.get(name)
                         if pitch is not None:
-                            ks_inst.notes.append(
-                                pretty_midi.Note(velocity=int(args.ks_vel), pitch=pitch, start=ks_time, end=ks_time + 0.05)
-                            )
-                            ks_hist[pitch] += 1
+                            emitted_any |= _emit_keyswitch(pitch, ks_time)
             for pitch in ks_notes:
-                ks_inst.notes.append(
-                    pretty_midi.Note(velocity=int(args.ks_vel), pitch=pitch, start=ks_time, end=ks_time + 0.05)
-                )
-                ks_hist[pitch] += 1
-        last_ks = ks_notes
+                emitted_any |= _emit_keyswitch(pitch, ks_time)
+            if emitted_any:
+                last_sent = ks_tuple
         for b in blocks:
             chord = utils.chordify(b["pitches"], (play_low, play_high))
             total_notes += len(b["pitches"])
@@ -358,14 +373,25 @@ def _section_for_bar(bar: int, sections: Dict[int, str]) -> str | None:
             try:
                 mf = mido.MidiFile(str(args.out_midi))  # type: ignore[attr-defined]
                 ks_ch = int(args.ks_channel) - 1
-                for track in mf.tracks:
-                    name = None
+                ks_track_index = None
+                for idx, track in enumerate(mf.tracks):
+                    track_name = None
                     for msg in track:
                         if msg.type == "track_name":
-                            name = msg.name
-                        elif name == "Keyswitches" and msg.type in {"note_on", "note_off"}:
+                            track_name = msg.name
+                            break
+                    if track_name == "Keyswitches":
+                        ks_track_index = idx
+                        break
+                if ks_track_index is not None:
+                    ks_track = mf.tracks[ks_track_index]
+                    for msg in ks_track:
+                        if msg.type in {"note_on", "note_off"}:
                             msg.channel = ks_ch
-                mf.save(str(args.out_midi))
+                    if ks_track_index != 0:
+                        del mf.tracks[ks_track_index]
+                        mf.tracks.insert(0, ks_track)
+                    mf.save(str(args.out_midi))
             except Exception:
                 pass
 

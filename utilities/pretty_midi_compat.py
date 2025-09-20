@@ -87,13 +87,11 @@ else:
             score_second_as_times = _times_score(second_arr) + _bpms_score(first_arr)
 
             # Tie-break: prefer the official pretty_midi order (times, bpms)
-            # internally, then flip back to the legacy (bpms, times) that the
-            # rest of the project consumes.
             if score_second_as_times > score_first_as_times:
                 times, bpms = second_arr, first_arr
             else:
                 times, bpms = first_arr, second_arr
-            return bpms, times
+            return times, bpms
 
         _safe_get_tempo_changes._composer2_patched = True  # type: ignore[attr-defined]
         _pm.PrettyMIDI.get_tempo_changes = _safe_get_tempo_changes  # type: ignore[assignment]

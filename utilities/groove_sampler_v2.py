@@ -183,7 +183,7 @@ def _ensure_tempo(pm: pretty_midi.PrettyMIDI, default_bpm: float = 120.0) -> pre
     """
 
     injected = False
-    tempi, _times = pm.get_tempo_changes()
+    _times, tempi = pm.get_tempo_changes()
     if len(tempi):
         _ensure_tempo.injected = False  # type: ignore[attr-defined]
         return pm
@@ -585,7 +585,7 @@ def _safe_read_bpm(
     source = "default"
 
 
-    bpms, _times = pm.get_tempo_changes()
+    _times, bpms = pm.get_tempo_changes()
     if len(bpms) and math.isfinite(bpms[0]) and bpms[0] > 0:
         bpm = float(bpms[0])
         source = "pretty_midi"
@@ -656,7 +656,7 @@ def _resolve_tempo(
 
     bpm: float | None = None
     source = "unknown"
-    tempi, _times = pm.get_tempo_changes()
+    _times, tempi = pm.get_tempo_changes()
     if len(tempi) and math.isfinite(tempi[0]):
         bpm = float(tempi[0])
         source = "pretty_midi"

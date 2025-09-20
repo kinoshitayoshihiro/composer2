@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 import warnings
+import inspect
 from collections import Counter
 from contextlib import nullcontext
 from pathlib import Path
@@ -41,69 +42,43 @@ except Exception:  # pragma: no cover - torch may be unavailable for docs builds
     torch = None  # type: ignore[assignment]
 
 
-# local import guard so the script works without an editable install
-try:  # pragma: no cover - import robustness
-    from models.phrase_transformer import PhraseTransformer  # type: ignore[import-not-found]
-except ModuleNotFoundError:
-    repo_root = Path(__file__).resolve().parent.parent
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-        logging.warning("added repo root to sys.path for local import")
-    try:
-        from models.phrase_transformer import PhraseTransformer  # type: ignore[import-not-found]
-    except Exception:
-        class PhraseTransformer:  # type: ignore[redeclaration]
-            """Test stub allowing monkeypatching of ``__init__``."""
+def _import_phrase_transformer() -> type:
+    """Import :class:`PhraseTransformer` with signature validation."""
 
-            def __init__(
-                self,
-                d_model: int,
-                max_len: int,
-                *,
-                section_vocab_size: int = 0,
-                mood_vocab_size: int = 0,
-                vel_bucket_size: int = 0,
-                dur_bucket_size: int = 0,
-                nhead: int = 8,
-                num_layers: int = 4,
-                dropout: float = 0.1,
-            ) -> None:
-                self.d_model = d_model
-                self.max_len = max_len
-                self.section_vocab_size = section_vocab_size
-                self.mood_vocab_size = mood_vocab_size
-                self.vel_bucket_size = vel_bucket_size
-                self.dur_bucket_size = dur_bucket_size
-                self.nhead = nhead
-                self.num_layers = num_layers
-                self.dropout = dropout
+    try:  # pragma: no cover - import robustness
+        from models.phrase_transformer import PhraseTransformer as _PT  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        repo_root = Path(__file__).resolve().parent.parent
+        if os.environ.get("ALLOW_LOCAL_IMPORT") == "1" and str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+            logging.warning("added repo root to sys.path for local import")
+            try:
+                from models.phrase_transformer import PhraseTransformer as _PT  # type: ignore[import-not-found]
+            except Exception as inner_exc:
+                raise ModuleNotFoundError(
+                    "models.phrase_transformer.PhraseTransformer is unavailable"
+                ) from inner_exc
+        else:
+            raise exc
+    except Exception as exc:  # pragma: no cover - unexpected import failure
+        raise ModuleNotFoundError(
+            "models.phrase_transformer.PhraseTransformer is unavailable"
+        ) from exc
 
-if not isinstance(PhraseTransformer, type):  # pragma: no cover - defensive fallback
-    class PhraseTransformer:  # type: ignore[redeclaration]
-        """Fallback stub enabling tests to monkeypatch ``__init__``."""
+    if not isinstance(_PT, type):  # pragma: no cover - defensive
+        raise ModuleNotFoundError("models.phrase_transformer.PhraseTransformer is unavailable")
 
-        def __init__(
-            self,
-            d_model: int,
-            max_len: int,
-            *,
-            section_vocab_size: int = 0,
-            mood_vocab_size: int = 0,
-            vel_bucket_size: int = 0,
-            dur_bucket_size: int = 0,
-            nhead: int = 8,
-            num_layers: int = 4,
-            dropout: float = 0.1,
-        ) -> None:
-            self.d_model = d_model
-            self.max_len = max_len
-            self.section_vocab_size = section_vocab_size
-            self.mood_vocab_size = mood_vocab_size
-            self.vel_bucket_size = vel_bucket_size
-            self.dur_bucket_size = dur_bucket_size
-            self.nhead = nhead
-            self.num_layers = num_layers
-            self.dropout = dropout
+    init = getattr(_PT, "__init__", None)
+    if init is None:
+        raise ModuleNotFoundError("models.phrase_transformer.PhraseTransformer is unavailable")
+    sig = inspect.signature(init)
+    required = {"d_model", "max_len"}
+    if not required.issubset(sig.parameters):
+        raise ModuleNotFoundError("models.phrase_transformer.PhraseTransformer is unavailable")
+    return _PT
+
+
+PhraseTransformer = _import_phrase_transformer()
 
 _TMP_DIRS: list[Path] = []
 
@@ -1244,8 +1219,10 @@ def train_model(
         viz_files: list[str] = []
         metrics_rows: list[dict[str, float]] = []
         use_progress = bool(progress and _tqdm is not None)
+        epochs_completed = start_epoch
         for ep in range(start_epoch, epochs):
             t0 = time.time()
+            epochs_completed = ep + 1
             model.train()
             loss_sum = 0.0
             lb_sum = lv_sum = ld_sum = lvb_sum = ldb_sum = lp_sum = 0.0
@@ -1496,13 +1473,15 @@ def train_model(
             "corpus_name": corpus_name,
             "tag_coverage": tag_coverage,
         }
+        final_best_f1 = float(best_f1) if best_f1 >= 0 else 0.0
+        final_epoch = max(start_epoch, epochs_completed)
         final_state = {
             "model": {k: v.cpu() for k, v in model.state_dict().items()},
             "optimizer": opt.state_dict(),
             "scheduler": sched.state_dict() if sched else None,
-            "epoch": ep + 1,
+            "epoch": final_epoch,
             "global_step": global_step,
-            "best_f1": best_f1,
+            "best_f1": final_best_f1,
             "meta": meta,
         }
         torch.save(final_state, out)
@@ -1599,7 +1578,7 @@ def train_model(
         print(
             json.dumps(
                 {
-                    "f1": float(best_f1),
+                    "f1": final_best_f1,
                     "best_th": float(best_threshold),
                     "arch": arch,
                     "d_model": int(d_model),
@@ -1617,7 +1596,7 @@ def train_model(
         }
         if weight_stats:
             stats["tag_weights_top10"] = weight_stats
-        return best_f1, device.type, stats
+        return final_best_f1, device.type, stats
     
     
 def build_parser() -> argparse.ArgumentParser:
@@ -1957,11 +1936,17 @@ def main(argv: list[str] | None = None) -> int:
             f1, device_type = result
             stats = {}
         else:
-            f1 = result[0] if len(result) > 0 else -1.0
+            f1 = result[0] if len(result) > 0 else 0.0
             device_type = result[1] if len(result) > 1 else "cpu"
             stats = result[2] if len(result) > 2 else {}
+    elif result is None:
+        f1, device_type, stats = 0.0, "cpu", {}
     else:
-        f1, device_type, stats = float(result), "cpu", {}
+        try:
+            f1 = float(result)
+        except (TypeError, ValueError):
+            f1 = 0.0
+        device_type, stats = "cpu", {}
 
     if not isinstance(stats, dict):
         stats = {"extra": stats}

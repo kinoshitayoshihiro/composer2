@@ -447,18 +447,27 @@ def _validate_map(data: Dict) -> List[str]:
             _register(name, value, require_hold=False)
 
     play = data.get("play_range", {}) or {}
+    play_defined = bool(play)
     try:
         low = int(play.get("low", KS_MIN))
         high = int(play.get("high", KS_MAX))
     except Exception:
         low, high = KS_MIN, KS_MAX
-    ks_low = min(low, KS_MIN)
-    ks_high = max(high, KS_MAX)
+    play_low = min(low, high)
+    play_high = max(low, high)
+    play_low = max(0, min(play_low, 127))
+    play_high = max(play_low, min(play_high, 127))
+    ks_low = min(play_low, KS_MIN)
+    ks_high = max(play_high, KS_MAX)
 
     for name, note in key_lookup.items():
         if note < ks_low or note > ks_high:
             range_issues.append(
                 f"keyswitch '{name}' out of range {KS_MIN}..{KS_MAX} (got {note})"
+            )
+        elif play_defined and play_low <= note <= play_high:
+            range_issues.append(
+                f"keyswitch '{name}' overlaps play range {play_low}..{play_high} (got {note})"
             )
 
     section_styles = data.get("section_styles", {}) or {}
@@ -505,6 +514,41 @@ def _group_chords(notes: List[pretty_midi.Note], window: float = 0.03) -> List[L
     if current:
         blocks.append(current)
     return blocks
+
+
+def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
+    """Return bar start times accounting for time signature changes."""
+
+    downbeats = list(pm.get_downbeats())
+    if downbeats:
+        return [float(t) for t in downbeats]
+    beats = pm.get_beats()
+    if beats.size == 0:
+        return [0.0]
+    ts_changes = list(pm.time_signature_changes)
+    if not ts_changes:
+        ts_changes = [pretty_midi.TimeSignature(4, 4, 0.0)]
+    bar_times: List[float] = []
+    ts_idx = 0
+    beats_per_bar = ts_changes[ts_idx].numerator
+    beat_in_bar = 0
+    for bt in beats:
+        bt_f = float(bt)
+        if beat_in_bar == 0:
+            bar_times.append(bt_f)
+        beat_in_bar += 1
+        next_change_time = (
+            ts_changes[ts_idx + 1].time if ts_idx + 1 < len(ts_changes) else None
+        )
+        if next_change_time is not None and bt_f >= float(next_change_time) - 1e-9:
+            ts_idx += 1
+            beats_per_bar = ts_changes[ts_idx].numerator
+            beat_in_bar = 0
+        elif beat_in_bar >= beats_per_bar:
+            beat_in_bar = 0
+    if not bar_times:
+        bar_times = [0.0]
+    return bar_times
 
 
 def _load_sections(path: pathlib.Path) -> Dict[int, str]:
@@ -614,14 +658,7 @@ def convert(args) -> None:
         )
     utils.humanize(pm, float(args.humanize))
 
-    downbeats = pm.get_downbeats()
-    ts_changes = pm.time_signature_changes
-    ts_idx = 0
-    bar_beats: Dict[int, int] = {}
-    for i, db in enumerate(downbeats):
-        while ts_idx + 1 < len(ts_changes) and ts_changes[ts_idx + 1].time <= db:
-            ts_idx += 1
-        bar_beats[i] = ts_changes[ts_idx].numerator if ts_changes else beats_per_bar
+    bar_starts = _compute_bar_starts(pm)
 
     instrument = pm.instruments[0]
     chord_blocks = _group_chords(instrument.notes)
@@ -634,8 +671,10 @@ def convert(args) -> None:
         start = block[0].start
         duration = min(n.end - n.start for n in block)
         beat = pm.time_to_tick(start) / pm.resolution
-        bar = max(0, bisect_right(downbeats, start) - 1)
-        bar_start_tick = pm.time_to_tick(downbeats[bar])
+        bar = max(0, bisect_right(bar_starts, start) - 1)
+        if bar >= len(bar_starts):
+            bar = len(bar_starts) - 1
+        bar_start_tick = pm.time_to_tick(bar_starts[bar])
         beat_in_bar = (pm.time_to_tick(start) - bar_start_tick) / pm.resolution
         if prev_beat is None or beat_in_bar < 0.1 or (beat - prev_beat) > 1.5:
             strum = "D"
@@ -691,7 +730,7 @@ def convert(args) -> None:
 
     for bar in sorted(bar_blocks):
         blocks = bar_blocks[bar]
-        bar_start = downbeats[bar]
+        bar_start = bar_starts[bar] if bar < len(bar_starts) else bar_starts[-1]
         pattern = " ".join(b["strum"] for b in blocks)
         ks_notes = pattern_to_keyswitches(pattern, pattern_lib, keymap)
         if not ks_notes:
@@ -700,11 +739,10 @@ def convert(args) -> None:
             for b in blocks:
                 ks_notes.extend(pattern_to_keyswitches(b["strum"], pattern_lib, keymap))
         ks_tuple = tuple(ks_notes)
-        send = True
-        if args.no_redundant_ks and last_sent == ks_tuple:
-            send = False
-        periodic = int(args.periodic_ks)
-        if periodic > 0 and bar_index % periodic != 0:
+        periodic = max(0, int(args.periodic_ks))
+        due_periodic = periodic == 0 or (bar_index % periodic == 0)
+        send = due_periodic
+        if send and args.no_redundant_ks and periodic == 0 and last_sent == ks_tuple:
             send = False
         if send:
             ks_time = max(0.0, bar_start - (float(args.ks_lead) + 20.0) / 1000.0)

@@ -43,7 +43,7 @@ from utilities.duv_infer import (
     OPTIONAL_FLOAT32_COLUMNS,
     OPTIONAL_INT32_COLUMNS,
     REQUIRED_COLUMNS,
-    _mask_any,
+    mask_any,
     duv_sequence_predict,
     load_duv_dataframe,
     duv_verbose,
@@ -53,6 +53,7 @@ from utilities.ml_velocity import MLVelocityModel
 
 
 _duv_sequence_predict = duv_sequence_predict
+_mask_any = mask_any
 
 
 def _ensure_int(value: object, default: int) -> int:
@@ -341,7 +342,10 @@ def run(args: argparse.Namespace) -> int:
             for (xb,) in loader:
                 out = vel_model(xb.to(device))
                 preds.append(out.cpu().numpy())
-        vel_pred = np.concatenate(preds, axis=0).astype("float32")
+        if preds:
+            vel_pred = np.concatenate(preds, axis=0).astype("float32")
+        else:
+            vel_pred = np.zeros(len(df), dtype=np.float32)
         vel_mask = np.ones_like(vel_pred, dtype=bool)
 
     if (

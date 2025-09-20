@@ -26,7 +26,7 @@ from utilities.duv_infer import (
     OPTIONAL_FLOAT32_COLUMNS,
     OPTIONAL_INT32_COLUMNS,
     REQUIRED_COLUMNS,
-    _mask_any,
+    mask_any,
     duv_sequence_predict,
     load_duv_dataframe,
     duv_verbose,
@@ -45,6 +45,7 @@ from .eval_duv import (  # reuse helpers
 
 
 _duv_sequence_predict = duv_sequence_predict
+_mask_any = mask_any
 
 
 def _median_smooth(x: np.ndarray, k: int) -> np.ndarray:
@@ -173,7 +174,10 @@ def run(args: argparse.Namespace) -> int:
                 xb = torch.from_numpy(X[start : start + args.batch]).to(device)
                 out = vel_model(xb)
                 preds.append(out.cpu().numpy())
-        vel_pred = np.concatenate(preds, axis=0).astype("float32")
+        if preds:
+            vel_pred = np.concatenate(preds, axis=0).astype("float32")
+        else:
+            vel_pred = np.zeros(len(df), dtype=np.float32)
 
     if args.vel_smooth > 1:
         smoothed = _median_smooth(vel_pred.copy(), args.vel_smooth)

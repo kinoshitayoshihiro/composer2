@@ -83,7 +83,7 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover
     pretty_midi = None  # type: ignore
 
-# pretty_midi がある環境では get_tempo_changes を (bpms, times) に矯正する
+# pretty_midi がある環境では get_tempo_changes を (times, bpms) に矯正する
 try:  # pragma: no cover - optional dependency
     from . import pretty_midi_compat as _pmc  # noqa: F401
 except Exception:  # pragma: no cover
@@ -621,6 +621,9 @@ def _safe_read_bpm(
 
     if bpm is None or not math.isfinite(bpm) or bpm <= 0:
         bpm = float(default_bpm)
+        source = "default"
+
+    if getattr(pm, "_composer2_injected_tempo", False):
         source = "default"
 
     if fold_halves:

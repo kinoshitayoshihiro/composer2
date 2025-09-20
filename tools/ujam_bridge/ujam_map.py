@@ -23,17 +23,22 @@ try:  # optional dependency
     import yaml  # type: ignore
 except Exception:  # pragma: no cover
     yaml = None  # type: ignore
-import groove_profile as gp
 
+import groove_profile as gp
 from . import utils
 
+__all__ = [
+    "pattern_to_keyswitches",
+    "load_map",
+    "convert",
+    "build_arg_parser",
+    "main",
+]
 
 PATTERN_PATH = pathlib.Path(__file__).with_name("patterns") / "strum_library.yaml"
 MAP_DIR = pathlib.Path(__file__).with_name("maps")
 KS_MIN, KS_MAX = 36, 88
 
-
-__all__ = ["convert"]
 
 
 def convert(args: SimpleNamespace) -> None:
@@ -530,6 +535,57 @@ def _section_for_bar(bar: int, sections: Dict[int, str]) -> str | None:
             break
     return current
 
+
+def convert(args) -> None:
+    if pretty_midi is None:
+        raise RuntimeError("pretty_midi is required for conversion")
+    mapping_arg = getattr(args, "mapping", "")
+    mapping_path = pathlib.Path(mapping_arg)
+    mapping_data: Dict
+    if mapping_path.is_file():
+        mapping_data = _load_yaml(mapping_path)
+        issues = _validate_map(mapping_data)
+        if issues:
+            raise ValueError(", ".join(issues))
+    else:
+        candidate_name = mapping_path.name if mapping_path.suffix else f"{mapping_path.name}.yaml"
+        candidate = MAP_DIR / candidate_name
+        if candidate.is_file():
+            mapping_data = _load_yaml(candidate)
+            issues = _validate_map(mapping_data)
+            if issues:
+                raise ValueError(", ".join(issues))
+        else:
+            mapping_key = mapping_path.stem if mapping_path.suffix else mapping_path.name
+            mapping_data = load_map(mapping_key)
+    keymap: Dict[str, int] = {}
+    for item in mapping_data.get("keyswitches", []) or []:
+        if isinstance(item, dict):
+            name = item.get("name")
+            note = item.get("note")
+            if isinstance(name, str) and isinstance(note, int):
+                keymap[name] = int(note)
+    extra = mapping_data.get("keyswitch")
+    if isinstance(extra, dict):
+        for name, note in extra.items():
+            if isinstance(name, str) and isinstance(note, int):
+                keymap[name] = int(note)
+    if not keymap:
+        raise ValueError("mapping did not define any keyswitch notes")
+    pattern_lib = _load_patterns()
+    section_styles = mapping_data.get("section_styles", {}) or {}
+    play_cfg = mapping_data.get("play_range", {}) or {}
+    try:
+        play_low = int(play_cfg.get("low", KS_MIN))
+        play_high = int(play_cfg.get("high", KS_MAX))
+    except Exception:
+        play_low, play_high = KS_MIN, KS_MAX
+    sections: Dict[int, str] = {}
+    tags_path = getattr(args, "tags", None)
+    if tags_path:
+        tag_path = pathlib.Path(tags_path)
+        if tag_path.is_file():
+            sections = _load_sections(tag_path)
     pm = pretty_midi.PrettyMIDI(str(args.in_midi))
     # 初期テンポ注入（無テンポや非正テンポの救済）
     try:
@@ -557,7 +613,7 @@ def _section_for_bar(bar: int, sections: Dict[int, str]) -> str | None:
             clip_other_ms=float(args.groove_clip_other),
         )
     utils.humanize(pm, float(args.humanize))
-    
+
     downbeats = pm.get_downbeats()
     ts_changes = pm.time_signature_changes
     ts_idx = 0
@@ -727,6 +783,7 @@ def _section_for_bar(bar: int, sections: Dict[int, str]) -> str | None:
         print(f"Clamped notes: {clamp_notes}/{total_notes} ({pct:.1f}%)")
     if approx:
         print("Approximate patterns for bars:", ", ".join(approx))
+
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

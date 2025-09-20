@@ -612,24 +612,6 @@ class ControlCurve:
                     ft.append(t[-1])
                     fv.append(v[-1])
                 t, v = ft, fv
-        if max_events is not None and len(t) > max_events:
-            if simplify_mode == "rdp":
-                cc = ControlCurve.from_dense(
-                    t,
-                    v,
-                    tol=1e-9,
-                    max_knots=max_events,
-                    units=self.units,
-                    domain="time",
-                )
-                t = list(cc.times)
-                v = list(cc.values)
-            else:
-                t_list = t.tolist() if hasattr(t, "tolist") else list(t)
-                v_list = v.tolist() if hasattr(v, "tolist") else list(v)
-                idxs = _uniform_indices(len(t_list), max_events)
-                t = [t_list[i] for i in idxs]
-                v = [v_list[i] for i in idxs]
         # clamp + round to MIDI domain
         vals = round_int(clip(v, 0, 127))
         t, vals = _dedupe_int(t, vals, time_eps=time_eps, keep_last=True)
@@ -743,24 +725,6 @@ class ControlCurve:
                     ft.append(t[-1])
                     fv.append(v[-1])
                 t, v = ft, fv
-        if max_events is not None and len(t) > max_events:
-            if simplify_mode == "rdp":
-                cc = ControlCurve.from_dense(
-                    t,
-                    v,
-                    tol=1e-9,
-                    max_knots=max_events,
-                    units=self.units,
-                    domain="time",
-                )
-                t = list(cc.times)
-                v = list(cc.values)
-            else:
-                t_list = t.tolist() if hasattr(t, "tolist") else list(t)
-                v_list = v.tolist() if hasattr(v, "tolist") else list(v)
-                idxs = _uniform_indices(len(t_list), max_events)
-                t = [t_list[i] for i in idxs]
-                v = [v_list[i] for i in idxs]
         # convert to 14-bit domain
         if units == "normalized":
             vals = pb_math.norm_to_pb(v)
@@ -779,18 +743,11 @@ class ControlCurve:
                 ft.append(t[-1])
                 fv.append(int(vals[-1]))
             t, vals = ft, fv
-        if max_events is not None and len(vals) > max_events:
-            t_list = t.tolist() if hasattr(t, "tolist") else list(t)
-            val_list = vals.tolist() if hasattr(vals, "tolist") else list(vals)
-            idxs = _uniform_indices(len(val_list), max_events)
-            t = [t_list[i] for i in idxs]
-            vals = [int(val_list[i]) for i in idxs]
         if not isinstance(t, list):
             t = t.tolist() if hasattr(t, "tolist") else list(t)
         if not isinstance(vals, list):
             vals = vals.tolist() if hasattr(vals, "tolist") else list(vals)
         if self.ensure_zero_at_edges and len(vals) > 0:
-            orig_len = len(vals)
             if vals[0] != 0:
                 t.insert(0, t[0])
                 vals.insert(0, 0)
@@ -803,13 +760,20 @@ class ControlCurve:
                 else:
                     vals[-1] = 0
         if max_events is not None and len(vals) > max_events:
-            idxs = _uniform_indices(len(vals), max_events)
-            t = [t[i] for i in idxs]
-            vals = [int(vals[i]) for i in idxs]
+            # support list or numpy arrays without changing caller behavior
+            t_list = t.tolist() if hasattr(t, "tolist") else list(t)
+            val_list = vals.tolist() if hasattr(vals, "tolist") else list(vals)
+            idxs = _uniform_indices(len(val_list), max_events)
+            t = [t_list[i] for i in idxs]
+            vals = [int(val_list[i]) for i in idxs]
         for tt, vv in zip(t, vals):
             inst.pitch_bends.append(
-                pretty_midi.PitchBend(pitch=int(vv), time=float(tt + self.offset_sec + time_offset))
+                pretty_midi.PitchBend(
+                    pitch=int(vv),
+                    time=float(tt + self.offset_sec + time_offset),
+                )
             )
+
 
     # ---- utils ------------------------------------------------------
     @staticmethod

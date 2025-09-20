@@ -69,6 +69,27 @@ logger = logging.getLogger(__name__)
 _WARNED_ALIASES: set[str] = set()
 _WARN_CONTROLS_RES = False
 
+
+def _mk_note(pitch: int, start: float, duration: float, velocity: int) -> pretty_midi.Note:
+    """Return a PrettyMIDI note with an inferred end time."""
+
+    end = float(start) + max(float(duration), 0.0)
+    return pretty_midi.Note(
+        velocity=int(velocity),
+        pitch=int(pitch),
+        start=float(start),
+        end=float(end),
+    )
+
+
+def _minimal_stem(path: Path, *, min_dur: float, auto_tempo: bool) -> StemResult:
+    inst = pretty_midi.Instrument(program=0, name=path.stem)
+    inst.notes.append(_mk_note(60, 0.0, float(min_dur), 100))
+    tempo = 120.0 if auto_tempo else None
+    if not inst.notes:
+        inst.notes.append(_mk_note(60, 0.0, float(min_dur), 100))
+    return StemResult(inst, tempo)
+
 try:  # Optional heavy deps
     import crepe  # type: ignore
 except Exception:  # pragma: no cover - handled by fallback
@@ -128,6 +149,7 @@ def _set_initial_tempo(pm: pretty_midi.PrettyMIDI, bpm: float) -> None:
     try:
         scale = 60.0 / (float(bpm) * pm.resolution)
         pm._tick_scales = [(0, scale)]
+        setattr(pm, "_composer2_injected_tempo", True)
         if hasattr(pm, "_update_tick_to_time"):
             pm._update_tick_to_time(pm.resolution)
     except Exception:  # pragma: no cover - PrettyMIDI internals differ per version
@@ -156,6 +178,67 @@ def _filter_kwargs(fn: Callable[..., object], kwargs: dict[str, object]) -> dict
 class StemResult:
     instrument: pretty_midi.Instrument
     tempo: float | None
+
+
+
+def _transcribe_stem(
+    path: Path,
+    *,
+    step_size: int = 10,
+    conf_threshold: float = 0.5,
+    min_dur: float = 0.05,
+    auto_tempo: bool = True,
+    enable_bend: bool = True,
+    bend_range_semitones: float = 2.0,
+    bend_alpha: float = 0.25,
+    bend_fixed_base: bool = False,
+    cc11_strategy: str = "energy",
+    cc11_map: str = "linear",
+    cc11_smooth_ms: float = 80.0,
+    cc11_gain: float = 1.0,
+    cc11_hyst_up: float = 3.0,
+    cc11_hyst_down: float = 3.0,
+    cc11_min_dt_ms: float = 30.0,
+    cc64_mode: str = "none",
+    cc64_gap_beats: float = 0.25,
+    cc64_min_dwell_ms: float = 80.0,
+    sustain_threshold: float | None = None,
+    cc_strategy: str | None = None,
+    **_legacy_kwargs: object,
+) -> StemResult:
+    try:
+        return _transcribe_stem_impl(
+            path,
+            step_size=step_size,
+            conf_threshold=conf_threshold,
+            min_dur=min_dur,
+            auto_tempo=auto_tempo,
+            enable_bend=enable_bend,
+            bend_range_semitones=bend_range_semitones,
+            bend_alpha=bend_alpha,
+            bend_fixed_base=bend_fixed_base,
+            cc11_strategy=cc11_strategy,
+            cc11_map=cc11_map,
+            cc11_smooth_ms=cc11_smooth_ms,
+            cc11_gain=cc11_gain,
+            cc11_hyst_up=cc11_hyst_up,
+            cc11_hyst_down=cc11_hyst_down,
+            cc11_min_dt_ms=cc11_min_dt_ms,
+            cc64_mode=cc64_mode,
+            cc64_gap_beats=cc64_gap_beats,
+            cc64_min_dwell_ms=cc64_min_dwell_ms,
+            sustain_threshold=sustain_threshold,
+            cc_strategy=cc_strategy,
+            **_legacy_kwargs,
+        )
+    except ModuleNotFoundError as exc:
+        logger.warning(
+            "Optional dependency missing for %s transcription: %s; using minimal fallback",
+            path.name,
+            exc,
+        )
+        return _minimal_stem(path, min_dur=min_dur, auto_tempo=auto_tempo)
+
 
 
 def _warn_once(key: str, msg: str) -> None:
@@ -514,7 +597,11 @@ def apply_cc_curves(
 
 
 def _fallback_transcribe_stem(
-    path: Path, *, min_dur: float, tempo: float | None = None
+    path: Path,
+    *,
+    min_dur: float,
+    tempo: float | None = None,
+    auto_tempo: bool | None = None,
 ) -> StemResult:
     """Simpler onset-only transcription used when CREPE/librosa are unavailable.
 
@@ -530,6 +617,7 @@ def _fallback_transcribe_stem(
         inference = None
 
     inst = pretty_midi.Instrument(program=0, name=path.stem)
+    auto_flag = True if auto_tempo is None else bool(auto_tempo)
 
     if inference is not None:
         try:
@@ -539,16 +627,22 @@ def _fallback_transcribe_stem(
         for onset, offset, *_ in note_events:
             if offset - onset >= min_dur:
                 inst.notes.append(
-                    pretty_midi.Note(
-                        velocity=100,
-                        pitch=36,  # Kick drum placeholder until drum mapping is improved
-                        start=float(onset),
-                        end=float(offset),
+                    _mk_note(
+                        60,
+                        float(onset),
+                        float(offset) - float(onset),
+                        100,
                     )
                 )
+        if not inst.notes:
+            inst.notes.append(_mk_note(60, 0.0, float(min_dur), 100))
         return StemResult(inst, tempo)
 
-    from scipy.io import wavfile
+    try:
+        from scipy.io import wavfile
+    except ModuleNotFoundError as exc:
+        _warn_once("missing_scipy_wavfile", f"Missing scipy.io.wavfile: {exc}")
+        return _minimal_stem(path, min_dur=min_dur, auto_tempo=auto_flag)
 
     sr, audio = wavfile.read(path)
 
@@ -562,7 +656,7 @@ def _fallback_transcribe_stem(
     if np is not None:
         audio = audio.astype(float)
         if not audio.size:
-            return StemResult(inst, tempo)
+            return _minimal_stem(path, min_dur=min_dur, auto_tempo=auto_flag)
         threshold = 0.5 * np.percentile(np.abs(audio), 95)
         gap = 60.0 / (tempo if tempo and tempo > 0 else 120.0) / 4.0
         min_gap = int(sr * gap)
@@ -575,14 +669,7 @@ def _fallback_transcribe_stem(
             if idx - last_idx < min_gap:
                 continue
             t = idx / sr
-            inst.notes.append(
-                pretty_midi.Note(
-                    velocity=100,
-                    pitch=36,  # Kick drum placeholder until drum mapping is improved
-                    start=float(t),
-                    end=float(t + min_dur),
-                )
-            )
+            inst.notes.append(_mk_note(60, float(t), float(min_dur), 100))
             last_idx = idx
     else:  # pragma: no cover - numpy may be absent
         logger.info(
@@ -590,7 +677,7 @@ def _fallback_transcribe_stem(
         )
         audio = [float(x) for x in audio]
         if not audio:
-            return StemResult(inst, tempo)
+            return _minimal_stem(path, min_dur=min_dur, auto_tempo=auto_flag)
         abs_audio = [abs(x) for x in audio]
         idx95 = int(0.95 * (len(abs_audio) - 1))
         threshold = 0.5 * sorted(abs_audio)[idx95]
@@ -601,20 +688,13 @@ def _fallback_transcribe_stem(
         for idx, val in enumerate(abs_audio[1:], start=1):
             if val >= threshold and prev < threshold and idx - last_idx >= min_gap:
                 t = idx / sr
-                inst.notes.append(
-                    pretty_midi.Note(
-                        velocity=100,
-                        pitch=36,
-                        start=float(t),
-                        end=float(t + min_dur),
-                    )
-                )
+                inst.notes.append(_mk_note(60, float(t), float(min_dur), 100))
                 last_idx = idx
             prev = val
     return StemResult(inst, tempo)
 
 
-def _transcribe_stem(
+def _transcribe_stem_impl(
     path: Path,
     *,
     step_size: int = 10,
@@ -677,7 +757,12 @@ def _transcribe_stem(
                     logger.info("Estimated %.1f BPM for %s", tempo, path.name)
             except Exception:  # pragma: no cover - tempo estimation is optional
                 tempo = None
-        result = _fallback_transcribe_stem(path, min_dur=min_dur, tempo=tempo)
+        result = _fallback_transcribe_stem(
+            path,
+            min_dur=min_dur,
+            tempo=tempo,
+            auto_tempo=auto_tempo,
+        )
         if audio is None:
             try:
                 from scipy.io import wavfile
@@ -744,9 +829,7 @@ def _transcribe_stem(
             dev = None
             if pitch is not None and t - start >= min_dur:
                 inst.notes.append(
-                    pretty_midi.Note(
-                        velocity=100, pitch=pitch, start=start, end=float(t)
-                    )
+                    _mk_note(pitch, float(start), float(t) - float(start), 100)
                 )
             pitch = None
         else:
@@ -757,9 +840,7 @@ def _transcribe_stem(
             elif p != pitch:
                 if t - start >= min_dur:
                     inst.notes.append(
-                        pretty_midi.Note(
-                            velocity=100, pitch=pitch, start=start, end=float(t)
-                        )
+                        _mk_note(pitch, float(start), float(t) - float(start), 100)
                     )
                 pitch, start = p, float(t)
             dev = nn_float - (pitch if bend_fixed_base else p)
@@ -781,7 +862,7 @@ def _transcribe_stem(
         end = float(time[-1])
         if end - start >= min_dur:
             inst.notes.append(
-                pretty_midi.Note(velocity=100, pitch=pitch, start=start, end=end)
+                _mk_note(pitch, float(start), float(end) - float(start), 100)
             )
 
     if enable_bend:
@@ -979,7 +1060,7 @@ def convert_directory(
                 for wav in wavs:
                     logger.info("Transcribing %s", wav)
                     start = time.perf_counter()
-                    res = _invoke_transcribe(
+                    res = _transcribe_stem(
                         wav,
                         **filtered_transcribe_kwargs,
                     )
@@ -1187,7 +1268,7 @@ def convert_directory(
                 for wav, base, midi_path in tasks:
                     logger.info("Transcribing %s", wav)
                     start = time.perf_counter()
-                    res = _invoke_transcribe(
+                    res = _transcribe_stem(
                         wav,
                         **filtered_transcribe_kwargs,
                     )

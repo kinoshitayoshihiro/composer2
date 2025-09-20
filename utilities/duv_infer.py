@@ -62,63 +62,37 @@ CSV_INT32_COLUMNS: set[str] = {
     "program",
 }
 
-def mask_any(mask: object) -> bool:
-    """Return True when *mask* contains any truthy entry.
+def _mask_any(x: object) -> bool:
+    """Reduce *x* to a single boolean, handling torch/numpy gracefully."""
 
-    - Supports torch.Tensor / numpy.ndarray directly.
-    - Falls back to calling .any() if available (and unwraps .item()).
-    - Remains safe if torch/numpy are unavailable.
-    """
-    if mask is None:
+    if x is None:
         return False
 
-    # torch.Tensor?
     try:
-        if isinstance(mask, torch.Tensor):
-            return bool(torch.any(mask).item())
+        import torch  # type: ignore[import-not-found]
+
+        t = torch.as_tensor(x)
+        return bool(t.any().item())
     except Exception:
         pass
 
-    # numpy.ndarray?
     try:
-        if isinstance(mask, np.ndarray):
-            return bool(np.any(mask))
+        import numpy as np  # type: ignore[import-not-found]
+
+        return bool(np.any(x))
     except Exception:
         pass
 
-    # Generic objects exposing .any()
-    any_method = getattr(mask, "any", None)
-    if callable(any_method):
-        result = any_method()
-
-        # result itself could be torch/numpy/bool/scalar-like
-        try:
-            if isinstance(result, torch.Tensor):
-                return bool(torch.any(result).item())
-        except Exception:
-            pass
-        try:
-            if isinstance(result, np.ndarray):
-                return bool(np.any(result))
-        except Exception:
-            pass
-
-        item = getattr(result, "item", None)
-        if callable(item):
-            try:
-                return bool(item())
-            except Exception:
-                pass
-        return bool(result)
-
-    # Fallback: plain truthiness
-    return bool(mask)
+    try:
+        return any(bool(v) for v in x)  # type: ignore[arg-type]
+    except Exception:
+        return bool(x)
 
 
-def _mask_any(mask: object) -> bool:
-    """Compatibility alias for :func:`mask_any`."""
+def mask_any(mask: object) -> bool:
+    """Backward compatible wrapper for :func:`_mask_any`."""
 
-    return mask_any(mask)
+    return _mask_any(mask)
 
 def _missing_required(columns: Iterable[str]) -> list[str]:
     return sorted(REQUIRED_COLUMNS - set(columns))

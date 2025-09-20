@@ -1154,7 +1154,14 @@ def train_model(
             best_f1 = float(state.get("best_f1", -1.0))
     
         def evaluate() -> tuple[
-            float, float, list[float], list[int], dict[str, list[int]], dict[str, float], list[float]
+            float,
+            float,
+            float,
+            list[float],
+            list[int],
+            dict[str, list[int]],
+            dict[str, float],
+            list[float],
         ]:
             model.eval()
             probs: list[float] = []
@@ -1169,6 +1176,8 @@ def train_model(
             vel_tot = 0
             dur_ok = 0
             dur_tot = 0
+            val_loss_sum = 0.0
+            val_batches = 0
             with torch.no_grad():
                 for i, (feats, targets, mask, tags) in enumerate(dl_val):
                     feats = {k: v.to(device) for k, v in feats.items()}
@@ -1177,16 +1186,27 @@ def train_model(
                     outputs = model(feats, mask)
                     m = mask.bool()
                     mask_cpu = m.cpu()
+                    loss_val = 0.0
                     if "boundary2" in outputs:
                         # CRF/2-class logits present; use softmax prob of class 1
                         logits2 = outputs["boundary2"][m].detach().cpu()
                         logits_all.extend((logits2[:, 1] - logits2[:, 0]).tolist())
                         import torch as _t
                         probs.extend(_t.softmax(logits2, dim=-1)[:, 1].tolist())
+                        if head == 'crf' and crf is not None:
+                            lb = crf.nll(outputs["boundary2"], targets["boundary"].long(), m)
+                        else:
+                            lb = crit_boundary(
+                                outputs["boundary2"][m][:, 1] - outputs["boundary2"][m][:, 0],
+                                targets["boundary"][m],
+                            )
+                        loss_val += w_boundary * float(lb)
                     else:
                         logits_this = outputs["boundary"][m].detach().cpu().tolist()
                         logits_all.extend([float(v) for v in logits_this])
                         probs.extend(torch.sigmoid(outputs["boundary"][m]).cpu().tolist())
+                        lb = crit_boundary(outputs["boundary"][m], targets["boundary"][m])
+                        loss_val += w_boundary * float(lb)
                     trues.extend(targets["boundary"][m].int().cpu().tolist())
                     if "vel_reg" in outputs:
                         vel_err += (
@@ -1195,6 +1215,8 @@ def train_model(
                             .sum()
                             .item()
                         )
+                        lv = crit_vel_reg(outputs["vel_reg"][m], targets["vel_reg"][m])
+                        loss_val += w_vel_reg * float(lv)
                         vel_n += int(m.sum())
                     if "dur_reg" in outputs:
                         dur_err += (
@@ -1205,17 +1227,28 @@ def train_model(
                             .sum()
                             .item()
                         )
+                        ld = crit_dur_reg(outputs["dur_reg"][m], targets["dur_reg"][m])
+                        loss_val += w_dur_reg * float(ld)
                         dur_n += int(m.sum())
                     if "vel_cls" in outputs:
                         preds = outputs["vel_cls"][m].argmax(dim=-1)
                         vel_ok += int((preds == targets["vel_cls"][m]).sum())
                         vel_tot += int(m.sum())
+                        lvb = crit_vel_cls(outputs["vel_cls"][m], targets["vel_cls"][m])
+                        loss_val += w_vel_cls * float(lvb)
                     if "dur_cls" in outputs:
                         preds = outputs["dur_cls"][m].argmax(dim=-1)
                         dur_ok += int((preds == targets["dur_cls"][m]).sum())
                         dur_tot += int(m.sum())
+                        ldb = crit_dur_cls(outputs["dur_cls"][m], targets["dur_cls"][m])
+                        loss_val += w_dur_cls * float(ldb)
+                    if "pitch_logits" in outputs:
+                        lp = crit_pitch(outputs["pitch_logits"][m], targets["pitch"][m])
+                        loss_val += w_pitch * float(lp)
                     for k in tag_buf:
                         tag_buf[k].extend(tags[k][mask_cpu].tolist())
+                    val_loss_sum += loss_val
+                    val_batches += 1
                     if limit_val_batches and (i + 1) >= limit_val_batches:
                         break
             best_f1, best_th = -1.0, 0.5
@@ -1240,7 +1273,8 @@ def train_model(
                 "pos_rate": pos_rate,
                 "mean_prob": mean_prob,
             }
-            return best_f1, best_th, probs, trues, tag_buf, metrics, logits_all
+            val_loss_avg = val_loss_sum / max(1, val_batches)
+            return best_f1, val_loss_avg, best_th, probs, trues, tag_buf, metrics, logits_all
     
         ts = int(time.time())
         best_state = None
@@ -1348,7 +1382,7 @@ def train_model(
                     iter_train.close()  # type: ignore[attr-defined]
                 except Exception:
                     pass
-            f1, th, probs, trues, tag_buf, metrics, _ = evaluate()
+            f1, val_loss, th, probs, trues, tag_buf, metrics, _ = evaluate()
             n_batches = max(1, len(dl_train))
             avg_loss = loss_sum / n_batches
             lb_avg = lb_sum / n_batches
@@ -1374,6 +1408,20 @@ def train_model(
                 metrics.get("mean_prob", 0.0),
                 elapsed,
             )
+            try:
+                logging.info(
+                    "epoch=%d train_loss=%.6f val_loss=%.6f",
+                    ep + 1,
+                    float(avg_loss),
+                    float(val_loss),
+                )
+            except Exception:
+                logging.info(
+                    "epoch=%d train_loss=%s val_loss=%s",
+                    ep + 1,
+                    avg_loss,
+                    val_loss,
+                )
             metrics_rows.append(
                 {
                     "epoch": ep + 1,
@@ -1515,7 +1563,12 @@ def train_model(
             "best_f1": final_best_f1,
             "meta": meta,
         }
-        torch.save(final_state, out)
+        try:
+            out_path = Path(out)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(final_state, out_path)
+        except Exception as exc:
+            logging.warning("failed to save checkpoint to %s: %s", out, exc)
         if save_last:
             last_link = out.with_name("last.ckpt")
             if last_link.exists() or last_link.is_symlink():
@@ -1535,7 +1588,7 @@ def train_model(
             writer.close()
         if best_state is not None:
             model.load_state_dict(best_state)
-        best_f1, best_threshold, probs, trues, tag_buf, metrics, logits_all = evaluate()
+        best_f1, _, best_threshold, probs, trues, tag_buf, metrics, logits_all = evaluate()
         inv_section = {i: s for s, i in section_vocab.items()} if section_vocab else {}
         inv_mood = {i: s for s, i in mood_vocab.items()} if mood_vocab else {}
         inv_inst = {i: s for s, i in instrument_vocab.items()} if instrument_vocab else {}

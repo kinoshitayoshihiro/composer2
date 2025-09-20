@@ -27,6 +27,7 @@ import groove_profile as gp
 
 PATTERN_PATH = pathlib.Path(__file__).with_name("patterns") / "strum_library.yaml"
 MAP_DIR = pathlib.Path(__file__).with_name("maps")
+KS_MIN, KS_MAX = 36, 88
 
 
 def pattern_to_keyswitches(pattern: str, library: Dict[str, List[str]], keymap: Dict[str, int]) -> List[int]:
@@ -121,15 +122,17 @@ def _validate_map(data: Dict) -> List[str]:
 
     play = data.get("play_range", {}) or {}
     try:
-        low = int(play.get("low", 0))
-        high = int(play.get("high", 127))
+        low = int(play.get("low", KS_MIN))
+        high = int(play.get("high", KS_MAX))
     except Exception:
-        low, high = 0, 127
+        low, high = KS_MIN, KS_MAX
+    ks_low = min(low, KS_MIN)
+    ks_high = max(high, KS_MAX)
 
     for name, note in key_lookup.items():
-        if note < low or note > high:
+        if note < ks_low or note > ks_high:
             issues.append(
-                f"keyswitch '{name}' out of range {low}..{high} (got {note})"
+                f"keyswitch '{name}' out of range {ks_low}..{ks_high} (got {note})"
             )
 
     section_styles = data.get("section_styles", {}) or {}
@@ -204,26 +207,13 @@ def _section_for_bar(bar: int, sections: Dict[int, str]) -> str | None:
             break
     return current
 
-
-def convert(args: argparse.Namespace) -> None:
-    from . import utils
-    mapping_path = pathlib.Path(args.mapping)
-    mapping = _load_yaml(mapping_path)
-    keymap: Dict[str, int] = mapping.get("keyswitch", {})
-    play_low = int(mapping.get("play_range", {}).get("low", 0))
-    play_high = int(mapping.get("play_range", {}).get("high", 127))
-    section_styles: Dict[str, List[str]] = mapping.get("section_styles", {})
-
-    pattern_lib = _load_patterns()
-
-    sections: Dict[int, str] = {}
-    if args.tags:
-        sections = _load_sections(pathlib.Path(args.tags))
-
     pm = pretty_midi.PrettyMIDI(str(args.in_midi))
+    # 初期テンポ注入（無テンポや非正テンポの救済）
     try:
-        tempi, _times = pm.get_tempo_changes()
-        if len(tempi) == 0 or not float(tempi[0]) > 0:
+        # pretty_midi.get_tempo_changes() は (times, tempi) を返す
+        times, tempi = pm.get_tempo_changes()
+        if len(tempi) == 0 or not (float(tempi[0]) > 0):
+            # 120 BPM を仮定して tick→sec のスケールを初期化
             scale = 60.0 / (120.0 * pm.resolution)
             pm._tick_scales = [(0, scale)]
             if hasattr(pm, "_update_tick_to_time"):

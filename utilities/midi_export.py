@@ -39,7 +39,7 @@ def _set_initial_tempo(pm: "pretty_midi.PrettyMIDI", bpm: float) -> None:
 def write_demo_bar(path: str | Path) -> Path:
     """Write a deterministic 4-beat MIDI bar for tests."""
     out_path = Path(path)
-    pm = PrettyMIDI()
+    pm = PrettyMIDI(initial_tempo=120.0)
     _set_initial_tempo(pm, 120.0)
     inst = pretty_midi.Instrument(program=0)
     qlen = 0.5  # quarter note length in seconds at 120 BPM
@@ -117,25 +117,8 @@ def apply_tempo_map(
             pm._tick_scales.append((int(round(tick)), last_scale))
         pm._update_tick_to_time(int(round(tick)) + 1)
 
-
-def export_song(
-    bars: int,
-    *,
-    tempo_map: list[tuple[float, float]] | None = None,
-    generators: dict[str, Callable[..., PrettyMIDI]],
-    fixed_tempo: float = 120.0,
-    out_path: str | Path = "song.mid",
-    sections: list[dict[str, Any]] | None = None,
-) -> PrettyMIDI:
-    """Generate multiple parts and export a merged MIDI file.
-
-    When ``sections`` are provided each section may include a ``tempo_map`` key
-    containing ``[(beat, bpm), ...]`` pairs. Generated parts for that section are
-    offset by the cumulative beat position and all tempo change events are
-    applied once to the master ``PrettyMIDI`` object.
-    """
-
     out_path = Path(out_path)
+    # 初期テンポを一度だけ確定（None/0ガード込み）
     base_tempo = float(fixed_tempo or 120.0)
     master = PrettyMIDI(initial_tempo=base_tempo)
     _set_initial_tempo(master, base_tempo)

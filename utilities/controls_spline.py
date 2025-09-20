@@ -777,6 +777,10 @@ class ControlCurve:
             idxs = _uniform_indices(len(val_list), max_events)
             t = [t_list[i] for i in idxs]
             vals = [int(val_list[i]) for i in idxs]
+        if not isinstance(t, list):
+            t = t.tolist() if hasattr(t, "tolist") else list(t)
+        if not isinstance(vals, list):
+            vals = vals.tolist() if hasattr(vals, "tolist") else list(vals)
         if self.ensure_zero_at_edges and len(vals) > 0:
             orig_len = len(vals)
             if vals[0] != 0:

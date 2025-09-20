@@ -18,6 +18,13 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable, Iterable
 
+# Optional torch (tests monkeypatch a shim module)
+try:  # pragma: no cover - optional dependency
+    import torch  # type: ignore
+except Exception:  # pragma: no cover - allow monkeypatch
+    sys.modules.pop("torch", None)
+    torch = None  # type: ignore[assignment]
+
 # Optional progress bar (tqdm)
 try:  # pragma: no cover - optional dependency
     from tqdm.auto import tqdm as _tqdm  # type: ignore
@@ -1806,7 +1813,7 @@ def main(argv: list[str] | None = None) -> int:
     run_cfg["seed"] = args.seed
 
     try:
-        f1, device_type, stats = train_model(
+        result = train_model(
             args.train_csv,
             args.val_csv,
             args.epochs,
@@ -1876,6 +1883,22 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 2
+
+    if isinstance(result, tuple):
+        if len(result) == 3:
+            f1, device_type, stats = result
+        elif len(result) == 2:
+            f1, device_type = result
+            stats = {}
+        else:
+            f1 = result[0] if len(result) > 0 else -1.0
+            device_type = result[1] if len(result) > 1 else "cpu"
+            stats = result[2] if len(result) > 2 else {}
+    else:
+        f1, device_type, stats = float(result), "cpu", {}
+
+    if not isinstance(stats, dict):
+        stats = {"extra": stats}
 
     run_cfg["viz_enabled"] = bool(args.viz and stats.get("viz_paths"))
     run_cfg["viz_backend"] = plt.get_backend() if run_cfg["viz_enabled"] and plt else None

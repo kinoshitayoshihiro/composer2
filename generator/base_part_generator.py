@@ -6,7 +6,7 @@ import random
 import re
 import statistics
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -62,6 +62,9 @@ class ControlConfig:
     cc11_attack_ms: int = 20
     cc11_release_ms: int = 60
     enable_cc64: bool = False
+
+
+DEFAULT_CONTROL_CONFIG = ControlConfig()
 
 
 def apply_controls(inst, cfg: ControlConfig) -> None:
@@ -162,15 +165,17 @@ class BasePartGenerator(ABC):
             try:
                 from utilities.control_config import control_config as _default_cc
             except Exception:
-                control_config = SimpleNamespace(
-                    swing_ratio=0.0,
-                    jitter_ms=0.0,
-                    velocity_curve="linear",
-                    enable_cc11=True,
-                    enable_cc64=False,
-                )
+                control_config = replace(DEFAULT_CONTROL_CONFIG)
             else:
-                control_config = _default_cc
+                control_config = _default_cc or replace(DEFAULT_CONTROL_CONFIG)
+        elif isinstance(control_config, ControlConfig):
+            control_config = replace(control_config)
+        elif isinstance(control_config, SimpleNamespace):
+            control_config = SimpleNamespace(**vars(control_config))
+        elif isinstance(control_config, dict):
+            control_config = SimpleNamespace(**control_config)
+        if control_config is None:
+            control_config = replace(DEFAULT_CONTROL_CONFIG)
         self.control_config = control_config
         self.part_name = kwargs.get("part_name")
         self.default_instrument = default_instrument

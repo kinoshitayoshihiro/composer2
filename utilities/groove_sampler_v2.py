@@ -37,6 +37,16 @@ from typing import Any
 # Module-level logger for concise log control
 logger = logging.getLogger(__name__)
 
+_LEGACY_WARNED: set[str] = set()
+
+
+def _warn_ignored(name: str) -> None:
+    """Emit a one-time warning when an ignored legacy argument is seen."""
+
+    if name not in _LEGACY_WARNED:
+        logger.warning("ignored legacy arg: %s", name)
+        _LEGACY_WARNED.add(name)
+
 OHH_CHOKE_DEFAULT = 0.3
 
 # Optional YAML (not strictly required by this module, but kept for compat)
@@ -1356,8 +1366,13 @@ def sample_next(
     top_p: float | None = None,
     cond_kick: str | None = None,
     cond: dict[str, str] | None = None,
+    strength: float | None = None,
+    **_: object,
 ) -> int:
     """Sample next state index using hashed back-off."""
+
+    if strength is not None:
+        _warn_ignored("strength")
 
     probs = next_prob_dist(
         model,
@@ -1389,6 +1404,8 @@ def generate_events(
     progress: bool = False,
     ohh_choke_prob: float = OHH_CHOKE_DEFAULT,
     kick_beat_threshold: float = 1.0,
+    seed: int | None = None,
+    **_: object,
 ) -> list[dict[str, float | str]]:
     """Generate a sequence of drum events.
 
@@ -1406,6 +1423,9 @@ def generate_events(
     cond:
         Dictionary of auxiliary conditions such as style or feel.
     """
+    if seed is not None:
+        _warn_ignored("seed")
+
     res = model.resolution
     step_per_beat = res / 4
     bar_len = res

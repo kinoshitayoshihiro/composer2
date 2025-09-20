@@ -241,6 +241,14 @@ def list_instruments(
     examples_per_key: int = 0,
     json_out: bool = False,
 ) -> bool:
+    """Print instrument statistics and return the total keys across categories.
+
+    The return value is the sum of unique keys meeting ``min_count`` across all
+    tracked categories (instrument, track_name, program, path). This matches the
+    CLI's legacy behavior of reporting the combined total rather than a single
+    category count.
+    """
+
     counters = {
         "instrument": Counter(),
         "track_name": Counter(),
@@ -304,17 +312,14 @@ def list_instruments(
                     counters["path"][stem] += 1
                     if len(examples["path"][stem]) < examples_per_key:
                         examples["path"][stem].append(stem)
-    data = {}
+    counts: dict[str, dict[object, int]] = {}
     for key, ctr in counters.items():
-        data[key] = {
-            val: {"count": ctr[val], "examples": examples[key].get(val, [])}
-            for val in ctr if ctr[val] >= min_count
-        }
+        counts[key] = {val: ctr[val] for val in ctr if ctr[val] >= min_count}
     if stats_json:
         stats_json.parent.mkdir(parents=True, exist_ok=True)
-        stats_json.write_text(json.dumps(data, indent=2))
+        stats_json.write_text(json.dumps(counts, indent=2))
     if json_out:
-        print(json.dumps(data, indent=2))
+        print(json.dumps(counts, indent=2))
     else:
         for key, ctr in counters.items():
             print(f"{key}:")
@@ -326,7 +331,7 @@ def list_instruments(
                     print(f"  {val}: {count} (examples: {', '.join(ex)})")
                 else:
                     print(f"  {val}: {count}")
-    return any(data[key] for key in data)
+    return sum(len(vals) for vals in counts.values())
 
 
 def corpus_mode(

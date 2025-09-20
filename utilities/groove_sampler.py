@@ -16,6 +16,16 @@ from .drum_map_registry import GM_DRUM_MAP
 
 logger = logging.getLogger(__name__)
 
+_LEGACY_WARNED: set[str] = set()
+
+
+def _warn_ignored(name: str) -> None:
+    """Emit a one-time warning when a legacy argument is ignored."""
+
+    if name not in _LEGACY_WARNED:
+        logger.warning("ignored legacy arg: %s", name)
+        _LEGACY_WARNED.add(name)
+
 _PITCH_TO_LABEL: dict[int, str] = {}
 """Mapping from MIDI pitch number to instrument label."""
 
@@ -224,6 +234,8 @@ def sample_next(
     *,
     temperature: float = 1.0,
     top_k: int | None = None,
+    strength: float | None = None,
+    **_: object,
 ) -> State | None:
     """Return the next state using n-gram back-off.
 
@@ -240,6 +252,9 @@ def sample_next(
         until a match is found. If no bigram matches exist, sampling falls back
         to the model's unigram frequency distribution.
     """
+
+    if strength is not None:
+        _warn_ignored("strength")
 
     if not model.get("prob"):
         return None

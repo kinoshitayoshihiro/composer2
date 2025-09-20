@@ -51,9 +51,9 @@ def test_transformer_hparams(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         batch_size=1,
         d_model=32,
         max_len=32,
-        nhead=3,
+        nhead=4,
         layers=2,
         dropout=0.2,
     )
     assert ckpt.is_file()
-    assert captured == {"nhead": 3, "num_layers": 2, "dropout": 0.2}
+    assert captured == {"nhead": 4, "num_layers": 2, "dropout": 0.2}

@@ -5,7 +5,8 @@ return plain Python lists, which breaks pretty_midi.PrettyMIDI.get_end_time()
 because it blindly calls `.tolist()`.
 
 By importing this module once at startup, we monkey-patch the method so it
-*always* returns numpy.ndarray, and returns in the (bpms, times) order.
+*always* returns numpy.ndarray and preserves PrettyMIDI's (times, bpms)
+contract, only swapping when legacy forks reversed the order.
 """
 
 from __future__ import annotations
@@ -81,16 +82,15 @@ else:
             first_arr = _ensure_array(first)
             second_arr = _ensure_array(second)
 
-            score_first_as_bpms = _bpms_score(first_arr) + _times_score(second_arr)
-            score_second_as_bpms = _bpms_score(second_arr) + _times_score(first_arr)
+            score_first_as_times = _times_score(first_arr) + _bpms_score(second_arr)
+            score_second_as_times = _times_score(second_arr) + _bpms_score(first_arr)
 
-            # Tie-break: prefer the official pretty_midi order (times, bpms),
-            # but public callers ALWAYS get (bpms, times).
-            if score_second_as_bpms >= score_first_as_bpms:
-                bpms, times = second_arr, first_arr
+            # Tie-break: prefer the official pretty_midi order (times, bpms).
+            if score_second_as_times > score_first_as_times:
+                times, bpms = second_arr, first_arr
             else:
-                bpms, times = first_arr, second_arr
-            return bpms, times
+                times, bpms = first_arr, second_arr
+            return times, bpms
 
         _safe_get_tempo_changes._composer2_patched = True  # type: ignore[attr-defined]
         _pm.PrettyMIDI.get_tempo_changes = _safe_get_tempo_changes  # type: ignore[assignment]

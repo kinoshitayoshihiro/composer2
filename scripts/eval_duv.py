@@ -176,7 +176,8 @@ class _NoopDurationModel:
     Supports ``.to()`` / ``.eval()`` chaining while behaving as a no-op callable.
     """
 
-    max_len = 0
+    # Use a plain ``int`` to keep ``int(model.max_len)`` safe without ``.item()``.
+    max_len: int = 16
 
     def to(self, *_args, **_kwargs):  # pragma: no cover - trivial passthrough
         return self
@@ -238,10 +239,23 @@ def _load_duration_model(path: Path | None) -> DurationTransformer | _NoopDurati
         return _NoopDurationModel()
 
 
-def _duration_predict(df: pd.DataFrame, model: DurationTransformer) -> tuple[np.ndarray, np.ndarray]:
+def _duration_predict(df: pd.DataFrame, model: DurationTransformer | _NoopDurationModel | None) -> tuple[np.ndarray, np.ndarray]:
+    if isinstance(model, _NoopDurationModel) or model is None:
+        n = len(df)
+        return np.zeros(n, dtype=np.float32), np.zeros(n, dtype=np.float32)
+
     preds: list[float] = []
     targets: list[float] = []
-    max_len = int(model.max_len.item()) if hasattr(model, "max_len") else 16
+    max_len_attr = getattr(model, "max_len", 16)
+    try:
+        max_len = int(max_len_attr)
+    except Exception:
+        try:
+            max_len = int(getattr(max_len_attr, "item")())
+        except Exception:
+            max_len = 16
+    if max_len <= 0:
+        max_len = 16
     for _, g in df.groupby("bar", sort=False):
         g = g.sort_values("position")
         L = len(g)
@@ -346,18 +360,19 @@ def run(args: argparse.Namespace) -> int:
         "vel_bucket_emb": getattr(core, "vel_bucket_emb", None) is not None,
         "dur_bucket_emb": getattr(core, "dur_bucket_emb", None) is not None,
     }
-    print(
-        {
-            "ckpt": str(args.ckpt),
-            "loader": loader_type,
-            "d_model": d_model or None,
-            "max_len": max_len or None,
-            "heads": {k: bool(v) for k, v in heads.items()},
-            "extras": extras,
-        }
-    )
+    info = {
+        "ckpt": str(args.ckpt),
+        "loader": loader_type,
+        "d_model": d_model or None,
+        "max_len": max_len or None,
+        "heads": {k: bool(v) for k, v in heads.items()},
+        "extras": extras,
+    }
+    if getattr(args, "verbose", False):
+        print(json.dumps(info), file=sys.stderr)
 
     vel_model = vel_model.to(device).eval()
+    heads = info["heads"]
     need_duration = bool(heads.get("dur_reg") or heads.get("dur_cls"))
     duration_model: DurationTransformer | _NoopDurationModel = _NoopDurationModel()
     if need_duration:

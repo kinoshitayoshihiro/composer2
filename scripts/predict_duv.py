@@ -9,6 +9,7 @@ predicted velocities and durations applied.
 """
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -40,6 +41,7 @@ from .eval_duv import (  # reuse helpers
     _load_duration_model,
     _load_stats,
     _parse_quant,
+    _NoopDurationModel,
     load_stats_and_normalize,
 )
 
@@ -130,18 +132,23 @@ def run(args: argparse.Namespace) -> int:
         "vel_bucket_emb": getattr(core, "vel_bucket_emb", None) is not None,
         "dur_bucket_emb": getattr(core, "dur_bucket_emb", None) is not None,
     }
-    print(
-        {
-            "ckpt": str(args.ckpt),
-            "loader": loader_type,
-            "d_model": d_model or None,
-            "max_len": max_len or None,
-            "heads": {k: bool(v) for k, v in heads.items()},
-            "extras": extras,
-        }
-    )
+    info = {
+        "ckpt": str(args.ckpt),
+        "loader": loader_type,
+        "d_model": d_model or None,
+        "max_len": max_len or None,
+        "heads": {k: bool(v) for k, v in heads.items()},
+        "extras": extras,
+    }
+    if getattr(args, "verbose", False):
+        print(json.dumps(info), file=sys.stderr)
 
     vel_model = vel_model.to(device).eval()
+    heads = info["heads"]
+    need_duration = bool(heads.get("dur_reg") or heads.get("dur_cls"))
+    duration_model: _NoopDurationModel | torch.nn.Module = _NoopDurationModel()
+    if need_duration:
+        duration_model = _load_duration_model(args.ckpt).to(device)
     verbose = duv_verbose(getattr(args, "verbose", False))
     try:
         duv_preds = _duv_sequence_predict(df, vel_model, device, verbose=verbose)
@@ -196,9 +203,15 @@ def run(args: argparse.Namespace) -> int:
             dur_pred = np.zeros(len(df), dtype=np.float32)
         mask = duv_preds["duration_mask"]
         dur_pred[mask] = duv_preds["duration"].astype("float32", copy=False)[mask]
-    elif "duration" in df.columns and "bar" in df.columns and "position" in df.columns and "pitch" in df.columns:
-        dmodel = _load_duration_model(args.ckpt).to(device)
-        dur_pred, _ = _duration_predict(df, dmodel)
+    elif (
+        need_duration
+        and not isinstance(duration_model, _NoopDurationModel)
+        and "duration" in df.columns
+        and "bar" in df.columns
+        and "position" in df.columns
+        and "pitch" in df.columns
+    ):
+        dur_pred, _ = _duration_predict(df, duration_model)
     grid = _parse_quant(args.dur_quant, stats[3])
     if grid > 0 and dur_pred is not None:
         dur_pred = np.maximum(grid, np.round(dur_pred / grid) * grid)

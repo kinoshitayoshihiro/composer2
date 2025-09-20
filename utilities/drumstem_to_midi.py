@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse
 import math
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
+from typing import Callable, List, Tuple, Optional
 
 import numpy as np
 from scipy.signal import find_peaks, get_window
@@ -159,27 +159,6 @@ def choose_class(spec_mag: np.ndarray, freqs: np.ndarray) -> str:
     return "hihat"
 
 
-def map_velocity(
-    rms_local: float,
-    peak_local: float,
-    rms_global: float,
-    peak_global: float,
-    floor_db: float = -36.0,
-) -> int:
-    # グローバル対比＋ローカルピークを混合：音量差をvelocityにマップ
-    # 1) 正規化（対数域の感じに近づける）
-    rel_rms = rms_local / (rms_global + 1e-12)
-    rel_peak = peak_local / (peak_global + 1e-12)
-    raw = 0.6 * rel_rms + 0.4 * rel_peak
-    # 2) ダイナミックレンジ下限（ゲート）: floor_db以下は弱打→クリップ
-    floor = db_to_lin(floor_db)  # ex: -36dB ≈ 0.0158
-    raw = max(raw, floor)
-    # 3) 対数圧縮→MIDI 1..127
-    logv = math.log(raw / floor) / max(math.log(1.0 / floor), 1e-6)
-    v = int(round(1 + 126 * min(max(logv, 0.0), 1.0)))
-    return v
-
-
 # ---------------------------
 # Main conversion
 # ---------------------------
@@ -216,7 +195,7 @@ def detect_hits(
 
 
 # --- NEW: per-song monotone rank mapping (no-ML) -----------------
-def build_rank_velocity_mapper(values, vmin=1, vmax=127):
+def build_rank_velocity_mapper(values, vmin=1, vmax=127) -> Callable[[float], int]:
     """
     values: np.ndarray of positive scalars (e.g., local RMS or a mix score)
     returns: function f(value)->int (1..127), monotone non-decreasing
@@ -226,19 +205,40 @@ def build_rank_velocity_mapper(values, vmin=1, vmax=127):
     if len(values) == 0:
         return lambda v: 64
     vals = np.asarray(values, dtype=np.float64)
+    if len(vals) == 1:
+        constant = int(round(0.5 * (vmin + vmax)))
+        return lambda v: constant
     order = np.argsort(vals)
-    ranks = np.empty_like(order, dtype=np.float64)
-    ranks[order] = np.linspace(0.0, 1.0, num=len(vals), endpoint=True)
+    vals_sorted = vals[order]
+    ranks = np.linspace(0.0, 1.0, num=len(vals), endpoint=True)
 
     # ルックアップ（最近傍）
     def f(v):
         # rank相当を最近傍探索
-        idx = np.searchsorted(vals[order], v, side="left")
+        idx = np.searchsorted(vals_sorted, v, side="left")
         idx = np.clip(idx, 0, len(vals) - 1)
         r = ranks[idx]
         return int(round(vmin + r * (vmax - vmin)))
 
     return f
+
+
+def is_downbeat(t_seconds: float, downbeats: Optional[List[float]], bpm: float, tol: float = 0.05) -> bool:
+    if downbeats:
+        return any(abs(t_seconds - db) <= tol for db in downbeats)
+    if bpm <= 0:
+        return False
+    beat_period = 60.0 / bpm
+    measure_period = beat_period * 4.0
+    if measure_period <= 0:
+        return False
+    measure_idx = round(t_seconds / measure_period)
+    candidate = measure_idx * measure_period
+    return abs(t_seconds - candidate) <= tol
+
+
+def accent_boost(t_seconds: float, downbeats: Optional[List[float]], bpm: float) -> int:
+    return 8 if is_downbeat(t_seconds, downbeats, bpm) else 0
 
 
 def convert(audio_path: str, out_path: str, opt: Options) -> None:
@@ -248,10 +248,6 @@ def convert(audio_path: str, out_path: str, opt: Options) -> None:
         # pydub resample（簡易・品質は十分）：
         seg = seg.set_frame_rate(opt.sr)
         x, sr = audio_to_mono_np(seg)
-
-    # 全体RMS/PEAK
-    rms_global = float(np.sqrt(np.mean(x * x)))
-    peak_global = float(np.max(np.abs(x)) + 1e-12)
 
     # オンセットフレーム
     hits = detect_hits(x, sr, opt.win_ms, opt.hop_ms, opt.gate_db, opt.min_sep_ms)
@@ -266,16 +262,14 @@ def convert(audio_path: str, out_path: str, opt: Options) -> None:
     pm = pretty_midi.PrettyMIDI()
     inst = pretty_midi.Instrument(program=0, is_drum=True, name="Drums")
 
-    # 各ヒット
+    feat_by_cls = {"kick": [], "snare": [], "hihat": []}
+    hit_meta: List[Tuple[float, str, float]] = []
+
     for hi in hits:
-        # 近傍フレームでローカルRMS/PEAK推定
         t = frame_to_time(hi, opt.hop_ms)
-        f0 = max(0, hi - 1)
-        f1 = min(mags.shape[0] - 1, hi + 1)
         spec_local = mags[hi]
         cls = choose_class(spec_local, freqs)
 
-        # ローカル波形窓（±20ms）
         w = int(sr * 0.02)
         c = int(t * sr)
         l = max(0, c - w)
@@ -284,12 +278,32 @@ def convert(audio_path: str, out_path: str, opt: Options) -> None:
 
         rms_local = float(np.sqrt(np.mean(seg_x * seg_x)))
         peak_local = float(np.max(np.abs(seg_x)) + 1e-12)
-        vel = map_velocity(rms_local, peak_local, rms_global, peak_global, floor_db=opt.gate_db)
+        feat_value = 0.6 * rms_local + 0.4 * peak_local
 
-        # タイミング微調整（tight<1.0でスライトヒューマナイズ）
+        feat_by_cls[cls].append(feat_value)
+        hit_meta.append((t, cls, feat_value))
+
+    map_k = build_rank_velocity_mapper(np.array(feat_by_cls["kick"], dtype=float))
+    map_s = build_rank_velocity_mapper(np.array(feat_by_cls["snare"], dtype=float))
+    map_h = build_rank_velocity_mapper(np.array(feat_by_cls["hihat"], dtype=float))
+
+    def map_vel(cls: str, feat: float) -> int:
+        if cls == "kick":
+            v = map_k(feat)
+        elif cls == "snare":
+            v = map_s(feat)
+        else:
+            v = map_h(feat)
+        return int(np.clip(v, 1, 127))
+
+    downbeats: List[float] = []
+
+    for (t, cls, feat) in hit_meta:
+        base = map_vel(cls, feat)
+        v = int(np.clip(base + accent_boost(t, downbeats, opt.bpm), 1, 127))
+
         jitter = (np.random.rand() - 0.5) * 2.0 * (opt.humanize_ms * 1e-3) * (1.0 - opt.tight)
         t_hit = max(0.0, t + jitter)
-        # ドラムの短い長さ（20〜60ms）
         dur = 0.02 + 0.04 * np.random.rand()
 
         note_num = (
@@ -297,7 +311,7 @@ def convert(audio_path: str, out_path: str, opt: Options) -> None:
             if cls == "hihat"
             else opt.snare_note if cls == "snare" else opt.kick_note
         )
-        n = pretty_midi.Note(velocity=vel, pitch=note_num, start=t_hit, end=t_hit + dur)
+        n = pretty_midi.Note(velocity=v, pitch=note_num, start=t_hit, end=t_hit + dur)
         inst.notes.append(n)
 
     pm.instruments.append(inst)

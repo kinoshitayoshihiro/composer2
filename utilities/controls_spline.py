@@ -329,18 +329,26 @@ def _resample(t_knots, v_knots, sample_rate_hz: float):
 def _uniform_indices(length: int, target: int) -> list[int]:
     """Return evenly spaced indices keeping first/last and removing duplicates."""
 
+    if length <= 0 or target <= 0:
+        return []
     if target >= length:
         return list(range(length))
-    if length == 0:
-        return []
-    target = max(2, target)
-    step = (length - 1) / (target - 1)
-    raw = [0] + [int(round(i * step)) for i in range(1, target - 1)] + [length - 1]
-    out: list[int] = []
-    for idx in raw:
-        idx = max(0, min(length - 1, idx))
-        if not out or idx != out[-1]:
-            out.append(idx)
+    if length == 1:
+        return [0]
+    if target == 1:
+        return [length - 1]
+
+    step = (length - 1) / float(target - 1)
+    out: list[int] = [0]
+    last = 0
+    for i in range(1, target - 1):
+        idx = int(round(i * step))
+        if idx <= last:
+            idx = last + 1
+        if idx >= length - 1:
+            break
+        out.append(idx)
+        last = idx
     if out[-1] != length - 1:
         out.append(length - 1)
     return out

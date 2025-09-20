@@ -35,22 +35,21 @@ def _interpolate_7pt_cached(curve_tuple, mode: str) -> list[float]:
         np = None
 
     try:  # pragma: no cover - SciPy optional
-        from scipy.interpolate import CubicSpline  # type: ignore
+        from scipy.interpolate import UnivariateSpline  # type: ignore
     except Exception:
-        CubicSpline = None
+        UnivariateSpline = None
 
     x_points = [i / 6 for i in range(7)]
 
-    if mode == "spline" and np is not None and CubicSpline is not None:
+    if mode == "spline" and np is not None and UnivariateSpline is not None:
         try:
-            x = np.array(x_points)
-            cs = CubicSpline(x, curve7, bc_type="natural")
+            x = np.array(x_points, dtype=float)
+            y = np.array(curve7, dtype=float)
+            spline = UnivariateSpline(x, y, k=3, s=0.0)
             x_new = np.linspace(0.0, 1.0, 128)
-            y_new = cs(x_new)
-            if np.allclose(y_new, np.interp(x_new, x, curve7), atol=1e-9, rtol=1e-9):
-                adjust = np.linspace(0.0, 1.0, x_new.size, dtype=float)
-                y_new = y_new + 1e-6 * adjust
+            y_new = spline(x_new)
             result = [float(v) for v in y_new]
+            result[0] = float(curve7[0])
             result[-1] = float(curve7[-1])
             return result
         except Exception:
@@ -105,10 +104,10 @@ def interpolate_7pt(curve7, *, mode: str = "spline") -> list[float]:
 
     mode = mode.lower()
     try:  # pragma: no cover - SciPy optional
-        from scipy.interpolate import CubicSpline  # type: ignore
+        from scipy.interpolate import UnivariateSpline  # type: ignore
     except Exception:
-        CubicSpline = None
-    if mode == "spline" and CubicSpline is None:
+        UnivariateSpline = None
+    if mode == "spline" and UnivariateSpline is None:
         logger.warning("SciPy unavailable – falling back to linear interpolation")
         mode = "linear"
     mode = "linear" if mode == "linear" else "spline"

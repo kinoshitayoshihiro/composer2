@@ -37,7 +37,7 @@ class KDEVelocityModel:
                 pm = pretty_midi.PrettyMIDI(str(midi_path))
             except Exception:
                 continue
-            tempos, _ = pm.get_tempo_changes()
+            _times, tempos = pm.get_tempo_changes()
             tempo = float(tempos[0]) if len(tempos) else 120.0
             spb = 60.0 / tempo
             for inst in pm.instruments:

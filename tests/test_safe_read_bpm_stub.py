@@ -8,7 +8,7 @@ class _DummyPM:
         self._bpm = bpm
 
     def get_tempo_changes(self):
-        return [self._bpm], [0.0]
+        return [0.0], [self._bpm]
 
 
 def test_safe_read_bpm_uses_first_bpm_from_stub():

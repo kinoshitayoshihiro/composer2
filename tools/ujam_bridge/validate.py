@@ -12,7 +12,7 @@ try:
 except Exception:  # pragma: no cover
     yaml = None  # type: ignore
 
-from .ujam_map import MAP_DIR, _parse_simple, _validate_map
+from .ujam_map import KS_MIN, KS_MAX, MAP_DIR, _parse_simple, _validate_map
 
 
 def _load(path: pathlib.Path) -> Dict:

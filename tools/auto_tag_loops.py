@@ -150,7 +150,7 @@ def estimate_bpm(p: pm.PrettyMIDI, fallback: float = 120.0) -> Tuple[float, bool
     except Exception:
         pass
     try:
-        tempi, _ = p.get_tempo_changes()
+        _times, tempi = p.get_tempo_changes()
         if len(tempi) > 1:
             return float(np.median(tempi)), False
         if len(tempi) == 1:

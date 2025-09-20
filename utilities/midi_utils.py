@@ -33,7 +33,7 @@ def safe_end_time(pm: pretty_midi.PrettyMIDI) -> float:
             if t > end:
                 end = float(t)
     # tempo changes
-    _, times = pm.get_tempo_changes()
+    times, _ = pm.get_tempo_changes()
     for t in times:
         if float(t) > end:
             end = float(t)

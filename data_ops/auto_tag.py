@@ -8,18 +8,6 @@ from statistics import median
 import numpy as np
 import pretty_midi
 import utilities  # ensure pretty_midi patch
-
-_pm_orig = pretty_midi.PrettyMIDI.get_tempo_changes
-
-def _pm_patch(self, *args, **kwargs):
-    tempi, times = _pm_orig(self, *args, **kwargs)
-    if isinstance(tempi, list):
-        tempi = np.asarray(tempi)
-    if isinstance(times, list):
-        times = np.asarray(times)
-    return tempi, times
-
-pretty_midi.PrettyMIDI.get_tempo_changes = _pm_patch
 from sklearn.cluster import KMeans
 
 try:
@@ -29,7 +17,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 def _extract_features(pm: pretty_midi.PrettyMIDI) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    tempo = pm.get_tempo_changes()[0]
+    tempo = pm.get_tempo_changes()[1]
     bpm = float(tempo[0]) if getattr(tempo, "size", 0) else 120.0
     if bpm <= 0:
         bpm = 120.0

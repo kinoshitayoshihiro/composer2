@@ -67,7 +67,7 @@ def _analyze(path: Path):
     logger.info("Analyzing %s", path)
     pm = pretty_midi.PrettyMIDI(str(path))
     try:
-        tempi, _times = pm.get_tempo_changes()
+        _times, tempi = pm.get_tempo_changes()
         if len(tempi) == 0 or not float(tempi[0]) > 0:
             scale = 60.0 / (120.0 * pm.resolution)
             pm._tick_scales = [(0, scale)]

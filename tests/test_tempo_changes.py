@@ -24,7 +24,7 @@ def test_tempo_changes() -> None:
         pm._tick_scales.append((int(round(tick)), last_scale))
     pm._update_tick_to_time(int(round(tick)) + 1)
 
-    bpms, times = pm.get_tempo_changes()
+    times, bpms = pm.get_tempo_changes()
     times_list = times.tolist() if hasattr(times, "tolist") else list(times)
     assert len(bpms) == 2
     assert times_list == pytest.approx([0.0, 30.0])

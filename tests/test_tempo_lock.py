@@ -55,7 +55,7 @@ def test_invalid_anchor_pattern_fallback(tmp_path, monkeypatch):
     midi_dir = out_dir / song_dir.name
     tempos = set()
     for p in midi_dir.glob("*.mid"):
-        tempi, _ = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
+        _times, tempi = pretty_midi.PrettyMIDI(str(p)).get_tempo_changes()
         tempos.add(round(float(tempi[0]), 1))
     assert tempos == {125.0}
 

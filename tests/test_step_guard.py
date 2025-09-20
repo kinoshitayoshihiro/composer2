@@ -8,7 +8,7 @@ from utilities.pretty_midi_safe import new_pm as PrettyMIDI
 
 
 def _make_loop(path: Path) -> None:
-    pm = PrettyMIDI(tempo=120)
+    pm = PrettyMIDI(initial_tempo=120)
     inst = pretty_midi.Instrument(program=0, is_drum=True)
     inst.notes.append(pretty_midi.Note(velocity=100, pitch=36, start=0.0, end=0.1))
     pm.instruments.append(inst)

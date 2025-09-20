@@ -48,7 +48,7 @@ def test_tempo_map_e2e(tmp_path: Path) -> None:
         out_path=out,
     )
     assert out.exists()
-    bpms, times = pm.get_tempo_changes()
+    times, bpms = pm.get_tempo_changes()
     times_list = times.tolist() if hasattr(times, "tolist") else list(times)
     assert times_list[0] == pytest.approx(0.0)
     assert all(t >= 0 for t in times_list)

@@ -142,7 +142,7 @@ def _scan_midi(
     pm = _load_pretty_midi(path)
     if pm is None:
         return None
-    tempi, _times = pm.get_tempo_changes()
+    _times, tempi = pm.get_tempo_changes()
     bpm = float(tempi[0]) if len(tempi) > 0 else 120.0
     if bpm <= 0:
         logger.warning(

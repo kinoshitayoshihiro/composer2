@@ -21,5 +21,5 @@ def test_export_song(tmp_path: Path) -> None:
     )
     assert out.exists()
     assert len(pm.instruments) == 1
-    _times, bpms = pm.get_tempo_changes()
+    times, bpms = pm.get_tempo_changes()
     assert [round(t) for t in bpms] == [120, 90, 140]

@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/velocity_curve.py
+# hypothesis_version: 6.138.15
+
+[0.0, 1e-09, 1e-06, 0.6, 0.8, 1.0, 127, 128, 'crescendo', 'decrescendo', 'linear', 'natural', 'spline']

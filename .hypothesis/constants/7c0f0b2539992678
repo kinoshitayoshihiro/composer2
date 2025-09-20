@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/cc_utils.py
+# hypothesis_version: 6.138.15
+
+[0.0, 1.0, 127, 1000, 'constant', 'energy', 'pretty_midi.Note', 'rms', 'valid']

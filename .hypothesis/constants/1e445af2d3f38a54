@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/gm_perc_map.py
+# hypothesis_version: 6.138.15
+
+['agogo_h', 'agogo_l', 'bongo_h', 'bongo_l', 'cabasa', 'chh', 'china', 'clap', 'claves', 'closed_hat', 'conga_h_mute', 'conga_h_open', 'conga_l', 'cowbell', 'crash', 'crash2', 'cuica_mute', 'cuica_open', 'guiro_l', 'guiro_s', 'hh_closed', 'hh_open', 'hh_pedal', 'kick', 'maracas', 'ohh', 'open_hat', 'pedal_hat', 'phh', 'ride', 'ride2', 'ride_bell', 'sidestick', 'snare', 'snare_elec', 'splash', 'tambourine', 'timbale_h', 'timbale_l', 'tom_floor_h', 'tom_high_h', 'tom_high_l', 'tom_low', 'tom_mid_h', 'tom_mid_l', 'triangle_mute', 'triangle_open', 'unk_(\\d{2})$', 'vibraslap', 'whistle_h', 'whistle_l', 'woodblock_h', 'woodblock_l']

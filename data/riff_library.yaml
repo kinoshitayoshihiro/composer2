@@ -1,0 +1,50 @@
+riff_patterns:
+  ballad:
+    intro:
+      neutral:
+        - name: ballad_intro_open
+          description: 余白多めアルペジオで世界観提示
+          rhythm: [0.0, 1.0, 2.5, 3.5]
+          harmony: ["triad", "add9"]
+          density: low
+        - name: ballad_intro_pedal
+          description: 低音ペダル＋上声のadd9装飾
+          rhythm: [0.0, 1.5, 3.0]
+          harmony: ["root", "add9"]
+          density: low
+      reflective:
+        - name: ballad_intro_ascending
+          description: 静かな上行アルペジオ（m3→5度）
+          rhythm: [0.0, 2.0, 3.0]
+          harmony: ["triad", "sus2"]
+          density: low
+        - name: ballad_intro_broken_oct
+          description: 低音→オクターブ上の分散（余白強め）
+          rhythm: [0.0, 2.5]
+          harmony: ["octave", "triad"]
+          density: low
+
+  rock:
+    intro:
+      neutral:
+        - name: rock_intro_power8
+          description: 低音ルート+5度の8分刻み。後で16分へ発展しやすい
+          rhythm: [0.0, 0.5, 1.0, 1.5, 2.0, 3.0]
+          harmony: ["power5"]
+          density: mid
+        - name: rock_intro_unison_bass
+          description: ギターとベースのユニゾン感を出す休符入り
+          rhythm: [0.0, 1.0, 2.5, 3.0]
+          harmony: ["power5", "octave"]
+          density: mid
+      intense:
+        - name: rock_intro_chug16_sparse
+          description: 16分の“間引き”チャグ。主旋律前の圧
+          rhythm: [0.0, 0.5, 1.0, 2.0, 2.5, 3.0]
+          harmony: ["power5"]
+          density: mid
+        - name: rock_intro_syncop_push
+          description: 裏拍の押し上げで緊張を作る
+          rhythm: [0.5, 1.5, 2.5, 3.5]
+          harmony: ["power5", "octave"]
+          density: mid

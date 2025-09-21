@@ -969,6 +969,38 @@ def resolve_downbeats(
             ):
                 rebuild = True
 
+    if not rebuild:
+        meter_times = [mt for mt, _, _ in meter_map]
+        for idx in range(len(downbeats) - 1):
+            start = downbeats[idx]
+            end = downbeats[idx + 1]
+            # Ignore spans that contain an intermediate meter change; the
+            # subsequent iteration anchored at the boundary will validate that
+            # region instead.
+            if any(
+                mt > start + EPS and mt < end - EPS
+                for mt in meter_times[1:]
+            ):
+                continue
+            num, den = get_meter_at(meter_map, start, times=meter_times)
+            expected_beats = num * (4.0 / den) if den else 0.0
+            if expected_beats <= 0.0:
+                continue
+            start_b = time_to_beat(start)
+            end_b = time_to_beat(end)
+            actual_beats = end_b - start_b
+            tol = max(1e-6, expected_beats * 1e-6)
+            if (
+                idx + 1 == len(downbeats) - 1
+                and abs(end_t - end) <= 1e-6
+                and actual_beats + tol < expected_beats
+            ):
+                # Final bar may be truncated; accept shorter spans at the tail.
+                continue
+            if not math.isclose(actual_beats, expected_beats, rel_tol=1e-6, abs_tol=tol):
+                rebuild = True
+                break
+
     if rebuild:
         downbeats = []
         for idx, (mt, num, den) in enumerate(meter_map):
@@ -982,6 +1014,9 @@ def resolve_downbeats(
             while bar < end_b - EPS:
                 downbeats.append(beat_to_time(bar))
                 bar += bar_beats
+            boundary = float(next_t)
+            if not downbeats or abs(boundary - downbeats[-1]) > EPS:
+                downbeats.append(boundary)
         if not downbeats:
             downbeats = list(beat_times[::4])
 
@@ -5910,15 +5945,25 @@ def build_sparkle_midi(
             num, den = get_meter_at(meter_map, start, times=meter_times)
             sb = time_to_beat(start)
             eb = time_to_beat(next_start)
-            bar_beats = eb - sb
+            bar_beats_actual = eb - sb
+            bar_beats_nominal = num * (4.0 / den) if den else 0.0
             total = max(1, pulses_per_bar(num, den, pulse_subdiv_beats))
-            if bar_beats <= 0.0 or total <= 0:
+            if bar_beats_nominal <= 0.0 or total <= 0 or bar_beats_actual <= 0.0:
                 pulse = (float(sb), float(beat_to_time(sb)))
                 grid_list = [pulse]
                 bar_grid[i] = grid_list
                 bar_pulses_dict[i] = list(grid_list)
                 continue
-            step = bar_beats / total
+            if bar_beats_actual > 0.0 and math.isclose(
+                bar_beats_actual,
+                bar_beats_nominal,
+                rel_tol=1e-6,
+                abs_tol=1e-9,
+            ):
+                end_beat = sb + bar_beats_actual
+            else:
+                end_beat = sb + bar_beats_nominal
+            step = pulse_subdiv_beats if pulse_subdiv_beats > 0 else bar_beats_nominal / total
             grid: List[Tuple[float, float]] = []
             for k in range(total):
                 pos = sb + k * step
@@ -5937,7 +5982,7 @@ def build_sparkle_midi(
                         if k % 3 == 1:
                             shift = swing_step
                     pos += shift
-                pos = clip_to_bar(pos, sb, eb)
+                pos = clip_to_bar(pos, sb, end_beat)
                 grid.append((float(pos), float(beat_to_time(pos))))
             if not grid:
                 grid = [(float(sb), float(beat_to_time(sb)))]

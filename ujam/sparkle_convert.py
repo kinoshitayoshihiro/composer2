@@ -982,6 +982,9 @@ def resolve_downbeats(
             while bar < end_b - EPS:
                 downbeats.append(beat_to_time(bar))
                 bar += bar_beats
+            boundary = float(next_t)
+            if not downbeats or abs(boundary - downbeats[-1]) > EPS:
+                downbeats.append(boundary)
         if not downbeats:
             downbeats = list(beat_times[::4])
 

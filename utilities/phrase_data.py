@@ -21,6 +21,11 @@ def denorm_duv(vel_reg: torch.Tensor, dur_reg: torch.Tensor) -> tuple[torch.Tens
         MIDI velocity ``[0, 127]`` and duration in original units.
     """
 
+    if not isinstance(vel_reg, torch.Tensor):
+        vel_reg = torch.tensor(vel_reg)
+    if not isinstance(dur_reg, torch.Tensor):
+        dur_reg = torch.tensor(dur_reg)
+
     vel = vel_reg.mul(127.0).round().clamp(0, 127)
     dur = torch.expm1(dur_reg)
     return vel, dur

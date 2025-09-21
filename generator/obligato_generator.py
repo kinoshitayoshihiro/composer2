@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple, Optional
 from pathlib import Path
+import math
 
 try:
     import pretty_midi
@@ -256,48 +257,3 @@ class ObligatoGenerator(BasePartGenerator):
         if section.lower() == "chorus":
             ramp += 0.05
         return int(max(30, min(127, round(base * ramp))))
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# File: utilities/pattern_loader.py
-# Desc: Shared helpers (optional) — if you later want centralized caching.
-# ──────────────────────────────────────────────────────────────────────────────
-from __future__ import annotations
-from functools import lru_cache
-from pathlib import Path
-from typing import Any
-
-try:
-    import yaml
-except Exception:
-    yaml = None  # type: ignore
-
-
-@lru_cache(maxsize=16)
-def load_yaml(path: str | Path) -> dict[str, Any]:
-    if yaml is None:
-        raise ImportError("PyYAML required to load YAML files")
-    with open(Path(path), "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Usage snippet (put in a notebook or a quick script)
-# ──────────────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    # Minimal smoke test rendering 4 bars with dummy chord sequence
-    chords = [(0.0, "Am"), (4.0, "G"), (8.0, "F"), (12.0, "E")]  # bar_start, symbol
-
-    rg = RiffGenerator(instrument="guitar", patterns_yaml="data/riff_library.yaml")
-    pm_riff = rg.generate(
-        key="A minor", tempo=92.0, emotion="warm", section="Verse", chord_seq=chords, bars=8
-    )
-    pm_riff.write("/tmp/demo_riff.mid")
-
-    og = ObligatoGenerator(instrument="synth", patterns_yaml="data/obligato_library.yaml")
-    pm_obl = og.generate(
-        key="A minor", tempo=92.0, emotion="warm", section="Verse", chord_seq=chords, bars=8
-    )
-    pm_obl.write("/tmp/demo_obligato.mid")
-
-    print("Wrote /tmp/demo_riff.mid and /tmp/demo_obligato.mid")

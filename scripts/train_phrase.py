@@ -184,6 +184,19 @@ def _bucket_value(row: dict[str, str], *names: str) -> int:
     return 0
 
 
+def _has_bucket_value(row: dict[str, str], *names: str) -> bool:
+    for name in names:
+        if name not in row:
+            continue
+        value = row.get(name)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return True
+    return False
+
+
 def load_csv_rows(path: Path, required: set[str]) -> list[dict[str, str]]:
     """Read *path* and ensure required columns exist."""
 
@@ -661,10 +674,10 @@ def train_model(
             self.mood_vocab = mood_vocab
             self.instrument_vocab = instrument_vocab
             self.has_vel_bucket = any(
-                ("velocity_bucket" in r) or ("vel_bucket" in r) for r in rows
+                _has_bucket_value(r, "velocity_bucket", "vel_bucket") for r in rows
             )
             self.has_dur_bucket = any(
-                ("duration_bucket" in r) or ("dur_bucket" in r) for r in rows
+                _has_bucket_value(r, "duration_bucket", "dur_bucket") for r in rows
             )
             self.use_vel_bucket_feat = use_duv_embed and self.has_vel_bucket
             self.use_dur_bucket_feat = use_duv_embed and self.has_dur_bucket
@@ -901,12 +914,12 @@ def train_model(
         vbs = [
             _bucket_value(r, "velocity_bucket", "vel_bucket")
             for r in train_rows + val_rows
-            if ("velocity_bucket" in r) or ("vel_bucket" in r)
+            if _has_bucket_value(r, "velocity_bucket", "vel_bucket")
         ]
         dbs = [
             _bucket_value(r, "duration_bucket", "dur_bucket")
             for r in train_rows + val_rows
-            if ("duration_bucket" in r) or ("dur_bucket" in r)
+            if _has_bucket_value(r, "duration_bucket", "dur_bucket")
         ]
         vel_bucket_size = (max(vbs) + 1) if vbs else 0
         dur_bucket_size = (max(dbs) + 1) if dbs else 0

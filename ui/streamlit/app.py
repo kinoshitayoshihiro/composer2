@@ -1,58 +1,45 @@
 # ui/streamlit/app.py
 from __future__ import annotations
-import io, sys, os
+import io, sys
 from pathlib import Path
 import streamlit as st
 
-# --- make repo root importable even when running from ui/streamlit ---
+# --- repo root を import パスに追加（ui/streamlit からでも動く） ---
 APP_DIR = Path(__file__).resolve().parent  # ui/streamlit
 REPO_ROOT = APP_DIR.parent.parent  # repo root
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# --- diagnose file placement ---
+# --- 想定ファイルの存在チェック（generator 固定 / generators は見ない） ---
 candidates = [
     REPO_ROOT / "generator" / "riff_generator.py",
     REPO_ROOT / "generator" / "obligato_generator.py",
-    REPO_ROOT / "generators" / "riff_generator.py",
-    REPO_ROOT / "generators" / "obligato_generator.py",
     REPO_ROOT / "data" / "riff_library.yaml",
     REPO_ROOT / "data" / "obligato_library.yaml",
 ]
 missing = [p for p in candidates if not p.exists()]
 
-# --- import with fallback: generator -> generators ---
-RiffGenerator = ObligatoGenerator = None
-import_err = None
+# --- import（generator 固定） ---
 try:
-    from generator.riff_generator import RiffGenerator as RG1
-    from generator.obligato_generator import ObligatoGenerator as OG1
-
-    RiffGenerator, ObligatoGenerator = RG1, OG1
-except Exception as e1:
-    try:
-        from generators.riff_generator import RiffGenerator as RG2
-        from generators.obligato_generator import ObligatoGenerator as OG2
-
-        RiffGenerator, ObligatoGenerator = RG2, OG2
-    except Exception as e2:
-        import_err = (e1, e2)
+    from generator.riff_generator import RiffGenerator
+    from generator.obligato_generator import ObligatoGenerator
+except Exception as e:
+    import_err = e
+else:
+    import_err = None
 
 st.set_page_config(page_title="Riff / Obligato Generator", page_icon="🎸", layout="centered")
 st.title("🎸 Riff / 🎼 Obligato Generator (minimal)")
 
-# Helpful diagnostics
 with st.expander("ℹ️ ファイル配置チェック（必要なら開いてください）", expanded=False):
     for p in candidates:
         st.write(("✅" if p.exists() else "❌"), str(p))
     if import_err:
-        st.error(
-            "インポートに失敗しました。generator/ か generators/ のいずれかに配置してください。"
-        )
-        st.exception(import_err[0])
-        st.exception(import_err[1])
+        st.error("generator/ からの import に失敗しました。")
+        st.exception(import_err)
 
-if (RiffGenerator is None) or (ObligatoGenerator is None):
+# インポート or 必須ファイルが欠けていたら停止
+if import_err or missing:
     st.stop()
 
 # --- Sidebar params ---
@@ -95,10 +82,10 @@ with col2:
 
 if do_generate:
     try:
+        data_dir = REPO_ROOT / "data"
         if gen_type.startswith("Riff"):
-            # ← generator/ または generators/ の実体を使う
             rg = RiffGenerator(
-                instrument="guitar", patterns_yaml=str(REPO_ROOT / "data" / "riff_library.yaml")
+                instrument="guitar", patterns_yaml=str(data_dir / "riff_library.yaml")
             )
             pm = rg.generate(
                 key=key,
@@ -111,7 +98,7 @@ if do_generate:
             )
         else:
             og = ObligatoGenerator(
-                instrument="synth", patterns_yaml=str(REPO_ROOT / "data" / "obligato_library.yaml")
+                instrument="synth", patterns_yaml=str(data_dir / "obligato_library.yaml")
             )
             pm = og.generate(
                 key=key,
@@ -123,15 +110,17 @@ if do_generate:
             )
 
         buf = io.BytesIO()
-        tmp = REPO_ROOT / "outputs" / Path(out_name).with_suffix(".mid")
-        tmp.parent.mkdir(parents=True, exist_ok=True)
-        pm.write(str(tmp))
-        with open(tmp, "rb") as f:
+        out_path = (REPO_ROOT / "outputs" / out_name).with_suffix(".mid")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        pm.write(str(out_path))
+        with open(out_path, "rb") as f:
             buf.write(f.read())
         buf.seek(0)
 
-        st.success(f"生成しました → {tmp}")
-        st.download_button("⬇️ MIDIをダウンロード", data=buf, file_name=tmp.name, mime="audio/midi")
+        st.success(f"生成しました → {out_path}")
+        st.download_button(
+            "⬇️ MIDIをダウンロード", data=buf, file_name=out_path.name, mime="audio/midi"
+        )
         st.caption("生成に使ったコード（バー開始拍 / シンボル）")
         st.table({"bar_start_beat": [b for b, _ in chord_seq], "chord": [c for _, c in chord_seq]})
     except FileNotFoundError:

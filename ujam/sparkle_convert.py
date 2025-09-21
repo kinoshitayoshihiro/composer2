@@ -159,18 +159,20 @@ _SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
 
 # Helper utilities ---------------------------------------------------------
 
+def _beats_per_bar(num: int, den: int) -> float:
+    """Return the theoretical bar length in beats for ``num/den``."""
+
+    if den == 0:
+        raise ValueError("time signature denominator must be non-zero")
+    return num * (4.0 / den)
+
+
 def pulses_per_bar(num: int, den: int, unit: float) -> int:
     """Return the pulse count implied by a time signature and subdivision."""
 
     if unit <= 0.0:
         raise ValueError("pulse subdivision must be positive")
-    if den == 0:
-        raise ValueError("time signature denominator must be non-zero")
-    if den == 8:
-        return max(1, int(num))
-    if den == 4:
-        return max(1, int(num * 2))
-    bar_beats = num * (4.0 / den)
+    bar_beats = _beats_per_bar(num, den)
     total = int(round(bar_beats / unit))
     return max(1, total)
 
@@ -969,21 +971,78 @@ def resolve_downbeats(
             ):
                 rebuild = True
 
+    if not rebuild:
+        meter_times = [mt for mt, _, _ in meter_map]
+        for idx in range(len(downbeats) - 1):
+            start = downbeats[idx]
+            end = downbeats[idx + 1]
+            # Ignore spans that contain an intermediate meter change; the
+            # subsequent iteration anchored at the boundary will validate that
+            # region instead.
+            if any(
+                mt > start + EPS and mt < end - EPS
+                for mt in meter_times[1:]
+            ):
+                continue
+            num, den = get_meter_at(meter_map, start, times=meter_times)
+            expected_beats = num * (4.0 / den) if den else 0.0
+            if expected_beats <= 0.0:
+                continue
+            start_b = time_to_beat(start)
+            end_b = time_to_beat(end)
+            actual_beats = end_b - start_b
+            tol = max(1e-6, expected_beats * 1e-6)
+            if (
+                idx + 1 == len(downbeats) - 1
+                and abs(end_t - end) <= 1e-6
+                and actual_beats + tol < expected_beats
+            ):
+                # Final bar may be truncated; accept shorter spans at the tail.
+                continue
+            if not math.isclose(actual_beats, expected_beats, rel_tol=1e-6, abs_tol=tol):
+                rebuild = True
+                break
+
     if rebuild:
-        downbeats = []
-        for idx, (mt, num, den) in enumerate(meter_map):
-            next_t = meter_map[idx + 1][0] if idx + 1 < len(meter_map) else end_t
-            start_b = time_to_beat(mt)
-            end_b = time_to_beat(next_t)
-            bar_beats = num * (4.0 / den)
+        meter_entries = [(time_to_beat(mt), num, den) for mt, num, den in meter_map]
+        meter_entries.sort(key=lambda item: item[0])
+        if not meter_entries:
+            return [0.0, float(end_t)]
+        end_beat = time_to_beat(end_t)
+        downbeats_beats: List[float] = []
+        start_b = meter_entries[0][0]
+        downbeats_beats.append(start_b)
+        meter_entries.append((end_beat, meter_entries[-1][1], meter_entries[-1][2]))
+        for (seg_start_b, num, den), (seg_end_b, _, _) in zip(
+            meter_entries, meter_entries[1:]
+        ):
+            bar_beats = _beats_per_bar(num, den)
             if bar_beats <= 0:
                 continue
-            bar = start_b
-            while bar < end_b - EPS:
-                downbeats.append(beat_to_time(bar))
-                bar += bar_beats
+            cur = max(downbeats_beats[-1], seg_start_b)
+            if cur < seg_start_b + EPS:
+                cur = seg_start_b
+            else:
+                offset = math.fmod(cur - seg_start_b, bar_beats)
+                if offset < 0:
+                    offset += bar_beats
+                if offset > EPS:
+                    cur += bar_beats - offset
+            while cur < seg_end_b - EPS:
+                if abs(cur - downbeats_beats[-1]) > EPS:
+                    downbeats_beats.append(cur)
+                cur += bar_beats
+            if downbeats_beats[-1] < seg_end_b - EPS:
+                downbeats_beats.append(seg_end_b)
+            else:
+                downbeats_beats[-1] = seg_end_b
+        downbeats = []
+        for beat_val in downbeats_beats:
+            t = beat_to_time(beat_val)
+            if not downbeats or abs(t - downbeats[-1]) > EPS:
+                downbeats.append(t)
         if not downbeats:
-            downbeats = list(beat_times[::4])
+            downbeats = [beat_to_time(meter_entries[0][0]), float(end_t)]
 
     downbeats.sort()
     unique: List[float] = []
@@ -5616,7 +5675,7 @@ def build_sparkle_midi(
             stats["song_end_hint"] = float(song_end_hint)
         if downbeats:
             stats["downbeats_last"] = float(downbeats[-1])
-        # Dict[bar_index, List[(beat_position_in_beats, absolute_time_seconds)]]
+        # Dict[bar_index, List[(bar_relative_beats, absolute_time_seconds)]]
         # capturing the meter-derived reference grid per bar. Stored as floats to
         # ease JSON export without further casting. ``bar_triggers`` records the
         # actual trigger placements when phrases are emitted so analytics can
@@ -5910,37 +5969,41 @@ def build_sparkle_midi(
             num, den = get_meter_at(meter_map, start, times=meter_times)
             sb = time_to_beat(start)
             eb = time_to_beat(next_start)
-            bar_beats = eb - sb
+            bar_len_beats = _beats_per_bar(num, den) if den else 0.0
             total = max(1, pulses_per_bar(num, den, pulse_subdiv_beats))
-            if bar_beats <= 0.0 or total <= 0:
-                pulse = (float(sb), float(beat_to_time(sb)))
+            if bar_len_beats <= 0.0 or total <= 0 or eb <= sb:
+                pulse = (0.0, float(start))
                 grid_list = [pulse]
                 bar_grid[i] = grid_list
                 bar_pulses_dict[i] = list(grid_list)
                 continue
-            step = bar_beats / total
+            offsets = [k * pulse_subdiv_beats for k in range(total)]
             grid: List[Tuple[float, float]] = []
-            for k in range(total):
-                pos = sb + k * step
-                # Grid swing offsets the theoretical meter grid; actual trigger swing is
-                # applied later during phrase emission when stride-aware intervals occur.
-                if swing > 0.0 and math.isclose(step, swing_unit_beats, abs_tol=EPS):
-                    shift = 0.0
-                    swing_step = swing * step
+            for k, off in enumerate(offsets):
+                beat_pos = sb + off
+                if beat_pos > eb + EPS:
+                    break
+                t_pos = beat_to_time(beat_pos)
+                if t_pos >= next_start - EPS:
+                    break
+                swing_off = 0.0
+                if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
+                    swing_step = swing * pulse_subdiv_beats
                     if swing_shape == "offbeat":
                         if k % 2 == 1:
-                            shift = swing_step
+                            swing_off = swing_step
                     elif swing_shape == "even":
                         if k % 2 == 1:
-                            shift = -swing_step
+                            swing_off = -swing_step
                     else:
                         if k % 3 == 1:
-                            shift = swing_step
-                    pos += shift
-                pos = clip_to_bar(pos, sb, eb)
-                grid.append((float(pos), float(beat_to_time(pos))))
+                            swing_off = swing_step
+                beat_val = sb + off + swing_off
+                beat_val = clip_to_bar(beat_val, sb, sb + bar_len_beats)
+                time_val = beat_to_time(beat_val)
+                grid.append((float(beat_val - sb), float(time_val)))
             if not grid:
-                grid = [(float(sb), float(beat_to_time(sb)))]
+                grid = [(0.0, float(start))]
             grid_list = list(grid)
             bar_grid[i] = grid_list
             bar_pulses_dict[i] = list(grid_list)

@@ -23,6 +23,7 @@ missing = [p for p in candidates if not p.exists()]
 try:
     from generator.riff_generator import RiffGenerator
     from generator.obligato_generator import ObligatoGenerator
+    from generator.riff_from_vocal import generate_riff_from_vocal
 except Exception as e:
     import_err = e
 else:
@@ -45,9 +46,9 @@ if import_err or missing:
 # --- Sidebar params ---
 with st.sidebar:
     st.header("基本設定")
-    gen_type = st.selectbox("生成タイプ", ["Riff (背骨)", "Obligato (彩り)"])
+    gen_type = st.selectbox("生成タイプ", ["Riff (背骨)", "Obligato (彩り)", "Riff from Vocal"])
     key = st.text_input("Key（例: A minor / C major）", value="A minor")
-    section = st.selectbox("Section", ["Verse", "PreChorus", "Chorus", "Bridge"])
+    section = st.selectbox("Section", ["Intro", "Verse", "PreChorus", "Chorus", "Bridge"])
     emotion = st.selectbox(
         "Emotion", ["sad", "warm", "neutral", "intense", "reflective", "heroic", "tension"]
     )
@@ -56,6 +57,13 @@ with st.sidebar:
     st.divider()
     st.subheader("スタイル（簡易）")
     style = st.selectbox("スタイル（初期は Ballad / Rock）", ["ballad", "rock"])
+    if gen_type == "Riff from Vocal":
+        st.subheader("Dials（連続つまみ）")
+        intensity = st.slider("intensity（力強さ）", 0.0, 1.0, 0.55, 0.05)
+        drive = st.slider("drive（推進力/細分化）", 0.0, 1.0, 0.45, 0.05)
+        warmth = st.slider("warmth（柔らかさ）", 0.0, 1.0, 0.70, 0.05)
+        genre_rf = st.selectbox("From-Vocal用ジャンル", ["ballad", "rock"], index=0)
+        st.caption("drive↑で16分寄り、intensity↑で短く大きく、warmth↑でadd9/sus2寄り（rockはtriad少し追加）")
 
 # --- Main: chord progression ---
 st.subheader("コード進行（バーごと）")
@@ -72,9 +80,18 @@ def parse_progression(text: str, bars: int) -> list[tuple[float, str]]:
 
 chord_seq = parse_progression(prog_text, int(bars))
 
+if gen_type == "Riff from Vocal":
+    st.subheader("ボーカルMIDIアップロード（.mid）")
+    up = st.file_uploader("Vocal MIDI", type=["mid", "midi"])
+
 col1, col2 = st.columns(2)
 with col1:
-    default_name = "riff.mid" if gen_type.startswith("Riff") else "obligato.mid"
+    if gen_type == "Riff (背骨)":
+        default_name = "riff.mid"
+    elif gen_type == "Obligato (彩り)":
+        default_name = "obligato.mid"
+    else:
+        default_name = "riff_from_vocal.mid"
     out_name = st.text_input("出力ファイル名", value=default_name)
 with col2:
     st.write("")
@@ -83,7 +100,7 @@ with col2:
 if do_generate:
     try:
         data_dir = REPO_ROOT / "data"
-        if gen_type.startswith("Riff"):
+        if gen_type == "Riff (背骨)":
             rg = RiffGenerator(
                 instrument="guitar", patterns_yaml=str(data_dir / "riff_library.yaml")
             )
@@ -96,7 +113,7 @@ if do_generate:
                 bars=int(bars),
                 style=style,
             )
-        else:
+        elif gen_type == "Obligato (彩り)":
             og = ObligatoGenerator(
                 instrument="synth", patterns_yaml=str(data_dir / "obligato_library.yaml")
             )
@@ -107,6 +124,19 @@ if do_generate:
                 section=section,
                 chord_seq=chord_seq,
                 bars=int(bars),
+            )
+        else:
+            if up is None:
+                st.error("Vocal MIDI をアップロードしてください。")
+                st.stop()
+            dials = {"intensity": intensity, "drive": drive, "warmth": warmth}
+            pm = generate_riff_from_vocal(
+                up.getvalue(),
+                chord_seq=chord_seq,
+                tempo=float(tempo),
+                genre=genre_rf,
+                bars=int(bars),
+                dials=dials,
             )
 
         buf = io.BytesIO()

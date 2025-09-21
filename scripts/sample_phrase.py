@@ -117,39 +117,86 @@ def load_checkpoint(path: Path) -> dict[str, Any]:
 def build_model_from_meta(state: dict[str, Any], hparams: dict[str, Any] | None) -> Any:
     """Rebuild the model using checkpoint state and (optional) sidecar hparams.
 
-    The training script stores at least ``d_model`` and ``max_len`` in the ckpt
-    and writes all CLI args to ``hparams.json``. We prefer the sidecar when
-    available; otherwise we fall back to ckpt fields and library defaults.
+    The training script stores architectural metadata inside the checkpoint
+    (``state['meta']``).  Some historical runs additionally wrote a
+    ``hparams.json`` sidecar.  We prefer explicit metadata from the checkpoint,
+    fall back to the sidecar, and lastly rely on library defaults.  This keeps
+    toy models (e.g., ``d_model=16``) loadable without relaxing
+    ``load_state_dict``.
     """
+
     if PhraseTransformer is None:
         raise SystemExit(
             "Could not import project modules. Run 'pip install -e .' or set ALLOW_LOCAL_IMPORT=1"
         )
 
-    # Gather basics
-    d_model = int((hparams or {}).get("d_model", state.get("d_model", 512)))
-    max_len = int((hparams or {}).get("max_len", state.get("max_len", 128)))
-    n_layers = int((hparams or {}).get("layers", 4))
-    n_heads = int((hparams or {}).get("nhead", 8))
-    dropout = float((hparams or {}).get("dropout", 0.1))
-
-    # DUV config
+    meta = state.get("meta", {}) or {}
+    hp = hparams or {}
     duv_cfg = state.get("duv_cfg", {}) or {}
-    duv_mode = (hparams or {}).get("duv_mode", duv_cfg.get("mode", "reg"))
-    vel_bins = int((hparams or {}).get("vel_bins", duv_cfg.get("vel_bins", 0)))
-    dur_bins = int((hparams or {}).get("dur_bins", duv_cfg.get("dur_bins", 0)))
 
-    # Some repos expose extra kwargs; keep defaults conservative
-    model = PhraseTransformer(
+    def _pick(key: str, *fallback_keys: str, default: Any = None) -> Any:
+        """Return the first present value from metadata, hparams, or state."""
+
+        sources = (meta, hp, state)
+        keys = (key, *fallback_keys)
+        for src in sources:
+            if not isinstance(src, dict):
+                continue
+            for k in keys:
+                if k in src and src[k] is not None:
+                    return src[k]
+        return default
+
+    def _pick_int(key: str, *fallback_keys: str, default: int = 0) -> int:
+        value = _pick(key, *fallback_keys, default=default)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return int(default)
+
+    def _pick_float(key: str, *fallback_keys: str, default: float = 0.0) -> float:
+        value = _pick(key, *fallback_keys, default=default)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _pick_bool(key: str, default: bool = False) -> bool:
+        value = _pick(key, default=default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    d_model = _pick_int("d_model", default=512)
+    max_len = _pick_int("max_len", default=128)
+    n_layers = _pick_int("layers", "num_layers", default=4)
+    n_heads = _pick_int("nhead", "num_heads", default=8)
+    dropout = _pick_float("dropout", default=0.1)
+
+    duv_mode = _pick("duv_mode", default=duv_cfg.get("mode", "reg")) or "reg"
+    vel_bins = _pick_int("vel_bins", default=duv_cfg.get("vel_bins", 0))
+    dur_bins = _pick_int("dur_bins", default=duv_cfg.get("dur_bins", 0))
+
+    ctor = dict(
         d_model=d_model,
         max_len=max_len,
-        duv_mode=duv_mode,
-        vel_bins=vel_bins,
-        dur_bins=dur_bins,
         nhead=n_heads,
         num_layers=n_layers,
         dropout=dropout,
+        duv_mode=duv_mode,
+        vel_bins=vel_bins,
+        dur_bins=dur_bins,
+        section_vocab_size=_pick_int("section_vocab_size"),
+        mood_vocab_size=_pick_int("mood_vocab_size"),
+        vel_bucket_size=_pick_int("vel_bucket_size"),
+        dur_bucket_size=_pick_int("dur_bucket_size"),
+        use_sinusoidal_posenc=_pick_bool("use_sinusoidal_posenc"),
+        use_bar_beat=_pick_bool("use_bar_beat"),
     )
+
+    model = PhraseTransformer(**ctor)
     return model
 
 

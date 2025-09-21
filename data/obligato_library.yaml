@@ -32,3 +32,59 @@ obligato_patterns:
           contour: ["gliss_up5"]
           register: mid
           density: low
+obligato_patterns:
+  synth:
+    verse:
+      sad:
+        - name: bell_spacey
+          description: 高域ベル、短い上行m3→下行2度、余白重視
+          rhythm: [1.5, 3.0]
+          contour: ["up_minor3", "down_second"]
+          register: high
+          density: low
+    chorus:
+      warm:
+        - name: strings_wrap_up5
+          description: ストリングスで包む上5度グリス
+          rhythm: [0.0, 2.0]
+          contour: ["gliss_up5"]
+          register: mid_high
+          density: mid
+
+  guitar:
+    verse:
+      neutral:
+        - name: gtr_slide_fill
+          description: 合間のスライド+軽いハンマーオン
+          rhythm: [2.5, 3.5]
+          contour: ["slide_up", "up_second"]
+          register: mid
+          density: low
+obligato_patterns:
+  synth:
+    verse:
+      sad:
+        - name: bell_upm3_down2
+          description: ベルで上行短3度→下行2度、隙間狙い
+          rhythm: [1.5, 3.0]
+          contour: ["up_minor3", "down_second"]
+          register: high
+          density: low
+    chorus:
+      warm:
+        - name: strings_gliss_up5
+          description: ストリングスの上5度グリスで包む
+          rhythm: [0.0, 2.0]
+          contour: ["gliss_up5"]
+          register: mid_high
+          density: mid
+
+  guitar:
+    verse:
+      neutral:
+        - name: gtr_slide_fill
+          description: 合いの手スライド+ハンマリング
+          rhythm: [2.5, 3.5]
+          contour: ["slide_up", "up_second"]
+          register: mid
+          density: low

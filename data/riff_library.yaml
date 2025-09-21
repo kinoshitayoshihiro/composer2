@@ -48,3 +48,86 @@ riff_patterns:
           rhythm: [0.5, 1.5, 2.5, 3.5]
           harmony: ["power5", "octave"]
           density: mid
+
+meta:
+  defaults:
+    ballad:
+      tempo_hint: [68, 86]
+      base_grid: 0.5      # 8th
+    rock:
+      tempo_hint: [96, 152]
+      base_grid: 0.25     # 16th
+
+riff_patterns:
+  ballad:
+    verse:
+      neutral:
+        - name: ballad_arpeggio_sparse
+          description: 8分基調、休符多め、開放感
+          rhythm: [0.0, 1.0, 2.5, 3.5]   # 8th grid基準
+          harmony: ["triad", "sus2", "add9"]
+          density: low
+    chorus:
+      warm:
+        - name: ballad_open_add9_drive
+          description: サビで密度↑、add9を混ぜて広げる
+          rhythm: [0.0, 0.5, 2.0, 2.5, 3.0]
+          harmony: ["triad", "add9", "octave"]
+          density: mid_high
+
+  rock:
+    verse:
+      neutral:
+        - name: rock_power8
+          description: 8分刻みの王道パワー（低driveでも有効）
+          rhythm: [0.0, 0.5, 1.0, 1.5, 2.0, 3.0]
+          harmony: ["power5"]
+          density: mid
+    chorus:
+      intense:
+        - name: rock_drive16
+          description: 16分ドライブ＋時折オクターブ
+          rhythm: [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 2.0, 2.5, 3.0]
+          harmony: ["power5", "octave"]
+          density: high
+riff_patterns:
+  rock:
+    verse:
+      neutral:
+        - name: rock_power8
+          description: 低音ルート+5度の8分刻み（王道）
+          rhythm: [0.0, 0.5, 1.0, 1.5, 2.0, 3.0]
+          harmony: ["power5"]
+          density: mid
+    chorus:
+      intense:
+        - name: rock_drive16_chroma_down
+          description: 16分ドライブ＋半音下降モチーフ
+          rhythm: [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 2.0, 2.5, 3.0]
+          harmony: ["power5", "octave"]
+          density: high
+
+  ballad:
+    verse:
+      sad:
+        - name: ballad_arpeggio_sparse
+          description: アルペジオ主体・休符多め
+          rhythm: [0.0, 1.0, 2.5, 3.5]
+          harmony: ["triad", "sus2"]
+          density: low
+    chorus:
+      warm:
+        - name: ballad_open_add9
+          description: 開放感のあるadd9混ぜの押しフレーズ
+          rhythm: [0.0, 0.5, 2.0, 2.5, 3.0]
+          harmony: ["triad", "add9"]
+          density: mid_high
+
+  blues:
+    verse:
+      groove:
+        - name: shuffle_root5
+          description: シャッフルでルート-5度往復
+          rhythm: [0.0, 0.66, 1.33, 2.0, 2.66, 3.33]
+          harmony: ["root", "fifth"]
+          density: mid

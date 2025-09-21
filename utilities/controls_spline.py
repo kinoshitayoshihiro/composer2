@@ -755,8 +755,14 @@ class ControlCurve:
                 if orig_len == 1:
                     vals[-1] = 0
                 elif orig_len == 2:
-                    t.append(t[-1])
-                    vals.append(0)
+                    has_support = any(
+                        v != 0 and ((v > 0) == (vals[-1] > 0)) for v in vals[:-1]
+                    )
+                    if len(vals) > orig_len + 1 and has_support:
+                        vals[-1] = 0
+                    else:
+                        t.append(t[-1])
+                        vals.append(0)
                 else:
                     vals[-1] = 0
         if max_events is not None and len(vals) > max_events:

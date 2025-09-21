@@ -57,6 +57,25 @@ with st.sidebar:
     st.divider()
     st.subheader("スタイル（簡易）")
     style = st.selectbox("スタイル（初期は Ballad / Rock）", ["ballad", "rock"])
+
+    st.subheader("Humanize / Groove（常時ON・上書き可）")
+    hu_profile = st.selectbox(
+        "Humanize Profile",
+        ["ballad_subtle", "ballad_warm", "rock_tight", "rock_drive"],
+        index=0,
+    )
+    onset_sigma_ms = st.slider("Onset σ (ms)", 0, 20, 5, 1)
+    vel_jitter = st.slider("Velocity jitter (±)", 0, 20, 5, 1)
+    dur_jitter = st.slider("Duration jitter ratio", 0.0, 0.10, 0.03, 0.01)
+    swing = st.slider(
+        "Swing (8th)",
+        0.0,
+        0.3,
+        0.10 if style == "ballad" else 0.00,
+        0.01,
+    )
+    groove_name = st.selectbox("Groove Name", ["ballad_8_swing", "rock_16_loose", "(none)"])
+    late_ms = st.slider("Late-humanize (ms)", 0, 20, 0, 1)
     if gen_type == "Riff from Vocal":
         st.subheader("Dials（連続つまみ）")
         intensity = st.slider("intensity（力強さ）", 0.0, 1.0, 0.55, 0.05)
@@ -112,6 +131,15 @@ if do_generate:
                 chord_seq=chord_seq,
                 bars=int(bars),
                 style=style,
+                humanize={
+                    "onset_sigma_ms": onset_sigma_ms,
+                    "velocity_jitter": vel_jitter,
+                    "duration_jitter_ratio": dur_jitter,
+                },
+                humanize_profile=hu_profile,
+                quantize={"grid": 0.25, "swing": swing},
+                groove=None if groove_name == "(none)" else {"name": groove_name},
+                late_humanize_ms=late_ms,
             )
         elif gen_type == "Obligato (彩り)":
             og = ObligatoGenerator(
@@ -124,6 +152,15 @@ if do_generate:
                 section=section,
                 chord_seq=chord_seq,
                 bars=int(bars),
+                humanize={
+                    "onset_sigma_ms": onset_sigma_ms,
+                    "velocity_jitter": vel_jitter,
+                    "duration_jitter_ratio": dur_jitter,
+                },
+                humanize_profile=hu_profile,
+                quantize={"grid": 0.25, "swing": swing},
+                groove=None if groove_name == "(none)" else {"name": groove_name},
+                late_humanize_ms=late_ms,
             )
         else:
             if up is None:
@@ -137,6 +174,15 @@ if do_generate:
                 genre=genre_rf,
                 bars=int(bars),
                 dials=dials,
+                humanize={
+                    "onset_sigma_ms": onset_sigma_ms,
+                    "velocity_jitter": vel_jitter,
+                    "duration_jitter_ratio": dur_jitter,
+                },
+                humanize_profile=hu_profile,
+                quantize={"grid": 0.25, "swing": swing},
+                groove=None if groove_name == "(none)" else {"name": groove_name},
+                late_humanize_ms=late_ms,
             )
 
         buf = io.BytesIO()

@@ -67,7 +67,11 @@ def _import_phrase_transformer() -> type:
     def _promote(pt: object | None, module: types.ModuleType | None = None) -> type | None:
         if pt is object:
             class PTProxy(object):
-                pass
+                def __init__(self, *args, **kwargs):
+                    # Allow instantiation with arbitrary args so train_model can
+                    # forward configuration parameters during tests that
+                    # monkeypatch PhraseTransformer.
+                    pass
 
             logging.warning("Promoting bare 'object' to PTProxy to allow monkeypatching.")
             if module is not None:

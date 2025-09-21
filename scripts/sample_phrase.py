@@ -171,8 +171,8 @@ def build_model_from_meta(state: dict[str, Any], hparams: dict[str, Any] | None)
 
     d_model = _pick_int("d_model", default=512)
     max_len = _pick_int("max_len", default=128)
-    n_layers = _pick_int("layers", "num_layers", default=4)
-    n_heads = _pick_int("nhead", "num_heads", default=8)
+    n_layers = _pick_int("n_layers", "num_layers", "layers", default=4)
+    n_heads = _pick_int("n_heads", "nhead", "num_heads", default=8)
     dropout = _pick_float("dropout", default=0.1)
 
     duv_mode = _pick("duv_mode", default=duv_cfg.get("mode", "reg")) or "reg"
@@ -194,6 +194,7 @@ def build_model_from_meta(state: dict[str, Any], hparams: dict[str, Any] | None)
         dur_bucket_size=_pick_int("dur_bucket_size"),
         use_sinusoidal_posenc=_pick_bool("use_sinusoidal_posenc"),
         use_bar_beat=_pick_bool("use_bar_beat"),
+        pitch_vocab_size=_pick_int("pitch_vocab_size", "vocab_pitch", default=0),
     )
 
     model = PhraseTransformer(**ctor)

@@ -33,6 +33,7 @@ except Exception:
 
     class BasePartGenerator:  # type: ignore
         pass
+from utilities.pattern_loader import load_yaml
 
 
 @dataclass
@@ -155,10 +156,7 @@ class RiffGenerator(BasePartGenerator):
 
     # ------------------------- Internals -------------------------
     def _load_patterns(self, path: Path) -> Dict[str, Dict[str, Dict[str, List[RiffPattern]]]]:
-        if yaml is None:
-            raise ImportError("PyYAML is required to load riff patterns")
-        with open(path, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
+        raw = load_yaml(path)
         data = {}
         for style, sec_map in (raw.get("riff_patterns") or {}).items():
             data[style] = {}

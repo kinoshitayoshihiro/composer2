@@ -31,6 +31,7 @@ except Exception:
 
     class BasePartGenerator:  # type: ignore
         pass
+from utilities.pattern_loader import load_yaml
 
 
 @dataclass
@@ -178,10 +179,7 @@ class ObligatoGenerator(BasePartGenerator):
 
     # ------------------------- Internals -------------------------
     def _load_patterns(self, path: Path) -> Dict[str, Dict[str, List[OblPattern]]]:
-        if yaml is None:
-            raise ImportError("PyYAML is required to load obligato patterns")
-        with open(path, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
+        raw = load_yaml(path)
         data: Dict[str, Dict[str, List[OblPattern]]] = {}
         for inst, sec_map in (raw.get("obligato_patterns") or {}).items():
             for sec, emo_map in sec_map.items():

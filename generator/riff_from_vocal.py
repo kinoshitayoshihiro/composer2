@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
 from pathlib import Path
 import math
@@ -31,7 +31,7 @@ class RiffFromVocalConfig:
     base_velocity: int = 84
     note_beats: float = 0.5      # 1発の長さ(拍)
     bars: int = 8                # 生成長（bar単位）
-    dials: Dials = Dials()
+    dials: Dials = field(default_factory=Dials)
 
     def apply_dials(self) -> None:
         """dialsからグリッド・和声・ベロシティ・音価を上書き"""

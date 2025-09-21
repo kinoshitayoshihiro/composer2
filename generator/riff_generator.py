@@ -218,6 +218,20 @@ class RiffGenerator(BasePartGenerator):
                 return got
         return None
 
+    def _guess_style(self, section: str, emotion: str) -> str:
+        """
+        section/emotion から粗くスタイルを推定。
+        - Chorus/Bridge や intense/heroic/tension は "rock"
+        - それ以外は "ballad"
+        """
+        sec = (section or "").lower()
+        emo = (emotion or "").lower()
+        if sec in ("chorus", "bridge"):
+            return "rock"
+        if any(k in emo for k in ("intense", "heroic", "tension")):
+            return "rock"
+        return "ballad"
+
     def _default_duration(self, pattern: RiffPattern) -> float:
         # Basic heuristic: denser patterns get shorter note values
         return 0.5 if pattern.density in ("mid", "mid_high") else 1.0

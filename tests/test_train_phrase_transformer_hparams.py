@@ -27,24 +27,66 @@ def test_transformer_hparams(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     tp.write_csv(rows, valid_csv)
 
     captured: dict[str, float] = {}
+    from torch import nn
+    import inspect
+
     try:
         from models.phrase_transformer import PhraseTransformer as RealPT  # type: ignore
     except Exception:
         RealPT = tp._import_phrase_transformer()
 
-    class SpyPT(RealPT):  # type: ignore[misc]
+    class SpyPT(nn.Module):  # type: ignore[misc]
         def __init__(self, d_model, max_len, *,
                      section_vocab_size=0, mood_vocab_size=0,
                      vel_bucket_size=0, dur_bucket_size=0,
                      nhead=8, num_layers=4, dropout=0.1, **kwargs):
+            super().__init__()
             captured.update(nhead=nhead, num_layers=num_layers, dropout=dropout)
-            super().__init__(d_model, max_len,
-                             section_vocab_size=section_vocab_size,
-                             mood_vocab_size=mood_vocab_size,
-                             vel_bucket_size=vel_bucket_size,
-                             dur_bucket_size=dur_bucket_size,
-                             nhead=nhead, num_layers=num_layers,
-                             dropout=dropout, **kwargs)
+
+            try:
+                sig = inspect.signature(RealPT.__init__)
+                allowed = {
+                    p.name
+                    for p in sig.parameters.values()
+                    if p.name != "self" and p.kind not in (
+                        inspect.Parameter.VAR_POSITIONAL,
+                        inspect.Parameter.VAR_KEYWORD,
+                    )
+                }
+                fkwargs = {
+                    k: v
+                    for k, v in dict(
+                        d_model=d_model,
+                        max_len=max_len,
+                        section_vocab_size=section_vocab_size,
+                        mood_vocab_size=mood_vocab_size,
+                        vel_bucket_size=vel_bucket_size,
+                        dur_bucket_size=dur_bucket_size,
+                        nhead=nhead,
+                        num_layers=num_layers,
+                        dropout=dropout,
+                        **kwargs,
+                    ).items()
+                    if k in allowed
+                }
+            except Exception:
+                fkwargs = dict(
+                    d_model=d_model,
+                    max_len=max_len,
+                    section_vocab_size=section_vocab_size,
+                    mood_vocab_size=mood_vocab_size,
+                    vel_bucket_size=vel_bucket_size,
+                    dur_bucket_size=dur_bucket_size,
+                    nhead=nhead,
+                    num_layers=num_layers,
+                    dropout=dropout,
+                    **kwargs,
+                )
+
+            self.inner = RealPT(**fkwargs)
+
+        def forward(self, *args, **kwargs):
+            return self.inner(*args, **kwargs)
 
     monkeypatch.setattr(tp, "PhraseTransformer", SpyPT, raising=True)
 

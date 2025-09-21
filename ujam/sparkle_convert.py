@@ -2508,34 +2508,62 @@ def insert_style_fill(
         explicit_avoid = list(avoid_pitches)
     avoid_set = build_avoid_set(mapping, explicit_avoid)
 
-    pitch_value: Optional[int] = None
-    pitch_source = "style"
-    candidates = (
-        style_fill_raw,
-        mapping.get("style_fill"),
-        34,
-        mapping.get("phrase_note"),
-    )
-    for idx, candidate in enumerate(candidates):
+    def _resolve_pitch(candidate: Any) -> Optional[int]:
         if candidate is None:
-            continue
+            return None
         resolved = resolve_phrase_alias(candidate, mapping)
         if resolved is None:
             try:
                 resolved = int(round(float(candidate)))
             except Exception:
-                continue
+                return None
         try:
-            pitch_value = int(round(float(resolved)))
+            value = int(round(float(resolved)))
         except Exception:
+            return None
+        return max(0, min(127, value))
+
+    def _coerce_int(value: Any, default: int) -> int:
+        if value is None:
+            return default
+        try:
+            coerced = int(round(float(value)))
+        except Exception:
+            return default
+        return max(0, min(127, coerced))
+
+    base_pitch = _resolve_pitch(mapping.get("phrase_note", 36))
+    pitch_min = _coerce_int(mapping.get("phrase_pitch_min"), 0)
+    pitch_max = _coerce_int(mapping.get("phrase_pitch_max"), 127)
+    if base_pitch is None:
+        base_pitch = max(pitch_min, min(pitch_max, 36))
+    else:
+        base_pitch = max(pitch_min, min(pitch_max, base_pitch))
+
+    def _fallback_candidates(base: int, lo: int, hi: int) -> List[int]:
+        up = list(range(base, min(base + 13, hi + 1)))
+        down = list(range(base - 1, max(base - 13, lo - 1), -1))
+        return up + down
+
+    pitch_value: Optional[int] = None
+    pitch_source = "style"
+    candidate_sources: List[Tuple[Any, str]] = [
+        (style_fill_raw, "style"),
+        (mapping.get("style_fill"), "style"),
+    ]
+    candidate_sources.extend(
+        (candidate, "fallback") for candidate in _fallback_candidates(base_pitch, pitch_min, pitch_max)
+    )
+    candidate_sources.append((34, "default"))
+
+    for candidate, source in candidate_sources:
+        resolved = _resolve_pitch(candidate)
+        if resolved is None:
             continue
-        pitch_value = max(0, min(127, pitch_value))
-        if idx <= 1:
-            pitch_source = "style"
-        elif idx == 2:
-            pitch_source = "default"
-        else:
-            pitch_source = "fallback"
+        if source != "style" and resolved in avoid_set:
+            continue
+        pitch_value = resolved
+        pitch_source = source
         break
 
     if pitch_value is None:

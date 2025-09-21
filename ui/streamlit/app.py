@@ -32,6 +32,18 @@ else:
 st.set_page_config(page_title="Riff / Obligato Generator", page_icon="🎸", layout="centered")
 st.title("🎸 Riff / 🎼 Obligato Generator (minimal)")
 
+# --- Presets (A案: 王道進行) ---
+# Roman numeral をキーへ射影するのが理想だが、まずは実用的な素のコード列を用意
+PRESET_PROGRESSIONS = {
+    "（選択してください）": "",
+    "王道進行 (I–V–vi–IV) / C": "C | G | Am | F",
+    "小室進行 (vi–IV–I–V) / C": "Am | F | C | G",
+    "循環進行 (ii–V–I) x2 / C": "Dm | G | C | C",
+    "カノン風 (C–G–Am–Em–F–C–F–G)": "C | G | Am | Em | F | C | F | G",
+    "悲しげ (Am–F–C–G)": "Am | F | C | G",
+    "爽やか (C–Em–Am–F)": "C | Em | Am | F",
+}
+
 with st.expander("ℹ️ ファイル配置チェック（必要なら開いてください）", expanded=False):
     for p in candidates:
         st.write(("✅" if p.exists() else "❌"), str(p))
@@ -57,6 +69,10 @@ with st.sidebar:
     st.divider()
     st.subheader("スタイル（簡易）")
     style = st.selectbox("スタイル（初期は Ballad / Rock）", ["ballad", "rock"])
+
+    st.subheader("進行プリセット（A案）")
+    sel_preset = st.selectbox("王道進行を選ぶ", list(PRESET_PROGRESSIONS.keys()), index=0)
+    apply_preset = st.button("⬇️ プリセットを進行欄に挿入")
 
     st.subheader("Humanize / Groove（常時ON・上書き可）")
     hu_profile = st.selectbox(
@@ -87,7 +103,17 @@ with st.sidebar:
 # --- Main: chord progression ---
 st.subheader("コード進行（バーごと）")
 st.caption("例: `Am | G | F | E`（4/4想定。縦棒で区切ると各バーになります）")
-prog_text = st.text_area("Progression", value="Am | G | F | E", height=80)
+if "prog_text" not in st.session_state:
+    st.session_state.prog_text = "Am | G | F | E"
+if apply_preset and sel_preset in PRESET_PROGRESSIONS and PRESET_PROGRESSIONS[sel_preset]:
+    st.session_state.prog_text = PRESET_PROGRESSIONS[sel_preset]
+st.text_area("Progression", height=80, key="prog_text")
+
+flash = st.session_state.pop("prog_text_flash", None)
+if flash:
+    level, message = flash
+    feedback = getattr(st, level, st.info)
+    feedback(message)
 
 
 def parse_progression(text: str, bars: int) -> list[tuple[float, str]]:
@@ -95,9 +121,6 @@ def parse_progression(text: str, bars: int) -> list[tuple[float, str]]:
     if not tokens:
         tokens = ["Am"]
     return [(i * 4.0, tokens[i % len(tokens)]) for i in range(max(bars, len(tokens)))]
-
-
-chord_seq = parse_progression(prog_text, int(bars))
 
 if gen_type == "Riff from Vocal":
     st.subheader("ボーカルMIDIアップロード（.mid）")
@@ -113,8 +136,35 @@ with col1:
         default_name = "riff_from_vocal.mid"
     out_name = st.text_input("出力ファイル名", value=default_name)
 with col2:
-    st.write("")
+    st.caption("B案: MIDI から進行を抽出")
+    mid_src = st.file_uploader("MIDI を選択", type=["mid", "midi"], accept_multiple_files=False)
+    extract_btn = st.button("🔎 MIDIから進行を抽出して挿入")
     do_generate = st.button("🎵 生成する", use_container_width=True)
+
+if extract_btn:
+    if mid_src is None:
+        st.warning("MIDI ファイルを選択してください。")
+    else:
+        try:
+            from utilities.midi_harmony import extract_progression_from_midi
+
+            bars_extracted = extract_progression_from_midi(
+                mid_src.getvalue(), key_hint=key, beats_per_bar=4.0
+            )
+            if bars_extracted:
+                st.session_state.prog_text = " | ".join(c for _, c in bars_extracted)
+                st.session_state.prog_text_flash = (
+                    "success",
+                    "MIDI から進行を抽出しました。編集してお使いください。",
+                )
+                st.experimental_rerun()
+            else:
+                st.warning("進行を抽出できませんでした（music21 未導入 or 解析不能）。手動で入力してください。")
+        except Exception as e:
+            st.error(f"抽出中にエラー: {e}")
+
+prog_text = st.session_state.prog_text
+chord_seq = parse_progression(prog_text, int(bars))
 
 if do_generate:
     try:

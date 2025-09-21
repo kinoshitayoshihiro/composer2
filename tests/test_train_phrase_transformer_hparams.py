@@ -27,31 +27,26 @@ def test_transformer_hparams(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     tp.write_csv(rows, valid_csv)
 
     captured: dict[str, float] = {}
-    RealPT = tp._import_phrase_transformer()
+    try:
+        from models.phrase_transformer import PhraseTransformer as RealPT  # type: ignore
+    except Exception:
+        RealPT = tp._import_phrase_transformer()
 
-    def _spy_import():
-        class SpyPT(RealPT):
-            def __init__(self, d_model, max_len, *,
-                         section_vocab_size=0, mood_vocab_size=0,
-                         vel_bucket_size=0, dur_bucket_size=0,
-                         nhead=8, num_layers=4, dropout=0.1, **kwargs):
-                captured.update(nhead=nhead, num_layers=num_layers, dropout=dropout)
-                super().__init__(
-                    d_model,
-                    max_len,
-                    section_vocab_size=section_vocab_size,
-                    mood_vocab_size=mood_vocab_size,
-                    vel_bucket_size=vel_bucket_size,
-                    dur_bucket_size=dur_bucket_size,
-                    nhead=nhead,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                    **kwargs,
-                )
+    class SpyPT(RealPT):  # type: ignore[misc]
+        def __init__(self, d_model, max_len, *,
+                     section_vocab_size=0, mood_vocab_size=0,
+                     vel_bucket_size=0, dur_bucket_size=0,
+                     nhead=8, num_layers=4, dropout=0.1, **kwargs):
+            captured.update(nhead=nhead, num_layers=num_layers, dropout=dropout)
+            super().__init__(d_model, max_len,
+                             section_vocab_size=section_vocab_size,
+                             mood_vocab_size=mood_vocab_size,
+                             vel_bucket_size=vel_bucket_size,
+                             dur_bucket_size=dur_bucket_size,
+                             nhead=nhead, num_layers=num_layers,
+                             dropout=dropout, **kwargs)
 
-        return SpyPT
-
-    monkeypatch.setattr(tp, "_import_phrase_transformer", _spy_import)
+    monkeypatch.setattr(tp, "PhraseTransformer", SpyPT, raising=True)
 
     ckpt = tmp_path / "m.ckpt"
     tp.train_model(

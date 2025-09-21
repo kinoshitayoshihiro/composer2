@@ -1021,15 +1021,12 @@ def resolve_downbeats(
             bar_beats = _beats_per_bar(num, den)
             if bar_beats <= 0:
                 continue
-            cur = max(downbeats_beats[-1], seg_start_b)
-            if cur < seg_start_b + EPS:
-                cur = seg_start_b
-            else:
-                offset = math.fmod(cur - seg_start_b, bar_beats)
-                if offset < 0:
-                    offset += bar_beats
-                if offset > EPS:
-                    cur += bar_beats - offset
+            # Treat the meter-change boundary itself as the next bar head without
+            # rounding adjustments so the following segment starts exactly at the
+            # change point.
+            if downbeats_beats[-1] < seg_start_b - EPS:
+                downbeats_beats.append(seg_start_b)
+            cur = seg_start_b
             while cur < seg_end_b - EPS:
                 if abs(cur - downbeats_beats[-1]) > EPS:
                     downbeats_beats.append(cur)
@@ -5972,12 +5969,13 @@ def build_sparkle_midi(
             sb = time_to_beat(start)
             eb = time_to_beat(next_start)
             bar_len_beats = _beats_per_bar(num, den) if den else 0.0
-            total = max(1, pulses_per_bar(num, den, pulse_subdiv_beats))
+            # derive pulses directly from the metre length so 4/4 @ 1/8th yields 8 pulses
+            total = max(1, int(round(bar_len_beats / pulse_subdiv_beats)))
             if bar_len_beats <= 0.0 or total <= 0 or eb <= sb:
                 pulse = (0.0, float(start))
                 grid_list = [pulse]
                 bar_grid[i] = grid_list
-                bar_pulses_dict[i] = list(grid_list)
+                bar_pulses_dict[i] = [phrase_note] * len(grid_list)
                 continue
             offsets = [k * pulse_subdiv_beats for k in range(total)]
             grid: List[Tuple[float, float]] = []
@@ -6003,12 +6001,13 @@ def build_sparkle_midi(
                 beat_val = sb + off + swing_off
                 beat_val = clip_to_bar(beat_val, sb, sb + bar_len_beats)
                 time_val = beat_to_time(beat_val)
-                grid.append((float(beat_val - sb), float(time_val)))
+                rel_beat = float(beat_val - sb)
+                grid.append((rel_beat, float(time_val)))
             if not grid:
                 grid = [(0.0, float(start))]
             grid_list = list(grid)
             bar_grid[i] = grid_list
-            bar_pulses_dict[i] = list(grid_list)
+            bar_pulses_dict[i] = [phrase_note] * len(grid_list)
 
     # Velocity curve helper
     bar_progress: Dict[int, int] = {}

@@ -27,68 +27,33 @@ def test_transformer_hparams(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     tp.write_csv(rows, valid_csv)
 
     captured: dict[str, float] = {}
+    import torch
     from torch import nn
-    import inspect
 
-    try:
-        from models.phrase_transformer import PhraseTransformer as RealPT  # type: ignore
-    except Exception:
-        RealPT = tp._import_phrase_transformer()
-
-    class SpyPT(nn.Module):  # type: ignore[misc]
+    class StubPT(nn.Module):  # 完全スタブ：最小の学習可能パラメータを持つ
         def __init__(self, d_model, max_len, *,
                      section_vocab_size=0, mood_vocab_size=0,
                      vel_bucket_size=0, dur_bucket_size=0,
                      nhead=8, num_layers=4, dropout=0.1, **kwargs):
             super().__init__()
             captured.update(nhead=nhead, num_layers=num_layers, dropout=dropout)
+            self.bias = nn.Parameter(torch.zeros(1))
+            self.pitch_logits = nn.Parameter(torch.zeros(1, 1, 128))
 
-            try:
-                sig = inspect.signature(RealPT.__init__)
-                allowed = {
-                    p.name
-                    for p in sig.parameters.values()
-                    if p.name != "self" and p.kind not in (
-                        inspect.Parameter.VAR_POSITIONAL,
-                        inspect.Parameter.VAR_KEYWORD,
-                    )
-                }
-                fkwargs = {
-                    k: v
-                    for k, v in dict(
-                        d_model=d_model,
-                        max_len=max_len,
-                        section_vocab_size=section_vocab_size,
-                        mood_vocab_size=mood_vocab_size,
-                        vel_bucket_size=vel_bucket_size,
-                        dur_bucket_size=dur_bucket_size,
-                        nhead=nhead,
-                        num_layers=num_layers,
-                        dropout=dropout,
-                        **kwargs,
-                    ).items()
-                    if k in allowed
-                }
-            except Exception:
-                fkwargs = dict(
-                    d_model=d_model,
-                    max_len=max_len,
-                    section_vocab_size=section_vocab_size,
-                    mood_vocab_size=mood_vocab_size,
-                    vel_bucket_size=vel_bucket_size,
-                    dur_bucket_size=dur_bucket_size,
-                    nhead=nhead,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                    **kwargs,
-                )
+        def forward(self, feats, mask):
+            B, T = mask.shape
+            boundary = self.bias.expand(B, T)
+            vel_reg = self.bias.expand(B, T)
+            dur_reg = self.bias.expand(B, T)
+            pitch = self.pitch_logits.expand(B, T, 128)
+            return {
+                "boundary": boundary,
+                "vel_reg": vel_reg,
+                "dur_reg": dur_reg,
+                "pitch": pitch,
+            }
 
-            self.inner = RealPT(**fkwargs)
-
-        def forward(self, *args, **kwargs):
-            return self.inner(*args, **kwargs)
-
-    monkeypatch.setattr(tp, "PhraseTransformer", SpyPT, raising=True)
+    monkeypatch.setattr(tp, "PhraseTransformer", StubPT, raising=True)
 
     ckpt = tmp_path / "m.ckpt"
     tp.train_model(

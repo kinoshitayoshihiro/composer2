@@ -56,6 +56,44 @@ class Sample:
     meta: Dict[str, object]
 
 
+def _duv_frequency(splits: Dict[str, List[Sample]]) -> Counter[str]:
+    freq: Counter[str] = Counter()
+    for samp_list in splits.values():
+        for sample in samp_list:
+            for tok in sample.tokens:
+                if tok.startswith("DUV_"):
+                    freq[tok] += 1
+    return freq
+
+
+def _collapse_duv_tokens_inplace(
+    splits: Dict[str, List[Sample]], limit: Optional[int]
+) -> Tuple[int, int]:
+    """Collapse infrequent DUV tokens to ``DUV_OOV`` in-place.
+
+    Returns a tuple ``(kept, collapsed)`` describing how many distinct DUV tokens
+    remain and how many were merged into ``DUV_OOV``.
+    """
+
+    if limit is None:
+        return 0, 0
+
+    freq = _duv_frequency(splits)
+    if not freq:
+        return 0, 0
+
+    keep = {tok for tok, _ in freq.most_common(max(limit, 0))}
+    collapsed = len(freq) - len(keep)
+    if collapsed:
+        for samp_list in splits.values():
+            for sample in samp_list:
+                sample.tokens = [
+                    tok if not tok.startswith("DUV_") or tok in keep else "DUV_OOV"
+                    for tok in sample.tokens
+                ]
+    return len(freq) - collapsed, collapsed
+
+
 def _total_notes(pm) -> int:
     """Return total note count in a PrettyMIDI object; safe on weird inputs."""
     try:
@@ -350,6 +388,15 @@ def build_corpus(args: argparse.Namespace, files: Sequence[Path]) -> Dict[str, L
         "valid": samples[n_train : n_train + n_valid],
         "test": samples[n_train + n_valid : n_train + n_valid + n_test],
     }
+
+    keep_count, collapsed = _collapse_duv_tokens_inplace(
+        splits, getattr(args, "duv_max", None)
+    )
+    if keep_count or collapsed:
+        logger.info("DUV kept: %d collapsed: %d", keep_count, collapsed)
+    args._duv_stats = (keep_count, collapsed)
+    args._duv_collapsed = True
+
     return splits, lyric_matches, len(files)
 
 
@@ -675,6 +722,11 @@ def main(argv: list[str] | None = None) -> None:
     out_dir = Path(args.out_dir).resolve()
     os.makedirs(out_dir, exist_ok=True)
 
+    if args.duv_max is not None and args.duv != "on":
+        raise SystemExit("--duv-max requires --duv on")
+    if not math.isclose(sum(args.split), 1.0, rel_tol=1e-6, abs_tol=1e-6):
+        raise SystemExit("split must sum to 1.0")
+
     # 簡易ヘルプ
     if args.tags and not all(Path(p).is_file() for p in args.tags):
         missing = [p for p in args.tags if not Path(p).is_file()]
@@ -686,6 +738,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # MIDI ファイル収集
     files = gather_midi_files(in_dir)
+    logger.info("files_scanned=%d", len(files))
 
     # I/O バッチング：num-workers > 1 のときシャッフル（ホットスポット回避）
     try:
@@ -712,28 +765,14 @@ def main(argv: list[str] | None = None) -> None:
     splits, lyric_matches, midi_file_count = build_corpus(args, files)
     logger.info("tempo fallback used: %d", _TEMPO_FALLBACKS)
 
-    # DUV 統計と必要ならクラスタリング
-    duv_freq: Counter[str] = Counter()
-    for samp in splits["train"] + splits.get("valid", []) + splits.get("test", []):
-        for tok in samp.tokens:
-            if tok.startswith("DUV_"):
-                duv_freq[tok] += 1
-    if args.duv_max is not None and duv_freq:
-        keep = {t for t, _ in duv_freq.most_common(args.duv_max)}
-        collapsed = len(duv_freq) - len(keep)
-        if collapsed:
-            for samp_list in splits.values():
-                for s in samp_list:
-                    s.tokens = [
-                        t if not t.startswith("DUV_") or t in keep else "DUV_OOV"
-                        for t in s.tokens
-                    ]
-            duv_freq = Counter()
-            for samp in splits["train"] + splits.get("valid", []) + splits.get("test", []):
-                for tok in samp.tokens:
-                    if tok.startswith("DUV_"):
-                        duv_freq[tok] += 1
-        logger.info("DUV kept: %d collapsed: %d", len(keep), collapsed)
+    if getattr(args, "_duv_collapsed", False):
+        keep_count, collapsed = getattr(args, "_duv_stats", (0, 0))
+    else:
+        keep_count, collapsed = _collapse_duv_tokens_inplace(splits, args.duv_max)
+        if keep_count or collapsed:
+            logger.info("DUV kept: %d collapsed: %d", keep_count, collapsed)
+
+    duv_freq = _duv_frequency(splits)
 
     # ボキャブラリ構築
     vocab = build_vocab(splits["train"])

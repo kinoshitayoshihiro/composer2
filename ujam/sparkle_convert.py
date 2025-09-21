@@ -952,6 +952,8 @@ def resolve_downbeats(
     end_t = pm.get_end_time()
     downbeats = list(pm.get_downbeats())
     rebuild = len(downbeats) < 2
+    if len(meter_map) > 1 and not rebuild:
+        rebuild = True
     if not rebuild:
         # If PrettyMIDI already places downbeats exactly at meter-change boundaries,
         # prefer trusting it even when coarse spacing differs from theoretical
@@ -1019,34 +1021,28 @@ def resolve_downbeats(
             bar_beats = _beats_per_bar(num, den)
             if bar_beats <= 0:
                 continue
-            cur = max(downbeats_beats[-1], start_b)
-            if cur < start_b + EPS:
-                cur = start_b
+            cur = max(downbeats_beats[-1], seg_start_b)
+            if cur < seg_start_b + EPS:
+                cur = seg_start_b
             else:
-                offset = math.fmod(cur - start_b, bar_beats)
+                offset = math.fmod(cur - seg_start_b, bar_beats)
                 if offset < 0:
                     offset += bar_beats
                 if offset > EPS:
                     cur += bar_beats - offset
-
-            while cur < end_b - EPS:
+            while cur < seg_end_b - EPS:
                 if abs(cur - downbeats_beats[-1]) > EPS:
                     downbeats_beats.append(cur)
                 cur += bar_beats
-
-            # ensure segment boundary is present exactly once
-            if downbeats_beats[-1] < end_b - EPS:
-                downbeats_beats.append(end_b)
+            if downbeats_beats[-1] < seg_end_b - EPS:
+                downbeats_beats.append(seg_end_b)
             else:
-                downbeats_beats[-1] = end_b
-
-        # convert beats → seconds with EPS de-dup
+                downbeats_beats[-1] = seg_end_b
         downbeats = []
         for beat_val in downbeats_beats:
             t = beat_to_time(beat_val)
             if not downbeats or abs(t - downbeats[-1]) > EPS:
                 downbeats.append(t)
-
         if not downbeats:
             downbeats = [beat_to_time(meter_entries[0][0]), float(end_t)]
 
@@ -5975,60 +5971,44 @@ def build_sparkle_midi(
             num, den = get_meter_at(meter_map, start, times=meter_times)
             sb = time_to_beat(start)
             eb = time_to_beat(next_start)
-# --- resolved begin ---
-bar_len_beats = _beats_per_bar(num, den) if den else 0.0
-total = max(1, pulses_per_bar(num, den, pulse_subdiv_beats))
-
-# 不正状態（拍数0、小節長不明、範囲逆転）はフォールバック
-if bar_len_beats <= 0.0 or total <= 0 or eb <= sb:
-    pulse = (0.0, float(start))  # (小節内オフセット=0.0, 絶対時刻)
-    grid_list = [pulse]
-    bar_grid[i] = grid_list
-    bar_pulses_dict[i] = list(grid_list)
-    continue
-
-# 小節ごとに位相0から刻む（0, subdiv, 2*subdiv, ...）
-offsets: List[float] = [k * pulse_subdiv_beats for k in range(total)]
-
-grid: List[Tuple[float, float]] = []
-for k, off in enumerate(offsets):
-    beat_pos = sb + off
-    if beat_pos > eb + EPS:
-        break
-    t_pos = beat_to_time(beat_pos)
-    if t_pos >= next_start - EPS:
-        break
-
-    # スウィング適用（小節内位相に対してのみ）
-    swing_off = 0.0
-    if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
-        swing_step = swing * pulse_subdiv_beats
-        if swing_shape == "offbeat":
-            if k % 2 == 1:
-                swing_off = swing_step
-        elif swing_shape == "even":
-            if k % 2 == 1:
-                swing_off = -swing_step
-        else:
-            # e.g., shuffle/triple feel: 0,1,2 のうち 1 に寄せるなど
-            if k % 3 == 1:
-                swing_off = swing_step
-
-    # 小節頭からのオフセットで位相リセット、かつ小節境界にクリップ
-    beat_val = sb + off + swing_off
-    beat_val = clip_to_bar(beat_val, sb, sb + bar_len_beats)
-
-    time_val = beat_to_time(beat_val)
-    # gridは (小節内オフセット[beat], 絶対時刻[sec]) で保持
-    grid.append((float(beat_val - sb), float(time_val)))
-
-if not grid:
-    grid = [(0.0, float(start))]
-
-grid_list = list(grid)
-bar_grid[i] = grid_list
-bar_pulses_dict[i] = list(grid_list)
-# --- resolved end ---
+            bar_len_beats = _beats_per_bar(num, den) if den else 0.0
+            total = max(1, pulses_per_bar(num, den, pulse_subdiv_beats))
+            if bar_len_beats <= 0.0 or total <= 0 or eb <= sb:
+                pulse = (0.0, float(start))
+                grid_list = [pulse]
+                bar_grid[i] = grid_list
+                bar_pulses_dict[i] = list(grid_list)
+                continue
+            offsets = [k * pulse_subdiv_beats for k in range(total)]
+            grid: List[Tuple[float, float]] = []
+            for k, off in enumerate(offsets):
+                beat_pos = sb + off
+                if beat_pos > eb + EPS:
+                    break
+                t_pos = beat_to_time(beat_pos)
+                if t_pos >= next_start - EPS:
+                    break
+                swing_off = 0.0
+                if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
+                    swing_step = swing * pulse_subdiv_beats
+                    if swing_shape == "offbeat":
+                        if k % 2 == 1:
+                            swing_off = swing_step
+                    elif swing_shape == "even":
+                        if k % 2 == 1:
+                            swing_off = -swing_step
+                    else:
+                        if k % 3 == 1:
+                            swing_off = swing_step
+                beat_val = sb + off + swing_off
+                beat_val = clip_to_bar(beat_val, sb, sb + bar_len_beats)
+                time_val = beat_to_time(beat_val)
+                grid.append((float(beat_val - sb), float(time_val)))
+            if not grid:
+                grid = [(0.0, float(start))]
+            grid_list = list(grid)
+            bar_grid[i] = grid_list
+            bar_pulses_dict[i] = list(grid_list)
 
     # Velocity curve helper
     bar_progress: Dict[int, int] = {}

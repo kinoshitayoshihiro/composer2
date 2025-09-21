@@ -84,10 +84,10 @@ def _mk_note(pitch: int, start: float, duration: float, velocity: int) -> pretty
 
 def _minimal_stem(path: Path, *, min_dur: float, auto_tempo: bool) -> StemResult:
     inst = pretty_midi.Instrument(program=0, name=path.stem)
-    inst.notes.append(_mk_note(60, 0.0, float(min_dur), 100))
+    inst.notes.append(_mk_note(36, 0.0, float(min_dur), 100))
     tempo = 120.0 if auto_tempo else None
     if not inst.notes:
-        inst.notes.append(_mk_note(60, 0.0, float(min_dur), 100))
+        inst.notes.append(_mk_note(36, 0.0, float(min_dur), 100))
     return StemResult(inst, tempo)
 
 try:  # Optional heavy deps

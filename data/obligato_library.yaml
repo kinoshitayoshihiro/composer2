@@ -1,0 +1,34 @@
+obligato_patterns:
+  synth:
+    intro:
+      neutral:
+        - name: bell_intro_hint
+          description: 高域ベルで1〜2発だけ、リフの隙間に
+          rhythm: [3.0]
+          contour: ["up_minor3"]
+          register: high
+          density: low
+      reflective:
+        - name: strings_intro_pad_glide
+          description: ストリングス短いグライドで空気を作る
+          rhythm: [2.0]
+          contour: ["gliss_up5"]
+          register: mid_high
+          density: low
+
+  guitar:
+    intro:
+      neutral:
+        - name: gtr_intro_slide
+          description: スライドで“来るぞ”を示す短い合図
+          rhythm: [3.5]
+          contour: ["up_second"]
+          register: mid
+          density: low
+      intense:
+        - name: gtr_intro_pick_scrape
+          description: ピックスクラッチ的上昇（簡易近似）
+          rhythm: [2.5]
+          contour: ["gliss_up5"]
+          register: mid
+          density: low

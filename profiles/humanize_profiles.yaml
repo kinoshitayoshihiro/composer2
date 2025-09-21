@@ -1,0 +1,21 @@
+profiles:
+  ballad_subtle:
+    onset_sigma_ms: 5
+    velocity_jitter: 5
+    duration_jitter_ratio: 0.03
+    swing_eighth: 0.10
+  ballad_warm:
+    onset_sigma_ms: 6
+    velocity_jitter: 7
+    duration_jitter_ratio: 0.04
+    swing_eighth: 0.12
+  rock_tight:
+    onset_sigma_ms: 4
+    velocity_jitter: 4
+    duration_jitter_ratio: 0.02
+    swing_eighth: 0.00
+  rock_drive:
+    onset_sigma_ms: 6
+    velocity_jitter: 6
+    duration_jitter_ratio: 0.03
+    swing_eighth: 0.00

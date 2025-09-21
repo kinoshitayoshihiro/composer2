@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 from pathlib import Path
 import math
 import io
@@ -136,6 +136,11 @@ def generate_riff_from_vocal(
     genre: str = "ballad",
     bars: int = 8,
     dials: Dict[str, float] | None = None,
+    humanize: bool | Dict | None = True,
+    humanize_profile: Optional[str] = None,
+    quantize: Optional[Dict] = None,
+    groove: Optional[Dict] = None,
+    late_humanize_ms: int = 0,
 ) -> pretty_midi.PrettyMIDI:
     """
     既存ボーカル（MIDI）から、ボーカルの“隙間”を優先してリフを生成。
@@ -177,6 +182,28 @@ def generate_riff_from_vocal(
             start = beat * sec_per_beat
             end = (beat + cfg.note_beats) * sec_per_beat
             inst.notes.append(pretty_midi.Note(velocity=cfg.base_velocity, pitch=p, start=start, end=end))
+
+    if humanize:
+        from utilities.humanize_bridge import apply_humanize_to_instrument
+
+        profile = humanize_profile or ("rock_tight" if genre == "rock" else "ballad_subtle")
+        overrides = (humanize if isinstance(humanize, dict) else None) or {}
+        quant = quantize or {
+            "grid": 0.25,
+            "swing": 0.0 if genre == "rock" else 0.10,
+        }
+        groove_spec = groove or {
+            "name": "rock_16_loose" if genre == "rock" else "ballad_8_swing"
+        }
+        apply_humanize_to_instrument(
+            inst,
+            tempo,
+            profile=profile,
+            overrides=overrides,
+            quantize=quant,
+            groove=groove_spec,
+            late_humanize_ms=late_humanize_ms,
+        )
 
     pm.instruments.append(inst)
     return pm

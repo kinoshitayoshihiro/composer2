@@ -121,6 +121,11 @@ class RiffGenerator(BasePartGenerator):
         bars: int = 8,
         seed: Optional[int] = None,
         style: Optional[str] = None,
+        humanize: bool | dict | None = True,
+        humanize_profile: Optional[str] = None,
+        quantize: Optional[dict] = None,
+        groove: Optional[dict] = None,
+        late_humanize_ms: int = 0,
     ) -> pretty_midi.PrettyMIDI:
         pm = pretty_midi.PrettyMIDI(initial_tempo=float(tempo or 120.0))
         inst = pretty_midi.Instrument(program=self.program, name=f"Riff:{self.instrument}")
@@ -150,6 +155,29 @@ class RiffGenerator(BasePartGenerator):
                     inst.notes.append(
                         pretty_midi.Note(velocity=vel, pitch=midi, start=start, end=end)
                     )
+
+        if humanize:
+            from utilities.humanize_bridge import apply_humanize_to_instrument
+
+            profile = humanize_profile or self._guess_profile(section, emotion, style)
+            overrides = (humanize if isinstance(humanize, dict) else None) or {}
+            quant = quantize or {
+                "grid": 0.25,
+                "swing": 0.10 if (style or "").lower() == "ballad" else 0.0,
+            }
+            groove_spec = groove
+            if groove_spec is None:
+                guess = self._guess_groove(section, emotion, style)
+                groove_spec = {"name": guess} if guess else None
+            apply_humanize_to_instrument(
+                inst,
+                tempo,
+                profile=profile,
+                overrides=overrides,
+                quantize=quant,
+                groove=groove_spec,
+                late_humanize_ms=late_humanize_ms,
+            )
 
         pm.instruments.append(inst)
         return pm
@@ -229,6 +257,19 @@ class RiffGenerator(BasePartGenerator):
         if any(k in emo for k in ("intense", "heroic", "tension")):
             return "rock"
         return "ballad"
+
+    def _guess_profile(self, section: str, emotion: str, style: Optional[str]) -> str:
+        sec = (section or "").lower()
+        sty = (style or "").lower()
+        if sty == "rock":
+            return "rock_tight" if sec in ("chorus", "bridge") else "rock_drive"
+        return "ballad_warm" if sec in ("chorus", "bridge") else "ballad_subtle"
+
+    def _guess_groove(self, section: str, emotion: str, style: Optional[str]) -> str:
+        sty = (style or "").lower()
+        if sty == "rock":
+            return "rock_16_loose"
+        return "ballad_8_swing"
 
     def _default_duration(self, pattern: RiffPattern) -> float:
         # Basic heuristic: denser patterns get shorter note values

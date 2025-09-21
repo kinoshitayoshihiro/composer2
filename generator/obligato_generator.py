@@ -125,6 +125,11 @@ class ObligatoGenerator(BasePartGenerator):
         chord_seq: List[Tuple[float, str]],
         bars: int = 8,
         seed: Optional[int] = None,
+        humanize: bool | dict | None = True,
+        humanize_profile: Optional[str] = None,
+        quantize: Optional[dict] = None,
+        groove: Optional[dict] = None,
+        late_humanize_ms: int = 0,
     ) -> pretty_midi.PrettyMIDI:
         pm = pretty_midi.PrettyMIDI(initial_tempo=float(tempo or 120.0))
         inst = pretty_midi.Instrument(program=self.program, name=f"Obl:{self.instrument}")
@@ -174,8 +179,35 @@ class ObligatoGenerator(BasePartGenerator):
                     )
                     current = target
 
+        if humanize:
+            from utilities.humanize_bridge import apply_humanize_to_instrument
+
+            profile = humanize_profile or self._guess_profile(section, emotion)
+            overrides = (humanize if isinstance(humanize, dict) else None) or {}
+            quant = quantize or {
+                "grid": 0.25,
+                "swing": 0.10 if section.lower() != "chorus" else 0.0,
+            }
+            groove_spec = groove or {"name": self._guess_groove(section, emotion)}
+            apply_humanize_to_instrument(
+                inst,
+                tempo,
+                profile=profile,
+                overrides=overrides,
+                quantize=quant,
+                groove=groove_spec,
+                late_humanize_ms=late_humanize_ms,
+            )
+
         pm.instruments.append(inst)
         return pm
+
+    def _guess_profile(self, section: str, emotion: str) -> str:
+        sec = (section or "").lower()
+        return "ballad_warm" if sec in ("intro", "verse", "prechorus") else "ballad_subtle"
+
+    def _guess_groove(self, section: str, emotion: str) -> str:
+        return "ballad_8_swing"
 
     # ------------------------- Internals -------------------------
     def _load_patterns(self, path: Path) -> Dict[str, Dict[str, List[OblPattern]]]:

@@ -1015,7 +1015,7 @@ def resolve_downbeats(
         start_b = meter_entries[0][0]
         downbeats_beats.append(start_b)
         meter_entries.append((end_beat, meter_entries[-1][1], meter_entries[-1][2]))
-        for (seg_start_b, num, den), (seg_end_b, _, _) in zip(
+        for (seg_start_b, num, den), (seg_end_b, next_num, next_den) in zip(
             meter_entries, meter_entries[1:]
         ):
             bar_beats = _beats_per_bar(num, den)
@@ -1028,6 +1028,9 @@ def resolve_downbeats(
                 downbeats_beats.append(seg_start_b)
             cur = seg_start_b
             while cur < seg_end_b - EPS:
+                remaining = seg_end_b - cur
+                if remaining + EPS < bar_beats and (num != next_num or den != next_den):
+                    break
                 if abs(cur - downbeats_beats[-1]) > EPS:
                     downbeats_beats.append(cur)
                 cur += bar_beats
@@ -6317,14 +6320,26 @@ def build_sparkle_midi(
 
     silent_qualities = set(silent_qualities or [])
 
-    bar_presets = {
-        i: (
-            DENSITY_PRESETS.get(stats.get("bar_density", {}).get(i, "med"), DENSITY_PRESETS["med"])
+    def _bar_preset_for(index: int) -> Dict[str, float]:
+        base = (
+            DENSITY_PRESETS.get(stats.get("bar_density", {}).get(index, "med"), DENSITY_PRESETS["med"])
             if stats
             else DENSITY_PRESETS["med"]
         )
-        for i in range(len(downbeats))
-    }
+        preset = dict(base)
+        stride_val = preset.get("stride")
+        default_stride = 1
+        if stride_val is None:
+            stride_int = default_stride
+        else:
+            try:
+                stride_int = int(round(float(stride_val)))
+            except Exception:
+                stride_int = default_stride
+        preset["stride"] = max(1, stride_int)
+        return preset
+
+    bar_presets = {i: _bar_preset_for(i) for i in range(len(downbeats))}
     precomputed_accents = {i: accent_for_bar(i) for i in range(len(downbeats))}
     vf0_by_bar = {i: vel_factor(vel_curve, 0, bar_counts.get(i, 1)) for i in range(len(downbeats))}
 

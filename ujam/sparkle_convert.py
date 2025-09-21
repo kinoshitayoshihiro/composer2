@@ -136,7 +136,7 @@ __all__ = [
     "main",
 ]
 
-NOTE_RE = re.compile(r"^([A-G][b#]?)(-?\d+)$")
+NOTE_RE = re.compile(r"^([A-Ga-g])([b#]{0,2})(-?\d+)$")
 
 _DEFAULT_NOTE_ALIASES: Dict[str, int] = {
     "open_1_8": 24,
@@ -202,42 +202,36 @@ def _note_name_to_midi(tok: str) -> Optional[int]:
         .replace("♯", "#")
         .replace("ｂ", "b")
         .replace("＃", "#")
+        .replace("𝄫", "bb")
+        .replace("𝄪", "##")
     )
     match = NOTE_RE.match(token)
     if not match:
         return None
-    name_raw, octave_raw = match.group(1), match.group(2)
+    letter, accidental, octave_raw = match.groups()
     try:
         octave = int(octave_raw)
     except Exception:
         return None
-    name = name_raw.replace("♭", "b").replace("♯", "#")
     base = {
         "C": 0,
-        "C#": 1,
-        "Db": 1,
         "D": 2,
-        "D#": 3,
-        "Eb": 3,
         "E": 4,
-        "E#": 5,
-        "Fb": 4,
         "F": 5,
-        "F#": 6,
-        "Gb": 6,
         "G": 7,
-        "G#": 8,
-        "Ab": 8,
         "A": 9,
-        "A#": 10,
-        "Bb": 10,
         "B": 11,
-        "Cb": 11,
-        "B#": 0,
     }
-    if name not in base:
-        return None
-    return base[name] + (octave + 1) * 12
+    semitone = base[letter.upper()]
+    if accidental == "#":
+        semitone += 1
+    elif accidental == "##":
+        semitone += 2
+    elif accidental == "b":
+        semitone -= 1
+    elif accidental == "bb":
+        semitone -= 2
+    return semitone + (octave + 1) * 12
 
 
 def _resolve_pitch_token(tok: Any, mapping: Optional[Dict[str, Any]] = None) -> Optional[int]:
@@ -273,16 +267,6 @@ def _resolve_pitch_token(tok: Any, mapping: Optional[Dict[str, Any]] = None) -> 
         if num_val is not None:
             return num_val
 
-        alias = NOTE_ALIASES.get(token)
-        if alias is not None:
-            alias_resolved = _resolve_pitch_token(alias, None)
-            if alias_resolved is not None:
-                return alias_resolved
-
-        note_val = _note_name_to_midi(token)
-        if note_val is not None:
-            return note_val
-
         if mapping:
             for key in (
                 "phrase_note_map",
@@ -296,6 +280,16 @@ def _resolve_pitch_token(tok: Any, mapping: Optional[Dict[str, Any]] = None) -> 
                     mapped = _resolve_pitch_token(mp[token], None)
                     if mapped is not None:
                         return mapped
+
+        alias = NOTE_ALIASES.get(token)
+        if alias is not None:
+            alias_resolved = _resolve_pitch_token(alias, None)
+            if alias_resolved is not None:
+                return alias_resolved
+
+        note_val = _note_name_to_midi(token)
+        if note_val is not None:
+            return note_val
 
     return None
 

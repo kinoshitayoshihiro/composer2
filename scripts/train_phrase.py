@@ -170,6 +170,20 @@ FIELDS = [
 ]
 
 
+def _bucket_value(row: dict[str, str], *names: str) -> int:
+    for name in names:
+        value = row.get(name)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
 def load_csv_rows(path: Path, required: set[str]) -> list[dict[str, str]]:
     """Read *path* and ensure required columns exist."""
 
@@ -731,12 +745,12 @@ def train_model(
                 feats["mood"] = torch.tensor(md, dtype=torch.long)
             if self.use_vel_bucket_feat:
                 vb = [
-                    int(r.get("velocity_bucket", r.get("vel_bucket", 0))) for r in g
+                    _bucket_value(r, "velocity_bucket", "vel_bucket") for r in g
                 ] + [0] * pad
                 feats["vel_bucket"] = torch.tensor(vb, dtype=torch.long)
             if self.use_dur_bucket_feat:
                 db = [
-                    int(r.get("duration_bucket", r.get("dur_bucket", 0))) for r in g
+                    _bucket_value(r, "duration_bucket", "dur_bucket") for r in g
                 ] + [0] * pad
                 feats["dur_bucket"] = torch.tensor(db, dtype=torch.long)
             if self.use_local_stats:
@@ -784,12 +798,12 @@ def train_model(
             }
             if self.has_vel_bucket:
                 vb = [
-                    int(r.get("velocity_bucket", r.get("vel_bucket", 0))) for r in g
+                    _bucket_value(r, "velocity_bucket", "vel_bucket") for r in g
                 ] + [0] * pad
                 targets["vel_cls"] = torch.tensor(vb, dtype=torch.long)
             if self.has_dur_bucket:
                 db = [
-                    int(r.get("duration_bucket", r.get("dur_bucket", 0))) for r in g
+                    _bucket_value(r, "duration_bucket", "dur_bucket") for r in g
                 ] + [0] * pad
                 targets["dur_cls"] = torch.tensor(db, dtype=torch.long)
             tags = {
@@ -885,12 +899,12 @@ def train_model(
     dur_bucket_size = 0
     if use_duv_embed:
         vbs = [
-            int(r.get("velocity_bucket", r.get("vel_bucket", 0)))
+            _bucket_value(r, "velocity_bucket", "vel_bucket")
             for r in train_rows + val_rows
             if ("velocity_bucket" in r) or ("vel_bucket" in r)
         ]
         dbs = [
-            int(r.get("duration_bucket", r.get("dur_bucket", 0)))
+            _bucket_value(r, "duration_bucket", "dur_bucket")
             for r in train_rows + val_rows
             if ("duration_bucket" in r) or ("dur_bucket" in r)
         ]

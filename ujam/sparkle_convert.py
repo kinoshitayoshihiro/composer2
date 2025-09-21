@@ -159,18 +159,20 @@ _SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
 
 # Helper utilities ---------------------------------------------------------
 
+def _beats_per_bar(num: int, den: int) -> float:
+    """Return the theoretical bar length in beats for ``num/den``."""
+
+    if den == 0:
+        raise ValueError("time signature denominator must be non-zero")
+    return num * (4.0 / den)
+
+
 def pulses_per_bar(num: int, den: int, unit: float) -> int:
     """Return the pulse count implied by a time signature and subdivision."""
 
     if unit <= 0.0:
         raise ValueError("pulse subdivision must be positive")
-    if den == 0:
-        raise ValueError("time signature denominator must be non-zero")
-    if den == 8:
-        return max(1, int(num))
-    if den == 4:
-        return max(1, int(num * 2))
-    bar_beats = num * (4.0 / den)
+    bar_beats = _beats_per_bar(num, den)
     total = int(round(bar_beats / unit))
     return max(1, total)
 
@@ -1002,23 +1004,51 @@ def resolve_downbeats(
                 break
 
     if rebuild:
-        downbeats = []
-        for idx, (mt, num, den) in enumerate(meter_map):
-            next_t = meter_map[idx + 1][0] if idx + 1 < len(meter_map) else end_t
-            start_b = time_to_beat(mt)
-            end_b = time_to_beat(next_t)
-            bar_beats = num * (4.0 / den)
+        meter_entries = [(time_to_beat(mt), num, den) for mt, num, den in meter_map]
+        meter_entries.sort(key=lambda item: item[0])
+        if not meter_entries:
+            return [0.0, float(end_t)]
+        end_beat = time_to_beat(end_t)
+        downbeats_beats: List[float] = []
+        start_b = meter_entries[0][0]
+        downbeats_beats.append(start_b)
+        meter_entries.append((end_beat, meter_entries[-1][1], meter_entries[-1][2]))
+        for (seg_start_b, num, den), (seg_end_b, _, _) in zip(
+            meter_entries, meter_entries[1:]
+        ):
+            bar_beats = _beats_per_bar(num, den)
             if bar_beats <= 0:
                 continue
-            bar = start_b
-            while bar < end_b - EPS:
-                downbeats.append(beat_to_time(bar))
-                bar += bar_beats
-            boundary = float(next_t)
-            if not downbeats or abs(boundary - downbeats[-1]) > EPS:
-                downbeats.append(boundary)
+            cur = max(downbeats_beats[-1], start_b)
+            if cur < start_b + EPS:
+                cur = start_b
+            else:
+                offset = math.fmod(cur - start_b, bar_beats)
+                if offset < 0:
+                    offset += bar_beats
+                if offset > EPS:
+                    cur += bar_beats - offset
+
+            while cur < end_b - EPS:
+                if abs(cur - downbeats_beats[-1]) > EPS:
+                    downbeats_beats.append(cur)
+                cur += bar_beats
+
+            # ensure segment boundary is present exactly once
+            if downbeats_beats[-1] < end_b - EPS:
+                downbeats_beats.append(end_b)
+            else:
+                downbeats_beats[-1] = end_b
+
+        # convert beats → seconds with EPS de-dup
+        downbeats = []
+        for beat_val in downbeats_beats:
+            t = beat_to_time(beat_val)
+            if not downbeats or abs(t - downbeats[-1]) > EPS:
+                downbeats.append(t)
+
         if not downbeats:
-            downbeats = list(beat_times[::4])
+            downbeats = [beat_to_time(meter_entries[0][0]), float(end_t)]
 
     downbeats.sort()
     unique: List[float] = []
@@ -5651,7 +5681,7 @@ def build_sparkle_midi(
             stats["song_end_hint"] = float(song_end_hint)
         if downbeats:
             stats["downbeats_last"] = float(downbeats[-1])
-        # Dict[bar_index, List[(beat_position_in_beats, absolute_time_seconds)]]
+        # Dict[bar_index, List[(bar_relative_beats, absolute_time_seconds)]]
         # capturing the meter-derived reference grid per bar. Stored as floats to
         # ease JSON export without further casting. ``bar_triggers`` records the
         # actual trigger placements when phrases are emitted so analytics can
@@ -5945,50 +5975,60 @@ def build_sparkle_midi(
             num, den = get_meter_at(meter_map, start, times=meter_times)
             sb = time_to_beat(start)
             eb = time_to_beat(next_start)
-            bar_beats_actual = eb - sb
-            bar_beats_nominal = num * (4.0 / den) if den else 0.0
-            total = max(1, pulses_per_bar(num, den, pulse_subdiv_beats))
-            if bar_beats_nominal <= 0.0 or total <= 0 or bar_beats_actual <= 0.0:
-                pulse = (float(sb), float(beat_to_time(sb)))
-                grid_list = [pulse]
-                bar_grid[i] = grid_list
-                bar_pulses_dict[i] = list(grid_list)
-                continue
-            if bar_beats_actual > 0.0 and math.isclose(
-                bar_beats_actual,
-                bar_beats_nominal,
-                rel_tol=1e-6,
-                abs_tol=1e-9,
-            ):
-                end_beat = sb + bar_beats_actual
-            else:
-                end_beat = sb + bar_beats_nominal
-            step = pulse_subdiv_beats if pulse_subdiv_beats > 0 else bar_beats_nominal / total
-            grid: List[Tuple[float, float]] = []
-            for k in range(total):
-                pos = sb + k * step
-                # Grid swing offsets the theoretical meter grid; actual trigger swing is
-                # applied later during phrase emission when stride-aware intervals occur.
-                if swing > 0.0 and math.isclose(step, swing_unit_beats, abs_tol=EPS):
-                    shift = 0.0
-                    swing_step = swing * step
-                    if swing_shape == "offbeat":
-                        if k % 2 == 1:
-                            shift = swing_step
-                    elif swing_shape == "even":
-                        if k % 2 == 1:
-                            shift = -swing_step
-                    else:
-                        if k % 3 == 1:
-                            shift = swing_step
-                    pos += shift
-                pos = clip_to_bar(pos, sb, end_beat)
-                grid.append((float(pos), float(beat_to_time(pos))))
-            if not grid:
-                grid = [(float(sb), float(beat_to_time(sb)))]
-            grid_list = list(grid)
-            bar_grid[i] = grid_list
-            bar_pulses_dict[i] = list(grid_list)
+# --- resolved begin ---
+bar_len_beats = _beats_per_bar(num, den) if den else 0.0
+total = max(1, pulses_per_bar(num, den, pulse_subdiv_beats))
+
+# 不正状態（拍数0、小節長不明、範囲逆転）はフォールバック
+if bar_len_beats <= 0.0 or total <= 0 or eb <= sb:
+    pulse = (0.0, float(start))  # (小節内オフセット=0.0, 絶対時刻)
+    grid_list = [pulse]
+    bar_grid[i] = grid_list
+    bar_pulses_dict[i] = list(grid_list)
+    continue
+
+# 小節ごとに位相0から刻む（0, subdiv, 2*subdiv, ...）
+offsets: List[float] = [k * pulse_subdiv_beats for k in range(total)]
+
+grid: List[Tuple[float, float]] = []
+for k, off in enumerate(offsets):
+    beat_pos = sb + off
+    if beat_pos > eb + EPS:
+        break
+    t_pos = beat_to_time(beat_pos)
+    if t_pos >= next_start - EPS:
+        break
+
+    # スウィング適用（小節内位相に対してのみ）
+    swing_off = 0.0
+    if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
+        swing_step = swing * pulse_subdiv_beats
+        if swing_shape == "offbeat":
+            if k % 2 == 1:
+                swing_off = swing_step
+        elif swing_shape == "even":
+            if k % 2 == 1:
+                swing_off = -swing_step
+        else:
+            # e.g., shuffle/triple feel: 0,1,2 のうち 1 に寄せるなど
+            if k % 3 == 1:
+                swing_off = swing_step
+
+    # 小節頭からのオフセットで位相リセット、かつ小節境界にクリップ
+    beat_val = sb + off + swing_off
+    beat_val = clip_to_bar(beat_val, sb, sb + bar_len_beats)
+
+    time_val = beat_to_time(beat_val)
+    # gridは (小節内オフセット[beat], 絶対時刻[sec]) で保持
+    grid.append((float(beat_val - sb), float(time_val)))
+
+if not grid:
+    grid = [(0.0, float(start))]
+
+grid_list = list(grid)
+bar_grid[i] = grid_list
+bar_pulses_dict[i] = list(grid_list)
+# --- resolved end ---
 
     # Velocity curve helper
     bar_progress: Dict[int, int] = {}

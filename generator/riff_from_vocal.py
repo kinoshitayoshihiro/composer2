@@ -205,5 +205,9 @@ def generate_riff_from_vocal(
             late_humanize_ms=late_humanize_ms,
         )
 
+    from utilities.midi_edit import light_cleanup
+
+    light_cleanup(inst)
+
     pm.instruments.append(inst)
     return pm

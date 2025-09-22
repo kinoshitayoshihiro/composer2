@@ -888,25 +888,29 @@ def train(
             notes = midi_to_events(pm, tempo)
             offs = [off for off, _ in notes]
 
+            beats_per_bar_local = 4.0
             try:
-                midi = pm_to_mido(pm)
-            except Exception as exc:
-                logger.warning("Failed to convert %s to mido: %s", p, exc)
-                return None, "error"
-            ticks_per_beat = midi.ticks_per_beat
-            total_ticks = max(sum(msg.time for msg in tr) for tr in midi.tracks)
-            ts_msg = None
-            for tr in midi.tracks:
-                for msg in tr:
-                    if msg.type == "time_signature":
-                        ts_msg = msg
-                        break
-                if ts_msg:
-                    break
-            beats_per_bar_local = (
-                ts_msg.numerator * (4 / ts_msg.denominator) if ts_msg is not None else 4.0
-            )
-            bars = total_ticks / (ticks_per_beat * beats_per_bar_local)
+                ts_changes = getattr(pm, "time_signature_changes", [])
+            except Exception:
+                ts_changes = []
+            if ts_changes:
+                ts0 = ts_changes[0]
+                try:
+                    beats_per_bar_local = float(ts0.numerator) * (4.0 / float(ts0.denominator))
+                except Exception:
+                    beats_per_bar_local = 4.0
+            try:
+                total_seconds = float(pm.get_end_time())
+            except Exception:
+                total_seconds = 0.0
+            if not math.isfinite(beats_per_bar_local) or beats_per_bar_local <= 0:
+                beats_per_bar_local = 4.0
+            if not math.isfinite(total_seconds) or total_seconds <= 0:
+                total_seconds = 0.0
+            if tempo and math.isfinite(tempo) and tempo > 0:
+                bars = (tempo / 60.0) * total_seconds / beats_per_bar_local if total_seconds > 0 else 0.0
+            else:
+                bars = 0.0
 
             all_notes = [n for inst in pm.instruments for n in inst.notes]
             note_cnt = len(all_notes)

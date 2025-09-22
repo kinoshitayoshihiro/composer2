@@ -874,11 +874,13 @@ def train(
         )
 
     def _load(p: Path):
+        audio_failed = False
         try:
             if p.suffix.lower() in {".wav", ".wave"}:
                 pm = convert_wav_to_midi(p, fixed_bpm=fixed_bpm)
                 if pm is None:
-                    return None, "error"
+                    audio_failed = True
+                    return None, "error", audio_failed
             else:
                 pm = pretty_midi.PrettyMIDI(str(p))
 
@@ -903,7 +905,7 @@ def train(
                 tempo_stats["skip"] += 1
                 skipped_paths.append(p)
                 logger.warning("Skipping %s due to %s tempo", p, reason)
-                return None, "skip"
+                return None, "skip", audio_failed
             if reason.startswith("fallback"):
                 tempo_stats["fallback"] += 1
             elif reason == "fold":
@@ -956,10 +958,12 @@ def train(
                 uniq_pitches,
                 is_drum,
                 is_fill,
-            ), src
+            ), src, audio_failed
         except Exception as exc:
             logger.warning("Failed to load %s: %s", p, exc)
-            return None, "error"
+            if p.suffix.lower() in {".wav", ".wave"}:
+                audio_failed = True
+            return None, "error", audio_failed
 
     if n_jobs == 1 or n_jobs == 0:
         loaded = [_load(p) for p in paths]
@@ -971,10 +975,19 @@ def train(
     bars_list: list[float] = []
     reason_counts: dict[str, int] = {}
     for p, r in zip(paths, loaded):
-        if r[0] is None:
-            files_skipped += 1
+        if len(r) == 3:
+            payload, load_reason, audio_decode_failed = r
+        else:
+            payload, load_reason = r
+            audio_decode_failed = False
+        if payload is None:
+            if load_reason == "skip":
+                files_skipped += 1
+            elif audio_decode_failed:
+                skipped_paths.append(p)
+                files_skipped += 1
             continue
-        notes, offs, bars, note_cnt, uniq_pitches, is_drum, is_fill = r[0]
+        notes, offs, bars, note_cnt, uniq_pitches, is_drum, is_fill = payload
         reason: str | None = None
         if bars < min_bars:
             reason = "bars"
@@ -987,9 +1000,18 @@ def train(
         elif exclude_fills and is_fill:
             reason = "fill"
 
-        if reason is not None:
+        if relax_filters and reason == "notes" and note_cnt == 0:
+            reason = None
+
+        # スキップにカウントするのは以下のみ：
+        # 1) オーディオデコード失敗 2) 明示フィルタ(reason!=None)
+        if reason is not None or audio_decode_failed:
+            if reason is not None:
+                skipped_paths.append(p)
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+            elif audio_decode_failed:
+                skipped_paths.append(p)
             files_skipped += 1
-            reason_counts[reason] = reason_counts.get(reason, 0) + 1
             continue
 
         results.append((notes, offs))

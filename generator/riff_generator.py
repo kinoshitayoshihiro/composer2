@@ -126,6 +126,8 @@ class RiffGenerator(BasePartGenerator):
         quantize: Optional[dict] = None,
         groove: Optional[dict] = None,
         late_humanize_ms: int = 0,
+        export_mode: str = "performance",  # 既定: 通常プラグイン向け
+        trigger_pitch: int = 60,
     ) -> pretty_midi.PrettyMIDI:
         pm = pretty_midi.PrettyMIDI(initial_tempo=float(tempo or 120.0))
         inst = pretty_midi.Instrument(program=self.program, name=f"Riff:{self.instrument}")
@@ -178,6 +180,21 @@ class RiffGenerator(BasePartGenerator):
                 groove=groove_spec,
                 late_humanize_ms=late_humanize_ms,
             )
+
+        from utilities.midi_edit import light_cleanup, hold_once_per_bar, to_trigger_per_bar
+
+        light_cleanup(inst)
+        if export_mode != "performance":
+            sec_per_beat = 60.0 / float(tempo or 120.0)
+            bar_len_sec = 4.0 * sec_per_beat
+            if export_mode == "chord_hold":
+                hold_once_per_bar(inst, bar_len_sec=bar_len_sec)
+            elif export_mode == "trigger":
+                to_trigger_per_bar(
+                    inst,
+                    bar_len_sec=bar_len_sec,
+                    trigger_pitch=int(trigger_pitch),
+                )
 
         pm.instruments.append(inst)
         return pm

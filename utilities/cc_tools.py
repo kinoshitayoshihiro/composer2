@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from typing import Iterable as TypingIterable
 
+try:
+    import pretty_midi
+except Exception:  # pragma: no cover - optional dependency
+    pretty_midi = None  # type: ignore
 
 from music21 import stream
 
@@ -114,11 +119,60 @@ def add_cc_events(part: stream.Part, events: TypingIterable[dict] | TypingIterab
     merged = merge_cc_events(base, events)
     part.extra_cc = to_sorted_dicts(merged)
 
+def add_cc_ramp(
+    inst: "pretty_midi.Instrument", cc: int, points: TypingIterable[tuple[float, int]]
+) -> None:
+    """Append CC ramp points ``(time_sec, value0-127)`` to ``inst``."""
+
+    if pretty_midi is None:  # pragma: no cover - runtime safeguard
+        raise ImportError("pretty_midi is required for add_cc_ramp")
+    for t, v in points:
+        value = int(max(0, min(127, round(v))))
+        inst.control_changes.append(pretty_midi.ControlChange(cc, value, float(t)))
+
+
+def add_cc_sine(
+    inst: "pretty_midi.Instrument",
+    cc: int,
+    t0: float,
+    t1: float,
+    base: int,
+    depth: int,
+    freq_hz: float,
+) -> None:
+    """Append sine-shaped CC modulation between ``t0`` and ``t1`` seconds."""
+
+    if pretty_midi is None:  # pragma: no cover - runtime safeguard
+        raise ImportError("pretty_midi is required for add_cc_sine")
+    if t1 <= t0:
+        return
+    steps = max(8, int((t1 - t0) * 40.0))
+    for i in range(steps + 1):
+        pos = i / steps
+        t = t0 + (t1 - t0) * pos
+        val = base + depth * math.sin(2.0 * math.pi * freq_hz * (t - t0))
+        value = int(max(0, min(127, round(val))))
+        inst.control_changes.append(pretty_midi.ControlChange(cc, value, t))
+
+
+def scale_gate(inst: "pretty_midi.Instrument", ratio: float) -> None:
+    """Scale note durations by ``ratio`` keeping a minimum length of ``10ms``."""
+
+    if pretty_midi is None:  # pragma: no cover - runtime safeguard
+        raise ImportError("pretty_midi is required for scale_gate")
+    for note in inst.notes:
+        dur = note.end - note.start
+        note.end = note.start + max(0.01, dur * ratio)
+
+
 __all__ = [
     "merge_cc_events",
     "to_sorted_dicts",
     "finalize_cc_events",
     "add_cc_events",
+    "add_cc_ramp",
+    "add_cc_sine",
+    "scale_gate",
     "CCEvent",
 ]
 

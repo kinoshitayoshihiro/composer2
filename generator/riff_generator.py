@@ -8,7 +8,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple, Optional
 from pathlib import Path
-import math
 
 try:
     import pretty_midi
@@ -33,6 +32,8 @@ except Exception:
 
     class BasePartGenerator:  # type: ignore
         pass
+from utilities.cc_tools import add_cc_ramp
+from utilities.pb_tools import add_pb_vibrato
 from utilities.pattern_loader import load_yaml
 
 
@@ -133,7 +134,6 @@ class RiffGenerator(BasePartGenerator):
         inst = pretty_midi.Instrument(program=self.program, name=f"Riff:{self.instrument}")
 
         sec_per_beat = 60.0 / float(tempo or 120.0)
-        beats_per_bar = 4.0
 
         # Pick a pattern according to style/section/emotion
         pattern = self._pick_pattern(style or self._guess_style(section, emotion), section, emotion)
@@ -157,6 +157,31 @@ class RiffGenerator(BasePartGenerator):
                     inst.notes.append(
                         pretty_midi.Note(velocity=vel, pitch=midi, start=start, end=end)
                     )
+
+        # Section-aware controller gestures (kept subtle by default)
+        sec_lower = (section or "").lower()
+        song_len = max((n.end for n in inst.notes), default=0.0)
+        if song_len > 0.0 and sec_lower in {"chorus", "bridge"}:
+            add_cc_ramp(inst, cc=1, points=[(0.0, 48), (song_len, 84)])
+
+        if sec_per_beat > 0:
+            for note in inst.notes:
+                beat_pos = note.start / sec_per_beat
+                if abs((beat_pos * 2.0) - round(beat_pos * 2.0)) < 1e-3:
+                    dur = note.end - note.start
+                    note.end = note.start + max(0.01, dur * 0.92)
+
+        for note in inst.notes:
+            if (note.end - note.start) >= 0.6:
+                t0 = max(note.start, note.end - 0.45)
+                add_pb_vibrato(
+                    inst,
+                    t0,
+                    note.end,
+                    depth_semi=0.18,
+                    freq_hz=5.6,
+                    bend_range=2.0,
+                )
 
         if humanize:
             from utilities.humanize_bridge import apply_humanize_to_instrument

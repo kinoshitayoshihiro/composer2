@@ -816,22 +816,23 @@ def train(
     else:
         raise ValueError("counts_dtype must be 'u32' or 'u64'")
 
-    # 大量ファイル時も探索を O(budget) で打ち切る（resume は列挙中に反映）
-    file_budget = _DEFAULT_FILE_BUDGET
-    try:
-        env_budget = int(os.getenv("GROOVE_SAMPLER_FILE_BUDGET", str(file_budget)))
-        if env_budget > 0:
-            file_budget = env_budget
-    except Exception:
-        pass
+# 大量ファイル時も探索を O(budget) で打ち切る（resume は列挙中に反映）
+file_budget = _DEFAULT_FILE_BUDGET
+try:
+    env_budget = int(os.getenv("GROOVE_SAMPLER_FILE_BUDGET", str(file_budget)))
+    if env_budget > 0:
+        file_budget = env_budget
+except Exception:
+    pass
 
-    paths: list[Path] = []
-    for p in _iter_loops(loop_dir, include_audio):
-        if resume and str(p) in processed_set:
-            continue
-        paths.append(p)
-        if file_budget > 0 and len(paths) >= file_budget:
-            break
+paths: list[Path] = []
+for p in _iter_loops(loop_dir, include_audio):
+    if resume and str(p) in processed_set:
+        continue
+    paths.append(p)
+    if file_budget > 0 and len(paths) >= file_budget:
+        break
+
 
     paths = [p for p in paths if str(p) not in processed_set]
     if aux_vocab_path and aux_vocab_path.exists():

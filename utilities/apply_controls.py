@@ -151,6 +151,69 @@ def apply_controls(
 
     sr_map = sample_rate_hz or {"cc11": 30.0, "cc64": 30.0, "bend": 120.0}
     max_map = max_events or {}
+    tempo_pairs = None
+    if isinstance(tempo_map, (list, tuple)):
+        tempo_pairs = sorted((float(b), float(bpm)) for b, bpm in tempo_map)
+
+    def _beats_to_seconds(beat: float) -> float:
+        tm = tempo_map
+        if tm is None:
+            return float(beat) * 0.5
+        if hasattr(tm, "sec_at"):
+            try:
+                return float(tm.sec_at(beat))
+            except Exception:  # pragma: no cover - fallback when tempo_map misbehaves
+                pass
+        if isinstance(tm, (int, float)):
+            bpm = float(tm)
+            if bpm <= 0 or not math.isfinite(bpm):
+                raise ValueError("bpm must be positive and finite")
+            return float(beat) * 60.0 / bpm
+        if callable(tm):
+            bpm = float(tm(beat))
+            if bpm <= 0 or not math.isfinite(bpm):
+                raise ValueError("bpm must be positive and finite")
+            return float(beat) * 60.0 / bpm
+        pairs = tempo_pairs or []
+        if not pairs:
+            return float(beat) * 0.5
+        t_acc = 0.0
+        for i, (b0, bpm) in enumerate(pairs):
+            b1 = pairs[i + 1][0] if i + 1 < len(pairs) else None
+            if i == 0 and beat <= b0:
+                return (beat - b0) * 60.0 / bpm
+            if b1 is None or beat < b1:
+                return t_acc + (beat - b0) * 60.0 / bpm
+            t_acc += (b1 - b0) * 60.0 / bpm
+        return t_acc
+
+    def _maybe_fix_cc_times(
+        curve: ControlCurve,
+        events: list[pretty_midi.ControlChange],
+        target: str,
+    ) -> None:
+        if not events or tempo_map is None or getattr(curve, "domain", None) != "beats":
+            return
+        first = float(events[0].time)
+        if any(abs(float(ev.time) - first) > max(time_eps, 1e-9) for ev in events[1:]):
+            return
+        sr_val = sr_map.get(target)
+        if sr_val is None:
+            sr_val = sr_map.get("cc")
+        if sr_val is None or float(sr_val) <= 0:
+            sr_val = getattr(curve, "sample_rate_hz", 0.0)
+        try:
+            sr = float(sr_val)
+        except (TypeError, ValueError):
+            sr = 0.0
+        if sr <= 0:
+            return
+        start_beat = float(curve.times[0]) if len(curve.times) else 0.0
+        step = 1.0 / sr
+        offset = float(getattr(curve, "offset_sec", 0.0))
+        for idx, ev in enumerate(events):
+            beat = start_beat + idx * step
+            ev.time = _beats_to_seconds(beat) + offset
 
     for ch, mapping in curves_by_channel.items():
         inst = ensure_instrument_for_channel(pm, ch)
@@ -217,6 +280,9 @@ def apply_controls(
                 )
                 new_cc = [c for c in inst.control_changes[pre:] if c.number == cc_num]
                 if new_cc:
+                    _maybe_fix_cc_times(curve, new_cc, name)
+                    rendered_start = new_cc[0].time
+                    rendered_end = new_cc[-1].time
                     start = float(curve.times[0]) if len(curve.times) else 0.0
                     end = float(curve.times[-1]) if len(curve.times) else 0.0
                     if curve.domain == "beats":

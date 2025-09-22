@@ -5,6 +5,7 @@ import io
 import logging
 from pathlib import Path
 import re
+from typing import Any
 
 import torch
 from torch import nn
@@ -96,8 +97,8 @@ def _extract_boundary_logits(outputs: object) -> torch.Tensor:
     """Return the boundary logits tensor from ``outputs``.
 
     Supports models that return either a mapping with a ``"boundary"`` entry
-    or a sequence whose first element holds the logits."""
-
+    or a sequence whose first element holds the logits.
+    """
     if isinstance(outputs, dict):
         if "boundary" not in outputs:
             logging.warning("segmenter outputs missing 'boundary' logits")
@@ -109,8 +110,10 @@ def _extract_boundary_logits(outputs: object) -> torch.Tensor:
         tensor = outputs[0]
     else:
         raise RuntimeError("invalid model outputs type")
+
     if not isinstance(tensor, torch.Tensor):
         raise RuntimeError("boundary logits must be a torch.Tensor")
+
     ndim = getattr(tensor, "ndim", None)
     if ndim is None:
         try:
@@ -122,9 +125,10 @@ def _extract_boundary_logits(outputs: object) -> torch.Tensor:
     return tensor
 
 
-def _normalize_feats_result(result: object) -> tuple[dict[str, torch.Tensor], torch.Tensor, list[float]]:
+def _normalize_feats_result(
+    result: object,
+) -> tuple[dict[str, torch.Tensor], torch.Tensor, list[float]]:
     """Ensure ``_midi_to_feats`` style helpers return ``(feats, mask, times)``."""
-
     if isinstance(result, (list, tuple)):
         if len(result) == 3:
             feats, mask, times = result
@@ -134,6 +138,16 @@ def _normalize_feats_result(result: object) -> tuple[dict[str, torch.Tensor], to
             return feats, mask, []
     raise ValueError("_midi_to_feats must return (feats, mask, [times])")
 
+
+def _midi_to_feats_compat(
+    data: bytes, **kwargs
+) -> tuple[dict[str, torch.Tensor], torch.Tensor, list[float]]:
+    """Call `_midi_to_feats` with backward compatibility for kwargs/returns."""
+    try:
+        res = _midi_to_feats(data, **kwargs)  # type: ignore[misc]
+    except TypeError:
+        res = _midi_to_feats(data)  # type: ignore[misc]
+    return _normalize_feats_result(res)
 
 class PhraseLSTMInfer(nn.Module):  # minimal LSTM to load LSTM checkpoints
     def __init__(
@@ -247,31 +261,36 @@ def segment_bytes(
     inst_regex: str | None = None,
     pitch_range: tuple[int, int] | None = None,
 ) -> list[tuple[int, float]]:
-    try:
-        feats, mask, _ = _normalize_feats_result(
-            _midi_to_feats(
-                data,
-                inst_index=inst_index,
-                inst_regex=inst_regex,
-                pitch_range=pitch_range,
-            )
-        )
-    except TypeError:
-        feats, mask, _ = _normalize_feats_result(_midi_to_feats(data))
-    with torch.no_grad():
-        outputs = model(feats, mask)
-        logits = _extract_boundary_logits(outputs)[0]
-        probs = torch.sigmoid(logits)
-        mask_row = mask[0]
-        if hasattr(mask_row, "bool"):
-            valid = mask_row.bool()
-            probs = probs[valid]
-            values = probs.tolist() if hasattr(probs, "tolist") else list(probs)
-        else:
-            mask_list = list(mask_row)
-            values_src = probs.tolist() if hasattr(probs, "tolist") else list(probs)
-            values = [values_src[i] for i, flag in enumerate(mask_list) if flag and i < len(values_src)]
-    return [(int(i), float(p)) for i, p in enumerate(values) if float(p) > threshold]
+feats, mask, _ = _midi_to_feats_compat(
+    data,
+    inst_index=inst_index,
+    inst_regex=inst_regex,
+    pitch_range=pitch_range,
+)
+with torch.no_grad():
+    outputs = model(feats, mask)
+    logits = _extract_boundary_logits(outputs)[0]  # shape: (T,)
+    probs = torch.sigmoid(logits)
+
+mask_row = mask[0]
+pairs: list[tuple[int, float]] = []
+if isinstance(mask_row, torch.Tensor):
+    valid = mask_row if mask_row.dtype == torch.bool else mask_row.bool()
+    if valid.ndim == 0:
+        valid = valid.unsqueeze(0)
+    idxs = torch.nonzero(valid, as_tuple=False).squeeze(1).tolist()
+    vals = probs[valid].tolist()
+    pairs = [(int(i), float(p)) for i, p in zip(idxs, vals) if float(p) > threshold]
+else:
+    mlist = list(mask_row)
+    vals = probs.tolist()
+    pairs = [
+        (i, float(p))
+        for i, (flag, p) in enumerate(zip(mlist, vals))
+        if flag and float(p) > threshold
+    ]
+
+return pairs
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -289,31 +308,39 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     data = args.midi.read_bytes()
     model = load_model(args.arch, args.ckpt)
-    try:
-        feats, mask, note_times = _normalize_feats_result(
-            _midi_to_feats(
-                data,
-                inst_index=args.instrument_index,
-                inst_regex=args.instrument_regex,
-                pitch_range=tuple(args.pitch_range) if args.pitch_range else None,
-            )
-        )
-    except TypeError:
-        feats, mask, note_times = _normalize_feats_result(_midi_to_feats(data))
-    with torch.no_grad():
-        outputs = model(feats, mask)
-        logits = _extract_boundary_logits(outputs)[0]
-        probs = torch.sigmoid(logits)
-        mask_row = mask[0]
-        if hasattr(mask_row, "bool"):
-            valid = mask_row.bool()
-            probs = probs[valid]
-            prob_list = probs.cpu().tolist() if hasattr(probs, "cpu") else (probs.tolist() if hasattr(probs, "tolist") else list(probs))
-        else:
-            mask_list = list(mask_row)
-            values_src = probs.tolist() if hasattr(probs, "tolist") else list(probs)
-            prob_list = [values_src[i] for i, flag in enumerate(mask_list) if flag and i < len(values_src)]
-    rows = [(i, float(p)) for i, p in enumerate(prob_list) if float(p) > args.threshold]
+feats, mask, note_times = _midi_to_feats_compat(
+    data,
+    inst_index=args.instrument_index,
+    inst_regex=args.instrument_regex,
+    pitch_range=tuple(args.pitch_range) if args.pitch_range else None,
+)
+with torch.no_grad():
+    outputs = model(feats, mask)
+    logits = _extract_boundary_logits(outputs)[0]  # shape: (T,)
+    probs = torch.sigmoid(logits)
+
+rows: list[tuple[int, float]] = []
+mask_row = mask[0]
+if isinstance(mask_row, torch.Tensor):
+    valid = mask_row if mask_row.dtype == torch.bool else mask_row.bool()
+    if valid.ndim == 0:
+        valid = valid.unsqueeze(0)
+    idxs = torch.nonzero(valid, as_tuple=False).squeeze(1).tolist()
+    vals = probs[valid].detach().cpu().tolist() if hasattr(probs, "detach") else (
+        probs.cpu().tolist() if hasattr(probs, "cpu") else (probs.tolist() if hasattr(probs, "tolist") else list(probs))
+    )
+    rows = [(int(i), float(p)) for i, p in zip(idxs, vals) if float(p) > args.threshold]
+else:
+    mask_list = list(mask_row)
+    vals = probs.detach().cpu().tolist() if hasattr(probs, "detach") else (
+        probs.cpu().tolist() if hasattr(probs, "cpu") else (probs.tolist() if hasattr(probs, "tolist") else list(probs))
+    )
+    rows = [
+        (i, float(p))
+        for i, (flag, p) in enumerate(zip(mask_list, vals))
+        if flag and float(p) > args.threshold
+    ]
+
     if args.out_tsv:
         try:
             import pretty_midi

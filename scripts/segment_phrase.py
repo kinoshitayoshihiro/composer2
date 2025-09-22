@@ -5,6 +5,7 @@ import io
 import logging
 from pathlib import Path
 import re
+from typing import Any
 
 import torch
 from torch import nn
@@ -90,6 +91,20 @@ def _midi_to_feats(
     feats = {"pitch_class": pc, "velocity": vel, "duration": dur, "position": pos}
     note_times = [float(n.start) for n in notes]
     return feats, mask, note_times
+
+
+def _midi_to_feats_compat(data: bytes, **kwargs: Any):
+    """Call `_midi_to_feats` with backward compatibility for kwargs/returns."""
+
+    try:
+        res = _midi_to_feats(data, **kwargs)  # type: ignore[misc]
+    except TypeError:
+        res = _midi_to_feats(data)  # type: ignore[misc]
+    if not isinstance(res, (tuple, list)) or len(res) < 2:
+        raise ValueError("_midi_to_feats must return at least (feats, mask)")
+    feats, mask = res[0], res[1]
+    extra = res[2] if len(res) > 2 else None
+    return feats, mask, extra
 
 
 class PhraseLSTMInfer(nn.Module):  # minimal LSTM to load LSTM checkpoints
@@ -204,15 +219,12 @@ def segment_bytes(
     inst_regex: str | None = None,
     pitch_range: tuple[int, int] | None = None,
 ) -> list[tuple[int, float]]:
-    try:
-        feats, mask, _ = _midi_to_feats(
-            data,
-            inst_index=inst_index,
-            inst_regex=inst_regex,
-            pitch_range=pitch_range,
-        )
-    except TypeError:
-        feats, mask, _ = _midi_to_feats(data)
+    feats, mask, _ = _midi_to_feats_compat(
+        data,
+        inst_index=inst_index,
+        inst_regex=inst_regex,
+        pitch_range=pitch_range,
+    )
     with torch.no_grad():
         outputs = model(feats, mask)
         if "boundary" not in outputs:
@@ -238,15 +250,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     data = args.midi.read_bytes()
     model = load_model(args.arch, args.ckpt)
-    try:
-        feats, mask, note_times = _midi_to_feats(
-            data,
-            inst_index=args.instrument_index,
-            inst_regex=args.instrument_regex,
-            pitch_range=tuple(args.pitch_range) if args.pitch_range else None,
-        )
-    except TypeError:
-        feats, mask, note_times = _midi_to_feats(data)
+    feats, mask, note_times = _midi_to_feats_compat(
+        data,
+        inst_index=args.instrument_index,
+        inst_regex=args.instrument_regex,
+        pitch_range=tuple(args.pitch_range) if args.pitch_range else None,
+    )
     with torch.no_grad():
         outputs = model(feats, mask)
         if "boundary" not in outputs:

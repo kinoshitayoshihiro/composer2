@@ -5603,7 +5603,42 @@ def build_sparkle_midi(
     top_note_max = mapping.get("top_note_max")
     strict = bool(mapping.get("strict", False))
 
-    beat_times = pm_in.get_beats()
+    # --- Beat grid with robust fallbacks ---
+    try:
+        beat_times = list(pm_in.get_beats())
+    except Exception:
+        beat_times = []
+    if len(beat_times) < 2:
+        # try beats from the output object where we already seeded tempo/ticks
+        try:
+            beat_times = list(out.get_beats())
+        except Exception:
+            beat_times = []
+    if len(beat_times) < 2:
+        # final fallback: seed a constant grid from BPM up to best end hint
+        target_end = (
+            song_end_hint
+            if (song_end_hint is not None and math.isfinite(song_end_hint))
+            else pm_input_end
+        )
+        if (
+            target_end is None
+            or not math.isfinite(target_end)
+            or target_end <= 0.0
+        ):
+            # default to 4 bars of 4/4 to stay conservative
+            target_end = 16 * (60.0 / seed_bpm)
+        step = 60.0 / seed_bpm
+        t = 0.0
+        beat_times = [0.0]
+        while t + step <= target_end + EPS:
+            t += step
+            beat_times.append(t)
+        logging.warning(
+            "build_sparkle_midi: no beats found; seeded constant grid (bpm=%s, end=%.3fs)",
+            seed_bpm,
+            target_end,
+        )
     if len(beat_times) < 2:
         raise SystemExit("Could not determine beats from MIDI")
     if stats is not None:

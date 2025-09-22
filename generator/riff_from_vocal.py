@@ -136,6 +136,9 @@ def generate_riff_from_vocal(
     genre: str = "ballad",
     bars: int = 8,
     dials: Dict[str, float] | None = None,
+    # Export shaping（既定: 通常プラグイン向け = Chord＋刻み）
+    export_mode: str = "performance",   # "performance" | "chord_hold" | "trigger"
+    trigger_pitch: int = 60,
     humanize: bool | Dict | None = True,
     humanize_profile: Optional[str] = None,
     quantize: Optional[Dict] = None,
@@ -210,4 +213,38 @@ def generate_riff_from_vocal(
     light_cleanup(inst)
 
     pm.instruments.append(inst)
+
+    # --- 軽整形（Chord＋刻みのまま、重複/微小ギャップだけ整える） ---
+    try:
+        from utilities.midi_edit import light_cleanup
+
+        light_cleanup(inst)
+    except Exception:
+        pass
+
+    # --- UJAM/特殊用途: 明示指定時のみエクスポート整形 ---
+    if export_mode != "performance":
+        try:
+            from utilities.midi_edit import (
+                hold_once_per_bar,
+                to_trigger_per_bar,
+                merge_ties,
+                dedupe_stack,
+            )
+
+            sec_per_beat = 60.0 / float(tempo or 120.0)
+            bar_len_sec = 4.0 * sec_per_beat
+            if export_mode == "chord_hold":
+                merge_ties(inst)
+                dedupe_stack(inst)
+                hold_once_per_bar(inst, bar_len_sec=bar_len_sec)
+            elif export_mode == "trigger":
+                to_trigger_per_bar(
+                    inst,
+                    bar_len_sec=bar_len_sec,
+                    trigger_pitch=int(trigger_pitch),
+                )
+        except Exception:
+            pass
+
     return pm

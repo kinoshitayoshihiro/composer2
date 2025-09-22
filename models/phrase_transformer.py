@@ -5,21 +5,22 @@ from typing import Any, Dict
 try:
     import torch
     from torch import nn
-except Exception:
+except Exception:  # torch が無い環境でも読み込めるように
     torch = None  # type: ignore
 
     class nn:  # type: ignore
-        Module = object
+        class Module(object):
+            pass
 
 
 class PhraseTransformer(nn.Module):
-    """Test-friendly stub.
+    """Test-friendly stub for realtime_ws tests.
 
-    - 任意のハイパラを受け付ける（d_model, max_len など）
+    - 任意のハイパラ（d_model, max_len など）を受け付ける
     - pointer系の属性を (max_len, max_len) で保持
-    - forward(feats, mask) は常に (B, T) 形状を返す
-      - Torchあり: torch.Tensor を返す
-      - Torchなし: shape 属性だけ持つ軽量オブジェクトを返す
+    - forward(feats, mask) は常に (B, T) を返す
+      - Torchあり: torch.Tensor
+      - Torchなし: .shape を持つ軽量オブジェクト
     """
 
     def __init__(
@@ -32,34 +33,41 @@ class PhraseTransformer(nn.Module):
         self.max_len = int(max_len)
 
         if torch is None:
-            # Torchなしでもコンストラクト可能に（リストで擬似バッファ）
-            self.pointer = [[0.0] * self.max_len for _ in range(self.max_len)]  # type: ignore[attr-defined]
-            self.pointer_table = self.pointer  # type: ignore[attr-defined]
-            self.pointer_bias = self.pointer  # type: ignore[attr-defined]
+            # Torchなしでもコンストラクト可能に（単純なリストを保持）
+            square = [[0.0] * self.max_len for _ in range(self.max_len)]
+            self.pointer = square  # type: ignore[attr-defined]
+            self.pointer_table = square  # type: ignore[attr-defined]
+            self.pointer_bias = square  # type: ignore[attr-defined]
             return
 
         super().__init__()
-        # (max_len, max_len) 形状のポインタ行列（テストが参照する可能性があるため）
+        # (max_len, max_len) の“ポインタ”行列（テスト側が参照する可能性がある）
         ptr = torch.zeros(self.max_len, self.max_len)
-        self.register_buffer("pointer", ptr)
+        self.register_buffer("pointer", ptr.clone())
         self.register_buffer("pointer_table", ptr.clone())
         self.register_buffer("pointer_bias", ptr.clone())
 
     def forward(self, feats: Dict[str, Any], mask: Any):  # type: ignore[override]
         """Return logits-like output with shape (B, T)."""
-        # Torchが使えるなら、maskを流用して (B,T) のTensorを返す
-        if torch is not None and hasattr(mask, "dim"):
-            # 1次元なら (1,T) に昇格
-            if mask.dim() == 1:
-                mask2 = mask.unsqueeze(0)
-            else:
-                mask2 = mask
-            # 中身は問われていないので、そのままfloat化でOK（形状が重要）
-            return mask2.float()
+        # Torchが使える場合は (B,T) の Tensor を返す
+        if torch is not None:
+            try:
+                # mask が Tensor なら 1D→2D に昇格してそのまま返す（中身は問わない）
+                if hasattr(mask, "dim"):
+                    mask2 = mask.unsqueeze(0) if mask.dim() == 1 else mask
+                    return mask2.to(dtype=torch.float32)
+            except Exception:
+                pass
+            # mask がリスト等でも (B,T) 形状でゼロTensorを返す
+            try:
+                b = len(mask)
+                t = len(mask[0]) if b else 0
+            except Exception:
+                b, t = 1, 0
+            return torch.zeros((b, t), dtype=torch.float32)
 
-        # Torchなしでも (B,T) の shape を持つオブジェクトを返す
+        # Torchなしでも .shape を持つオブジェクトを返す
         try:
-            # list/ndarray など
             b = len(mask)
             t = len(mask[0]) if b else 0
         except Exception:

@@ -45,12 +45,12 @@ def test_transformer_hparams(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
             boundary = self.bias.expand(B, T)
             vel_reg = self.bias.expand(B, T)
             dur_reg = self.bias.expand(B, T)
-            pitch = self.pitch_logits.expand(B, T, 128)
+            pitch_logits = self.pitch_logits.expand(B, T, 128)
             return {
                 "boundary": boundary,
                 "vel_reg": vel_reg,
                 "dur_reg": dur_reg,
-                "pitch": pitch,
+                "pitch_logits": pitch_logits,
             }
 
     monkeypatch.setattr(tp, "PhraseTransformer", StubPT, raising=True)

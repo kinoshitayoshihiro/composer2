@@ -22,8 +22,13 @@ try:  # pragma: no cover - optional dependency for export helpers
 except ImportError:  # pragma: no cover - handled gracefully in functions
     mido = None
 import pretty_midi
-from music21 import stream
-from music21.midi import translate
+
+try:  # pragma: no cover - optional dependency
+    from music21 import stream
+    from music21.midi import translate
+except Exception:  # pragma: no cover - optional dependency missing
+    stream = None  # type: ignore[assignment]
+    translate = None  # type: ignore[assignment]
 
 from utilities.pretty_midi_safe import new_pm as PrettyMIDI
 
@@ -54,13 +59,15 @@ def write_demo_bar(path: str | Path) -> Path:
 
 
 def append_extra_cc(
-    part: stream.Part,
+    part: "stream.Part",
     track: mido.MidiTrack,
     to_ticks: Callable[[float], int],
     *,
     channel: int = 0,
 ) -> None:
     """Append extra CC events from ``part`` to the given ``track``."""
+    if stream is None:
+        raise RuntimeError("music21 is required for append_extra_cc; install music21")
     if mido is None:
         return
     if hasattr(part, "extra_cc"):
@@ -76,8 +83,10 @@ def append_extra_cc(
             )
 
 
-def music21_to_mido(part: stream.Part) -> mido.MidiFile:
+def music21_to_mido(part: "stream.Part") -> mido.MidiFile:
     """Convert a ``music21`` part to ``mido.MidiFile`` preserving ``extra_cc``."""
+    if stream is None or translate is None:
+        raise RuntimeError("music21 is required for music21_to_mido; install music21")
     if mido is None:  # pragma: no cover - optional dependency
         raise ImportError("mido is required to export MIDI")
 

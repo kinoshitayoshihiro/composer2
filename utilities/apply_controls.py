@@ -177,6 +177,13 @@ def apply_controls(
                     end += curve.offset_sec
                     new_pb[0].time = start
                     new_pb[-1].time = end
+                    if (
+                        len(new_pb) >= 2
+                        and abs(new_pb[-1].time - new_pb[-2].time) <= time_eps
+                        and getattr(new_pb[-1], "pitch", None) == 0
+                        and getattr(new_pb[-2], "pitch", None) != 0
+                    ):
+                        inst.pitch_bends.pop(-2)
                 if write_rpn and not getattr(inst, "_rpn_written", False):
                     first_pb = min((pb.time for pb in inst.pitch_bends), default=None)
                     t = _rpn_time(rpn_at, first_pb)

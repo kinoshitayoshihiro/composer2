@@ -58,18 +58,25 @@ class PhraseTransformer(nn.Module):
                 try:
                     mask = torch.as_tensor(mask, dtype=torch.bool)
                 except Exception:
-                    # どうしても Tensor 化できない場合は (B,T) を推定してゼロTensorを返す
-                    try:
-                        b = len(mask)
-                        t = len(mask[0]) if b else 0
-                    except Exception:
-                        b, t = 1, 0
-                    return torch.zeros((b, t), dtype=torch.float32)
+                    mask = None
 
-            # 2) (B,T) へ昇格して、そのまま (B,T) の float32 を返す
-            if mask.dim() == 1:
-                mask = mask.unsqueeze(0)
-            return mask.to(dtype=torch.float32)
+            if mask is not None and isinstance(mask, torch.Tensor):
+                # 2) (B,T) へ昇格して、そのまま (B,T) の float32 を返す
+                if mask.dim() == 1:
+                    mask = mask.unsqueeze(0)
+                return mask.float()
+
+            # mask を Tensor 化できなかった場合: feats から shape を推定
+            pitch = feats.get("pitch_class")
+            if isinstance(pitch, torch.Tensor) and pitch.dim() >= 2:
+                b, t = pitch.shape[:2]
+            else:
+                try:
+                    b = len(pitch)  # type: ignore[arg-type]
+                    t = len(pitch[0]) if b else 0  # type: ignore[index]
+                except Exception:
+                    b, t = 1, 0
+            return torch.zeros((b, t), dtype=torch.float32)
 
         # Torch なし: .shape を持つ軽量オブジェクトを返す
         try:

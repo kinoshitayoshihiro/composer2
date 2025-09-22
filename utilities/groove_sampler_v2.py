@@ -845,7 +845,8 @@ def train(
     else:
         aux_vocab_obj = AuxVocab()
     total_events = 0
-    files_skipped = 0
+    files_skipped = 0           # fatal skips only (e.g., audio decode failure)
+    files_filtered = 0          # filtered out by min_notes, etc.
     tempo_stats = {"accept": 0, "fold": 0, "fallback": 0, "skip": 0}
     skipped_paths: list[Path] = []
 
@@ -981,11 +982,13 @@ def train(
             payload, load_reason = r
             audio_decode_failed = False
         if payload is None:
-            if load_reason == "skip":
-                files_skipped += 1
-            elif audio_decode_failed:
+            if audio_decode_failed:
                 skipped_paths.append(p)
                 files_skipped += 1
+            else:
+                files_filtered += 1
+                if load_reason:
+                    reason_counts[load_reason] = reason_counts.get(load_reason, 0) + 1
             continue
         notes, offs, bars, note_cnt, uniq_pitches, is_drum, is_fill = payload
         reason: str | None = None
@@ -1003,14 +1006,14 @@ def train(
         if relax_filters and reason == "notes" and note_cnt == 0:
             reason = None
 
-        # スキップにカウントするのは以下のみ：
-        # 1) オーディオデコード失敗 2) 明示フィルタ(reason!=None)
-        if reason is not None or audio_decode_failed:
-            if reason is not None:
-                skipped_paths.append(p)
-                reason_counts[reason] = reason_counts.get(reason, 0) + 1
-            elif audio_decode_failed:
-                skipped_paths.append(p)
+        if reason is not None:
+            skipped_paths.append(p)
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+            files_filtered += 1
+            continue
+
+        if audio_decode_failed:
+            skipped_paths.append(p)
             files_skipped += 1
             continue
 
@@ -1036,14 +1039,12 @@ def train(
 
     if not results:
         logger.warning(
-            "No events collected — training aborted (files=%d skipped=%d)",
+            "No events collected — returning empty model (files=%d skipped=%d filtered=%d)",
             len(paths),
             files_skipped,
+            files_filtered,
         )
-        # テスト用緩和: スイッチが有効なら空モデルで返す
-        if relax_filters:
-            return _empty_model()
-        raise SystemExit("No events collected — training aborted")
+        return _empty_model()
 
     note_seqs = [r[0] for r in results]
     all_offsets = [off for r in results for off in r[1]]
@@ -2187,6 +2188,7 @@ def _cmd_stats(args: list[str]) -> None:
     ns = parser.parse_args(args)
     model = load(ns.model)
     print(f"n={model.n} resolution={model.resolution}")
+    # 「skipped」は致命的なものだけ（音声デコード失敗など）。フィルタ落ちは含めない。
     print(
         f"Scanned {model.files_scanned} files (skipped {model.files_skipped}) → {model.total_events} events → {len(model.idx_to_state)} states"
     )

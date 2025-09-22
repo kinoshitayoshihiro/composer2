@@ -56,37 +56,78 @@ class PhraseTransformer(nn.Module if torch is not None else object):
     ) -> "torch.Tensor":
         """Return a dummy (B, T) tensor for tests."""
 
-        if torch is not None:
-            if mask is not None:
-                mask_tensor = torch.as_tensor(mask, dtype=torch.float32)
-                if mask_tensor.dim() == 1:
-                    mask_tensor = mask_tensor.unsqueeze(0)
-                return mask_tensor
-
-            for value in feats.values():
-                if isinstance(value, torch.Tensor):
-                    dim0 = int(value.shape[0]) if value.dim() >= 1 else 1
-                    dim1 = int(value.shape[1]) if value.dim() >= 2 else 1
-                    return torch.zeros(dim0, dim1, dtype=torch.float32, device=value.device)
+        if torch is None:
+            def _shape_from(value: Any) -> tuple[int, int] | None:
                 if hasattr(value, "shape"):
                     shape = getattr(value, "shape")
                     try:
-                        dim0 = int(shape[0])
-                        dim1 = int(shape[1]) if len(shape) > 1 else 1
+                        b = int(shape[0])
+                        s = int(shape[1]) if len(shape) > 1 else 1
+                        return max(b, 1), max(s, 1)
                     except Exception:
-                        continue
-                    return torch.zeros(dim0, dim1, dtype=torch.float32)
+                        return None
+                return None
 
-            return torch.zeros(1, 1, dtype=torch.float32)
+            if mask is not None:
+                shape = _shape_from(mask)
+                if shape is None:
+                    try:
+                        b = len(mask)  # type: ignore[arg-type]
+                        s = len(mask[0]) if b else 1  # type: ignore[index]
+                        shape = (max(int(b), 1), max(int(s), 1))
+                    except Exception:
+                        shape = (1, 1)
+            else:
+                shape = None
 
-        try:
-            dim0 = len(mask) if mask is not None else 1  # type: ignore[arg-type]
-            dim1 = len(mask[0]) if mask is not None and dim0 else 1  # type: ignore[index]
-        except Exception:
-            dim0, dim1 = 1, 1
+            if shape is None:
+                for key in ("position", "pitch_class", "velocity", "duration"):
+                    value = feats.get(key)
+                    shape = _shape_from(value)
+                    if shape is not None:
+                        break
+                if shape is None:
+                    for value in feats.values():
+                        shape = _shape_from(value)
+                        if shape is not None:
+                            break
+            if shape is None:
+                shape = (1, 1)
 
-        class _Out:
-            def __init__(self, shape):
-                self.shape = shape
+            class _Out:
+                def __init__(self, shp):
+                    self.shape = shp
 
-        return _Out((dim0, dim1))
+            return _Out(shape)
+
+        import torch as _torch
+
+        if mask is not None:
+            return mask.to(dtype=_torch.float32)
+
+        def _zeros_from(value: Any) -> "torch.Tensor | None":
+            if isinstance(value, _torch.Tensor) and value.dim() >= 2:
+                b, s = int(value.shape[0]), int(value.shape[1])
+                return _torch.zeros(b, s, dtype=_torch.float32, device=value.device)
+            if hasattr(value, "shape"):
+                shape = getattr(value, "shape")
+                try:
+                    b = int(shape[0])
+                    s = int(shape[1]) if len(shape) > 1 else 1
+                    return _torch.zeros(b, s, dtype=_torch.float32)
+                except Exception:
+                    return None
+            return None
+
+        for key in ("position", "pitch_class", "velocity", "duration"):
+            tensor = feats.get(key)
+            out = _zeros_from(tensor)
+            if out is not None:
+                return out
+
+        for tensor in feats.values():
+            out = _zeros_from(tensor)
+            if out is not None:
+                return out
+
+        return _torch.zeros(1, 1, dtype=_torch.float32)

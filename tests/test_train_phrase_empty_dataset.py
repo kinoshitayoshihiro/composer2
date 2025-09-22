@@ -13,7 +13,16 @@ pt = ModuleType("models.phrase_transformer")
 
 
 class PhraseTransformer:  # pragma: no cover - simple stub
-    pass
+    def __init__(self, *args, **kwargs):
+        # The real implementation accepts numerous configuration parameters,
+        # but the tests only need to instantiate the class successfully.
+        # Swallow all arguments to mimic the signature without taking action.
+        _ = args, kwargs
+
+    def forward(self, *args, **kwargs):  # pragma: no cover - simple stub
+        return None
+
+    __call__ = forward
 
 
 pt.PhraseTransformer = PhraseTransformer

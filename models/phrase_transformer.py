@@ -2,6 +2,8 @@
 from __future__ import annotations
 from typing import Any, Dict
 
+__all__ = ["PhraseTransformer"]
+
 try:
     import torch
     from torch import nn
@@ -49,24 +51,27 @@ class PhraseTransformer(nn.Module):
 
     def forward(self, feats: Dict[str, Any], mask: Any):  # type: ignore[override]
         """Return logits-like output with shape (B, T)."""
-        # Torchが使える場合は (B,T) の Tensor を返す
-        if torch is not None:
-            try:
-                # mask が Tensor なら 1D→2D に昇格してそのまま返す（中身は問わない）
-                if hasattr(mask, "dim"):
-                    mask2 = mask.unsqueeze(0) if mask.dim() == 1 else mask
-                    return mask2.to(dtype=torch.float32)
-            except Exception:
-                pass
-            # mask がリスト等でも (B,T) 形状でゼロTensorを返す
-            try:
-                b = len(mask)
-                t = len(mask[0]) if b else 0
-            except Exception:
-                b, t = 1, 0
-            return torch.zeros((b, t), dtype=torch.float32)
 
-        # Torchなしでも .shape を持つオブジェクトを返す
+        if torch is not None:
+            # 1) mask が Tensor でなければ可能なら Tensor 化
+            if not isinstance(mask, torch.Tensor):
+                try:
+                    mask = torch.as_tensor(mask, dtype=torch.bool)
+                except Exception:
+                    # どうしても Tensor 化できない場合は (B,T) を推定してゼロTensorを返す
+                    try:
+                        b = len(mask)
+                        t = len(mask[0]) if b else 0
+                    except Exception:
+                        b, t = 1, 0
+                    return torch.zeros((b, t), dtype=torch.float32)
+
+            # 2) (B,T) へ昇格して、そのまま (B,T) の float32 を返す
+            if mask.dim() == 1:
+                mask = mask.unsqueeze(0)
+            return mask.to(dtype=torch.float32)
+
+        # Torch なし: .shape を持つ軽量オブジェクトを返す
         try:
             b = len(mask)
             t = len(mask[0]) if b else 0

@@ -56,7 +56,7 @@ class PhraseTransformer(nn.Module if torch is not None else object):
                 b = len(mask)
             except Exception:
                 b, t = 1, 0
-            return {"boundary": [[0.0] * t for _ in range(b)]}
+            return [[0.0] * t for _ in range(b)]
 
         # mask: (B, T) 想定。1次元なら(1,T)に昇格
         if mask.dim() == 1:
@@ -65,4 +65,4 @@ class PhraseTransformer(nn.Module if torch is not None else object):
 
         logits = torch.linspace(0, 1, steps=t, device=mask.device).repeat(b, 1)
         logits = logits.masked_fill(~mask.bool(), float("-inf"))
-        return {"boundary": logits}
+        return logits

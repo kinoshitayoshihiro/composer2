@@ -1018,6 +1018,7 @@ def train(
             len(paths),
             files_skipped,
         )
+        # テスト用緩和: スイッチが有効なら空モデルで返す
         if relax_filters:
             return _empty_model()
         raise SystemExit("No events collected — training aborted")

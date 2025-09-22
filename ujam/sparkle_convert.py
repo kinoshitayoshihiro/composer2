@@ -2494,12 +2494,23 @@ def insert_style_fill(
     section_default: str = "section",
 ) -> int:
     """Insert style fills based on mode."""
+    def _get_phrase_inst(pm_obj: pretty_midi.PrettyMIDI) -> pretty_midi.Instrument:
+        """Return the phrase instrument, creating it so fills can be scheduled."""
+        for inst in pm_obj.instruments:
+            if getattr(inst, "name", "") == PHRASE_INST_NAME:
+                return inst
+        new_inst = pretty_midi.Instrument(program=0, name=PHRASE_INST_NAME)
+        pm_obj.instruments.append(new_inst)
+        return new_inst
+
     phrase_inst = None
     for inst in pm_out.instruments:
         if inst.name == PHRASE_INST_NAME:
             phrase_inst = inst
             break
-    if phrase_inst is None or not units:
+    if phrase_inst is None:
+        phrase_inst = _get_phrase_inst(pm_out)
+    if not units:
         return 0
     style_fill_raw = mapping.get("style_fill")
 
@@ -2706,6 +2717,78 @@ def insert_style_fill(
             logging.info("sections(label) was provided; normalized to ranges")
         sections = layout
         section_layout = layout
+
+    def _norm_sections(sec: Iterable[Any], bars: int) -> List[str]:
+        items = list(sec)
+        if not items:
+            return []
+        if isinstance(items[0], str):
+            return [str(label) for label in items[:bars]]
+        labels: List[Optional[str]] = [None] * bars
+        for item in items:
+            if isinstance(item, dict):
+                sb = int(item.get("start_bar", 0) or 0)
+                eb = int(item.get("end_bar", sb + 1) or (sb + 1))
+                tag_val = item.get("tag") or item.get("label") or item.get("section")
+            else:
+                sb = int(getattr(item, "start_bar", 0) or 0)
+                eb = int(getattr(item, "end_bar", sb + 1) or (sb + 1))
+                tag_val = (
+                    getattr(item, "tag", None)
+                    or getattr(item, "label", None)
+                    or getattr(item, "section", None)
+                )
+            tag = str(tag_val) if tag_val else "A"
+            for bar in range(max(0, sb), min(bars, eb)):
+                labels[bar] = tag
+        current = labels[0] or "A"
+        for idx in range(bars):
+            if labels[idx] is None:
+                labels[idx] = current
+            else:
+                current = labels[idx]
+        return [label or "A" for label in labels]
+
+    if (
+        mode == "section_end"
+        and section_layout
+        and units
+        and bpm is not None
+    ):
+        bars_total = int(bar_count) if bar_count is not None else len(units)
+        labels = _norm_sections(section_layout, bars_total)
+        if labels:
+            end_bars: List[int] = []
+            max_bar = min(bars_total, len(units))
+            span = min(len(labels), max_bar)
+            for idx in range(max_bar):
+                if idx >= span:
+                    if idx == bars_total - 1:
+                        end_bars.append(idx)
+                    continue
+                if idx == bars_total - 1 or idx == span - 1:
+                    end_bars.append(idx)
+                elif labels[idx] != labels[idx + 1]:
+                    end_bars.append(idx)
+            fill_pitch = int(mapping.get("style_fill", 34))
+            velocity = int(mapping.get("phrase_velocity", 96))
+            dur_beats = float(mapping.get("phrase_length_beats", 0.5))
+            seconds_per_beat = 60.0 / float(bpm)
+            duration = max(1e-4, dur_beats * seconds_per_beat)
+            inst_obj = _get_phrase_inst(pm_out)
+            for bar_idx in end_bars:
+                start_time = float(units[bar_idx][0])
+                inst_obj.notes.append(
+                    pretty_midi.Note(
+                        velocity=velocity,
+                        pitch=fill_pitch,
+                        start=start_time,
+                        end=start_time + duration,
+                    )
+                )
+                count += 1
+            return count
+
     if mode == "section_end":
         if len(section_layout) <= 1:
             return 0

@@ -1005,25 +1005,69 @@ def train_model(
     weight_stats: dict[str, float] | None = None
     shuffle_train = True
     if reweight:
-        parts = dict(p.split("=") for p in reweight.split(",") if "=" in p)
-        tag = parts.get("tag")
-        scheme = parts.get("scheme")
-        if tag and scheme == "inv_freq" and tag in ds_train.group_tags:
-            vals = ds_train.group_tags[tag]
-            freq = Counter(vals)
-            weights = [1.0 / freq[v] for v in vals]
-            try:
-                sampler = torch.utils.data.WeightedRandomSampler(
-                    weights, len(weights), replacement=True
+        def _parse_reweight(spec: str) -> tuple[str | None, str]:
+            entries = {}
+            for part in spec.split(","):
+                if "=" not in part:
+                    continue
+                key, value = part.split("=", 1)
+                entries[key.strip()] = value.strip()
+            return entries.get("tag") or entries.get("class"), entries.get("scheme", "inv_freq")
+
+        tag, scheme = _parse_reweight(reweight)
+        if tag and scheme == "inv_freq":
+            values: list[str] = []
+            group_values: list[str] = []
+            if tag in ds_train.group_tags:
+                group_values = list(ds_train.group_tags[tag])
+                values = group_values
+            train_rows_local = locals().get("train_rows")
+            train_rows_count = 0
+            if train_rows_local:
+                try:
+                    train_rows_count = len(train_rows_local)  # type: ignore[arg-type]
+                except TypeError:
+                    train_rows_local = list(train_rows_local)  # type: ignore[assignment]
+                    train_rows_count = len(train_rows_local)
+            if not values and train_rows_local:
+                values = [str(r.get(tag, "")) for r in train_rows_local]
+            group_count = len(group_values)
+            logging.debug("reweight tag=%s values=%d", tag, len(values))
+            if values:
+                freq = Counter(values)
+                weights = [1.0 / max(1, freq[v]) for v in values]
+                logging.debug("inv_freq weight head %s", [round(w, 6) for w in weights[:3]])
+                weight_map = {v: 1.0 / max(1, freq[v]) for v in freq}
+                weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
+                logging.info("top tag weights %s", weight_stats)
+                wrs_cls = None
+                wrs_reason: str | None = None
+                if torch is None:
+                    wrs_reason = "torch import failed"
+                else:
+                    utils_mod = getattr(torch, "utils", None)
+                    data_mod = getattr(utils_mod, "data", None) if utils_mod is not None else None
+                    wrs_cls = getattr(data_mod, "WeightedRandomSampler", None) if data_mod is not None else None
+                    if wrs_cls is None:
+                        wrs_reason = "torch.utils.data.WeightedRandomSampler missing"
+                if wrs_cls is None:
+                    logging.info(
+                        "torch not available for reweight; skipping sampler (%s)",
+                        wrs_reason or "unavailable",
+                    )
+                else:
+                    try:
+                        sampler = wrs_cls(weights, len(weights), replacement=True)
+                    except TypeError:
+                        sampler = wrs_cls(weights, len(weights), True)
+                    shuffle_train = False
+            else:
+                logging.info(
+                    "reweight=%r accepted but no values found; skipping sampler (group_tags=%d, train_rows=%d)",
+                    reweight,
+                    group_count,
+                    train_rows_count,
                 )
-            except TypeError:
-                # older torch versions may require positional form for 'replacement'
-                sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights), True)
-            logging.debug("inv_freq weight head %s", [round(w, 6) for w in weights[:3]])
-            weight_map = {v: 1.0 / freq[v] for v in freq}
-            weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
-            logging.info("top tag weights %s", weight_stats)
-            shuffle_train = False
 
     dl_train = DataLoader(
         ds_train,

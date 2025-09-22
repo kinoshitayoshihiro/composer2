@@ -288,8 +288,11 @@ def convert(args: SimpleNamespace) -> None:
                             emitted_any |= _emit_keyswitch(pitch, ks_time)
             for pitch in ks_notes:
                 emitted_any |= _emit_keyswitch(pitch, ks_time)
-            last_sent = ks_tuple
-            last_sent_bar = bar_index
+            if emitted_any:
+                # Update guards only when a keyswitch message was emitted so the
+                # redundant suppression logic tracks real transmissions.
+                last_sent = ks_tuple
+                last_sent_bar = bar_index
         for b in blocks:
             chord = utils.chordify(b["pitches"], (play_low, play_high))
             total_notes += len(b["pitches"])
@@ -766,6 +769,7 @@ def convert(args) -> None:
             for pitch in ks_notes:
                 emitted_any |= _emit_keyswitch(pitch, ks_time)
             if emitted_any:
+                # Track the last tuple only when a keyswitch actually went out.
                 last_sent = ks_tuple
         for b in blocks:
             chord = utils.chordify(b["pitches"], (play_low, play_high))

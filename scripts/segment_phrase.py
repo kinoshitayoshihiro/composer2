@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import logging
 from pathlib import Path
 import re
 
@@ -203,9 +204,19 @@ def segment_bytes(
     inst_regex: str | None = None,
     pitch_range: tuple[int, int] | None = None,
 ) -> list[tuple[int, float]]:
-    feats, mask, _ = _midi_to_feats(data, inst_index=inst_index, inst_regex=inst_regex, pitch_range=pitch_range)
+    try:
+        feats, mask, _ = _midi_to_feats(
+            data,
+            inst_index=inst_index,
+            inst_regex=inst_regex,
+            pitch_range=pitch_range,
+        )
+    except TypeError:
+        feats, mask, _ = _midi_to_feats(data)
     with torch.no_grad():
         outputs = model(feats, mask)
+        if "boundary" not in outputs:
+            logging.warning("segmenter outputs missing 'boundary' logits")
         logits = outputs["boundary"][0]
         valid = mask[0].bool()
         probs = torch.sigmoid(logits[valid])
@@ -227,14 +238,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     data = args.midi.read_bytes()
     model = load_model(args.arch, args.ckpt)
-    feats, mask, note_times = _midi_to_feats(
-        data,
-        inst_index=args.instrument_index,
-        inst_regex=args.instrument_regex,
-        pitch_range=tuple(args.pitch_range) if args.pitch_range else None,
-    )
+    try:
+        feats, mask, note_times = _midi_to_feats(
+            data,
+            inst_index=args.instrument_index,
+            inst_regex=args.instrument_regex,
+            pitch_range=tuple(args.pitch_range) if args.pitch_range else None,
+        )
+    except TypeError:
+        feats, mask, note_times = _midi_to_feats(data)
     with torch.no_grad():
         outputs = model(feats, mask)
+        if "boundary" not in outputs:
+            logging.warning("segmenter outputs missing 'boundary' logits")
         logits = outputs["boundary"][0]
         valid = mask[0].bool()
         probs = torch.sigmoid(logits[valid]).cpu().tolist()

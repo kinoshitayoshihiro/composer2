@@ -757,12 +757,36 @@ def _transcribe_stem_impl(
                     logger.info("Estimated %.1f BPM for %s", tempo, path.name)
             except Exception:  # pragma: no cover - tempo estimation is optional
                 tempo = None
-        result = _fallback_transcribe_stem(
-            path,
-            min_dur=min_dur,
-            tempo=tempo,
-            auto_tempo=auto_tempo,
-        )
+        fallback_kwargs: dict[str, object] = {"min_dur": min_dur}
+        if tempo is not None:
+            fallback_kwargs["tempo"] = tempo
+        try:
+            signature = inspect.signature(_fallback_transcribe_stem)
+        except (TypeError, ValueError):  # pragma: no cover - dynamic callable
+            signature = None
+        if signature is None or "auto_tempo" in signature.parameters:
+            fallback_kwargs["auto_tempo"] = auto_tempo
+        else:
+            logger.info(
+                "omitted auto_tempo due to legacy signature for fallback transcription"
+            )
+            logger.debug(
+                "omitted auto_tempo due to legacy signature for fallback transcription"
+            )
+        try:
+            result = _fallback_transcribe_stem(path, **fallback_kwargs)
+        except TypeError:
+            args = [path]
+            min_dur_kw = fallback_kwargs.get("min_dur")
+            if min_dur_kw is not None:
+                args.append(min_dur_kw)
+            tempo_kw = fallback_kwargs.get("tempo")
+            if tempo_kw is not None:
+                args.append(tempo_kw)
+            try:
+                result = _fallback_transcribe_stem(*args)
+            except TypeError:
+                result = _fallback_transcribe_stem(path)
         if audio is None:
             try:
                 from scipy.io import wavfile

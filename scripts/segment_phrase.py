@@ -261,36 +261,40 @@ def segment_bytes(
     inst_regex: str | None = None,
     pitch_range: tuple[int, int] | None = None,
 ) -> list[tuple[int, float]]:
-feats, mask, _ = _midi_to_feats_compat(
-    data,
-    inst_index=inst_index,
-    inst_regex=inst_regex,
-    pitch_range=pitch_range,
-)
-with torch.no_grad():
-    outputs = model(feats, mask)
-    logits = _extract_boundary_logits(outputs)[0]  # shape: (T,)
-    probs = torch.sigmoid(logits)
+    feats, mask, _ = _midi_to_feats_compat(
+        data,
+        inst_index=inst_index,
+        inst_regex=inst_regex,
+        pitch_range=pitch_range,
+    )
+    with torch.no_grad():
+        outputs = model(feats, mask)
+        logits = _extract_boundary_logits(outputs)[0]  # shape: (T,)
+        probs = torch.sigmoid(logits)
 
-mask_row = mask[0]
-pairs: list[tuple[int, float]] = []
-if isinstance(mask_row, torch.Tensor):
-    valid = mask_row if mask_row.dtype == torch.bool else mask_row.bool()
-    if valid.ndim == 0:
-        valid = valid.unsqueeze(0)
-    idxs = torch.nonzero(valid, as_tuple=False).squeeze(1).tolist()
-    vals = probs[valid].tolist()
-    pairs = [(int(i), float(p)) for i, p in zip(idxs, vals) if float(p) > threshold]
-else:
-    mlist = list(mask_row)
-    vals = probs.tolist()
-    pairs = [
-        (i, float(p))
-        for i, (flag, p) in enumerate(zip(mlist, vals))
-        if flag and float(p) > threshold
-    ]
+    mask_row = mask[0]
+    pairs: list[tuple[int, float]] = []
+    if isinstance(mask_row, torch.Tensor):
+        valid = mask_row if mask_row.dtype == torch.bool else mask_row.bool()
+        if valid.ndim == 0:
+            valid = valid.unsqueeze(0)
+        idxs = torch.nonzero(valid, as_tuple=False).squeeze(1).tolist()
+        vals = probs[valid].tolist()
+        pairs = [
+            (int(i), float(p))
+            for i, p in zip(idxs, vals)
+            if float(p) > threshold
+        ]
+    else:
+        mlist = list(mask_row)
+        vals = probs.tolist()
+        pairs = [
+            (i, float(p))
+            for i, (flag, p) in enumerate(zip(mlist, vals))
+            if flag and float(p) > threshold
+        ]
 
-return pairs
+    return pairs
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -308,47 +312,73 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     data = args.midi.read_bytes()
     model = load_model(args.arch, args.ckpt)
-feats, mask, note_times = _midi_to_feats_compat(
-    data,
-    inst_index=args.instrument_index,
-    inst_regex=args.instrument_regex,
-    pitch_range=tuple(args.pitch_range) if args.pitch_range else None,
-)
-with torch.no_grad():
-    outputs = model(feats, mask)
-    logits = _extract_boundary_logits(outputs)[0]  # shape: (T,)
-    probs = torch.sigmoid(logits)
+    feats, mask, note_times = _midi_to_feats_compat(
+        data,
+        inst_index=args.instrument_index,
+        inst_regex=args.instrument_regex,
+        pitch_range=tuple(args.pitch_range) if args.pitch_range else None,
+    )
+    with torch.no_grad():
+        outputs = model(feats, mask)
+        logits = _extract_boundary_logits(outputs)[0]  # shape: (T,)
+        probs = torch.sigmoid(logits)
 
-rows: list[tuple[int, float]] = []
-mask_row = mask[0]
-if isinstance(mask_row, torch.Tensor):
-    valid = mask_row if mask_row.dtype == torch.bool else mask_row.bool()
-    if valid.ndim == 0:
-        valid = valid.unsqueeze(0)
-    idxs = torch.nonzero(valid, as_tuple=False).squeeze(1).tolist()
-    vals = probs[valid].detach().cpu().tolist() if hasattr(probs, "detach") else (
-        probs.cpu().tolist() if hasattr(probs, "cpu") else (probs.tolist() if hasattr(probs, "tolist") else list(probs))
-    )
-    rows = [(int(i), float(p)) for i, p in zip(idxs, vals) if float(p) > args.threshold]
-else:
-    mask_list = list(mask_row)
-    vals = probs.detach().cpu().tolist() if hasattr(probs, "detach") else (
-        probs.cpu().tolist() if hasattr(probs, "cpu") else (probs.tolist() if hasattr(probs, "tolist") else list(probs))
-    )
-    rows = [
-        (i, float(p))
-        for i, (flag, p) in enumerate(zip(mask_list, vals))
-        if flag and float(p) > args.threshold
-    ]
+    rows: list[tuple[int, float]] = []
+    mask_row = mask[0]
+    if isinstance(mask_row, torch.Tensor):
+        valid = mask_row if mask_row.dtype == torch.bool else mask_row.bool()
+        if valid.ndim == 0:
+            valid = valid.unsqueeze(0)
+        idxs = torch.nonzero(valid, as_tuple=False).squeeze(1).tolist()
+        vals = (
+            probs[valid].detach().cpu().tolist()
+            if hasattr(probs, "detach")
+            else (
+                probs.cpu().tolist()
+                if hasattr(probs, "cpu")
+                else (
+                    probs.tolist()
+                    if hasattr(probs, "tolist")
+                    else list(probs)
+                )
+            )
+        )
+        rows = [
+            (int(i), float(p))
+            for i, p in zip(idxs, vals)
+            if float(p) > args.threshold
+        ]
+    else:
+        mask_list = list(mask_row)
+        vals = (
+            probs.detach().cpu().tolist()
+            if hasattr(probs, "detach")
+            else (
+                probs.cpu().tolist()
+                if hasattr(probs, "cpu")
+                else (
+                    probs.tolist()
+                    if hasattr(probs, "tolist")
+                    else list(probs)
+                )
+            )
+        )
+        rows = [
+            (i, float(p))
+            for i, (flag, p) in enumerate(zip(mask_list, vals))
+            if flag and float(p) > args.threshold
+        ]
 
     if args.out_tsv:
         try:
             import pretty_midi
             from bisect import bisect_right
+
             pm = pretty_midi.PrettyMIDI(args.midi.as_posix())
             tpb = float(pm.resolution)
             beat_times = pm.get_beats()  # ascending times of beats
             downbeats = pm.get_downbeats()  # bar starts
+
             # map downbeat time -> nearest beat index <= t
             def beat_index_at(t: float) -> int:
                 if not beat_times:
@@ -356,7 +386,11 @@ else:
                 i = max(0, bisect_right(beat_times, t) - 1)
                 return min(i, len(beat_times) - 1)
 
-            downbeat_beat_idx = [beat_index_at(db) for db in downbeats] if downbeats is not None else []
+            downbeat_beat_idx = (
+                [beat_index_at(db) for db in downbeats]
+                if downbeats is not None
+                else []
+            )
 
             def global_beat_float(t: float) -> float:
                 if not beat_times:
@@ -373,7 +407,11 @@ else:
                 if downbeats:
                     b = max(0, bisect_right(downbeats, t) - 1)
                     bar = b + 1
-                    b0_idx = downbeat_beat_idx[b] if b < len(downbeat_beat_idx) else 0
+                    b0_idx = (
+                        downbeat_beat_idx[b]
+                        if b < len(downbeat_beat_idx)
+                        else 0
+                    )
                 else:
                     bar, b0_idx = 1, 0
                 i = beat_index_at(t)
@@ -387,6 +425,7 @@ else:
 
         except Exception:
             beat_times = []
+
             def bar_beat_at(t: float) -> tuple[int, int, float, int]:
                 return 1, 1, 0.0, 0
 
@@ -396,7 +435,9 @@ else:
             for i, p in rows:
                 t = note_times[i] if i < len(note_times) else 0.0
                 bar, beat, bf, tick = bar_beat_at(t)
-                f.write(f"{i}\t{p:.3f}\t{t:.3f}\t{bar}\t{beat}\t{bf:.2f}\t{tick}\n")
+                f.write(
+                    f"{i}\t{p:.3f}\t{t:.3f}\t{bar}\t{beat}\t{bf:.2f}\t{tick}\n"
+                )
     else:
         for b in rows:
             print(b)

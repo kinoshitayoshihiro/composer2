@@ -9,8 +9,23 @@ try:
 except Exception:
     torch = None
 
+try:
+    import transformers  # type: ignore[unused-import]
+except Exception:
+    transformers = None
 
-@pytest.mark.skipif(torch is None, reason="requires torch")
+try:
+    import peft  # type: ignore[unused-import]
+except Exception:
+    peft = None
+
+requires_lora_stack = pytest.mark.skipif(
+    torch is None or transformers is None or peft is None,
+    reason="requires torch, transformers and peft",
+)
+
+
+@requires_lora_stack
 def test_piano_lora_smoke(tmp_path: Path):
     dummy = tmp_path / "dummy.jsonl"
     dummy.write_text('{"tokens": [0,0,0]}\n' * 4)
@@ -33,7 +48,7 @@ def test_piano_lora_smoke(tmp_path: Path):
     ).exists()
 
 
-@pytest.mark.skipif(torch is None, reason="requires torch")
+@requires_lora_stack
 def test_sax_lora_smoke(tmp_path: Path):
     dummy = tmp_path / "dummy.jsonl"
     dummy.write_text('{"tokens": [0,0,0]}\n' * 4)

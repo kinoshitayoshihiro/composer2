@@ -226,6 +226,7 @@ def convert(args: SimpleNamespace) -> None:
     approx: List[str] = []
     csv_rows: List[Dict[str, object]] = []
     last_sent: tuple[int, ...] | None = None
+    last_sent_bar = -10**9
     emitted_at: dict[int, float] = {}
     bar_index = 0
 
@@ -262,10 +263,18 @@ def convert(args: SimpleNamespace) -> None:
             for b in blocks:
                 ks_notes.extend(pattern_to_keyswitches(b["strum"], pattern_lib, keymap))
         ks_tuple = tuple(ks_notes)
-        send = True
-        if getattr(args, "no_redundant_ks", False) and last_sent == ks_tuple:
-            send = False
-        if periodic > 0 and bar_index % periodic != 0:
+        same_tuple = last_sent == ks_tuple
+        periodic_due = (
+            periodic == 0
+            or not same_tuple
+            or last_sent_bar < 0
+            or (bar_index - last_sent_bar) >= periodic
+        )
+        # Allow periodic re-arming even when the tuple repeats across bars; only
+        # suppress true duplicates that occur within the same bar when the guard
+        # is enabled.
+        send = periodic_due
+        if send and getattr(args, "no_redundant_ks", False) and same_tuple and last_sent_bar == bar_index:
             send = False
         if send:
             ks_time = max(0.0, bar_start - (ks_lead + 20.0) / 1000.0)
@@ -279,8 +288,8 @@ def convert(args: SimpleNamespace) -> None:
                             emitted_any |= _emit_keyswitch(pitch, ks_time)
             for pitch in ks_notes:
                 emitted_any |= _emit_keyswitch(pitch, ks_time)
-            if emitted_any:
-                last_sent = ks_tuple
+            last_sent = ks_tuple
+            last_sent_bar = bar_index
         for b in blocks:
             chord = utils.chordify(b["pitches"], (play_low, play_high))
             total_notes += len(b["pitches"])

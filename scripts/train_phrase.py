@@ -1016,20 +1016,17 @@ def train_model(
 
         tag, scheme = _parse_reweight(reweight)
         if tag and (scheme is None or scheme == "inv_freq"):
-            tag_values: list[str] = []
-            group_count = 0
             tags_map = getattr(ds_train, "group_tags", None)
-            if isinstance(tags_map, dict) and tag in tags_map:
-                group_values = list(tags_map.get(tag, []))
-                group_count = len(group_values)
-                tag_values = ["" if v is None else str(v) for v in group_values]
-            if not any(v != "" for v in tag_values):
-                tag_values = []
-                with open(train_csv, newline="") as f:
-                    for row in csv.DictReader(f):
-                        tag_values.append("" if row.get(tag) is None else str(row.get(tag)))
+            group_count = (
+                len(tags_map.get(tag, []))
+                if isinstance(tags_map, dict) and tag in tags_map
+                else 0
+            )
+            with open(train_csv, newline="") as f:
+                rows = list(csv.DictReader(f))
+            tag_values = ["" if row.get(tag) is None else str(row.get(tag)) for row in rows]
             logging.debug("reweight tag=%s values=%d", tag, len(tag_values))
-            if any(v != "" for v in tag_values):
+            if scheme == "inv_freq" and any(v != "" for v in tag_values):
                 if len(tag_values) != len(ds_train):
                     logging.info(
                         "reweight=%r length mismatch (values=%d groups=%d); skipping sampler",
@@ -1074,10 +1071,8 @@ def train_model(
                         shuffle_train = False
             else:
                 logging.info(
-                    "reweight=%r accepted but no values found; skipping sampler (group_tags=%d, train_rows=%d)",
+                    "reweight=%r specified but no values found; keep shuffle.",
                     reweight,
-                    group_count,
-                    len(train_rows),
                 )
 
     dl_train = DataLoader(

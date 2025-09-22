@@ -49,41 +49,44 @@ class PhraseTransformer(nn.Module if torch is not None else object):
         self.head_vel_reg = None  # type: ignore[attr-defined]
         self.head_pos_reg = None  # type: ignore[attr-defined]
 
-    def forward(self, feats: Dict[str, "torch.Tensor"], mask: "torch.Tensor"):
-        """Return dummy logits with shape (B, T)."""
-        if torch is None:
-            try:
-                b = len(mask)  # type: ignore[arg-type]
-                t = len(mask[0]) if b else 0  # type: ignore[index]
-            except Exception:
-                b, t = 1, 0
+    def forward(
+        self,
+        feats: Dict[str, "torch.Tensor"],
+        mask: "torch.Tensor | None" = None,
+    ) -> "torch.Tensor":
+        """Return a dummy (B, T) tensor for tests."""
 
-            class _Out:
-                def __init__(self, shape):
-                    self.shape = shape
+        if torch is not None:
+            if mask is not None:
+                mask_tensor = torch.as_tensor(mask, dtype=torch.float32)
+                if mask_tensor.dim() == 1:
+                    mask_tensor = mask_tensor.unsqueeze(0)
+                return mask_tensor
 
-            return _Out((b, t))
-
-        # Tensor 化を試みる（失敗したら feats から形状推定して 0 テンソルを返す）
-        if not isinstance(mask, torch.Tensor):
-            try:
-                mask = torch.as_tensor(mask, dtype=torch.bool)
-            except Exception:
-                pitch = feats.get("pitch_class")
-                if isinstance(pitch, torch.Tensor) and pitch.dim() >= 2:
-                    b, t = pitch.shape[:2]
-                else:
+            for value in feats.values():
+                if isinstance(value, torch.Tensor):
+                    dim0 = int(value.shape[0]) if value.dim() >= 1 else 1
+                    dim1 = int(value.shape[1]) if value.dim() >= 2 else 1
+                    return torch.zeros(dim0, dim1, dtype=torch.float32, device=value.device)
+                if hasattr(value, "shape"):
+                    shape = getattr(value, "shape")
                     try:
-                        b = len(pitch)  # type: ignore[arg-type]
-                        t = len(pitch[0]) if b else 0  # type: ignore[index]
+                        dim0 = int(shape[0])
+                        dim1 = int(shape[1]) if len(shape) > 1 else 1
                     except Exception:
-                        b, t = 1, 0
-                return torch.zeros((b, t), dtype=torch.float32)
+                        continue
+                    return torch.zeros(dim0, dim1, dtype=torch.float32)
 
-        # (T,) → (1,T)
-        if mask.dim() == 1:
-            mask = mask.unsqueeze(0)
+            return torch.zeros(1, 1, dtype=torch.float32)
 
-        b, t = mask.shape
-        # 形を満たすゼロロジットを返す
-        return torch.zeros((b, t), dtype=torch.float32, device=mask.device)
+        try:
+            dim0 = len(mask) if mask is not None else 1  # type: ignore[arg-type]
+            dim1 = len(mask[0]) if mask is not None and dim0 else 1  # type: ignore[index]
+        except Exception:
+            dim0, dim1 = 1, 1
+
+        class _Out:
+            def __init__(self, shape):
+                self.shape = shape
+
+        return _Out((dim0, dim1))

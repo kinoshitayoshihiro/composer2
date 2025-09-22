@@ -1005,58 +1005,79 @@ def train_model(
     weight_stats: dict[str, float] | None = None
     shuffle_train = True
     if reweight:
-        def _parse_reweight(spec: str) -> tuple[str | None, str]:
-            entries = {}
+        def _parse_reweight(spec: str) -> tuple[str | None, str | None]:
+            entries: dict[str, str] = {}
             for part in spec.split(","):
                 if "=" not in part:
                     continue
                 key, value = part.split("=", 1)
                 entries[key.strip()] = value.strip()
-            return entries.get("tag") or entries.get("class"), entries.get("scheme", "inv_freq")
+            return entries.get("tag") or entries.get("class"), entries.get("scheme")
 
         tag, scheme = _parse_reweight(reweight)
-        if tag and scheme == "inv_freq":
-            group_values = list(ds_train.group_tags.get(tag, [])) if tag in ds_train.group_tags else []
-            values = ["" if v is None else str(v) for v in group_values]
-            train_rows_count = len(train_rows)
-            if not values and train_rows:
-                values = ["" if r.get(tag) is None else str(r.get(tag)) for r in train_rows]
-            group_count = len(group_values)
-            logging.debug("reweight tag=%s values=%d", tag, len(values))
-            if values:
-                freq = Counter(values)
-                weights = [1.0 / max(1, freq[v]) for v in values]
-                logging.debug("inv_freq weight head %s", [round(w, 6) for w in weights[:3]])
-                weight_map = {v: 1.0 / max(1, freq[v]) for v in freq}
-                weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
-                logging.info("top tag weights %s", weight_stats)
-                wrs_cls = None
-                wrs_reason: str | None = None
-                if torch is None:
-                    wrs_reason = "torch import failed"
-                else:
-                    utils_mod = getattr(torch, "utils", None)
-                    data_mod = getattr(utils_mod, "data", None) if utils_mod is not None else None
-                    wrs_cls = getattr(data_mod, "WeightedRandomSampler", None) if data_mod is not None else None
-                    if wrs_cls is None:
-                        wrs_reason = "torch.utils.data.WeightedRandomSampler missing"
-                if wrs_cls is None:
+        if tag and (scheme is None or scheme == "inv_freq"):
+            tag_values: list[str] = []
+            group_count = 0
+            tags_map = getattr(ds_train, "group_tags", None)
+            if isinstance(tags_map, dict) and tag in tags_map:
+                group_values = list(tags_map.get(tag, []))
+                group_count = len(group_values)
+                tag_values = ["" if v is None else str(v) for v in group_values]
+            if not any(v != "" for v in tag_values):
+                tag_values = []
+                with open(train_csv, newline="") as f:
+                    for row in csv.DictReader(f):
+                        tag_values.append("" if row.get(tag) is None else str(row.get(tag)))
+            logging.debug("reweight tag=%s values=%d", tag, len(tag_values))
+            if any(v != "" for v in tag_values):
+                if len(tag_values) != len(ds_train):
                     logging.info(
-                        "torch not available for reweight; skipping sampler (%s)",
-                        wrs_reason or "unavailable",
+                        "reweight=%r length mismatch (values=%d groups=%d); skipping sampler",
+                        reweight,
+                        len(tag_values),
+                        len(ds_train),
                     )
                 else:
-                    try:
-                        sampler = wrs_cls(weights, len(weights), replacement=True)
-                    except TypeError:
-                        sampler = wrs_cls(weights, len(weights), True)
-                    shuffle_train = False
+                    freq = Counter(tag_values)
+                    weights = [1.0 / max(1, freq[v]) for v in tag_values]
+                    weight_map = {v: 1.0 / max(1, freq[v]) for v in freq}
+                    weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
+                    logging.info("top tag weights %s", weight_stats)
+                    logging.debug(
+                        "inv_freq head weights: %s",
+                        [round(w, 6) for w in weights[:3]],
+                    )
+                    wrs_cls = None
+                    wrs_reason: str | None = None
+                    if torch is None:
+                        wrs_reason = "torch import failed"
+                    else:
+                        utils_mod = getattr(torch, "utils", None)
+                        data_mod = getattr(utils_mod, "data", None) if utils_mod is not None else None
+                        wrs_cls = (
+                            getattr(data_mod, "WeightedRandomSampler", None)
+                            if data_mod is not None
+                            else None
+                        )
+                        if wrs_cls is None:
+                            wrs_reason = "torch.utils.data.WeightedRandomSampler missing"
+                    if wrs_cls is None:
+                        logging.info(
+                            "torch not available for reweight; skipping sampler (%s)",
+                            wrs_reason or "unavailable",
+                        )
+                    else:
+                        try:
+                            sampler = wrs_cls(weights, len(weights), replacement=True)
+                        except TypeError:
+                            sampler = wrs_cls(weights, len(weights), True)
+                        shuffle_train = False
             else:
                 logging.info(
                     "reweight=%r accepted but no values found; skipping sampler (group_tags=%d, train_rows=%d)",
                     reweight,
                     group_count,
-                    train_rows_count,
+                    len(train_rows),
                 )
 
     dl_train = DataLoader(

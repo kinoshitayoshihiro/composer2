@@ -628,14 +628,14 @@ def _fallback_transcribe_stem(
             if offset - onset >= min_dur:
                 inst.notes.append(
                     _mk_note(
-                        60,
+                        36,
                         float(onset),
                         float(offset) - float(onset),
                         100,
                     )
                 )
         if not inst.notes:
-            inst.notes.append(_mk_note(60, 0.0, float(min_dur), 100))
+            inst.notes.append(_mk_note(36, 0.0, float(min_dur), 100))
         return StemResult(inst, tempo)
 
     try:

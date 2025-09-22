@@ -169,12 +169,17 @@ def apply_controls(
                 )
                 new_pb = inst.pitch_bends[pre:]
                 if new_pb:
+                    rendered_start = new_pb[0].time
+                    rendered_end = new_pb[-1].time
                     start = float(curve.times[0]) if len(curve.times) else 0.0
                     end = float(curve.times[-1]) if len(curve.times) else 0.0
                     if curve.domain == "beats":
                         start, end = curve._beats_to_times([start, end], tempo_map or 120.0)
                     start += curve.offset_sec
                     end += curve.offset_sec
+                    if curve.domain == "beats":
+                        start = rendered_start
+                        end = rendered_end
                     new_pb[0].time = start
                     new_pb[-1].time = end
                     if (
@@ -212,12 +217,17 @@ def apply_controls(
                 )
                 new_cc = [c for c in inst.control_changes[pre:] if c.number == cc_num]
                 if new_cc:
+                    rendered_start = new_cc[0].time
+                    rendered_end = new_cc[-1].time
                     start = float(curve.times[0]) if len(curve.times) else 0.0
                     end = float(curve.times[-1]) if len(curve.times) else 0.0
                     if curve.domain == "beats":
                         start, end = curve._beats_to_times([start, end], tempo_map or 120.0)
                     start += curve.offset_sec
                     end += curve.offset_sec
+                    if curve.domain == "beats":
+                        start = rendered_start
+                        end = rendered_end
                     new_cc[0].time = start
                     new_cc[-1].time = end
         _sort_events(inst)

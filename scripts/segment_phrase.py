@@ -227,9 +227,29 @@ def segment_bytes(
     )
     with torch.no_grad():
         outputs = model(feats, mask)
-        if "boundary" not in outputs:
-            logging.warning("segmenter outputs missing 'boundary' logits")
-        logits = outputs["boundary"][0]
+
+        def _extract_boundary_logits(o):
+            import torch as _torch
+
+            if isinstance(o, dict):
+                t = o.get("boundary")
+                if t is None:
+                    for v in o.values():
+                        if isinstance(v, _torch.Tensor):
+                            return v[0] if getattr(v, "ndim", 1) > 1 else v
+                    logging.warning(
+                        "segmenter outputs missing 'boundary' logits and no tensor values"
+                    )
+                    raise RuntimeError("invalid segmenter outputs")
+                return t[0] if getattr(t, "ndim", 1) > 1 else t
+            if isinstance(o, (list, tuple)):
+                t = o[0]
+                return t[0] if hasattr(t, "ndim") and getattr(t, "ndim", 1) > 1 else t
+            if hasattr(o, "ndim"):
+                return o[0] if getattr(o, "ndim", 1) > 1 else o
+            raise RuntimeError("unknown segmenter output type")
+
+        logits = _extract_boundary_logits(outputs)
         valid = mask[0].bool()
         probs = torch.sigmoid(logits[valid])
     return [(int(i), float(p)) for i, p in enumerate(probs.tolist()) if p > threshold]
@@ -258,9 +278,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     with torch.no_grad():
         outputs = model(feats, mask)
-        if "boundary" not in outputs:
-            logging.warning("segmenter outputs missing 'boundary' logits")
-        logits = outputs["boundary"][0]
+
+        def _extract_boundary_logits(o):
+            import torch as _torch
+
+            if isinstance(o, dict):
+                t = o.get("boundary")
+                if t is None:
+                    for v in o.values():
+                        if isinstance(v, _torch.Tensor):
+                            return v[0] if getattr(v, "ndim", 1) > 1 else v
+                    logging.warning(
+                        "segmenter outputs missing 'boundary' logits and no tensor values"
+                    )
+                    raise RuntimeError("invalid segmenter outputs")
+                return t[0] if getattr(t, "ndim", 1) > 1 else t
+            if isinstance(o, (list, tuple)):
+                t = o[0]
+                return t[0] if hasattr(t, "ndim") and getattr(t, "ndim", 1) > 1 else t
+            if hasattr(o, "ndim"):
+                return o[0] if getattr(o, "ndim", 1) > 1 else o
+            raise RuntimeError("unknown segmenter output type")
+
+        logits = _extract_boundary_logits(outputs)
         valid = mask[0].bool()
         probs = torch.sigmoid(logits[valid]).cpu().tolist()
     rows = [(i, float(p)) for i, p in enumerate(probs) if p > args.threshold]

@@ -715,12 +715,20 @@ def _resolve_tempo(
     return float(bpm), reason
 
 
-def collect_files(root: Path, include_audio: bool = True) -> list[Path]:
-    """Recursively collect MIDI and (optionally) WAV files under *root*."""
+def _iter_loops(root: Path, include_audio: bool = True) -> Iterable[Path]:
+    """Yield loop files under *root* with minimal traversal overhead."""
+
+    stack = [Path(root)]
     exts = {".mid", ".midi"}
     if include_audio:
         exts |= {".wav", ".wave"}
-    return [p for p in root.rglob("*") if p.suffix.lower() in exts]
+    while stack:
+        directory = stack.pop()
+        for entry in directory.iterdir():
+            if entry.is_dir():
+                stack.append(entry)
+            elif entry.suffix.lower() in exts:
+                yield entry
 
 
 def train(
@@ -797,7 +805,10 @@ def train(
     else:
         raise ValueError("counts_dtype must be 'u32' or 'u64'")
 
-    paths = collect_files(loop_dir, include_audio)
+    paths = list(_iter_loops(loop_dir, include_audio))
+    if n and n > 0 and len(paths) > n:
+        step = max(1, len(paths) // n)
+        paths = paths[::step][:n]
 
     processed_log = memmap_dir / "processed.txt"
     processed_set: set[str] = set()

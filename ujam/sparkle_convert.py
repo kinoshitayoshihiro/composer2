@@ -3100,7 +3100,8 @@ def insert_style_layer(
             phrase_inst = inst
             break
     if phrase_inst is None:
-        return 0
+        phrase_inst = pretty_midi.Instrument(program=0, name=PHRASE_INST_NAME)
+        pm_out.instruments.append(phrase_inst)
     seed_bpm = float(bpm) if bpm is not None else 120.0
     if not math.isfinite(seed_bpm) or seed_bpm <= 0.0:
         seed_bpm = 120.0

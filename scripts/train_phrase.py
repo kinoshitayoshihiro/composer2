@@ -1016,21 +1016,11 @@ def train_model(
 
         tag, scheme = _parse_reweight(reweight)
         if tag and scheme == "inv_freq":
-            values: list[str] = []
-            group_values: list[str] = []
-            if tag in ds_train.group_tags:
-                group_values = list(ds_train.group_tags[tag])
-                values = group_values
-            train_rows_local = locals().get("train_rows")
-            train_rows_count = 0
-            if train_rows_local:
-                try:
-                    train_rows_count = len(train_rows_local)  # type: ignore[arg-type]
-                except TypeError:
-                    train_rows_local = list(train_rows_local)  # type: ignore[assignment]
-                    train_rows_count = len(train_rows_local)
-            if not values and train_rows_local:
-                values = [str(r.get(tag, "")) for r in train_rows_local]
+            group_values = list(ds_train.group_tags.get(tag, [])) if tag in ds_train.group_tags else []
+            values = ["" if v is None else str(v) for v in group_values]
+            train_rows_count = len(train_rows)
+            if not values and train_rows:
+                values = ["" if r.get(tag) is None else str(r.get(tag)) for r in train_rows]
             group_count = len(group_values)
             logging.debug("reweight tag=%s values=%d", tag, len(values))
             if values:

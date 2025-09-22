@@ -731,6 +731,9 @@ def _iter_loops(root: Path, include_audio: bool = True) -> Iterable[Path]:
                 yield entry
 
 
+# 上限（大規模ディレクトリ時の探索打切り）。環境変数で調整可。
+_DEFAULT_FILE_BUDGET = int(os.getenv("GROOVE_SAMPLER_FILE_BUDGET", "64"))
+
 def train(
     loop_dir: Path,
     *,
@@ -798,6 +801,14 @@ def train(
     if memmap_dir is None:
         memmap_dir = Path(tempfile.gettempdir()) / "composer2_groove_mm"
 
+    # 先に resume ログを読む（列挙中にスキップしたいので）
+    processed_log = memmap_dir / "processed.txt"
+    processed_set: set[str] = (
+        set(processed_log.read_text().splitlines())
+        if (resume and processed_log.exists())
+        else set()
+    )
+
     if counts_dtype in {"u32", "uint32"}:
         counts_dtype = "uint32"
     elif counts_dtype in {"u64", "uint64"}:
@@ -805,15 +816,24 @@ def train(
     else:
         raise ValueError("counts_dtype must be 'u32' or 'u64'")
 
-    paths = list(_iter_loops(loop_dir, include_audio))
-    if n and n > 0 and len(paths) > n:
-        step = max(1, len(paths) // n)
-        paths = paths[::step][:n]
+# 大量ファイル時も探索を O(budget) で打ち切る（resume は列挙中に反映）
+file_budget = _DEFAULT_FILE_BUDGET
+try:
+    env_budget = int(os.getenv("GROOVE_SAMPLER_FILE_BUDGET", str(file_budget)))
+    if env_budget > 0:
+        file_budget = env_budget
+except Exception:
+    pass
 
-    processed_log = memmap_dir / "processed.txt"
-    processed_set: set[str] = set()
-    if resume and processed_log.exists():
-        processed_set = set(processed_log.read_text().splitlines())
+paths: list[Path] = []
+for p in _iter_loops(loop_dir, include_audio):
+    if resume and str(p) in processed_set:
+        continue
+    paths.append(p)
+    if file_budget > 0 and len(paths) >= file_budget:
+        break
+
+
     paths = [p for p in paths if str(p) not in processed_set]
     if aux_vocab_path and aux_vocab_path.exists():
         aux_vocab_obj = AuxVocab.from_json(aux_vocab_path)

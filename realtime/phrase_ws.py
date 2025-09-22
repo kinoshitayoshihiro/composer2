@@ -3,7 +3,16 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import torch
+try:  # pragma: no cover - optional dependency
+    import torch
+except Exception:  # pragma: no cover - fallback to test stub when available
+    try:
+        from tests.torch_stub import _stub_torch  # type: ignore
+
+        _stub_torch()
+        import torch  # type: ignore
+    except Exception as exc:  # pragma: no cover - tests ensure stub availability
+        raise ImportError("torch is required for realtime phrase inference") from exc
 import uvicorn
 
 try:  # pragma: no cover - prefer FastAPI when available

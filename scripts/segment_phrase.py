@@ -93,19 +93,61 @@ def _midi_to_feats(
     return feats, mask, note_times
 
 
-def _midi_to_feats_compat(data: bytes, **kwargs: Any):
-    """Call `_midi_to_feats` with backward compatibility for kwargs/returns."""
+def _extract_boundary_logits(outputs: object) -> torch.Tensor:
+    """Return the boundary logits tensor from ``outputs``.
 
+    Supports models that return either a mapping with a ``"boundary"`` entry
+    or a sequence whose first element holds the logits.
+    """
+    if isinstance(outputs, dict):
+        if "boundary" not in outputs:
+            logging.warning("segmenter outputs missing 'boundary' logits")
+            raise RuntimeError("boundary logits missing")
+        tensor = outputs["boundary"]
+    elif isinstance(outputs, (list, tuple)):
+        if not outputs:
+            raise RuntimeError("invalid model outputs type")
+        tensor = outputs[0]
+    else:
+        raise RuntimeError("invalid model outputs type")
+
+    if not isinstance(tensor, torch.Tensor):
+        raise RuntimeError("boundary logits must be a torch.Tensor")
+
+    ndim = getattr(tensor, "ndim", None)
+    if ndim is None:
+        try:
+            ndim = tensor.dim()  # type: ignore[attr-defined]
+        except Exception:
+            ndim = 1
+    if int(ndim) == 1:
+        tensor = tensor.unsqueeze(0)
+    return tensor
+
+
+def _normalize_feats_result(
+    result: object,
+) -> tuple[dict[str, torch.Tensor], torch.Tensor, list[float]]:
+    """Ensure ``_midi_to_feats`` style helpers return ``(feats, mask, times)``."""
+    if isinstance(result, (list, tuple)):
+        if len(result) == 3:
+            feats, mask, times = result
+            return feats, mask, list(times)
+        if len(result) == 2:
+            feats, mask = result
+            return feats, mask, []
+    raise ValueError("_midi_to_feats must return (feats, mask, [times])")
+
+
+def _midi_to_feats_compat(
+    data: bytes, **kwargs
+) -> tuple[dict[str, torch.Tensor], torch.Tensor, list[float]]:
+    """Call `_midi_to_feats` with backward compatibility for kwargs/returns."""
     try:
         res = _midi_to_feats(data, **kwargs)  # type: ignore[misc]
     except TypeError:
         res = _midi_to_feats(data)  # type: ignore[misc]
-    if not isinstance(res, (tuple, list)) or len(res) < 2:
-        raise ValueError("_midi_to_feats must return at least (feats, mask)")
-    feats, mask = res[0], res[1]
-    extra = res[2] if len(res) > 2 else None
-    return feats, mask, extra
-
+    return _normalize_feats_result(res)
 
 class PhraseLSTMInfer(nn.Module):  # minimal LSTM to load LSTM checkpoints
     def __init__(
@@ -219,40 +261,36 @@ def segment_bytes(
     inst_regex: str | None = None,
     pitch_range: tuple[int, int] | None = None,
 ) -> list[tuple[int, float]]:
-    feats, mask, _ = _midi_to_feats_compat(
-        data,
-        inst_index=inst_index,
-        inst_regex=inst_regex,
-        pitch_range=pitch_range,
-    )
-    with torch.no_grad():
-        outputs = model(feats, mask)
+feats, mask, _ = _midi_to_feats_compat(
+    data,
+    inst_index=inst_index,
+    inst_regex=inst_regex,
+    pitch_range=pitch_range,
+)
+with torch.no_grad():
+    outputs = model(feats, mask)
+    logits = _extract_boundary_logits(outputs)[0]  # shape: (T,)
+    probs = torch.sigmoid(logits)
 
-        def _extract_boundary_logits(o):
-            import torch as _torch
+mask_row = mask[0]
+pairs: list[tuple[int, float]] = []
+if isinstance(mask_row, torch.Tensor):
+    valid = mask_row if mask_row.dtype == torch.bool else mask_row.bool()
+    if valid.ndim == 0:
+        valid = valid.unsqueeze(0)
+    idxs = torch.nonzero(valid, as_tuple=False).squeeze(1).tolist()
+    vals = probs[valid].tolist()
+    pairs = [(int(i), float(p)) for i, p in zip(idxs, vals) if float(p) > threshold]
+else:
+    mlist = list(mask_row)
+    vals = probs.tolist()
+    pairs = [
+        (i, float(p))
+        for i, (flag, p) in enumerate(zip(mlist, vals))
+        if flag and float(p) > threshold
+    ]
 
-            if isinstance(o, dict):
-                t = o.get("boundary")
-                if t is None:
-                    for v in o.values():
-                        if isinstance(v, _torch.Tensor):
-                            return v[0] if getattr(v, "ndim", 1) > 1 else v
-                    logging.warning(
-                        "segmenter outputs missing 'boundary' logits and no tensor values"
-                    )
-                    raise RuntimeError("invalid segmenter outputs")
-                return t[0] if getattr(t, "ndim", 1) > 1 else t
-            if isinstance(o, (list, tuple)):
-                t = o[0]
-                return t[0] if hasattr(t, "ndim") and getattr(t, "ndim", 1) > 1 else t
-            if hasattr(o, "ndim"):
-                return o[0] if getattr(o, "ndim", 1) > 1 else o
-            raise RuntimeError("unknown segmenter output type")
-
-        logits = _extract_boundary_logits(outputs)
-        valid = mask[0].bool()
-        probs = torch.sigmoid(logits[valid])
-    return [(int(i), float(p)) for i, p in enumerate(probs.tolist()) if p > threshold]
+return pairs
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -270,40 +308,39 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     data = args.midi.read_bytes()
     model = load_model(args.arch, args.ckpt)
-    feats, mask, note_times = _midi_to_feats_compat(
-        data,
-        inst_index=args.instrument_index,
-        inst_regex=args.instrument_regex,
-        pitch_range=tuple(args.pitch_range) if args.pitch_range else None,
+feats, mask, note_times = _midi_to_feats_compat(
+    data,
+    inst_index=args.instrument_index,
+    inst_regex=args.instrument_regex,
+    pitch_range=tuple(args.pitch_range) if args.pitch_range else None,
+)
+with torch.no_grad():
+    outputs = model(feats, mask)
+    logits = _extract_boundary_logits(outputs)[0]  # shape: (T,)
+    probs = torch.sigmoid(logits)
+
+rows: list[tuple[int, float]] = []
+mask_row = mask[0]
+if isinstance(mask_row, torch.Tensor):
+    valid = mask_row if mask_row.dtype == torch.bool else mask_row.bool()
+    if valid.ndim == 0:
+        valid = valid.unsqueeze(0)
+    idxs = torch.nonzero(valid, as_tuple=False).squeeze(1).tolist()
+    vals = probs[valid].detach().cpu().tolist() if hasattr(probs, "detach") else (
+        probs.cpu().tolist() if hasattr(probs, "cpu") else (probs.tolist() if hasattr(probs, "tolist") else list(probs))
     )
-    with torch.no_grad():
-        outputs = model(feats, mask)
+    rows = [(int(i), float(p)) for i, p in zip(idxs, vals) if float(p) > args.threshold]
+else:
+    mask_list = list(mask_row)
+    vals = probs.detach().cpu().tolist() if hasattr(probs, "detach") else (
+        probs.cpu().tolist() if hasattr(probs, "cpu") else (probs.tolist() if hasattr(probs, "tolist") else list(probs))
+    )
+    rows = [
+        (i, float(p))
+        for i, (flag, p) in enumerate(zip(mask_list, vals))
+        if flag and float(p) > args.threshold
+    ]
 
-        def _extract_boundary_logits(o):
-            import torch as _torch
-
-            if isinstance(o, dict):
-                t = o.get("boundary")
-                if t is None:
-                    for v in o.values():
-                        if isinstance(v, _torch.Tensor):
-                            return v[0] if getattr(v, "ndim", 1) > 1 else v
-                    logging.warning(
-                        "segmenter outputs missing 'boundary' logits and no tensor values"
-                    )
-                    raise RuntimeError("invalid segmenter outputs")
-                return t[0] if getattr(t, "ndim", 1) > 1 else t
-            if isinstance(o, (list, tuple)):
-                t = o[0]
-                return t[0] if hasattr(t, "ndim") and getattr(t, "ndim", 1) > 1 else t
-            if hasattr(o, "ndim"):
-                return o[0] if getattr(o, "ndim", 1) > 1 else o
-            raise RuntimeError("unknown segmenter output type")
-
-        logits = _extract_boundary_logits(outputs)
-        valid = mask[0].bool()
-        probs = torch.sigmoid(logits[valid]).cpu().tolist()
-    rows = [(i, float(p)) for i, p in enumerate(probs) if p > args.threshold]
     if args.out_tsv:
         try:
             import pretty_midi

@@ -286,12 +286,14 @@ def apply_controls(
                     start = float(curve.times[0]) if len(curve.times) else 0.0
                     end = float(curve.times[-1]) if len(curve.times) else 0.0
                     if curve.domain == "beats":
-                        start, end = curve._beats_to_times([start, end], tempo_map or 120.0)
+                        converted = curve._beats_to_times([start, end], tempo_map or 120.0)
+                        if converted:
+                            start = float(converted[0])
+                            end = float(converted[-1])
+                        else:
+                            start = end = 0.0
                     start += curve.offset_sec
                     end += curve.offset_sec
-                    if curve.domain == "beats":
-                        start = rendered_start
-                        end = rendered_end
                     new_cc[0].time = start
                     new_cc[-1].time = end
         _sort_events(inst)

@@ -1251,44 +1251,116 @@ def train_model(
                     )
                 if torch is None:
                     logging.info(
-                        "torch not available for reweight; skipping sampler (%s)",
-                        "torch import failed",
+                        "reweight=%r skipped %d empty values", reweight, skipped_empty
+                    )
+                logging.debug(
+                    "reweight=%r collected %d values (raw=%d)",
+                    reweight,
+                    len(values),
+                    raw_count,
+                )
+                if not values:
+                    logging.info(
+                        "reweight=%r accepted but no values found; skipping sampler",
+                        reweight,
                     )
                 else:
-                    sampler_fn = getattr(torch.utils.data, "WeightedRandomSampler", None)
-                    if sampler_fn is None:
-                        sampler_mod = getattr(torch.utils.data, "sampler", None)
-                        sampler_fn = (
-                            getattr(sampler_mod, "WeightedRandomSampler", None)
-                            if sampler_mod is not None
-                            else None
+                    if len(values) != len(ds_train):
+                        tags_map = getattr(ds_train, "group_tags", None)
+                        if (
+                            isinstance(tags_map, dict)
+                            and tag in tags_map
+                            and len(tags_map[tag]) == len(ds_train)
+                        ):
+                            try:
+                                tag_values = []
+                                for v in tags_map[tag]:
+                                    normed = _norm(v)
+                                    tag_values.append(normed if normed else "UNK")
+                            except Exception:
+                                tag_values = [
+                                    str(v) if v is not None else "UNK" for v in tags_map[tag]
+                                ]
+                                tag_values = [tv if tv else "UNK" for tv in tag_values]
+                            values = tag_values
+                            logging.info(
+                                "reweight=%r length mismatch fixed via group_tags(tag=%s)",
+                                reweight,
+                                tag,
+                            )
+                        if len(values) != len(ds_train):
+                            logging.info(
+                                "reweight=%r values=%d groups=%d; aligning by slice/pad",
+                                reweight,
+                                len(values),
+                                len(ds_train),
+                            )
+                            logging.debug(
+                                "reweight=%r first 5 values=%s",
+                                reweight,
+                                values[:5],
+                            )
+                            if len(values) > len(ds_train):
+                                values = values[: len(ds_train)]
+                            else:
+                                pad_source = next((v for v in reversed(values) if v), "UNK")
+                                if not pad_source:
+                                    pad_source = "UNK"
+                                values = values + [pad_source] * (len(ds_train) - len(values))
+                    freq = Counter(values)
+                    weights = [1.0 / max(1, freq[v]) for v in values]
+                    weight_map = {v: 1.0 / max(1, freq[v]) for v in freq}
+                    weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
+                    logging.info("top tag weights (tag=%s) %s", tag, weight_stats)
+                    logging.debug(
+                        "inv_freq weights head (tag=%s) %s",
+                        tag,
+                        [round(w, 6) for w in weights[:3]],
+                    )
+                    if torch is None:
+                        logging.info(
+                            "torch not available for reweight; skipping sampler (%s)",
+                            "torch import failed",
                         )
-                    if callable(sampler_fn):
-                        try:
-                            weight_tensor = torch.as_tensor(weights, dtype=torch.float64)
-                        except Exception:
-                            weight_tensor = torch.tensor(weights, dtype=torch.float32)
-                        try:
-                            sampler = sampler_fn(weight_tensor, len(ds_train), replacement=True)
-                        except TypeError:
-                            sampler = sampler_fn(weight_tensor, len(ds_train), True)
-                        except RecursionError:
-                            base_mod = getattr(torch.utils.data, "sampler", None)
-                            base_cls = (
-                                getattr(base_mod, "WeightedRandomSampler", None)
-                                if base_mod is not None
+                    else:
+                        sampler_fn = getattr(torch.utils.data, "WeightedRandomSampler", None)
+                        if sampler_fn is None:
+                            sampler_mod = getattr(torch.utils.data, "sampler", None)
+                            sampler_fn = (
+                                getattr(sampler_mod, "WeightedRandomSampler", None)
+                                if sampler_mod is not None
                                 else None
                             )
-                            if callable(base_cls):
-                                sampler = base_cls(weight_tensor, len(ds_train), replacement=True)
-                            else:
-                                logging.info(
-                                    "reweight=%r sampler recursion detected; continuing without sampler",
-                                    reweight,
+                        if callable(sampler_fn):
+                            try:
+                                weight_tensor = torch.as_tensor(weights, dtype=torch.float64)
+                            except Exception:
+                                weight_tensor = torch.tensor(weights, dtype=torch.float32)
+                            try:
+                                sampler = sampler_fn(
+                                    weight_tensor, len(ds_train), replacement=True
                                 )
-                                sampler = None
-                        if sampler is not None:
-                            shuffle_train = False
+                            except TypeError:
+                                sampler = sampler_fn(weight_tensor, len(ds_train), True)
+                            except RecursionError:
+                                base_mod = getattr(torch.utils.data, "sampler", None)
+                                base_cls = (
+                                    getattr(base_mod, "WeightedRandomSampler", None)
+                                    if base_mod is not None
+                                    else None
+                                )
+                                if callable(base_cls):
+                                    sampler = base_cls(
+                                        weight_tensor, len(ds_train), replacement=True
+                                    )
+                                else:
+                                    logging.info(
+                                        "reweight=%r sampler recursion detected; continuing without sampler",
+                                        reweight,
+                                    )
+                                    sampler = None
+                            if sampler is not None:
+                                shuffle_train = False
 
     dl_train = DataLoader(
         ds_train,

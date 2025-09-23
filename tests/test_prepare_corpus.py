@@ -1,6 +1,8 @@
 import argparse
 import json
 import logging
+import math
+import random
 from pathlib import Path
 
 import pytest
@@ -17,6 +19,7 @@ from tools.prepare_transformer_corpus import (
     gather_midi_files,
     bin_duration,
     load_tag_maps,
+    split_samples,
 )
 from utilities.pretty_midi_safe import pm_to_mido
 
@@ -95,8 +98,9 @@ def test_tag_merge(tmp_path: Path) -> None:
         num_workers=1,
     )
     files = gather_midi_files(Path(args.in_dir))
-    splits, _, _ = build_corpus(args, files)
+    splits, meta = build_corpus(args, files)
     assert splits["train"][0].meta["mood"] == "happy"
+    assert meta["extra"]["midi_file_count"] == 1
 
 
 def test_deterministic_split(tmp_path: Path) -> None:
@@ -127,11 +131,11 @@ def test_deterministic_split(tmp_path: Path) -> None:
         num_workers=1,
     )
     files = gather_midi_files(Path(args.in_dir))
-    s1, _, _ = build_corpus(args, files)
-    s2, _, _ = build_corpus(args, files)
+    s1, _ = build_corpus(args, files)
+    s2, _ = build_corpus(args, files)
     assert [s.tokens for s in s1["train"]] == [s.tokens for s in s2["train"]]
     args.seed = 321
-    s3, _, _ = build_corpus(args, files)
+    s3, _ = build_corpus(args, files)
     assert [s.tokens for s in s1["train"]] != [s.tokens for s in s3["train"]]
 
 
@@ -193,11 +197,58 @@ def test_non_four_four_timesig(tmp_path: Path) -> None:
         num_workers=1,
     )
     files = gather_midi_files(Path(args.in_dir))
-    splits, _, _ = build_corpus(args, files)
+    splits, _ = build_corpus(args, files)
     assert len(splits["train"]) == 1
     meta = splits["train"][0].meta
     assert meta["beats_per_bar"] == 3.0
     assert meta["time_signature"] == "6/8"
+
+
+def test_split_samples_randomised_quantisation() -> None:
+    rng = random.Random(1234)
+    pm = pretty_midi.PrettyMIDI()
+    inst = pretty_midi.Instrument(program=0)
+    t = 0.0
+    for _ in range(16):
+        dur = rng.uniform(0.05, 0.6)
+        inst.notes.append(
+            pretty_midi.Note(velocity=80, pitch=60 + rng.randint(-5, 5), start=t, end=t + dur)
+        )
+        t += rng.uniform(0.05, 0.5)
+    pm.instruments.append(inst)
+
+    switch = t * 0.5
+    tempo_a = rng.uniform(40.0, 180.0)
+    tempo_b = rng.uniform(40.0, 200.0)
+
+    def sec_to_beats_local(x: float) -> float:
+        x = max(0.0, x)
+        if x <= switch:
+            return x * tempo_a / 60.0
+        return switch * tempo_a / 60.0 + (x - switch) * tempo_b / 60.0
+
+    total_beats = sec_to_beats_local(pm.get_end_time())
+    beats_per_bar = rng.choice([2.5, 3.0, 4.0, 5.0])
+    segments = list(
+        split_samples(
+            pm,
+            bars_per_sample=1,
+            min_notes=1,
+            beats_per_bar=beats_per_bar,
+            sec_to_beats=sec_to_beats_local,
+            include_programs=None,
+            drums_only=False,
+            exclude_drums=False,
+            quant=8,
+        )
+    )
+    assert segments
+    expected_max = math.ceil(total_beats / beats_per_bar)
+    assert len(segments) <= expected_max
+    for seg in segments:
+        assert seg
+        for note in seg:
+            assert note.end >= note.start >= 0.0
 
 
 def test_variable_tempo_snap(tmp_path: Path) -> None:
@@ -251,18 +302,18 @@ def test_instrument_filters(tmp_path: Path) -> None:
     )
     args = argparse.Namespace(include_programs=[0], drums_only=False, exclude_drums=False, **base)
     files = gather_midi_files(Path(args.in_dir))
-    splits, _, _ = build_corpus(args, files)
+    splits, _ = build_corpus(args, files)
     toks = splits["train"][0].tokens
     assert any("NOTE_60" == t for t in toks)
     assert all("NOTE_64" != t for t in toks)
     args = argparse.Namespace(include_programs=None, drums_only=True, exclude_drums=False, **base)
     files = gather_midi_files(Path(args.in_dir))
-    splits, _, _ = build_corpus(args, files)
+    splits, _ = build_corpus(args, files)
     toks = splits["train"][0].tokens
     assert any("NOTE_36" == t for t in toks)
     args = argparse.Namespace(include_programs=None, drums_only=False, exclude_drums=True, **base)
     files = gather_midi_files(Path(args.in_dir))
-    splits, _, _ = build_corpus(args, files)
+    splits, _ = build_corpus(args, files)
     toks = splits["train"][0].tokens
     assert all("NOTE_36" != t for t in toks)
 
@@ -308,7 +359,7 @@ def test_offline_embed_and_duv_oov(tmp_path: Path, caplog) -> None:
     base_args["duv_max"] = 0
     with caplog.at_level(logging.INFO):
         files = gather_midi_files(Path(base_args["in_dir"]))
-        splits, _, _ = build_corpus(argparse.Namespace(**base_args), files)
+        splits, _ = build_corpus(argparse.Namespace(**base_args), files)
     sample = splits["train"][0]
     assert sample.meta["text_emb"] == [0.0, 0.1]
     assert "DUV_OOV" in sample.tokens

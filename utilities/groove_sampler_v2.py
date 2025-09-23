@@ -67,8 +67,8 @@ def _instrument_allowed(
 
     if not whitelist:
         return True
-    if is_drum and -1 in whitelist:
-        return True
+    if is_drum:
+        return -1 in whitelist
     if inst_program is None:
         return True
     return inst_program in whitelist
@@ -1336,6 +1336,7 @@ def train(
     resume: bool = False,
     aux_vocab_path: Path | None = None,
     cache_probs_memmap: bool = False,
+    instrument_whitelist: Iterable[int] | None = None,
 ):
     """Build a hashed n‑gram model from drum loops located in *loop_dir*."""
     if mido is None:  # pragma: no cover - dependency is missing
@@ -1445,6 +1446,11 @@ def train(
             tempo_defaults=tempo_defaults_meta,
         )
 
+    if instrument_whitelist:
+        whitelist: set[int] | None = set(instrument_whitelist)
+    else:
+        whitelist = None
+
     if drum_only and pitched_only:
         logger.warning(
             "Both --drums-only and --pitched-only were set; treating as 'allow both'."
@@ -1474,6 +1480,7 @@ def train(
         allow_pitched=allow_pitched_flag,
         min_bars=float(min_bars),
         min_notes=int(min_notes),
+        instrument_whitelist=whitelist,
     )
 
     if n_jobs == 1 or n_jobs == 0:
@@ -2644,6 +2651,12 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
     parser.add_argument("--drum-only", action="store_true")
     parser.add_argument("--pitched-only", action="store_true")
     parser.add_argument(
+        "--instruments",
+        type=int,
+        nargs="+",
+        help="restrict training to these MIDI programs (-1 enables drums)",
+    )
+    parser.add_argument(
         "--tag-fill-from-filename",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -2789,6 +2802,7 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
             dedup_filter=ns.dedup_filter,
             max_ram_mb=ns.max_ram_mb,
             cache_probs_memmap=ns.cache_probs_memmap,
+            instrument_whitelist=ns.instruments,
         )
         elapsed = time.perf_counter() - t0
         save(model, ns.output)

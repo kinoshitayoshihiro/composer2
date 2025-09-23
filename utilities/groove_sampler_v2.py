@@ -52,8 +52,8 @@ class _LoadWorkerConfig:
     max_bpm: float
     fold_halves: bool
     tag_fill_from_filename: bool
-    allow_drums: bool
-    allow_pitched: bool
+    allow_drums: bool | None
+    allow_pitched: bool | None
     min_bars: float
     min_notes: int
 
@@ -1036,10 +1036,11 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
 
     bars = (total_beats / beats_per_bar_local) if (total_beats and total_beats > 0) else 0.0
 
-    allow_drums = cfg.allow_drums
-    allow_pitched = cfg.allow_pitched
-    if not allow_drums and not allow_pitched:
-        allow_drums = allow_pitched = True
+    allow_drums = True if cfg.allow_drums is None else bool(cfg.allow_drums)
+    allow_pitched = True if cfg.allow_pitched is None else bool(cfg.allow_pitched)
+    logger.debug(
+        "loader filters: allow_drums=%s allow_pitched=%s", allow_drums, allow_pitched
+    )
 
     raw_note_count = 0
     for inst in pm.instruments:
@@ -1279,10 +1280,18 @@ def train(
             tempo_defaults=tempo_defaults_meta,
         )
 
-    allow_drums_flag = not pitched_only
-    allow_pitched_flag = not drum_only
-    if not allow_drums_flag and not allow_pitched_flag:
-        allow_drums_flag = allow_pitched_flag = True
+    if drum_only and pitched_only:
+        allow_drums_flag: bool | None = True
+        allow_pitched_flag: bool | None = True
+    elif drum_only:
+        allow_drums_flag = True
+        allow_pitched_flag = False
+    elif pitched_only:
+        allow_drums_flag = False
+        allow_pitched_flag = True
+    else:
+        allow_drums_flag = None
+        allow_pitched_flag = None
 
     worker_cfg = _LoadWorkerConfig(
         fixed_bpm=fixed_bpm,

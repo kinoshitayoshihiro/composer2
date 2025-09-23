@@ -52,6 +52,10 @@ class _LoadWorkerConfig:
     max_bpm: float
     fold_halves: bool
     tag_fill_from_filename: bool
+    allow_drums: bool
+    allow_pitched: bool
+    min_bars: float
+    min_notes: int
 
 
 @dataclass(frozen=True)
@@ -944,9 +948,6 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
             invalid_bpm,
         )
 
-    notes = midi_to_events(pm, tempo)
-    offs = [off for off, _ in notes]
-
     beats_per_bar_local = 4.0
     try:
         ts_changes = getattr(pm, "time_signature_changes", [])
@@ -1012,12 +1013,74 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
 
     bars = (total_beats / beats_per_bar_local) if (total_beats and total_beats > 0) else 0.0
 
-    all_notes = [n for inst in pm.instruments for n in inst.notes]
-    note_cnt = len(all_notes)
-    uniq_pitches = len({n.pitch for n in all_notes})
+    allow_drums = cfg.allow_drums
+    allow_pitched = cfg.allow_pitched
+    if not allow_drums and not allow_pitched:
+        allow_drums = allow_pitched = True
+
+    raw_note_count = 0
+    for inst in pm.instruments:
+        if (inst.is_drum and allow_drums) or (not inst.is_drum and allow_pitched):
+            raw_note_count += len(inst.notes)
+
+    min_bars = float(cfg.min_bars)
+    min_notes = int(cfg.min_notes)
+    if min_bars > 0 and bars < min_bars:
+        return _LoadResult(
+            None,
+            "bars",
+            audio_failed,
+            tempo,
+            tempo_reason,
+            tempo_source,
+            tempo_injected,
+            tempo_error,
+            invalid_bpm,
+        )
+
+    if min_notes > 0 and raw_note_count < min_notes:
+        return _LoadResult(
+            None,
+            "notes",
+            audio_failed,
+            tempo,
+            tempo_reason,
+            tempo_source,
+            tempo_injected,
+            tempo_error,
+            invalid_bpm,
+        )
+
+    notes = midi_to_events(pm, tempo)
+    if not notes:
+        return _LoadResult(
+            None,
+            "notes",
+            audio_failed,
+            tempo,
+            tempo_reason,
+            tempo_source,
+            tempo_injected,
+            tempo_error,
+            invalid_bpm,
+        )
+
+    offs = [off for off, _ in notes]
+
+    note_cnt = len(notes)
+    uniq_pitches = len({pitch for _, pitch in notes})
     is_drum = any(inst.is_drum for inst in pm.instruments)
     is_fill = bool(
         cfg.tag_fill_from_filename and re.search(r"\bfill\b", path.name, re.IGNORECASE)
+    )
+
+    logger.debug(
+        "accept: %s bars=%.2f notes=%d (beats/bar=%.2f tempo=%s)",
+        path,
+        bars,
+        note_cnt,
+        float(beats_per_bar_local),
+        str(tempo),
     )
 
     payload = (notes, offs, bars, note_cnt, uniq_pitches, is_drum, is_fill)
@@ -1193,6 +1256,11 @@ def train(
             tempo_defaults=tempo_defaults_meta,
         )
 
+    allow_drums_flag = not pitched_only
+    allow_pitched_flag = not drum_only
+    if not allow_drums_flag and not allow_pitched_flag:
+        allow_drums_flag = allow_pitched_flag = True
+
     worker_cfg = _LoadWorkerConfig(
         fixed_bpm=fixed_bpm,
         inject_default_tempo=inject_default_tempo,
@@ -1202,6 +1270,10 @@ def train(
         max_bpm=max_bpm,
         fold_halves=fold_halves,
         tag_fill_from_filename=tag_fill_from_filename,
+        allow_drums=allow_drums_flag,
+        allow_pitched=allow_pitched_flag,
+        min_bars=float(min_bars),
+        min_notes=int(min_notes),
     )
 
     if n_jobs == 1 or n_jobs == 0:

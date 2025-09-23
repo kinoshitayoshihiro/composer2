@@ -962,6 +962,12 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
         total_seconds = float(pm.get_end_time())
     except Exception:
         total_seconds = 0.0
+    try:
+        midi_data = getattr(pm, "midi_data", None)
+        if midi_data is not None:
+            total_seconds = max(total_seconds, float(getattr(midi_data, "length", 0.0)))
+    except Exception:
+        pass
     if not math.isfinite(beats_per_bar_local) or beats_per_bar_local <= 0:
         beats_per_bar_local = 4.0
     if not math.isfinite(total_seconds) or total_seconds <= 0:

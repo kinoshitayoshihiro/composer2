@@ -547,7 +547,7 @@ def _validate_map(data: Dict) -> List[str]:
     for name, note in key_lookup.items():
         if note < ks_low or note > ks_high:
             range_issues.append(
-                f"keyswitch '{name}' out of range {KS_MIN}..{KS_MAX} (got {note})"
+                f"keyswitch '{name}' out of range {ks_low}..{ks_high} (got {note})"
             )
         elif play_defined and play_low <= note <= play_high:
             range_issues.append(

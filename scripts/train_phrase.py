@@ -1014,11 +1014,26 @@ def train_model(
             values: list[str] = []
             raw_count = 0
             skipped_empty = 0
+            req_cols = locals().get("required")
+            if isinstance(req_cols, set):
+                req = set(req_cols)
+            else:
+                req = {
+                    "pitch",
+                    "velocity",
+                    "duration",
+                    "pos",
+                    "boundary",
+                    "bar",
+                    "instrument",
+                }
+            req.add("instrument")
+            req.add(tag)
             if train_rows:
                 rows = train_rows
             elif isinstance(train_csv, (str, Path)):
                 try:
-                    rows = load_csv_rows(Path(train_csv), required)
+                    rows = load_csv_rows(Path(train_csv), req)
                 except Exception as exc:
                     logging.info("failed to read %s for reweight: %s", train_csv, exc)
                     rows = []
@@ -1046,6 +1061,27 @@ def train_model(
                     except Exception:
                         values = []
                 raw_count = len(values)
+            if not values and isinstance(train_csv, (str, Path)):
+                try:
+                    csv_rows = load_csv_rows(Path(train_csv), req)
+                except Exception:
+                    csv_rows = []
+                if csv_rows:
+                    raw_values = []
+                    for r in csv_rows:
+                        value_str = _norm(r.get(tag))
+                        raw_values.append(value_str)
+                        if value_str == "":
+                            skipped_empty += 1
+                    values = [v for v in raw_values if v]
+                    raw_count = len(raw_values)
+            logging.info(
+                "reweight tag=%s collected=%d (raw=%d), skipped_empty=%d",
+                tag,
+                len(values),
+                raw_count,
+                skipped_empty,
+            )
             if skipped_empty:
                 logging.info(
                     "reweight=%r skipped %d empty values", reweight, skipped_empty
@@ -1121,9 +1157,9 @@ def train_model(
                     sampler_fn = getattr(torch.utils.data, "WeightedRandomSampler", None)
                     if callable(sampler_fn):
                         try:
-                            sampler = sampler_fn(weights, len(weights), True)
+                            sampler = sampler_fn(weights, len(ds_train), True)
                         except TypeError:
-                            sampler = sampler_fn(weights, len(weights), replacement=True)
+                            sampler = sampler_fn(weights, len(ds_train), replacement=True)
                         except RecursionError:
                             logging.info(
                                 "reweight=%r sampler recursion detected; continuing without sampler",

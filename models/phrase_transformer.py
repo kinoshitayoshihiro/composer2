@@ -129,6 +129,14 @@ class PhraseTransformer(nn.Module if torch is not None else object):
             return None
 
         if torch is None:
+            try:
+                import torch as _torch_fallback
+            except Exception:  # pragma: no cover - torch truly unavailable
+                _torch_fallback = None  # type: ignore[assignment]
+            try:
+                import numpy as _np_fallback  # type: ignore[import-not-found]
+            except Exception:  # pragma: no cover - numpy unavailable
+                _np_fallback = None  # type: ignore[assignment]
             if mask is not None:
                 shape = _shape_from(mask)
                 if shape is None:
@@ -153,6 +161,21 @@ class PhraseTransformer(nn.Module if torch is not None else object):
             if shape is None:
                 shape = (1, 1)
             bsz, seqlen = shape
+            device = None
+            if mask is not None and hasattr(mask, "device"):
+                device = getattr(mask, "device")
+            elif _torch_fallback is not None:
+                for value in feats.values():
+                    if hasattr(value, "device"):
+                        device = getattr(value, "device")
+                        break
+            if _torch_fallback is not None:
+                kwargs: dict[str, object] = {"dtype": _torch_fallback.float32}
+                if device is not None:
+                    kwargs["device"] = device
+                return _torch_fallback.zeros((bsz, seqlen), **kwargs)
+            if _np_fallback is not None:
+                return _np_fallback.zeros((bsz, seqlen), dtype=_np_fallback.float32)
             return [[0.0 for _ in range(seqlen)] for _ in range(bsz)]
 
         import torch as _torch

@@ -982,7 +982,9 @@ def train(
             payload, load_reason = r
             audio_decode_failed = False
         if payload is None:
-            if audio_decode_failed:
+            suffix = p.suffix.lower()
+            audio_issue = audio_decode_failed or suffix in {".wav", ".wave"}
+            if audio_issue:
                 skipped_paths.append(p)
                 files_skipped += 1
             else:
@@ -1050,6 +1052,7 @@ def train(
         )
         model = _empty_model()
         model.files_skipped = files_skipped
+        model.files_scanned = len(paths)
         save(model, model_path)
         return model
 
@@ -1198,6 +1201,7 @@ def train(
         )
         empty_model = _empty_model(resolution)
         empty_model.files_skipped = files_skipped
+        empty_model.files_scanned = len(paths)
         save(empty_model, model_path)
         return empty_model
     model = NGramModel(

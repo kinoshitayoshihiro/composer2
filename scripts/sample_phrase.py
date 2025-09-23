@@ -548,13 +548,24 @@ def main(argv: list[str] | None = None) -> None:
 
     if torch is None:
         # Fallback: generate a constant-length, random-velocity sequence
-        out_events.extend(
-            _generate_fallback_events(
-                max_steps=max_steps,
-                pitch_min=args.pitch_min,
-                pitch_max=args.pitch_max,
+        # Generate fallback events via helper, but honor --bars limit like the old inline loop.
+        step_beats = 0.25  # one step = 1/4 beat (sixteenth note)
+        if args.bars is not None:
+            remaining_beats = max(0.0, 4 * args.bars - total_beats)
+            limit_by_bars = int(remaining_beats / step_beats)
+        else:
+            limit_by_bars = None
+
+        steps = max(0, min(max_steps, limit_by_bars) if limit_by_bars is not None else max_steps)
+        if steps:
+            out_events.extend(
+                _generate_fallback_events(
+                    max_steps=steps,
+                    pitch_min=args.pitch_min,
+                    pitch_max=args.pitch_max,
+                )
             )
-        )
+            total_beats += steps * step_beats
         logging.warning("Torch not available; generated fallback events without model")
     else:
         with torch.no_grad():
@@ -582,17 +593,18 @@ def main(argv: list[str] | None = None) -> None:
                 # Velocity/Duration decoding
                 vel, dur = decode_duv(out_dict, vel_mode, dur_mode, meta, args.dur_max_beats)
 
+                next_total = total_beats + float(dur)
+                if args.bars is not None and next_total > 4 * args.bars:
+                    break
                 ev = {"pitch": pitch, "velocity": vel, "duration_beats": dur}
                 out_events.append(ev)
-                total_beats += float(dur)
+                total_beats = next_total
 
                 # Advance model state if supported
                 if hasattr(model, "update_state"):
                     state_enc = model.update_state(state_enc, ev)  # type: ignore[attr-defined]
 
-                # Optional early stop by bars
-                if bar_step_limit is not None and len(out_events) >= bar_step_limit:
-                    break
+               # Optional early stop by bars handled above
 
     # Outputs ---------------------------------------------------------------
     if args.out_csv:

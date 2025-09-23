@@ -40,6 +40,36 @@ logger = logging.getLogger(__name__)
 _LEGACY_WARNED: set[str] = set()
 
 
+@dataclass(frozen=True)
+class _LoadWorkerConfig:
+    """Configuration bundle for the parallel loader."""
+
+    fixed_bpm: float | None
+    inject_default_tempo: float
+    tempo_policy: str
+    fallback_bpm: float
+    min_bpm: float
+    max_bpm: float
+    fold_halves: bool
+    tag_fill_from_filename: bool
+
+
+@dataclass(frozen=True)
+class _LoadResult:
+    """Lightweight container returned by ``_load_worker``."""
+
+    payload: tuple[list[tuple[float, int]], list[float], float, int, int, bool, bool] | None
+    reason: str
+    audio_failed: bool
+    tempo: float | None
+    tempo_reason: str
+    tempo_source: str
+    tempo_injected: bool
+    tempo_error: str | None
+    invalid_bpm: float | None
+
+
+
 def _warn_ignored(name: str) -> None:
     """Emit a one-time warning when an ignored legacy argument is seen."""
 
@@ -302,6 +332,7 @@ class NGramModel:
     files_skipped: int = 0
     total_events: int = 0
     hash_buckets: int = 16_777_216
+    tempo_defaults: dict[str, float | str | None] | None = None
 
 
 def _encode_state(bar_mod: int, bin_in_bar: int, label: str) -> State:
@@ -385,6 +416,7 @@ class MemmapNGramStore:
                         dtype=self.dtype,
                         shape=(self.shard_size, vocab_size),
                     )
+                    logger.debug("opened existing memmap shard %s", fn)
                 else:
                     tmp = tempfile.NamedTemporaryFile(dir=self.path, delete=False)
                     try:
@@ -410,10 +442,12 @@ class MemmapNGramStore:
                         dtype=self.dtype,
                         shape=(self.shard_size, vocab_size),
                     )
+                    logger.debug("created memmap shard %s", fn)
                 order_maps.append(mm)
             self.maps.append(order_maps)
 
     def flush(self, tables: list[FreqTable]) -> None:
+        logger.debug("flushing memmap tables (%d orders)", len(tables))
         for order, table in enumerate(tables):
             for h, arr in table.items():
                 bucket = h % self.hash_buckets
@@ -815,6 +849,7 @@ def _resolve_tempo(
             reason = "fold"
 
     invalid = bpm is None or not math.isfinite(bpm) or bpm <= 0 or bpm < min_bpm or bpm > max_bpm
+    _resolve_tempo.last_invalid = orig_bpm  # type: ignore[attr-defined]
 
     if invalid:
         if tempo_policy == "skip":
@@ -823,6 +858,9 @@ def _resolve_tempo(
         if tempo_policy == "fallback":
             _resolve_tempo.last_source = "fallback"  # type: ignore[attr-defined]
             return float(fallback_bpm), f"fallback:{orig_bpm}"
+        if tempo_policy == "accept_warn":
+            _resolve_tempo.last_source = "fallback"  # type: ignore[attr-defined]
+            return float(fallback_bpm), "accept_warn"
         _resolve_tempo.last_source = "fallback"  # type: ignore[attr-defined]
         return float(fallback_bpm), "accept"
 
@@ -844,6 +882,115 @@ def _iter_loops(root: Path, include_audio: bool = True) -> Iterable[Path]:
                 stack.append(entry)
             elif entry.suffix.lower() in exts:
                 yield entry
+
+
+# joblib/loky workers require top-level callables on Windows; keep arguments
+# serialisable via the small ``_LoadWorkerConfig`` dataclass defined above.
+def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
+    path, cfg = args
+    audio_failed = False
+    tempo_error: str | None = None
+    tempo_injected = False
+    try:
+        if path.suffix.lower() in {".wav", ".wave"}:
+            pm = convert_wav_to_midi(path, fixed_bpm=cfg.fixed_bpm)
+            if pm is None:
+                audio_failed = True
+                return _LoadResult(
+                    None,
+                    "error",
+                    audio_failed,
+                    None,
+                    "error",
+                    "unknown",
+                    False,
+                    tempo_error,
+                    None,
+                )
+        else:
+            pm = pretty_midi.PrettyMIDI(str(path))
+    except Exception as exc:
+        if path.suffix.lower() in {".wav", ".wave"}:
+            audio_failed = True
+        return _LoadResult(None, "error", audio_failed, None, "error", "unknown", False, str(exc), None)
+
+    if cfg.inject_default_tempo > 0:
+        try:
+            pm = _ensure_tempo(pm, cfg.inject_default_tempo)
+            tempo_injected = bool(getattr(_ensure_tempo, "injected", False))
+        except Exception as exc:  # pragma: no cover - best effort logging upstream
+            tempo_error = str(exc)
+
+    tempo, tempo_reason = _resolve_tempo(
+        pm,
+        tempo_policy=cfg.tempo_policy,
+        fallback_bpm=cfg.fallback_bpm,
+        min_bpm=cfg.min_bpm,
+        max_bpm=cfg.max_bpm,
+        fold_halves=cfg.fold_halves,
+    )
+    tempo_source = getattr(_resolve_tempo, "last_source", "unknown")
+    invalid_bpm = getattr(_resolve_tempo, "last_invalid", None)
+    if tempo is None:
+        return _LoadResult(
+            None,
+            "skip",
+            audio_failed,
+            None,
+            tempo_reason,
+            tempo_source,
+            tempo_injected,
+            tempo_error,
+            invalid_bpm,
+        )
+
+    notes = midi_to_events(pm, tempo)
+    offs = [off for off, _ in notes]
+
+    beats_per_bar_local = 4.0
+    try:
+        ts_changes = getattr(pm, "time_signature_changes", [])
+    except Exception:
+        ts_changes = []
+    if ts_changes:
+        ts0 = ts_changes[0]
+        try:
+            beats_per_bar_local = float(ts0.numerator) * (4.0 / float(ts0.denominator))
+        except Exception:
+            beats_per_bar_local = 4.0
+    try:
+        total_seconds = float(pm.get_end_time())
+    except Exception:
+        total_seconds = 0.0
+    if not math.isfinite(beats_per_bar_local) or beats_per_bar_local <= 0:
+        beats_per_bar_local = 4.0
+    if not math.isfinite(total_seconds) or total_seconds <= 0:
+        total_seconds = 0.0
+    if tempo and math.isfinite(tempo) and tempo > 0:
+        bars = (tempo / 60.0) * total_seconds / beats_per_bar_local if total_seconds > 0 else 0.0
+    else:
+        bars = 0.0
+
+    all_notes = [n for inst in pm.instruments for n in inst.notes]
+    note_cnt = len(all_notes)
+    uniq_pitches = len({n.pitch for n in all_notes})
+    is_drum = any(inst.is_drum for inst in pm.instruments)
+    is_fill = bool(
+        cfg.tag_fill_from_filename and re.search(r"\bfill\b", path.name, re.IGNORECASE)
+    )
+
+    payload = (notes, offs, bars, note_cnt, uniq_pitches, is_drum, is_fill)
+    return _LoadResult(
+        payload,
+        "ok",
+        audio_failed,
+        tempo,
+        tempo_reason,
+        tempo_source,
+        tempo_injected,
+        tempo_error,
+        invalid_bpm,
+    )
 
 
 # 上限（大規模ディレクトリ時の探索打切り）。環境変数で調整可。
@@ -903,12 +1050,24 @@ def train(
             "mido is required for groove sampler training; install via 'pip install mido'"
         )
 
+    requested_inject_tempo = inject_default_tempo
+    forced_relax_tempo: float | None = None
     relax_filters = os.getenv("TEST_RELAX_FILTERS") == "1"
     if relax_filters:
         min_bars = min(min_bars, 1.0)
         min_notes = min(min_notes, 1)
+        # Tempo injection priority: explicit CLI value > relax-forced 100 BPM > fallback BPM.
         if inject_default_tempo <= 0:
-            inject_default_tempo = fallback_bpm
+            forced_relax_tempo = 100.0 if fallback_bpm != 100.0 else fallback_bpm
+            inject_default_tempo = forced_relax_tempo
+
+    tempo_defaults_meta = {
+        "policy": tempo_policy,
+        "fallback_bpm": fallback_bpm,
+        "requested_inject": requested_inject_tempo,
+        "effective_inject": inject_default_tempo,
+        "relax_forced": forced_relax_tempo,
+    }
 
     if n_jobs is None:
         n_jobs = min(4, os.cpu_count() or 1)
@@ -924,6 +1083,8 @@ def train(
         if (resume and processed_log.exists())
         else set()
     )
+    if processed_set:
+        logger.info("resume: %d files previously processed", len(processed_set))
 
     if counts_dtype in {"u32", "uint32"}:
         counts_dtype = "uint32"
@@ -963,7 +1124,7 @@ def train(
     total_events = 0
     files_skipped = 0           # fatal skips only (e.g., audio decode failure)
     files_filtered = 0          # filtered out by min_notes, etc.
-    tempo_stats = {"accept": 0, "fold": 0, "fallback": 0, "skip": 0}
+    tempo_stats = {"accept": 0, "accept_warn": 0, "fold": 0, "fallback": 0, "skip": 0}
     skipped_paths: list[Path] = []
 
     def _empty_model(resolution_hint: int = 16) -> NGramModel:
@@ -988,115 +1149,92 @@ def train(
             files_skipped=files_skipped,
             total_events=0,
             hash_buckets=hash_buckets,
+            tempo_defaults=tempo_defaults_meta,
         )
 
-    def _load(p: Path):
-        audio_failed = False
-        try:
-            if p.suffix.lower() in {".wav", ".wave"}:
-                pm = convert_wav_to_midi(p, fixed_bpm=fixed_bpm)
-                if pm is None:
-                    audio_failed = True
-                    return None, "error", audio_failed
-            else:
-                pm = pretty_midi.PrettyMIDI(str(p))
-
-            if inject_default_tempo > 0:
-                try:
-                    pm = _ensure_tempo(pm, inject_default_tempo)
-                    if getattr(_ensure_tempo, "injected", False):
-                        logger.warning("Injected tempo %.2f BPM for %s", inject_default_tempo, p)
-                except Exception as exc:
-                    logger.warning("Failed to ensure tempo for %s: %s", p, exc)
-
-            tempo, reason = _resolve_tempo(
-                pm,
-                tempo_policy=tempo_policy,
-                fallback_bpm=fallback_bpm,
-                min_bpm=min_bpm,
-                max_bpm=max_bpm,
-                fold_halves=fold_halves,
-            )
-            src = getattr(_resolve_tempo, "last_source", "unknown")
-            if tempo is None:
-                tempo_stats["skip"] += 1
-                skipped_paths.append(p)
-                logger.warning("Skipping %s due to %s tempo", p, reason)
-                return None, "skip", audio_failed
-            if reason.startswith("fallback"):
-                tempo_stats["fallback"] += 1
-            elif reason == "fold":
-                tempo_stats["fold"] += 1
-            else:
-                tempo_stats["accept"] += 1
-            if src == "fallback" and reason == "accept":
-                logger.warning("Invalid tempo in %s; using fallback %.2f BPM", p, tempo)
-            else:
-                logger.info("Tempo=%.2f via %s for %s", tempo, src, p)
-
-            notes = midi_to_events(pm, tempo)
-            offs = [off for off, _ in notes]
-
-            beats_per_bar_local = 4.0
-            try:
-                ts_changes = getattr(pm, "time_signature_changes", [])
-            except Exception:
-                ts_changes = []
-            if ts_changes:
-                ts0 = ts_changes[0]
-                try:
-                    beats_per_bar_local = float(ts0.numerator) * (4.0 / float(ts0.denominator))
-                except Exception:
-                    beats_per_bar_local = 4.0
-            try:
-                total_seconds = float(pm.get_end_time())
-            except Exception:
-                total_seconds = 0.0
-            if not math.isfinite(beats_per_bar_local) or beats_per_bar_local <= 0:
-                beats_per_bar_local = 4.0
-            if not math.isfinite(total_seconds) or total_seconds <= 0:
-                total_seconds = 0.0
-            if tempo and math.isfinite(tempo) and tempo > 0:
-                bars = (tempo / 60.0) * total_seconds / beats_per_bar_local if total_seconds > 0 else 0.0
-            else:
-                bars = 0.0
-
-            all_notes = [n for inst in pm.instruments for n in inst.notes]
-            note_cnt = len(all_notes)
-            uniq_pitches = len({n.pitch for n in all_notes})
-            is_drum = any(inst.is_drum for inst in pm.instruments)
-            is_fill = bool(tag_fill_from_filename and re.search(r"\bfill\b", p.name, re.IGNORECASE))
-
-            return (
-                notes,
-                offs,
-                bars,
-                note_cnt,
-                uniq_pitches,
-                is_drum,
-                is_fill,
-            ), src, audio_failed
-        except Exception as exc:
-            logger.warning("Failed to load %s: %s", p, exc)
-            if p.suffix.lower() in {".wav", ".wave"}:
-                audio_failed = True
-            return None, "error", audio_failed
+    worker_cfg = _LoadWorkerConfig(
+        fixed_bpm=fixed_bpm,
+        inject_default_tempo=inject_default_tempo,
+        tempo_policy=tempo_policy,
+        fallback_bpm=fallback_bpm,
+        min_bpm=min_bpm,
+        max_bpm=max_bpm,
+        fold_halves=fold_halves,
+        tag_fill_from_filename=tag_fill_from_filename,
+    )
 
     if n_jobs == 1 or n_jobs == 0:
-        loaded = [_load(p) for p in paths]
+        loaded = [_load_worker((p, worker_cfg)) for p in paths]
     else:
-        loaded = Parallel(n_jobs=n_jobs)(delayed(_load)(p) for p in paths)
+        loaded = Parallel(n_jobs=n_jobs)(delayed(_load_worker)((p, worker_cfg)) for p in paths)
 
     aux_values: list[str | None] = []
     results: list[tuple[list[tuple[float, int]], list[float]]] = []
     bars_list: list[float] = []
-    reason_counts: dict[str, int] = {}
-    for p, r in zip(paths, loaded):
-        if len(r) == 3:
-            payload, load_reason, audio_decode_failed = r
+    reason_counts: dict[str, int] = {
+        "tempo_skip": 0,
+        "bars": 0,
+        "notes": 0,
+        "fill": 0,
+        "drum_only": 0,
+        "pitched_only": 0,
+        "error": 0,
+    }
+
+    def _bump_reason(key: str) -> None:
+        reason_counts[key] = reason_counts.get(key, 0) + 1
+    for p, res in zip(paths, loaded):
+        if res.reason == "error":
+            if res.tempo_error:
+                logger.warning("Failed to load %s: %s", p, res.tempo_error)
+            suffix = p.suffix.lower()
+            audio_issue = res.audio_failed or suffix in {".wav", ".wave"}
+            if audio_issue:
+                skipped_paths.append(p)
+                files_skipped += 1
+            else:
+                files_filtered += 1
+                _bump_reason("error")
+            continue
+
+        if res.tempo_error:
+            logger.warning("Failed to ensure tempo for %s: %s", p, res.tempo_error)
+        if res.tempo_injected:
+            logger.warning("Injected tempo %.2f BPM for %s", worker_cfg.inject_default_tempo, p)
+
+        if res.tempo is None:
+            tempo_stats["skip"] += 1
+            skipped_paths.append(p)
+            files_filtered += 1
+            _bump_reason("tempo_skip")
+            logger.warning("Skipping %s due to %s tempo", p, res.tempo_reason)
+            continue
+
+        if res.tempo_reason == "accept_warn":
+            tempo_stats["accept_warn"] += 1
+        elif res.tempo_reason.startswith("fallback"):
+            tempo_stats["fallback"] += 1
+        elif res.tempo_reason == "fold":
+            tempo_stats["fold"] += 1
         else:
-            payload, load_reason = r
-            audio_decode_failed = False
+            tempo_stats["accept"] += 1
+
+        if res.tempo_reason == "accept_warn":
+            bad = res.invalid_bpm if res.invalid_bpm is not None else "unknown"
+            logger.warning(
+                "Invalid tempo %s in %s; using fallback %.2f BPM",
+                bad,
+                p,
+                res.tempo,
+            )
+        elif res.tempo_source == "fallback" and res.tempo_reason == "accept":
+            logger.warning("Invalid tempo in %s; using fallback %.2f BPM", p, res.tempo)
+        else:
+            logger.info("Tempo=%.2f via %s for %s", res.tempo, res.tempo_source, p)
+
+        payload = res.payload
+        audio_decode_failed = res.audio_failed
+        load_reason = res.reason
         if payload is None:
             suffix = p.suffix.lower()
             audio_issue = audio_decode_failed or suffix in {".wav", ".wave"}
@@ -1106,7 +1244,12 @@ def train(
             else:
                 files_filtered += 1
                 if load_reason:
-                    reason_counts[load_reason] = reason_counts.get(load_reason, 0) + 1
+                    if load_reason == "error":
+                        _bump_reason("error")
+                    elif load_reason == "skip":
+                        _bump_reason("tempo_skip")
+                    else:
+                        _bump_reason(load_reason)
             continue
         notes, offs, bars, note_cnt, uniq_pitches, is_drum, is_fill = payload
         reason: str | None = None
@@ -1126,7 +1269,7 @@ def train(
 
         if reason is not None:
             skipped_paths.append(p)
-            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+            _bump_reason(reason)
             files_filtered += 1
             continue
 
@@ -1142,13 +1285,16 @@ def train(
 
     if tempo_verbose:
         logger.info(
-            "tempo summary: total=%d accept=%d fold=%d fallback=%d skip=%d",
+            "tempo summary: total=%d accept=%d warn=%d fold=%d fallback=%d skip=%d",
             len(paths),
             tempo_stats["accept"],
+            tempo_stats["accept_warn"],
             tempo_stats["fold"],
             tempo_stats["fallback"],
             tempo_stats["skip"],
         )
+        summary_items = ", ".join(f"{k}={v}" for k, v in reason_counts.items())
+        logger.info("filter summary: %s", summary_items if summary_items else "none")
         if skipped_paths:
             preview = ", ".join(str(p) for p in skipped_paths[:20])
             if len(skipped_paths) > 20:
@@ -1336,18 +1482,32 @@ def train(
         files_skipped=skipped_total,
         total_events=total_events,
         hash_buckets=hb,
+        tempo_defaults=tempo_defaults_meta,
     )
     if (memmap_dir_given or cache_probs_memmap) and model.idx_to_state:
         _write_prob_memmaps(model, memmap_dir)
     if aux_vocab_path:
+# ensure parent directory exists before writing
+
+    aux_vocab_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
         if hasattr(aux_vocab_obj, "to_json"):
-            aux_vocab_obj.to_json(aux_vocab_path)
-        else:
-            aux_vocab_path.parent.mkdir(parents=True, exist_ok=True)
-            data = getattr(aux_vocab_obj, "id_to_str", [])
-            if not isinstance(data, list):
-                data = []
-            aux_vocab_path.write_text(json.dumps(data))
+        # prefer native serializer when available
+        aux_vocab_obj.to_json(aux_vocab_path)
+    elif hasattr(aux_vocab_obj, "id_to_str"):
+        # fallback: list of strings
+        data = getattr(aux_vocab_obj, "id_to_str")
+        if not isinstance(data, list):
+            data = list(data)
+        aux_vocab_path.write_text(json.dumps(data))
+    else:
+        # last resort: best-effort JSON dump with vars() fallback
+        logger.warning("aux vocab compat path for %s", aux_vocab_path)
+        aux_vocab_path.write_text(json.dumps(aux_vocab_obj, default=vars))
+except Exception as exc:  # pragma: no cover - compatibility path
+    logger.warning("failed to write aux vocab to %s: %s", aux_vocab_path, exc)
+
     if resume:
         save(model, model_path)
         processed_log.write_text("\n".join(processed_set | {str(p) for p in paths}) + "\n")
@@ -1939,6 +2099,7 @@ def save(model: NGramModel, path: Path) -> None:
         "files_skipped": model.files_skipped,
         "total_events": model.total_events,
         "hash_buckets": model.hash_buckets,
+        "tempo_defaults": model.tempo_defaults,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as fh:
@@ -2015,6 +2176,7 @@ def load(
         files_skipped=data.get("files_skipped", 0),
         total_events=data.get("total_events", 0),
         hash_buckets=data.get("hash_buckets", 16_777_216),
+        tempo_defaults=data.get("tempo_defaults"),
     )
     if model.prob_paths is not None:
         prob_arrays: list[np.ndarray]
@@ -2121,6 +2283,11 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
         "--tempo-policy",
         choices=["skip", "fallback", "accept", "accept_warn"],
         default="fallback",
+        help=(
+            "how to handle invalid tempos: 'skip' drops the file, 'fallback' uses "
+            "--fallback-bpm silently, 'accept' keeps the detected tempo, and "
+            "'accept_warn' uses the fallback BPM while logging one WARNING per file"
+        ),
     )
     parser.add_argument("--fallback-bpm", type=float, default=120.0)
     parser.add_argument("--min-bpm", type=float, default=40.0)
@@ -2556,6 +2723,10 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_merge(rest)
     else:
         raise SystemExit(f"Unknown command: {cmd}")
+
+
+__all__ = [name for name in globals() if not name.startswith("_")]
+__all__.extend(["_LoadWorkerConfig", "_LoadResult", "_load_worker"])
 
 
 if __name__ == "__main__":  # pragma: no cover

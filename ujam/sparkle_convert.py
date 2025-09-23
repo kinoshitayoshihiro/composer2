@@ -182,11 +182,45 @@ def _legacy_pulses_per_bar(num: int, den: int, stats: Optional[Dict[str, Any]]) 
 
     if not stats or not stats.get("_legacy_bar_pulses_grid"):
         return None
-    if (num, den) == (12, 8):
-        return 24
     if den == 4:
+        approx: Optional[int] = None
+        if stats is not None:
+            beat_times = stats.get("beat_times")
+            downbeats = stats.get("downbeats")
+            raw_downbeats = stats.get("_legacy_downbeats_raw")
+            if (
+                isinstance(beat_times, list)
+                and len(beat_times) >= 2
+            ):
+                try:
+                    beat_step = float(beat_times[1]) - float(beat_times[0])
+                except Exception:
+                    beat_step = 0.0
+                if beat_step > EPS:
+                    spans: List[float] = []
+                    if isinstance(raw_downbeats, list) and len(raw_downbeats) >= 2:
+                        try:
+                            spans.append(float(raw_downbeats[1]) - float(raw_downbeats[0]))
+                        except Exception:
+                            spans.append(0.0)
+                    if isinstance(downbeats, list) and len(downbeats) >= 2:
+                        try:
+                            spans.append(float(downbeats[1]) - float(downbeats[0]))
+                        except Exception:
+                            spans.append(0.0)
+                    for bar_span in spans:
+                        if bar_span > beat_step + EPS:
+                            est = bar_span / beat_step
+                            approx_val = int(round(est))
+                            if approx_val > num:
+                                approx = approx_val
+                                break
+        if approx is not None:
+            return approx * 4
         return num * 4
     if den == 8:
+        if num % 6 == 0:
+            return (num // 2) * 4
         return num * 3
     return num * 2
 
@@ -5944,6 +5978,10 @@ def build_sparkle_midi(
         return mg
 
     ts_changes = pm_in.time_signature_changes
+    try:
+        raw_downbeats = list(pm_in.get_downbeats())
+    except Exception:
+        raw_downbeats = []
     meter_map: List[Tuple[float, int, int]] = []
     estimated_4_4 = False
     if ts_changes:
@@ -5974,6 +6012,8 @@ def build_sparkle_midi(
         stats["schema_version"] = "1.1"
         stats["schema"] = "1.1"
         stats["downbeats"] = list(downbeats)
+        if raw_downbeats:
+            stats["_legacy_downbeats_raw"] = [float(db) for db in raw_downbeats]
         if song_end_hint is not None and math.isfinite(song_end_hint):
             stats["song_end_hint"] = float(song_end_hint)
         if downbeats:

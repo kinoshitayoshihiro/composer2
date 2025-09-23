@@ -1777,8 +1777,8 @@ def main(argv: list[str] | None = None) -> None:
         "--cc11-smoothing-ms",
         dest="cc11_smoothing_ms",
         type=float,
-        default=80.0,
-        help="Smoothing window for CC11 envelope in milliseconds",
+        default=60.0,
+        help="Smoothing window for CC11 strategies",
     )
     parser.add_argument(
         "--cc11-gain",
@@ -1872,12 +1872,8 @@ def main(argv: list[str] | None = None) -> None:
         dest="cc_strategy",
         help="Source for CC11 dynamics",
     )
-    controls.add_argument(
-        "--cc11-smoothing-ms",
-        type=float,
-        default=60.0,
-        help="Smoothing window for CC11 strategies",
-    )
+    # --cc11-smoothing-ms is defined on the main parser (with the --cc11-smooth-ms alias)
+    # to avoid duplicate option registration here.
     controls.add_argument(
         "--controls-domain",
         choices=["time", "beats"],

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import pathlib
 from bisect import bisect_right
 from collections import Counter, defaultdict
@@ -137,9 +138,29 @@ def convert(args: SimpleNamespace) -> None:
         pass
 
     utils.quantize(pm, int(getattr(args, "quant", 120)), float(getattr(args, "swing", 0.0)))
-    beats_per_bar = (
-        pm.time_signature_changes[0].numerator if pm.time_signature_changes else 4
-    )
+
+    ts_raw = list(getattr(pm, "time_signature_changes", []))
+    if not ts_raw:
+        ts_raw = [SimpleNamespace(numerator=4, denominator=4, time=0.0)]
+    ts_raw = sorted(ts_raw, key=lambda ts: float(getattr(ts, "time", 0.0) or 0.0))
+
+    def _beats_per_bar(ts_obj: SimpleNamespace) -> float:
+        num = getattr(ts_obj, "numerator", 4)
+        den = getattr(ts_obj, "denominator", 4)
+        try:
+            num = int(num)
+        except Exception:
+            num = 4
+        try:
+            den = int(den)
+        except Exception:
+            den = 4
+        if den <= 0:
+            den = 4
+        beats = float(num) * (4.0 / float(den))
+        return beats if beats > 0 else 4.0
+
+    beats_per_bar = max(1, int(round(_beats_per_bar(ts_raw[0]))))
 
     groove_profile_path = getattr(args, "use_groove_profile", None)
     if groove_profile_path:
@@ -162,16 +183,66 @@ def convert(args: SimpleNamespace) -> None:
 
     utils.humanize(pm, float(getattr(args, "humanize", 0.0)))
 
-    downbeats = list(pm.get_downbeats())
-    if not downbeats:
-        downbeats = [0.0]
-    ts_changes = pm.time_signature_changes
-    ts_idx = 0
-    bar_beats: Dict[int, int] = {}
-    for i, db in enumerate(downbeats):
-        while ts_idx + 1 < len(ts_changes) and ts_changes[ts_idx + 1].time <= db:
-            ts_idx += 1
-        bar_beats[i] = ts_changes[ts_idx].numerator if ts_changes else beats_per_bar
+    resolution = float(getattr(pm, "resolution", 480) or 480.0)
+
+    def _time_to_beats(value: float) -> float:
+        try:
+            tick_val = pm.time_to_tick(value)
+        except Exception:
+            tick_val = value * resolution
+        return float(tick_val) / resolution if resolution else float(value)
+
+    segments: List[Dict[str, float]] = []
+    prev_start_beat = 0.0
+    prev_beats = _beats_per_bar(ts_raw[0])
+    bar_offset = 0
+    for idx, ts in enumerate(ts_raw):
+        start_time = float(getattr(ts, "time", 0.0) or 0.0)
+        start_beat = _time_to_beats(start_time)
+        if idx > 0:
+            beats_since_prev = max(0.0, start_beat - prev_start_beat)
+            if prev_beats > 0:
+                bar_offset += int(math.floor(beats_since_prev / prev_beats + 1e-9))
+        beats_cur = max(_beats_per_bar(ts), 1.0)
+        segments.append(
+            {
+                "start_time": start_time,
+                "start_beat": start_beat,
+                "beats_per_bar": beats_cur,
+                "bar_offset": bar_offset,
+            }
+        )
+        prev_start_beat = start_beat
+        prev_beats = beats_cur
+    if not segments:
+        segments.append(
+            {
+                "start_time": 0.0,
+                "start_beat": 0.0,
+                "beats_per_bar": float(beats_per_bar),
+                "bar_offset": 0.0,
+            }
+        )
+
+    def _locate_bar(time: float) -> tuple[int, float, float, float]:
+        beat_pos = _time_to_beats(time)
+        segment = segments[0]
+        for candidate in segments[1:]:
+            if beat_pos + 1e-9 >= candidate["start_beat"]:
+                segment = candidate
+            else:
+                break
+        beats_in_bar = max(segment["beats_per_bar"], 1.0)
+        rel_beats = max(0.0, beat_pos - segment["start_beat"])
+        bar_in_segment = int(math.floor(rel_beats / beats_in_bar + 1e-9))
+        bar_index = int(segment["bar_offset"]) + bar_in_segment
+        bar_start_beat = segment["start_beat"] + bar_in_segment * beats_in_bar
+        tick_value = bar_start_beat * resolution
+        try:
+            bar_start_time = pm.tick_to_time(tick_value)
+        except Exception:
+            bar_start_time = float(bar_start_beat)
+        return bar_index, float(bar_start_time), bar_start_beat, beats_in_bar
 
     if not pm.instruments:
         raise ValueError("input MIDI has no instruments to convert")
@@ -188,10 +259,9 @@ def convert(args: SimpleNamespace) -> None:
             continue
         start = block[0].start
         duration = min(n.end - n.start for n in block)
-        beat = pm.time_to_tick(start) / pm.resolution
-        bar = max(0, bisect_right(downbeats, start) - 1)
-        bar_start_tick = pm.time_to_tick(downbeats[bar])
-        beat_in_bar = (pm.time_to_tick(start) - bar_start_tick) / pm.resolution
+        beat = _time_to_beats(start)
+        bar, bar_start_time, bar_start_beat, _beats_in_bar = _locate_bar(start)
+        beat_in_bar = beat - bar_start_beat
         if prev_beat is None or beat_in_bar < 0.1 or (beat - prev_beat) > 1.5:
             strum = "D"
         else:
@@ -255,7 +325,7 @@ def convert(args: SimpleNamespace) -> None:
 
     for bar in sorted(bar_blocks):
         blocks = bar_blocks[bar]
-        bar_start = downbeats[bar]
+        bar_start = bar_starts[bar] if bar < len(bar_starts) else bar_starts[-1]
         pattern = " ".join(b["strum"] for b in blocks)
         ks_notes = pattern_to_keyswitches(pattern, pattern_lib, keymap)
         if not ks_notes:
@@ -534,35 +604,85 @@ def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
     """Return bar start times accounting for time signature changes."""
 
     downbeats = list(pm.get_downbeats())
-    if downbeats:
+    if len(downbeats) >= 2:
         return [float(t) for t in downbeats]
-    beats = pm.get_beats()
-    if beats.size == 0:
-        return [0.0]
-    ts_changes = list(pm.time_signature_changes)
+    resolution = float(getattr(pm, "resolution", 480) or 480.0)
+    ts_changes = list(getattr(pm, "time_signature_changes", []))
     if not ts_changes:
         ts_changes = [pretty_midi.TimeSignature(4, 4, 0.0)]
-    bar_times: List[float] = []
-    ts_idx = 0
-    beats_per_bar = ts_changes[ts_idx].numerator
-    beat_in_bar = 0
-    for bt in beats:
-        bt_f = float(bt)
-        if beat_in_bar == 0:
-            bar_times.append(bt_f)
-        beat_in_bar += 1
-        next_change_time = (
-            ts_changes[ts_idx + 1].time if ts_idx + 1 < len(ts_changes) else None
+    ts_changes = sorted(ts_changes, key=lambda ts: float(getattr(ts, "time", 0.0) or 0.0))
+
+    def _beats_per_bar(ts_obj: object) -> float:
+        num = getattr(ts_obj, "numerator", 4)
+        den = getattr(ts_obj, "denominator", 4)
+        try:
+            num = int(num)
+        except Exception:
+            num = 4
+        try:
+            den = int(den)
+        except Exception:
+            den = 4
+        if den <= 0:
+            den = 4
+        beats = float(num) * (4.0 / float(den))
+        return beats if beats > 0 else 4.0
+
+    def _time_to_beats(value: float) -> float:
+        try:
+            tick_val = pm.time_to_tick(value)
+        except Exception:
+            tick_val = value * resolution
+        return float(tick_val) / resolution if resolution else float(value)
+
+    segments: List[Dict[str, float]] = []
+    prev_start_beat = 0.0
+    prev_beats = _beats_per_bar(ts_changes[0])
+    bar_offset = 0
+    for idx, ts in enumerate(ts_changes):
+        start_time = float(getattr(ts, "time", 0.0) or 0.0)
+        start_beat = _time_to_beats(start_time)
+        if idx > 0:
+            beats_since_prev = max(0.0, start_beat - prev_start_beat)
+            if prev_beats > 0:
+                bar_offset += int(math.floor(beats_since_prev / prev_beats + 1e-9))
+        beats_cur = max(_beats_per_bar(ts), 1.0)
+        segments.append(
+            {
+                "start_time": start_time,
+                "start_beat": start_beat,
+                "beats_per_bar": beats_cur,
+                "bar_offset": bar_offset,
+            }
         )
-        if next_change_time is not None and bt_f >= float(next_change_time) - 1e-9:
-            ts_idx += 1
-            beats_per_bar = ts_changes[ts_idx].numerator
-            beat_in_bar = 0
-        elif beat_in_bar >= beats_per_bar:
-            beat_in_bar = 0
-    if not bar_times:
-        bar_times = [0.0]
-    return bar_times
+        prev_start_beat = start_beat
+        prev_beats = beats_cur
+
+    def _locate_bar_start(time: float) -> float:
+        beat_pos = _time_to_beats(time)
+        segment = segments[0]
+        for candidate in segments[1:]:
+            if beat_pos + 1e-9 >= candidate["start_beat"]:
+                segment = candidate
+            else:
+                break
+        beats_in_bar = max(segment["beats_per_bar"], 1.0)
+        rel_beats = max(0.0, beat_pos - segment["start_beat"])
+        bar_in_segment = int(math.floor(rel_beats / beats_in_bar + 1e-9))
+        bar_start_beat = segment["start_beat"] + bar_in_segment * beats_in_bar
+        tick_val = bar_start_beat * resolution
+        try:
+            return float(pm.tick_to_time(tick_val))
+        except Exception:
+            return float(bar_start_beat)
+
+    bar_times = {0.0}
+    for inst in getattr(pm, "instruments", []):
+        for note in getattr(inst, "notes", []):
+            bar_times.add(_locate_bar_start(float(getattr(note, "start", 0.0))))
+    for ts in ts_changes:
+        bar_times.add(_locate_bar_start(float(getattr(ts, "time", 0.0) or 0.0)))
+    return sorted(bar_times)
 
 
 def _load_sections(path: pathlib.Path) -> Dict[int, str]:

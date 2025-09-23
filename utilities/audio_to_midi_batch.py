@@ -491,23 +491,57 @@ def apply_cc_curves(
                 if cc11_map == "log":
                     k = 9.0
                     env = np.log1p(k * env) / math.log1p(k)
-                alpha = (
-                    hop / (sr * (cc11_smooth_ms / 1000.0))
-                    if cc11_smooth_ms > 0
-                    else 1.0
-                )
-                alpha = max(0.0, min(1.0, float(alpha)))
-                ema = 0.0
-                smoothed = []
-                for e in env:
-                    ema = alpha * e + (1 - alpha) * ema
-                    smoothed.append(ema)
-                times = np.arange(len(smoothed)) * hop / sr
+                raw = np.clip(env * float(cc11_gain) * 127.0, 0.0, 127.0)
+                raw_times = np.arange(raw.size) * hop / sr
+                series = raw
+                series_times = raw_times
+                len_raw = int(raw.size)
+                if cc11_smooth_ms > 0 and len_raw:
+                    win = max(1, int(sr * cc11_smooth_ms / 1000.0))
+                    if win > 1:
+                        kernel = np.ones(win, dtype=float) / float(win)
+                        smoothed = np.convolve(series, kernel, mode="same")
+                        idx = list(range(0, smoothed.size, win))
+                        if idx:
+                            last_idx = smoothed.size - 1
+                            if idx[-1] != last_idx:
+                                idx.append(last_idx)
+                        dedup_idx: list[int] = []
+                        prev_idx = -1
+                        for i in idx:
+                            if 0 <= i < smoothed.size and i != prev_idx:
+                                dedup_idx.append(i)
+                                prev_idx = i
+                        if dedup_idx:
+                            series = smoothed[dedup_idx]
+                            series_times = raw_times[dedup_idx]
+                        else:
+                            series = raw
+                            series_times = raw_times
+                len_smooth = int(series.size)
+                if len_smooth == 0 and len_raw:
+                    series = raw
+                    series_times = raw_times
+                    len_smooth = len_raw
+                logger.debug("cc11 raw=%d smoothed=%d", len_raw, len_smooth)
+                series = np.clip(series, 0.0, 127.0)
+                vals = np.rint(series).astype(int)
+                times = series_times.astype(float)
+                dedup_vals: list[int] = []
+                dedup_times: list[float] = []
+                prev_sample: int | None = None
+                for t, v in zip(times.tolist(), vals.tolist()):
+                    if prev_sample is None or v != prev_sample:
+                        dedup_vals.append(int(v))
+                        dedup_times.append(float(t))
+                        prev_sample = int(v)
+                if not dedup_vals and len_raw:
+                    dedup_vals = np.rint(np.clip(raw, 0.0, 127.0)).astype(int).tolist()
+                    dedup_times = raw_times.tolist()
                 prev_val = None
                 last_t = -1e9
                 min_dt = cc11_min_dt_ms / 1000.0
-                for t, e in zip(times, smoothed):
-                    val = int(round(max(0.0, min(1.0, e * cc11_gain)) * 127))
+                for t, val in zip(dedup_times, dedup_vals):
                     if (
                         prev_val is None
                         or (
@@ -518,10 +552,10 @@ def apply_cc_curves(
                     ):
                         inst.control_changes.append(
                             pretty_midi.ControlChange(
-                                number=11, value=val, time=float(t)
+                                number=11, value=int(max(0, min(127, val))), time=float(t)
                             )
                         )
-                        prev_val = val
+                        prev_val = int(val)
                         last_t = float(t)
                         cc11_count += 1
         else:  # Fallback to ADSR derived from notes
@@ -1020,6 +1054,10 @@ def convert_directory(
         if sustain_threshold is not None
         else cc64_gap_beats,
     }
+    # Older stubs (used in tests) expect ``cc11_smoothing_ms`` instead of
+    # ``cc11_smooth_ms``.  Provide both so ``_filter_kwargs`` can keep the one
+    # supported by the active transcription function.
+    base_transcribe_kwargs["cc11_smoothing_ms"] = base_transcribe_kwargs["cc11_smooth_ms"]
     # Tests patch _transcribe_stem with legacy signatures; filter new kwargs for compatibility.
     filtered_transcribe_kwargs = _filter_kwargs(
         _transcribe_stem, base_transcribe_kwargs

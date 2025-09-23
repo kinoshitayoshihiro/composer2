@@ -47,6 +47,8 @@ try:  # pragma: no cover - optional
 except Exception:  # pragma: no cover
     pretty_midi = None  # type: ignore
 
+logger = logging.getLogger(__name__)
+
 # Project import guard (same pattern as train_phrase.py) ---------------------
 try:  # pragma: no cover - regular import
     from models.phrase_transformer import PhraseTransformer  # type: ignore
@@ -316,6 +318,53 @@ def events_to_prettymidi(
     return pm
 
 
+def _resolve_steps_per_bar(state: dict[str, Any], hparams: dict[str, Any] | None) -> int:
+    """Resolve steps-per-bar with priority: hparams → state → state.meta → default."""
+
+    sources: tuple[Any, ...] = (hparams or {}, state, {})
+    if isinstance(state, dict):
+        sources = (hparams or {}, state, state.get("meta", {}) or {})
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        value = source.get("steps_per_bar")
+        if value is None:
+            continue
+        try:
+            candidate = int(value)
+        except (TypeError, ValueError):
+            continue
+        if candidate:
+            return candidate
+    return 4
+
+
+def _compute_step_limits(
+    *, length: int, model_max_len: int, bars: int | None, steps_per_bar: int
+) -> tuple[int, int | None]:
+    """Return ``(max_steps, bar_step_limit)`` for the sampling loop."""
+
+    max_steps = min(int(length), int(model_max_len))
+    bar_step_limit: int | None = None
+    if bars is not None:
+        bar_step_limit = max(0, int(bars) * int(steps_per_bar))
+        if bar_step_limit > 0:
+            max_steps = min(max_steps, bar_step_limit)
+    return max(0, max_steps), bar_step_limit
+
+
+def _generate_fallback_events(
+    *, max_steps: int, pitch_min: int, pitch_max: int
+) -> list[dict[str, float | int]]:
+    """Return random placeholder events used when Torch is unavailable."""
+
+    events: list[dict[str, float | int]] = []
+    for _ in range(max_steps):
+        pitch = random.randint(pitch_min, pitch_max)
+        events.append({"pitch": pitch, "velocity": 64, "duration_beats": 0.25})
+    return events
+
+
 # ----------------------- main inference ------------------------------------
 
 def main(argv: list[str] | None = None) -> None:
@@ -476,24 +525,51 @@ def main(argv: list[str] | None = None) -> None:
     # Sampling loop ----------------------------------------------------------
     out_events: list[dict[str, float | int]] = []
     total_beats = 0.0
+    steps_per_bar = _resolve_steps_per_bar(state, hparams)
     meta = {
         "vel_bins": (hparams or {}).get("vel_bins", state.get("duv_cfg", {}).get("vel_bins", 8)),
         "dur_bins": (hparams or {}).get("dur_bins", state.get("duv_cfg", {}).get("dur_bins", 16)),
+        "steps_per_bar": steps_per_bar,
     }
+
+    model_max_len = int(getattr(model, "max_len", args.length))
+    max_steps, bar_step_limit = _compute_step_limits(
+        length=int(args.length),
+        model_max_len=model_max_len,
+        bars=args.bars,
+        steps_per_bar=steps_per_bar,
+    )
+    logger.debug(
+        "max_steps=%d bar_step_limit=%s model_max_len=%d",
+        max_steps,
+        bar_step_limit,
+        model_max_len,
+    )
 
     if torch is None:
         # Fallback: generate a constant-length, random-velocity sequence
-        for _ in range(args.length):
-            pitch = random.randint(args.pitch_min, args.pitch_max)
-            dur = 0.25
-            if args.bars is not None and total_beats + dur > 4 * args.bars:
-                break
-            out_events.append({"pitch": pitch, "velocity": 64, "duration_beats": dur})
-            total_beats += dur
+        # Generate fallback events via helper, but honor --bars limit like the old inline loop.
+        step_beats = 0.25  # one step = 1/4 beat (sixteenth note)
+        if args.bars is not None:
+            remaining_beats = max(0.0, 4 * args.bars - total_beats)
+            limit_by_bars = int(remaining_beats / step_beats)
+        else:
+            limit_by_bars = None
+
+        steps = max(0, min(max_steps, limit_by_bars) if limit_by_bars is not None else max_steps)
+        if steps:
+            out_events.extend(
+                _generate_fallback_events(
+                    max_steps=steps,
+                    pitch_min=args.pitch_min,
+                    pitch_max=args.pitch_max,
+                )
+            )
+            total_beats += steps * step_beats
         logging.warning("Torch not available; generated fallback events without model")
     else:
         with torch.no_grad():
-            for step in range(args.length):
+            for step in range(max_steps):
                 # Query model step API if available; otherwise synthesize empty outputs
                 if hasattr(model, "step"):
                     out_dict = model.step(state_enc)  # type: ignore[attr-defined]
@@ -501,7 +577,7 @@ def main(argv: list[str] | None = None) -> None:
                     out_dict = {}
 
                 # Temperature schedule (linear)
-                alpha = step / max(args.length - 1, 1)
+                alpha = step / max(max_steps - 1, 1)
                 temp = temp_start + (temp_end - temp_start) * alpha
 
                 # Pitch sampling
@@ -528,7 +604,7 @@ def main(argv: list[str] | None = None) -> None:
                 if hasattr(model, "update_state"):
                     state_enc = model.update_state(state_enc, ev)  # type: ignore[attr-defined]
 
-                # Optional early stop by bars handled above
+               # Optional early stop by bars handled above
 
     # Outputs ---------------------------------------------------------------
     if args.out_csv:

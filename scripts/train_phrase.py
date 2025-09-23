@@ -1230,6 +1230,7 @@ def train_model(
             use_local_stats=use_local_stats,
         )
     else:
+        num_layers = layers if layers is not None else 2
         ctor_kwargs = dict(
             d_model=d_model,
             max_len=max_len,
@@ -1242,7 +1243,7 @@ def train_model(
             vel_bins=vel_bins,
             dur_bins=dur_bins,
             nhead=nhead,
-            num_layers=layers,
+            num_layers=num_layers,
             dropout=dropout,
             use_sinusoidal_posenc=use_sinusoidal_posenc,
         )

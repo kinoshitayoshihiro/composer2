@@ -733,6 +733,10 @@ def _transcribe_stem_impl(
     if _legacy_kwargs:
         _legacy_kwargs.clear()
 
+    effective_cc11_smooth_ms = float(cc11_smooth_ms)
+    if effective_cc11_smooth_ms <= cc11_min_dt_ms:
+        effective_cc11_smooth_ms = 0.0
+
     if crepe is None or librosa is None:
         missing = " and ".join(
             dep for dep, mod in (("crepe", crepe), ("librosa", librosa)) if mod is None
@@ -804,7 +808,7 @@ def _transcribe_stem_impl(
             tempo=result.tempo,
             cc11_strategy=cc11_strategy,
             cc11_map=cc11_map,
-            cc11_smooth_ms=cc11_smooth_ms,
+            cc11_smooth_ms=effective_cc11_smooth_ms,
             cc11_gain=cc11_gain,
             cc11_hyst_up=cc11_hyst_up,
             cc11_hyst_down=cc11_hyst_down,
@@ -903,7 +907,7 @@ def _transcribe_stem_impl(
         tempo=tempo,
         cc11_strategy=cc11_strategy,
         cc11_map=cc11_map,
-        cc11_smooth_ms=cc11_smooth_ms,
+        cc11_smooth_ms=effective_cc11_smooth_ms,
         cc11_gain=cc11_gain,
         cc11_hyst_up=cc11_hyst_up,
         cc11_hyst_down=cc11_hyst_down,
@@ -992,6 +996,9 @@ def convert_directory(
 
     log_path = dst / "conversion_log.json"
     log_data: dict[str, list[str]] = {}
+    effective_cc11_smooth_ms = float(cc11_smooth_ms)
+    if effective_cc11_smooth_ms <= cc11_min_dt_ms:
+        effective_cc11_smooth_ms = 0.0
     base_transcribe_kwargs = {
         "min_dur": min_dur,
         "auto_tempo": auto_tempo,
@@ -1001,7 +1008,7 @@ def convert_directory(
         "bend_fixed_base": bend_fixed_base,
         "cc11_strategy": cc11_strategy,
         "cc11_map": cc11_map,
-        "cc11_smooth_ms": cc11_smooth_ms,
+        "cc11_smooth_ms": effective_cc11_smooth_ms,
         "cc11_gain": cc11_gain,
         "cc11_hyst_up": cc11_hyst_up,
         "cc11_hyst_down": cc11_hyst_down,
@@ -1767,6 +1774,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--cc11-smooth-ms",
+        "--cc11-smoothing-ms",
+        dest="cc11_smoothing_ms",
         type=float,
         default=80.0,
         help="Smoothing window for CC11 envelope in milliseconds",
@@ -2035,7 +2044,7 @@ def main(argv: list[str] | None = None) -> None:
         bend_integer_range=args.bend_integer_range,
         cc11_strategy=args.cc_strategy,
         cc11_map=args.cc11_map,
-        cc11_smooth_ms=args.cc11_smooth_ms,
+        cc11_smooth_ms=args.cc11_smoothing_ms,
         cc11_gain=args.cc11_gain,
         cc11_hyst_up=args.cc11_hyst_up,
         cc11_hyst_down=args.cc11_hyst_down,

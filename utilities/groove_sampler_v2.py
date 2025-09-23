@@ -157,6 +157,42 @@ except Exception:  # pragma: no cover
             return 0
 
 
+def _rebuild_probabilities(
+    model: "NGramModel",
+) -> tuple[list[np.ndarray], list[dict[int, int]]]:
+    """Reconstruct normalized probability tables from frequency counts."""
+
+    vocab_size = len(model.idx_to_state)
+    prob_arrays: list[np.ndarray] = []
+    ctx_maps: list[dict[int, int]] = []
+    for table in model.freq:
+        items = sorted(table.items(), key=lambda item: item[0])
+        rows = len(items)
+        arr = np.zeros((rows, vocab_size), dtype=np.float32)
+        ctx_map: dict[int, int] = {}
+        for row, (ctx_hash, counts) in enumerate(items):
+            ctx_map[ctx_hash] = row
+            counts_arr = np.asarray(counts, dtype=np.float32)
+            total = float(counts_arr.sum())
+            if total > 0.0:
+                arr[row] = counts_arr / total
+        prob_arrays.append(arr)
+        ctx_maps.append(ctx_map)
+    return prob_arrays, ctx_maps
+
+
+def _rebuild_prob_in_memory(model: "NGramModel") -> list[np.ndarray]:
+    probs, ctx_maps = _rebuild_probabilities(model)
+    model.ctx_maps = ctx_maps
+    return probs
+
+
+def _is_small_corpus(total_events: int, num_files: int, avg_events: float) -> bool:
+    """Heuristic to decide when in-memory training is preferable."""
+
+    return (total_events <= 200_000 or avg_events <= 256) and num_files <= 2_000
+
+
 try:  # pragma: no cover - optional dependency
     from tqdm import tqdm  # noqa: E402
 except Exception:  # pragma: no cover
@@ -475,6 +511,82 @@ class MemmapNGramStore:
         (self.path / "meta.json").write_text(json.dumps(meta))
 
 
+def _write_prob_memmaps(model: NGramModel, directory: Path) -> None:
+    """Materialize normalized probability tables as memmaps on disk."""
+
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    vocab_size = len(model.idx_to_state)
+    prob_paths: list[str] = []
+    ctx_maps: list[dict[int, int]] = []
+    rows_meta: list[int] = []
+    meta: dict[str, object] = {
+        "schema_version": 1,
+        "orders": len(model.freq),
+        "vocab_size": vocab_size,
+        "rows_per_order": rows_meta,
+        "dtype": "float32",
+    }
+    for order, table in enumerate(model.freq):
+        items = sorted(table.items(), key=lambda item: item[0])
+        ctx_map: dict[int, int] = {}
+        path = directory / f"prob_order{order}.mmap"
+        tmp_path = Path(f"{path}.tmp")
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        rows = len(items)
+        rows_meta.append(rows)
+        if rows == 0 or vocab_size == 0:
+            with open(tmp_path, "wb") as fh:
+                fh.truncate(0)
+            os.replace(tmp_path, path)
+            prob_paths.append(str(path))
+            ctx_maps.append(ctx_map)
+            continue
+        mm = np.memmap(tmp_path, mode="w+", dtype=np.float32, shape=(rows, vocab_size))
+        for row, (ctx_hash, counts) in enumerate(items):
+            ctx_map[ctx_hash] = row
+            counts_arr = np.asarray(counts, dtype=np.float32)
+            total = float(counts_arr.sum())
+            if total > 0.0:
+                mm[row] = counts_arr / total
+            else:
+                mm[row] = 0.0
+        mm.flush()
+        del mm
+        gc.collect()
+        os.replace(tmp_path, path)
+        prob_paths.append(str(path))
+        ctx_maps.append(ctx_map)
+    model.prob_paths = prob_paths
+    model.ctx_maps = ctx_maps
+    meta_path = directory / "prob_meta.json"
+    tmp_meta_path = directory / "prob_meta.json.tmp"
+    with tmp_meta_path.open("w", encoding="utf-8") as fh:
+        json.dump(meta, fh)
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())
+        except OSError:
+            pass
+    os.replace(tmp_meta_path, meta_path)
+    from .memmap_utils import load_memmap
+
+    prob_arrays: list[np.ndarray] = []
+    for order, path_str in enumerate(prob_paths):
+        rows = rows_meta[order] if order < len(rows_meta) else 0
+        if rows == 0 or vocab_size == 0:
+            prob_arrays.append(np.zeros((rows, vocab_size), dtype=np.float32))
+            continue
+        prob_arrays.append(
+            load_memmap(Path(path_str), shape=(rows, vocab_size))
+        )
+    model.prob = prob_arrays
+
+
 def convert_wav_to_midi(
     path: Path, *, fixed_bpm: float | None = None
 ) -> pretty_midi.PrettyMIDI | None:
@@ -704,6 +816,9 @@ def _resolve_tempo(
     ``skip``. ``_resolve_tempo.last_source`` records the tempo source
     (``pretty_midi`` or ``mido``).
     """
+
+    if tempo_policy == "accept_warn":
+        tempo_policy = "accept"
 
     bpm: float | None = None
     source = "unknown"
@@ -957,6 +1072,7 @@ def train(
     if n_jobs is None:
         n_jobs = min(4, os.cpu_count() or 1)
 
+    memmap_dir_given = memmap_dir is not None
     if memmap_dir is None:
         memmap_dir = Path(tempfile.gettempdir()) / "composer2_groove_mm"
 
@@ -1193,11 +1309,11 @@ def train(
         logger.warning(
             "No events collected — returning empty model (files=%d skipped=%d filtered=%d)",
             len(paths),
-            files_skipped,
+            files_skipped + files_filtered,
             files_filtered,
         )
         model = _empty_model()
-        model.files_skipped = files_skipped
+        model.files_skipped = files_skipped + files_filtered
         model.files_scanned = len(paths)
         save(model, model_path)
         return model
@@ -1233,12 +1349,9 @@ def train(
     total_events = sum(len(s) for s in seqs)
 
     effective_mode = train_mode
-    avg_events = total_events / max(1, len(paths))
-    small_corpus = (
-        (total_events <= 200_000 and len(paths) <= 2_000)
-        or (avg_events <= 256)
-    )
-    if train_mode == "stream" and small_corpus:
+    num_files = len(paths)
+    avg_events = total_events / max(1, num_files)
+    if train_mode == "stream" and _is_small_corpus(total_events, num_files, avg_events):
         effective_mode = "inmemory"
 
     if len_sampling == "uniform":
@@ -1330,10 +1443,11 @@ def train(
     aux_hit = sum(1 for v in aux_values if v)
     if aux_values:
         logger.info("aux hit rate=%.2f", aux_hit / len(aux_values))
+    skipped_total = files_skipped + files_filtered
     logger.info(
         "Scanned %d files (skipped %d) \u2192 %d events \u2192 %d states",
         len(paths),
-        files_skipped,
+        skipped_total,
         total_events,
         len(idx_to_state),
     )
@@ -1346,7 +1460,7 @@ def train(
             len(idx_to_state),
         )
         empty_model = _empty_model(resolution)
-        empty_model.files_skipped = files_skipped
+        empty_model.files_skipped = skipped_total
         empty_model.files_scanned = len(paths)
         save(empty_model, model_path)
         return empty_model
@@ -1365,23 +1479,35 @@ def train(
         version=2,
         file_weights=file_weights,
         files_scanned=len(paths),
-        files_skipped=files_skipped,
+        files_skipped=skipped_total,
         total_events=total_events,
         hash_buckets=hb,
         tempo_defaults=tempo_defaults_meta,
     )
+    if (memmap_dir_given or cache_probs_memmap) and model.idx_to_state:
+        _write_prob_memmaps(model, memmap_dir)
     if aux_vocab_path:
-        try:
-            if hasattr(aux_vocab_obj, "to_json"):
-                aux_vocab_obj.to_json(aux_vocab_path)
-            elif hasattr(aux_vocab_obj, "id_to_str"):
-                vocab_data = list(getattr(aux_vocab_obj, "id_to_str"))
-                aux_vocab_path.write_text(json.dumps(vocab_data))
-            else:
-                logger.warning("aux vocab compat path for %s", aux_vocab_path)
-                aux_vocab_path.write_text(json.dumps(aux_vocab_obj, default=vars))
-        except Exception as exc:  # pragma: no cover - compatibility path
-            logger.warning("failed to write aux vocab to %s: %s", aux_vocab_path, exc)
+# ensure parent directory exists before writing
+
+    aux_vocab_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if hasattr(aux_vocab_obj, "to_json"):
+        # prefer native serializer when available
+        aux_vocab_obj.to_json(aux_vocab_path)
+    elif hasattr(aux_vocab_obj, "id_to_str"):
+        # fallback: list of strings
+        data = getattr(aux_vocab_obj, "id_to_str")
+        if not isinstance(data, list):
+            data = list(data)
+        aux_vocab_path.write_text(json.dumps(data))
+    else:
+        # last resort: best-effort JSON dump with vars() fallback
+        logger.warning("aux vocab compat path for %s", aux_vocab_path)
+        aux_vocab_path.write_text(json.dumps(aux_vocab_obj, default=vars))
+except Exception as exc:  # pragma: no cover - compatibility path
+    logger.warning("failed to write aux vocab to %s: %s", aux_vocab_path, exc)
+
     if resume:
         save(model, model_path)
         processed_log.write_text("\n".join(processed_set | {str(p) for p in paths}) + "\n")
@@ -1424,6 +1550,13 @@ def train_streaming(
         processed = state.get("processed", 0)
         kept = state.get("kept", 0)
         skipped = state.get("skipped", 0)
+        logger.info(
+            "Resuming streaming run from %s (processed=%d kept=%d skipped=%d)",
+            resume_from,
+            processed,
+            kept,
+            skipped,
+        )
 
     path_list = list(paths)
     start_idx = processed
@@ -1588,6 +1721,40 @@ else:  # pragma: no cover - environment toggle
     _get_arr = _get_arr_internal
 
 
+def _resolve_aux_ids(
+    aux_vocab: AuxVocab | None,
+    cond: dict[str, str] | None,
+    fallback: str | None,
+) -> list[int]:
+    """Return auxiliary ids to probe ordered by preference."""
+
+    if aux_vocab is None:
+        return [0]
+    if not cond:
+        return [0]
+
+    key = "|".join(f"{k}={v}" for k, v in sorted(cond.items()))
+    aux_any = 0
+    aux_unknown = aux_vocab.str_to_id.get("<UNK>")
+    idx = aux_vocab.str_to_id.get(key)
+
+    if idx is not None:
+        order = [idx]
+        if fallback in {"allow", "prefer"} and aux_any not in order:
+            order.append(aux_any)
+        return order
+
+    order: list[int] = []
+    if fallback == "prefer":
+        order.append(aux_any)
+    if aux_unknown is not None:
+        order.append(aux_unknown)
+    if fallback != "prefer" and aux_any not in order:
+        order.append(aux_any)
+
+    return order or [aux_any]
+
+
 def next_prob_dist(
     model: "NGramModel",
     history: list[int],
@@ -1597,27 +1764,36 @@ def next_prob_dist(
     top_k: int | None = None,
     top_p: float | None = None,
     cond: dict[str, str] | None = None,
+    aux_fallback: str | None = None,
 ) -> np.ndarray:
     """Return probability distribution for next state."""
 
     _MODEL_CACHE[id(model)] = model
     n = model.n if model.n is not None else 4
-    aux_id = model.aux_vocab.encode(cond) if cond and model.aux_vocab else 0
+    aux_ids = _resolve_aux_ids(model.aux_vocab, cond, aux_fallback)
     hb = model.hash_buckets
 
     arr: np.ndarray | None = None
     for order in range(min(len(history), n - 1), 0, -1):
         ctx = history[-order:]
-        ctx_hash = _hash_ctx(list(ctx) + [order, aux_id]) % hb
-        arr = _get_arr(id(model), order, ctx_hash)
+        for aux_id in aux_ids:
+            ctx_hash = _hash_ctx(list(ctx) + [order, aux_id]) % hb
+            arr = _get_arr(id(model), order, ctx_hash)
+            if arr is not None and arr.sum() > 0:
+                arr = arr.astype(float)
+                break
         if arr is not None and arr.sum() > 0:
-            arr = arr.astype(float)
             break
     else:
-        ctx_hash = _hash_ctx([0, aux_id]) % hb
-        arr = _get_arr(id(model), 0, ctx_hash)
-        if arr is not None and arr.sum() == 0:
-            arr = None
+        arr = None
+        for aux_id in aux_ids:
+            ctx_hash = _hash_ctx([0, aux_id]) % hb
+            arr = _get_arr(id(model), 0, ctx_hash)
+            if arr is not None and arr.sum() > 0:
+                arr = arr.astype(float)
+                break
+            if arr is not None and arr.sum() == 0:
+                arr = None
 
     if arr is None or arr.sum() == 0:
         b_arr = model.bucket_freq.get(bucket) if model.bucket_freq is not None else None
@@ -1651,6 +1827,7 @@ def sample_next(
     cond_kick: str | None = None,
     cond: dict[str, str] | None = None,
     strength: float | None = None,
+    aux_fallback: str | None = None,
     **_: object,
 ) -> int:
     """Sample next state index using hashed back-off."""
@@ -1666,6 +1843,7 @@ def sample_next(
         top_k=top_k,
         top_p=top_p,
         cond=cond,
+        aux_fallback=aux_fallback,
     )
     if cond_kick and model.idx_to_state:
         labels = [s[2] for s in model.idx_to_state]
@@ -2001,12 +2179,70 @@ def load(
         tempo_defaults=data.get("tempo_defaults"),
     )
     if model.prob_paths is not None:
-        from .memmap_utils import load_memmap
+        prob_arrays: list[np.ndarray]
+        meta_path: Path | None = None
+        rows_meta: list[int] | None = None
+        meta_data: dict[str, Any] | None = None
+        if model.prob_paths:
+            meta_path = Path(model.prob_paths[0]).parent / "prob_meta.json"
+            try:
+                meta_text = meta_path.read_text(encoding="utf-8")
+                meta_data = json.loads(meta_text)
+            except Exception as exc:
+                logger.warning(
+                    "failed to read probability metadata from %s: %s", meta_path, exc
+                )
+        expected_vocab = len(model.idx_to_state)
+        if meta_data and isinstance(meta_data.get("rows_per_order"), list):
+            try:
+                rows_meta = [int(r) for r in meta_data["rows_per_order"]]
+            except Exception:
+                rows_meta = None
+        valid_meta = (
+            rows_meta is not None
+            and meta_data is not None
+            and meta_data.get("schema_version") == 1
+            and meta_data.get("vocab_size") == expected_vocab
+            and len(rows_meta) == len(model.freq)
+        )
+        if valid_meta:
+            from .memmap_utils import load_memmap
 
-        prob_arrays = []
-        for order, p in enumerate(model.prob_paths):
-            shape = (len(model.ctx_maps[order]), len(model.idx_to_state))
-            prob_arrays.append(load_memmap(Path(p), shape=shape))
+            prob_arrays = []
+            try:
+                for order, path_str in enumerate(model.prob_paths):
+                    rows = rows_meta[order] if order < len(rows_meta) else 0
+                    cols = expected_vocab
+                    ctx_rows = len(model.ctx_maps[order]) if order < len(model.ctx_maps) else 0
+                    if ctx_rows != rows:
+                        raise ValueError(
+                            f"ctx map rows mismatch for order {order}: {ctx_rows} vs {rows}"
+                        )
+                    path_obj = Path(path_str)
+                    if rows == 0 or cols == 0 or not path_obj.exists():
+                        prob_arrays.append(np.zeros((rows, cols), dtype=np.float32))
+                        continue
+                    prob_arrays.append(load_memmap(path_obj, shape=(rows, cols)))
+            except Exception as exc:
+                logger.warning(
+                    "failed to map probability memmaps from %s: %s; reconstructing in memory",
+                    meta_path,
+                    exc,
+                )
+                model.prob_paths = None
+                prob_arrays = _rebuild_prob_in_memory(model)
+        else:
+            if meta_path is not None:
+                logger.warning(
+                    "probability memmap metadata missing or incompatible in %s; reconstructing in memory",
+                    meta_path,
+                )
+            else:
+                logger.warning(
+                    "probability memmap metadata unavailable; reconstructing in memory"
+                )
+            model.prob_paths = None
+            prob_arrays = _rebuild_prob_in_memory(model)
         model.prob = prob_arrays
 
     return model

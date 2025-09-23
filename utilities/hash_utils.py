@@ -3,7 +3,7 @@ from __future__ import annotations
 import struct
 from typing import Sequence, Tuple
 
-__all__ = ["murmur32", "hash_ctx"]
+__all__ = ["murmur32", "hash_ctx", "murmur32_worker"]
 
 
 def murmur32(data: bytes, seed: int = 0) -> int:
@@ -71,3 +71,9 @@ def hash_ctx(
         *list(context_events) + list(aux_vals),
     )
     return murmur32(data) & 0xFFFFFFFF
+
+
+def murmur32_worker(queue, data: bytes = b"abc") -> None:
+    """Helper suitable for multiprocessing pickling tests."""
+
+    queue.put(murmur32(data))

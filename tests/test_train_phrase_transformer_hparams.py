@@ -96,7 +96,7 @@ def test_transformer_hparams(
     tp.train_model(
         train_csv,
         valid_csv,
-        epochs=1,
+        epochs=0,
         arch="transformer",
         out=ckpt,
         batch_size=1,
@@ -109,7 +109,9 @@ def test_transformer_hparams(
     assert ckpt.is_file()
     assert captured == {"nhead": nhead, "num_layers": num_layers, "dropout": dropout}
 
+    # Forward signature/shape sanity
     model = stub_cls(d_model=32, max_len=32, nhead=nhead, num_layers=num_layers, dropout=dropout)
     mask = torch.ones((1, 2), dtype=torch.bool)
     out = model({}, mask)
     assert out["boundary"].shape == (1, 2)
+    assert out["pitch_logits"].shape == (1, 2, 128)

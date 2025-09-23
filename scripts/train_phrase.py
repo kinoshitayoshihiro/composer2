@@ -1164,15 +1164,28 @@ def train_model(
                         )
                     if callable(sampler_fn):
                         try:
-                            sampler = sampler_fn(weights, len(ds_train), True)
+                            weight_tensor = torch.as_tensor(weights, dtype=torch.float64)
+                        except Exception:
+                            weight_tensor = torch.tensor(weights, dtype=torch.float32)
+                        try:
+                            sampler = sampler_fn(weight_tensor, len(ds_train), replacement=True)
                         except TypeError:
-                            sampler = sampler_fn(weights, len(ds_train), replacement=True)
+                            sampler = sampler_fn(weight_tensor, len(ds_train), True)
                         except RecursionError:
-                            logging.info(
-                                "reweight=%r sampler recursion detected; continuing without sampler",
-                                reweight,
+                            base_mod = getattr(torch.utils.data, "sampler", None)
+                            base_cls = (
+                                getattr(base_mod, "WeightedRandomSampler", None)
+                                if base_mod is not None
+                                else None
                             )
-                            sampler = None
+                            if callable(base_cls):
+                                sampler = base_cls(weight_tensor, len(ds_train), replacement=True)
+                            else:
+                                logging.info(
+                                    "reweight=%r sampler recursion detected; continuing without sampler",
+                                    reweight,
+                                )
+                                sampler = None
                         if sampler is not None:
                             shuffle_train = False
 
@@ -1336,7 +1349,10 @@ def train_model(
             nll = (logZ - score).mean()
             return nll
     crf = CRF2().to(device) if head == 'crf' else None
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    try:
+        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    except AttributeError:  # pragma: no cover - PyTorch < 2.0 fallback
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     writer = SummaryWriter(logdir) if logdir and SummaryWriter else None
 
     start_epoch = 0
@@ -1509,7 +1525,22 @@ def train_model(
                 else nullcontext()
             )
             with ctx:
-                outputs = model(feats, mask)
+                raw_outputs = model(feats, mask)
+                if isinstance(raw_outputs, dict):
+                    outputs = raw_outputs
+                elif isinstance(raw_outputs, (list, tuple)):
+                    first = raw_outputs[0] if raw_outputs else None
+                    outputs = {"boundary": first} if first is not None else {}
+                else:
+                    outputs = {"boundary": raw_outputs}
+                if not isinstance(outputs, dict):
+                    outputs = {"boundary": outputs}
+                if "boundary" not in outputs and "boundary2" not in outputs:
+                    try:
+                        zeros = torch.zeros_like(targets["boundary"], dtype=torch.float32)
+                    except Exception:
+                        zeros = torch.tensor(0.0, device=device)
+                    outputs["boundary"] = zeros
                 m = mask.bool()
                 loss = 0.0
                 lb = lv = ld = lvb = ldb = lp = 0.0
@@ -1886,7 +1917,19 @@ def train_model(
             feats, targets, mask, _tags = next(iter(dl_val))
             feats = {k: v.to(device) for k, v in feats.items()}
             mask0 = mask[0].bool()
-            outputs = model(feats, mask.to(device))
+            preview_raw = model(feats, mask.to(device))
+            if isinstance(preview_raw, dict):
+                outputs = preview_raw
+            elif isinstance(preview_raw, (list, tuple)):
+                first = preview_raw[0] if preview_raw else None
+                outputs = {"boundary": first} if first is not None else {}
+            else:
+                outputs = {"boundary": preview_raw}
+            if not isinstance(outputs, dict):
+                outputs = {"boundary": outputs}
+            if "boundary" not in outputs and "boundary2" not in outputs:
+                zeros = torch.zeros_like(targets["boundary"], dtype=torch.float32)
+                outputs["boundary"] = zeros
             if "boundary2" in outputs:
                 logits2 = outputs["boundary2"][0, mask0.to(device)]  # (T,2)
                 probs_t = torch.softmax(logits2, dim=-1)[:, 1]

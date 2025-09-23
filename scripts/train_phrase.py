@@ -1104,80 +1104,81 @@ def train_model(
             tag = kv.get("tag") or kv.get("class")
             scheme = kv.get("scheme", "inv_freq")
             if tag and scheme == "inv_freq":
-            rows: list[dict[str, str]] = []
-            values: list[str] = []
-            raw_count = 0
-            skipped_empty = 0
-            req_cols = locals().get("required")
-            if isinstance(req_cols, set):
-                req = set(req_cols)
-            else:
-                req = {
-                    "pitch",
-                    "velocity",
-                    "duration",
-                    "pos",
-                    "boundary",
-                    "bar",
-                    "instrument",
-                }
-            req.add("instrument")
-            req.add(tag)
-            if train_rows:
-                rows = train_rows
-            elif isinstance(train_csv, (str, Path)):
-                try:
-                    rows = load_csv_rows(Path(train_csv), req)
-                except Exception as exc:
-                    logging.info("failed to read %s for reweight: %s", train_csv, exc)
-                    rows = []
-            def _norm(value: object) -> str:
-                if value is None:
-                    return ""
-                text = str(value).strip()
-                return "" if text.lower() in {"", "none", "nan"} else text
-
-            if rows:
-                raw_values: list[str] = []
-                for r in rows:
-                    value_str = _norm(r.get(tag))
-                    raw_values.append(value_str)
-                    if value_str == "":
-                        skipped_empty += 1
-                values = [v for v in raw_values if v != ""]
-                raw_count = len(raw_values)
-            if not values:
-                tags_map = getattr(ds_train, "group_tags", None)
-                if isinstance(tags_map, dict) and tag in tags_map:
+                rows: list[dict[str, str]] = []
+                values: list[str] = []
+                raw_count = 0
+                skipped_empty = 0
+                req_cols = locals().get("required")
+                if isinstance(req_cols, set):
+                    req = set(req_cols)
+                else:
+                    req = {
+                        "pitch",
+                        "velocity",
+                        "duration",
+                        "pos",
+                        "boundary",
+                        "bar",
+                        "instrument",
+                    }
+                req.add("instrument")
+                req.add(tag)
+                if train_rows:
+                    rows = train_rows
+                elif isinstance(train_csv, (str, Path)):
                     try:
-                        values = [_norm(v) for v in tags_map[tag]]
-                        values = [v for v in values if v]
-                    except Exception:
-                        values = []
-                raw_count = len(values)
-            if not values and isinstance(train_csv, (str, Path)):
-                try:
-                    csv_rows = load_csv_rows(Path(train_csv), req)
-                except Exception:
-                    csv_rows = []
-                if csv_rows:
-                    raw_values = []
-                    for r in csv_rows:
+                        rows = load_csv_rows(Path(train_csv), req)
+                    except Exception as exc:
+                        logging.info("failed to read %s for reweight: %s", train_csv, exc)
+                        rows = []
+
+                def _norm(value: object) -> str:
+                    if value is None:
+                        return ""
+                    text = str(value).strip()
+                    return "" if text.lower() in {"", "none", "nan"} else text
+
+                if rows:
+                    raw_values: list[str] = []
+                    for r in rows:
                         value_str = _norm(r.get(tag))
                         raw_values.append(value_str)
                         if value_str == "":
                             skipped_empty += 1
-                    values = [v for v in raw_values if v]
+                    values = [v for v in raw_values if v != ""]
                     raw_count = len(raw_values)
-            logging.info(
-                "reweight tag=%s collected=%d (raw=%d), skipped_empty=%d",
-                tag,
-                len(values),
-                raw_count,
-                skipped_empty,
-            )
-            if skipped_empty:
+                if not values:
+                    tags_map = getattr(ds_train, "group_tags", None)
+                    if isinstance(tags_map, dict) and tag in tags_map:
+                        try:
+                            values = [_norm(v) for v in tags_map[tag]]
+                            values = [v for v in values if v]
+                        except Exception:
+                            values = []
+                    raw_count = len(values)
+                if not values and isinstance(train_csv, (str, Path)):
+                    try:
+                        csv_rows = load_csv_rows(Path(train_csv), req)
+                    except Exception:
+                        csv_rows = []
+                    if csv_rows:
+                        raw_values = []
+                        for r in csv_rows:
+                            value_str = _norm(r.get(tag))
+                            raw_values.append(value_str)
+                            if value_str == "":
+                                skipped_empty += 1
+                        values = [v for v in raw_values if v]
+                        raw_count = len(raw_values)
                 logging.info(
+                    "reweight tag=%s collected=%d (raw=%d), skipped_empty=%d",
+                    tag,
+                    len(values),
+                    raw_count,
+                    skipped_empty,
+                )
+                if skipped_empty:
+                    logging.info(
                     "reweight=%r skipped %d empty values", reweight, skipped_empty
                 )
             logging.debug(

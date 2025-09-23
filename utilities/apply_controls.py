@@ -252,10 +252,33 @@ def apply_controls(
                         and getattr(new_pb[-2], "pitch", None) != 0
                     ):
                         inst.pitch_bends.pop(-2)
-                if write_rpn and not getattr(inst, "_rpn_written", False):
+            if write_rpn:
+                prev_written = getattr(inst, "_rpn_written", False)
+                prev_range = getattr(inst, "_rpn_range", None)
+                prev_precision = getattr(inst, "_rpn_precision", "midi128")
+                target_precision = "midi128"
+                need_rpn = not prev_written
+                if not need_rpn and prev_precision != target_precision:
+                    need_rpn = True
+                if not need_rpn and prev_range is not None:
+                    if abs(float(prev_range) - float(bend_range_semitones)) > 0.01:
+                        need_rpn = True
+                if need_rpn:
                     first_pb = min((pb.time for pb in inst.pitch_bends), default=None)
                     t = _rpn_time(rpn_at, first_pb)
-                    write_bend_range_rpn(inst, bend_range_semitones, at_time=t)
+                    write_bend_range_rpn(
+                        inst,
+                        bend_range_semitones,
+                        at_time=t,
+                        precision=target_precision,
+                    )
+                    inst._rpn_written = True  # type: ignore[attr-defined]
+                    inst._rpn_range = getattr(
+                        inst, "_rpn_range", float(bend_range_semitones)
+                    )  # type: ignore[attr-defined]
+                    inst._rpn_precision = getattr(
+                        inst, "_rpn_precision", target_precision
+                    )  # type: ignore[attr-defined]
             elif name in _CC_MAP:
                 cc_num = _CC_MAP[name]
                 sr = sr_map.get(name)
@@ -305,7 +328,9 @@ def apply_controls(
 
 
 def _downsample_keep_endpoints(events: list, target: int) -> list:
-    if target >= len(events) or target <= 0:
+    if target <= 0:
+        return []
+    if target >= len(events):
         return list(events)
     idxs = [round(i * (len(events) - 1) / (target - 1)) for i in range(target)]
     seen: set[int] = set()
@@ -318,48 +343,162 @@ def _downsample_keep_endpoints(events: list, target: int) -> list:
 
 
 def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
-    lists: list[tuple[pretty_midi.Instrument, str, list]] = []
+    if cap <= 0:
+        for inst in pm.instruments:
+            inst.notes = []
+            inst.control_changes = []
+            inst.pitch_bends = []
+            _sort_events(inst)
+        return
+
+    groups: list[dict[str, object]] = []
     total = 0
     for inst in pm.instruments:
-        cc11 = [c for c in inst.control_changes if c.number == 11]
-        cc64 = [c for c in inst.control_changes if c.number == 64]
-        bend = list(inst.pitch_bends)
-        lists.extend([(inst, "cc11", cc11), (inst, "cc64", cc64), (inst, "bend", bend)])
-        total += len(cc11) + len(cc64) + len(bend)
-    if cap <= 0 or total <= cap:
+        notes = list(inst.notes)
+        if notes:
+            groups.append({"inst": inst, "kind": "note", "key": None, "events": notes})
+            total += len(notes)
+        cc_map: dict[int, list[pretty_midi.ControlChange]] = {}
+        for cc in inst.control_changes:
+            cc_map.setdefault(cc.number, []).append(cc)
+        for number, changes in cc_map.items():
+            groups.append(
+                {"inst": inst, "kind": "cc", "key": number, "events": list(changes)}
+            )
+            total += len(changes)
+        bends = list(inst.pitch_bends)
+        if bends:
+            groups.append({"inst": inst, "kind": "bend", "key": None, "events": bends})
+            total += len(bends)
+
+    if total <= cap:
         return
-    ratio = cap / total
-    entries: list[dict[str, object]] = []
-    for inst, name, lst in lists:
-        n = len(lst)
-        target = int(round(n * ratio))
-        if n > 1 and target < 2:
-            target = 2
-        kept = _downsample_keep_endpoints(lst, target)
-        entries.append({"inst": inst, "name": name, "orig": lst, "kept": kept})
-    total_new = sum(len(e["kept"]) for e in entries)
-    while total_new > cap:
-        entry = max(entries, key=lambda e: len(e["kept"]))
-        if len(entry["kept"]) <= 2:
-            break
-        entry["kept"] = _downsample_keep_endpoints(entry["kept"], len(entry["kept"]) - 1)
-        total_new = sum(len(e["kept"]) for e in entries)
-    new_cc: dict[pretty_midi.Instrument, list[pretty_midi.ControlChange]] = {}
-    new_pb: dict[pretty_midi.Instrument, list[pretty_midi.PitchBend]] = {}
-    for e in entries:
-        inst = e["inst"]
-        name = e["name"]
-        kept = e["kept"]
-        if name == "bend":
-            new_pb[inst] = kept
+
+    allocations: list[dict[str, object]] = []
+    sum_targets = 0
+    for group in groups:
+        events = list(group["events"])
+        n = len(events)
+        if n == 0:
+            min_keep = 0
+            ideal = 0.0
+            target = 0
         else:
-            new_cc.setdefault(inst, []).extend(kept)
+            min_keep = 1 if n == 1 else min(2, n)
+            ideal = (n / total) * cap
+            base = int(math.floor(ideal))
+            target = min(n, max(min_keep, base))
+        allocations.append(
+            {
+                "inst": group["inst"],
+                "kind": group["kind"],
+                "key": group["key"],
+                "events": events,
+                "min": min_keep,
+                "ideal": ideal,
+                "target": target,
+            }
+        )
+        sum_targets += target
+
+    if sum_targets > cap:
+        reducible = [a for a in allocations if int(a["target"]) > int(a["min"])]
+        while sum_targets > cap and reducible:
+            reducible.sort(
+                key=lambda a: (
+                    int(a["target"]) - int(a["min"]),
+                    float(a["ideal"]),
+                ),
+                reverse=True,
+            )
+            candidate = reducible[0]
+            candidate["target"] = int(candidate["target"]) - 1
+            sum_targets -= 1
+            if int(candidate["target"]) <= int(candidate["min"]):
+                reducible.pop(0)
+        if sum_targets > cap:
+            reducible = [a for a in allocations if a["target"] > 0]
+            while sum_targets > cap and reducible:
+                reducible.sort(
+                    key=lambda a: (
+                        int(a["target"]),
+                        float(a["ideal"]),
+                    ),
+                    reverse=True,
+                )
+                candidate = reducible[0]
+                candidate["target"] = int(candidate["target"]) - 1
+                sum_targets -= 1
+                if int(candidate["target"]) == 0:
+                    reducible.pop(0)
+
+    remainder = cap - sum_targets
+    if remainder > 0:
+        expandable = [
+            a for a in allocations if int(a["target"]) < len(a["events"])
+        ]
+        while remainder > 0 and expandable:
+            expandable.sort(
+                key=lambda a: (
+                    float(a["ideal"]) - float(a["target"]),
+                    len(a["events"]),
+                ),
+                reverse=True,
+            )
+            candidate = expandable[0]
+            current = int(candidate["target"])
+            if current >= len(candidate["events"]):
+                expandable.pop(0)
+                continue
+            candidate["target"] = current + 1
+            remainder -= 1
+    
+    new_notes: dict[pretty_midi.Instrument, list[pretty_midi.Note]] = {}
+    new_cc: dict[pretty_midi.Instrument, dict[int, list[pretty_midi.ControlChange]]] = {}
+    new_pb: dict[pretty_midi.Instrument, list[pretty_midi.PitchBend]] = {}
+    for alloc in allocations:
+        target = int(alloc.get("target", 0))
+        events = alloc["events"]
+        kept = _downsample_keep_endpoints(events, target)
+        inst = alloc["inst"]
+        kind = alloc["kind"]
+        key = alloc["key"]
+        if kind == "note":
+            new_notes[inst] = kept
+        elif kind == "bend":
+            new_pb[inst] = kept
+        elif kind == "cc" and isinstance(key, int):
+            new_cc.setdefault(inst, {})[key] = kept
+
     for inst in pm.instruments:
+        if inst in new_notes:
+            inst.notes = sorted(
+                new_notes[inst],
+                key=lambda n: (
+                    float(n.start),
+                    float(n.end),
+                    int(getattr(n, "pitch", 0)),
+                    int(getattr(n, "velocity", 0)),
+                ),
+            )
         if inst in new_pb:
-            inst.pitch_bends = new_pb[inst]
+            inst.pitch_bends = sorted(
+                new_pb[inst], key=lambda pb: (float(pb.time), int(getattr(pb, "pitch", 0)))
+            )
         if inst in new_cc:
-            others = [c for c in inst.control_changes if c.number not in {11, 64}]
-            inst.control_changes = others + new_cc[inst]
+            merged: list[pretty_midi.ControlChange] = []
+            for number, events in new_cc[inst].items():
+                deduped: list[pretty_midi.ControlChange] = []
+                seen: set[tuple[int, float, int]] = set()
+                for cc in sorted(events, key=lambda c: (float(c.time), int(c.value))):
+                    key = (number, float(cc.time), int(cc.value))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    deduped.append(cc)
+                merged.extend(deduped)
+            merged.sort(key=lambda c: (float(c.time), int(c.number), int(c.value)))
+            inst.control_changes = merged
         _sort_events(inst)
 
 

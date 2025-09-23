@@ -1179,6 +1179,52 @@ def train_model(
                 )
                 if skipped_empty:
                     logging.info(
+                    "reweight=%r skipped %d empty values", reweight, skipped_empty
+                )
+            logging.debug(
+                "reweight=%r collected %d values (raw=%d)",
+                reweight,
+                len(values),
+                raw_count,
+            )
+            if not values:
+                logging.info(
+                    "reweight=%r accepted but no values found; skipping sampler",
+                    reweight,
+                )
+            else:
+                if len(values) != len(ds_train):
+                    tags_map = getattr(ds_train, "group_tags", None)
+                    if isinstance(tags_map, dict) and tag in tags_map:
+                        try:
+                            values = [_norm(v) for v in tags_map[tag]]
+                            values = [v for v in values if v]
+                        except Exception:
+                            values = []
+                    raw_count = len(values)
+                if not values and isinstance(train_csv, (str, Path)):
+                    try:
+                        csv_rows = load_csv_rows(Path(train_csv), req)
+                    except Exception:
+                        csv_rows = []
+                    if csv_rows:
+                        raw_values = []
+                        for r in csv_rows:
+                            value_str = _norm(r.get(tag))
+                            raw_values.append(value_str)
+                            if value_str == "":
+                                skipped_empty += 1
+                        values = [v for v in raw_values if v]
+                        raw_count = len(raw_values)
+                logging.info(
+                    "reweight tag=%s collected=%d (raw=%d), skipped_empty=%d",
+                    tag,
+                    len(values),
+                    raw_count,
+                    skipped_empty,
+                )
+                if skipped_empty:
+                    logging.info(
                         "reweight=%r skipped %d empty values", reweight, skipped_empty
                     )
                 logging.debug(

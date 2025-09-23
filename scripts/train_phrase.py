@@ -326,6 +326,61 @@ def load_corpus(
     return load_split("train"), load_split("valid")
 
 
+def compute_inv_freq_weights(
+    dataset: object,
+    *,
+    tag: str,
+) -> tuple["torch.Tensor", dict[str, float]] | None:
+    """Compute inverse-frequency weights for a dataset tag.
+
+    Parameters
+    ----------
+    dataset:
+        Dataset instance providing ``group_tags`` and ``__len__``.
+    tag:
+        Tag column to use (e.g., ``"section"``).
+
+    Returns
+    -------
+    tuple or ``None``
+        ``(weights, stats)`` when the tag is available; otherwise ``None``.
+        ``weights`` is a 1-D tensor of ``float32`` values aligned with the
+        dataset order. ``stats`` stores the top inverse-frequency weights for
+        logging.
+    """
+
+    if torch is None:  # pragma: no cover - torch optional in tests
+        return None
+    tags = getattr(dataset, "group_tags", None)
+    if not isinstance(tags, dict):
+        return None
+    raw_values = tags.get(tag)
+    if not isinstance(raw_values, list) or not raw_values:
+        return None
+
+    normalized: list[str] = []
+    for value in raw_values:
+        text = "" if value is None else str(value).strip()
+        normalized.append(text or "UNK")
+
+    if not normalized:
+        return None
+
+    freq = Counter(normalized)
+    weights = [1.0 / max(1, freq[v]) for v in normalized]
+    if len(weights) != len(dataset):
+        length = len(dataset)
+        if len(weights) > length:
+            weights = weights[:length]
+        else:
+            pad_value = weights[-1] if weights else 1.0
+            weights = weights + [pad_value] * (length - len(weights))
+
+    weight_stats = dict(sorted({k: 1.0 / max(1, freq[k]) for k in freq}.items(), key=lambda x: -x[1])[:10])
+    weight_tensor = torch.tensor(weights, dtype=torch.float32)
+    return weight_tensor, weight_stats
+
+
 def train_model(
     train_csv: Path,
     val_csv: Path,
@@ -1005,11 +1060,50 @@ def train_model(
     weight_stats: dict[str, float] | None = None
     shuffle_train = True
     if reweight:
-        parts = [p.strip() for p in reweight.split(",") if p.strip()]
-        kv = {k.strip(): v.strip() for k, v in (p.split("=", 1) for p in parts if "=" in p)}
-        tag = kv.get("tag") or kv.get("class")
-        scheme = kv.get("scheme", "inv_freq")
-        if tag and scheme == "inv_freq":
+        tag_name = "section"
+        stripped = reweight.strip()
+        if stripped:
+            if "=" in stripped:
+                for part in stripped.split(","):
+                    if "=" not in part:
+                        continue
+                    key, value = part.split("=", 1)
+                    if key.strip().lower() in {"tag", "class"} and value.strip():
+                        tag_name = value.strip()
+                        break
+            else:
+                tag_name = stripped
+        inv = compute_inv_freq_weights(ds_train, tag=tag_name)
+        if inv is not None:
+            weights_tensor, weight_stats = inv
+            logging.info(
+                "reweight tag=%s using inv_freq sampler (%d samples)",
+                tag_name,
+                int(weights_tensor.numel()),
+            )
+            if weight_stats:
+                logging.info("top tag weights (tag=%s) %s", tag_name, weight_stats)
+            if torch is not None:
+                try:
+                    sampler = torch.utils.data.WeightedRandomSampler(
+                        weights_tensor,
+                        int(weights_tensor.numel()),
+                        replacement=True,
+                    )
+                except TypeError:
+                    sampler = torch.utils.data.WeightedRandomSampler(
+                        weights_tensor,
+                        int(weights_tensor.numel()),
+                        True,
+                    )
+                if sampler is not None:
+                    shuffle_train = False
+        if sampler is None:
+            parts = [p.strip() for p in reweight.split(",") if p.strip()]
+            kv = {k.strip(): v.strip() for k, v in (p.split("=", 1) for p in parts if "=" in p)}
+            tag = kv.get("tag") or kv.get("class")
+            scheme = kv.get("scheme", "inv_freq")
+            if tag and scheme == "inv_freq":
             rows: list[dict[str, str]] = []
             values: list[str] = []
             raw_count = 0
@@ -1504,8 +1598,13 @@ def train_model(
         t0 = time.time()
         epochs_completed = ep + 1
         model.train()
-        loss_sum = 0.0
-        lb_sum = lv_sum = ld_sum = lvb_sum = ldb_sum = lp_sum = 0.0
+        loss_sum = torch.zeros((), device=device)
+        lb_sum = torch.zeros((), device=device)
+        lv_sum = torch.zeros((), device=device)
+        ld_sum = torch.zeros((), device=device)
+        lvb_sum = torch.zeros((), device=device)
+        ldb_sum = torch.zeros((), device=device)
+        lp_sum = torch.zeros((), device=device)
         opt.zero_grad()
         iter_train = dl_train
         if use_progress:
@@ -1542,8 +1641,13 @@ def train_model(
                         zeros = torch.tensor(0.0, device=device)
                     outputs["boundary"] = zeros
                 m = mask.bool()
-                loss = 0.0
-                lb = lv = ld = lvb = ldb = lp = 0.0
+                loss = torch.zeros((), device=device)
+                lb = torch.zeros((), device=device)
+                lv = torch.zeros((), device=device)
+                ld = torch.zeros((), device=device)
+                lvb = torch.zeros((), device=device)
+                ldb = torch.zeros((), device=device)
+                lp = torch.zeros((), device=device)
                 if "boundary2" in outputs:
                     # 2-class logits available (CRF head or softmax head); use BCE on class-1 logit if not CRF
                     if head == 'crf':
@@ -1574,13 +1678,13 @@ def train_model(
                 if "pitch_logits" in outputs:
                     lp = crit_pitch(outputs["pitch_logits"][m], targets["pitch"][m])
                     loss = loss + w_pitch * lp
-                lb_sum += float(lb)
-                lv_sum += float(lv)
-                ld_sum += float(ld)
-                lvb_sum += float(lvb)
-                ldb_sum += float(ldb)
-                lp_sum += float(lp)
-            loss_sum += float(loss)
+                lb_sum = lb_sum + lb.detach()
+                lv_sum = lv_sum + lv.detach()
+                ld_sum = ld_sum + ld.detach()
+                lvb_sum = lvb_sum + lvb.detach()
+                ldb_sum = ldb_sum + ldb.detach()
+                lp_sum = lp_sum + lp.detach()
+            loss_sum = loss_sum + loss.detach()
             if scaler.is_enabled():
                 scaler.scale(loss / grad_accum).backward()
             else:
@@ -1614,13 +1718,13 @@ def train_model(
                 pass
         f1, val_loss, th, probs, trues, tag_buf, metrics, _ = evaluate()
         n_batches = max(1, len(dl_train))
-        avg_loss = loss_sum / n_batches
-        lb_avg = lb_sum / n_batches
-        lv_avg = lv_sum / n_batches
-        ld_avg = ld_sum / n_batches
-        lvb_avg = lvb_sum / n_batches
-        ldb_avg = ldb_sum / n_batches
-        lp_avg = lp_sum / n_batches
+        avg_loss = (loss_sum / n_batches).item() if loss_sum.numel() else 0.0
+        lb_avg = (lb_sum / n_batches).item() if lb_sum.numel() else 0.0
+        lv_avg = (lv_sum / n_batches).item() if lv_sum.numel() else 0.0
+        ld_avg = (ld_sum / n_batches).item() if ld_sum.numel() else 0.0
+        lvb_avg = (lvb_sum / n_batches).item() if lvb_sum.numel() else 0.0
+        ldb_avg = (ldb_sum / n_batches).item() if ldb_sum.numel() else 0.0
+        lp_avg = (lp_sum / n_batches).item() if lp_sum.numel() else 0.0
         lr_cur = opt.param_groups[0]["lr"]
         elapsed = time.time() - t0
         logging.info(

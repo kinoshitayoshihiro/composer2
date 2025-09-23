@@ -1155,6 +1155,13 @@ def train_model(
                     )
                 else:
                     sampler_fn = getattr(torch.utils.data, "WeightedRandomSampler", None)
+                    if sampler_fn is None:
+                        sampler_mod = getattr(torch.utils.data, "sampler", None)
+                        sampler_fn = (
+                            getattr(sampler_mod, "WeightedRandomSampler", None)
+                            if sampler_mod is not None
+                            else None
+                        )
                     if callable(sampler_fn):
                         try:
                             sampler = sampler_fn(weights, len(ds_train), True)

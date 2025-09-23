@@ -1012,6 +1012,8 @@ def train_model(
         if tag and scheme == "inv_freq":
             rows: list[dict[str, str]] = []
             values: list[str] = []
+            raw_count = 0
+            skipped_empty = 0
             if train_rows:
                 rows = train_rows
             elif isinstance(train_csv, (str, Path)):
@@ -1020,36 +1022,94 @@ def train_model(
                 except Exception as exc:
                     logging.info("failed to read %s for reweight: %s", train_csv, exc)
                     rows = []
+            def _norm(value: object) -> str:
+                if value is None:
+                    return ""
+                text = str(value).strip()
+                return "" if text.lower() in {"", "none", "nan"} else text
+
             if rows:
-                values = [str(r.get(tag, "")) for r in rows]
-                values = [v for v in values if v != ""]
+                raw_values: list[str] = []
+                for r in rows:
+                    value_str = _norm(r.get(tag))
+                    raw_values.append(value_str)
+                    if value_str == "":
+                        skipped_empty += 1
+                values = [v for v in raw_values if v != ""]
+                raw_count = len(raw_values)
             if not values:
                 tags_map = getattr(ds_train, "group_tags", None)
                 if isinstance(tags_map, dict) and tag in tags_map:
                     try:
-                        values = [str(v) for v in tags_map[tag] if str(v) != ""]
+                        values = [_norm(v) for v in tags_map[tag]]
+                        values = [v for v in values if v]
                     except Exception:
                         values = []
+                raw_count = len(values)
+            if skipped_empty:
+                logging.info(
+                    "reweight=%r skipped %d empty values", reweight, skipped_empty
+                )
+            logging.debug(
+                "reweight=%r collected %d values (raw=%d)",
+                reweight,
+                len(values),
+                raw_count,
+            )
             if not values:
                 logging.info(
                     "reweight=%r accepted but no values found; skipping sampler",
                     reweight,
                 )
-            elif len(values) != len(ds_train):
-                logging.info(
-                    "reweight=%r length mismatch (values=%d groups=%d); skipping sampler",
-                    reweight,
-                    len(values),
-                    len(ds_train),
-                )
             else:
+                if len(values) != len(ds_train):
+                    tags_map = getattr(ds_train, "group_tags", None)
+                    if (
+                        isinstance(tags_map, dict)
+                        and tag in tags_map
+                        and len(tags_map[tag]) == len(ds_train)
+                    ):
+                        try:
+                            tag_values = []
+                            for v in tags_map[tag]:
+                                normed = _norm(v)
+                                tag_values.append(normed if normed else "UNK")
+                        except Exception:
+                            tag_values = [str(v) if v is not None else "UNK" for v in tags_map[tag]]
+                            tag_values = [tv if tv else "UNK" for tv in tag_values]
+                        values = tag_values
+                        logging.info(
+                            "reweight=%r length mismatch fixed via group_tags(tag=%s)",
+                            reweight,
+                            tag,
+                        )
+                    if len(values) != len(ds_train):
+                        logging.info(
+                            "reweight=%r values=%d groups=%d; aligning by slice/pad",
+                            reweight,
+                            len(values),
+                            len(ds_train),
+                        )
+                        logging.debug(
+                            "reweight=%r first 5 values=%s",
+                            reweight,
+                            values[:5],
+                        )
+                        if len(values) > len(ds_train):
+                            values = values[: len(ds_train)]
+                        else:
+                            pad_source = next((v for v in reversed(values) if v), "UNK")
+                            if not pad_source:
+                                pad_source = "UNK"
+                            values = values + [pad_source] * (len(ds_train) - len(values))
                 freq = Counter(values)
                 weights = [1.0 / max(1, freq[v]) for v in values]
                 weight_map = {v: 1.0 / max(1, freq[v]) for v in freq}
                 weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
-                logging.info("top tag weights %s", weight_stats)
+                logging.info("top tag weights (tag=%s) %s", tag, weight_stats)
                 logging.debug(
-                    "inv_freq weight head %s",
+                    "inv_freq weights head (tag=%s) %s",
+                    tag,
                     [round(w, 6) for w in weights[:3]],
                 )
                 if torch is None:
@@ -1058,15 +1118,20 @@ def train_model(
                         "torch import failed",
                     )
                 else:
-                    try:
-                        sampler = torch.utils.data.WeightedRandomSampler(
-                            weights,
-                            len(weights),
-                            replacement=True,
-                        )
-                    except TypeError:
-                        sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights), True)
-                    shuffle_train = False
+                    sampler_fn = getattr(torch.utils.data, "WeightedRandomSampler", None)
+                    if callable(sampler_fn):
+                        try:
+                            sampler = sampler_fn(weights, len(weights), True)
+                        except TypeError:
+                            sampler = sampler_fn(weights, len(weights), replacement=True)
+                        except RecursionError:
+                            logging.info(
+                                "reweight=%r sampler recursion detected; continuing without sampler",
+                                reweight,
+                            )
+                            sampler = None
+                        if sampler is not None:
+                            shuffle_train = False
 
     dl_train = DataLoader(
         ds_train,

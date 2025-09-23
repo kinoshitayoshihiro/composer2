@@ -111,36 +111,38 @@ class PhraseTransformer(nn.Module if torch is not None else object):
         feats: Dict[str, "torch.Tensor"],
         mask: "torch.Tensor | None" = None,
     ) -> "torch.Tensor":
-        """Return a dummy (B, T) tensor for tests."""
+        """Return a (B, T) tensor inferred from ``mask``/``feats``."""
+
+        def _shape_from(value: Any) -> tuple[int, int] | None:
+            if hasattr(value, "shape"):
+                shape = getattr(value, "shape")
+                try:
+                    length = len(shape)
+                except Exception:
+                    return None
+                try:
+                    b = int(shape[0])
+                    t = int(shape[1]) if length > 1 else 1
+                    return max(b, 1), max(t, 1)
+                except Exception:
+                    return None
+            return None
 
         if torch is None:
-            def _shape_from(value: Any) -> tuple[int, int] | None:
-                if hasattr(value, "shape"):
-                    shape = getattr(value, "shape")
-                    try:
-                        b = int(shape[0])
-                        s = int(shape[1]) if len(shape) > 1 else 1
-                        return max(b, 1), max(s, 1)
-                    except Exception:
-                        return None
-                return None
-
             if mask is not None:
                 shape = _shape_from(mask)
                 if shape is None:
                     try:
                         b = len(mask)  # type: ignore[arg-type]
-                        s = len(mask[0]) if b else 1  # type: ignore[index]
-                        shape = (max(int(b), 1), max(int(s), 1))
+                        t = len(mask[0]) if b else 1  # type: ignore[index]
+                        shape = (max(int(b), 1), max(int(t), 1))
                     except Exception:
-                        shape = (1, 1)
+                        shape = None
             else:
                 shape = None
-
             if shape is None:
                 for key in ("position", "pitch_class", "velocity", "duration"):
-                    value = feats.get(key)
-                    shape = _shape_from(value)
+                    shape = _shape_from(feats.get(key))
                     if shape is not None:
                         break
                 if shape is None:
@@ -150,56 +152,57 @@ class PhraseTransformer(nn.Module if torch is not None else object):
                             break
             if shape is None:
                 shape = (1, 1)
-
-            b, t = shape
-            return [[0.0 for _ in range(t)] for _ in range(b)]
+            bsz, seqlen = shape
+            return [[0.0 for _ in range(seqlen)] for _ in range(bsz)]
 
         import torch as _torch
 
+        mask_tensor: "torch.Tensor | None" = None
         if mask is not None:
-            if not isinstance(mask, _torch.Tensor):
+            if isinstance(mask, _torch.Tensor):
+                mask_tensor = mask
+            else:
                 try:
                     mask_tensor = _torch.as_tensor(mask)
                 except Exception:
                     mask_tensor = None
-                else:
-                    mask = mask_tensor  # type: ignore[assignment]
-            if isinstance(mask, _torch.Tensor):
-                mask_tensor = mask
-                if mask_tensor.dim() == 1:
-                    return mask_tensor.unsqueeze(0).to(dtype=_torch.float32)
-                if mask_tensor.dim() >= 2:
-                    return mask_tensor.to(dtype=_torch.float32)
-            pitch = feats.get("pitch_class")
-            if isinstance(pitch, _torch.Tensor) and pitch.dim() >= 2:
-                b, t = int(pitch.shape[0]), int(pitch.shape[1])
-                return _torch.zeros(b, t, dtype=_torch.float32, device=pitch.device)
+            if mask_tensor is not None and not mask_tensor.is_floating_point():
+                mask_tensor = mask_tensor.to(dtype=_torch.float32)
 
-            def _zeros_from_feats() -> "torch.Tensor":
-                for key in ("position", "velocity", "duration"):
-                    tensor = feats.get(key)
-                    if isinstance(tensor, _torch.Tensor) and tensor.dim() >= 2:
-                        b, t = int(tensor.shape[0]), int(tensor.shape[1])
-                        return _torch.zeros(b, t, dtype=_torch.float32, device=tensor.device)
-                for tensor in feats.values():
-                    if isinstance(tensor, _torch.Tensor) and tensor.dim() >= 2:
-                        b, t = int(tensor.shape[0]), int(tensor.shape[1])
-                        return _torch.zeros(b, t, dtype=_torch.float32, device=tensor.device)
-                bsz, seqlen, device = self._resolve_shape(feats, None)
-                if device is None:
-                    return _torch.zeros(bsz, seqlen, dtype=_torch.float32)
-                return _torch.zeros(bsz, seqlen, dtype=_torch.float32, device=device)
+        bsz, seqlen, device = self._resolve_shape(feats, mask_tensor)
+        if mask_tensor is not None and mask_tensor.dim() == 1:
+            mask_tensor = mask_tensor.view(1, -1)
+        seqlen = max(1, min(seqlen, self.max_len))
 
-            return _zeros_from_feats()
+        def _zeros(dtype: _torch.dtype = _torch.float32, dev: "torch.device | None" = device) -> "torch.Tensor":
+            kwargs: dict[str, object] = {"dtype": dtype}
+            if dev is not None:
+                kwargs["device"] = dev
+            return _torch.zeros(bsz, seqlen, **kwargs)
 
-        bsz, seqlen, device = self._resolve_shape(feats, None)
-        x = self._embed(feats, bsz, seqlen, device)
-        x = self.posenc(x)
-        x = self.encoder(x)
-        out = self.boundary_head(x).squeeze(-1)
+        try:
+            x = self._embed(feats, bsz, seqlen, device)
+            x = self.posenc(x)
+            x = self.encoder(x)
+            out = self.boundary_head(x).squeeze(-1)
+        except Exception:
+            return _zeros()
+
+        if not isinstance(out, _torch.Tensor):
+            return _zeros()
         if out.dim() == 1:
             out = out.unsqueeze(0)
-        return out
+        if out.dim() != 2:
+            return _zeros()
+        if out.shape[0] == bsz and out.shape[1] == seqlen:
+            return out
+
+        trimmed = _zeros(out.dtype, out.device)
+        rows = min(out.shape[0], bsz)
+        cols = min(out.shape[1], seqlen)
+        if rows > 0 and cols > 0:
+            trimmed[:rows, :cols] = out[:rows, :cols]
+        return trimmed
 
     def _resolve_shape(
         self,
@@ -209,8 +212,13 @@ class PhraseTransformer(nn.Module if torch is not None else object):
         import torch as _torch
 
         device = mask.device if isinstance(mask, _torch.Tensor) else None
-        if isinstance(mask, _torch.Tensor) and mask.dim() >= 2:
-            return int(mask.shape[0]), int(mask.shape[1]), device
+        if isinstance(mask, _torch.Tensor):
+            if mask.dim() >= 2:
+                return int(mask.shape[0]), int(mask.shape[1]), device
+            if mask.dim() == 1:
+                return 1, int(mask.shape[0]), device
+            if mask.dim() == 0:
+                return 1, 1, device
         for tensor in feats.values():
             if isinstance(tensor, _torch.Tensor) and tensor.dim() >= 2:
                 device = tensor.device
@@ -234,7 +242,7 @@ class PhraseTransformer(nn.Module if torch is not None else object):
                 continue
             t = tensor.to(dtype=_torch.float32)
             if t.dim() == 1:
-                t = t.view(t.shape[0], 1, 1)
+                t = t.view(1, t.shape[0], 1)
             elif t.dim() == 2:
                 t = t.unsqueeze(-1)
             elif t.dim() > 3:

@@ -13,14 +13,59 @@ pt = ModuleType("models.phrase_transformer")
 
 
 class PhraseTransformer:  # pragma: no cover - simple stub
-    def __init__(self, *args, **kwargs):
-        # The real implementation accepts numerous configuration parameters,
-        # but the tests only need to instantiate the class successfully.
-        # Swallow all arguments to mimic the signature without taking action.
-        _ = args, kwargs
+    """Lightweight stand-in that mimics the real transformer output shape."""
 
-    def forward(self, *args, **kwargs):  # pragma: no cover - simple stub
-        return None
+    def __init__(self, *args, **kwargs):
+        d_model = kwargs.get("d_model") if "d_model" in kwargs else (args[0] if args else 16)
+        max_len = kwargs.get("max_len") if "max_len" in kwargs else (
+            args[1] if len(args) > 1 else 128
+        )
+        self.d_model = int(d_model)
+        self.max_len = int(max_len)
+        size = [[0.0] * self.max_len for _ in range(self.max_len)]
+        self.pointer = size  # type: ignore[attr-defined]
+        self.pointer_table = size  # type: ignore[attr-defined]
+        self.pointer_bias = size  # type: ignore[attr-defined]
+
+    def forward(self, feats=None, mask=None):  # pragma: no cover - simple stub
+        try:
+            import torch
+        except Exception:  # torch absent in some environments
+            torch = None  # type: ignore
+
+        def _shape(obj):
+            if torch is not None and isinstance(obj, torch.Tensor):
+                if obj.dim() >= 2:
+                    return int(obj.shape[0]), int(obj.shape[1])
+                if obj.dim() == 1:
+                    return 1, int(obj.shape[0])
+            try:
+                b = len(obj)
+                inner = obj[0] if b else []
+                t = len(inner) if isinstance(inner, (list, tuple)) else 1
+                return int(b or 1), int(t or 1)
+            except Exception:
+                return None
+
+        shape = _shape(mask)
+        if shape is None and isinstance(feats, dict):
+            for key in ("position", "pitch_class", "velocity", "duration"):
+                shape = _shape(feats.get(key))
+                if shape:
+                    break
+            if shape is None:
+                for value in feats.values():
+                    shape = _shape(value)
+                    if shape:
+                        break
+        if shape is None:
+            shape = (1, 1)
+
+        bsz, seqlen = shape
+        if torch is None:
+            return [[0.0 for _ in range(seqlen)] for _ in range(bsz)]
+
+        return torch.zeros(bsz, seqlen, dtype=torch.float32)
 
     __call__ = forward
 

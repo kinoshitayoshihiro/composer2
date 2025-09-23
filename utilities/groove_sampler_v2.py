@@ -969,6 +969,15 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
             total_seconds = max(total_seconds, float(getattr(midi_data, "length", 0.0)))
     except Exception:
         pass
+    try:
+        latest_note = max(
+            (note.end for inst in pm.instruments for note in inst.notes),
+            default=0.0,
+        )
+    except Exception:
+        latest_note = 0.0
+    if latest_note > total_seconds:
+        total_seconds = float(latest_note)
     if mido is not None:
         midi_obj = None
         try:
@@ -1008,7 +1017,13 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
         total_seconds = 0.0
 
     total_beats = _total_beats_from_tempo_map(pm, total_seconds)
-    if total_beats is None and tempo and math.isfinite(tempo) and tempo > 0 and total_seconds > 0:
+    if (
+        (total_beats is None or total_beats <= 0)
+        and tempo
+        and math.isfinite(tempo)
+        and tempo > 0
+        and total_seconds > 0
+    ):
         total_beats = (tempo / 60.0) * total_seconds
 
     bars = (total_beats / beats_per_bar_local) if (total_beats and total_beats > 0) else 0.0

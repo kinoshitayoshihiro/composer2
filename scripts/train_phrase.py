@@ -1206,7 +1206,9 @@ def train_model(
                                     normed = _norm(v)
                                     tag_values.append(normed if normed else "UNK")
                             except Exception:
-                                tag_values = [str(v) if v is not None else "UNK" for v in tags_map[tag]]
+                                tag_values = [
+                                    str(v) if v is not None else "UNK" for v in tags_map[tag]
+                                ]
                                 tag_values = [tv if tv else "UNK" for tv in tag_values]
                             values = tag_values
                             logging.info(
@@ -1263,7 +1265,9 @@ def train_model(
                             except Exception:
                                 weight_tensor = torch.tensor(weights, dtype=torch.float32)
                             try:
-                                sampler = sampler_fn(weight_tensor, len(ds_train), replacement=True)
+                                sampler = sampler_fn(
+                                    weight_tensor, len(ds_train), replacement=True
+                                )
                             except TypeError:
                                 sampler = sampler_fn(weight_tensor, len(ds_train), True)
                             except RecursionError:
@@ -1274,7 +1278,9 @@ def train_model(
                                     else None
                                 )
                                 if callable(base_cls):
-                                    sampler = base_cls(weight_tensor, len(ds_train), replacement=True)
+                                    sampler = base_cls(
+                                        weight_tensor, len(ds_train), replacement=True
+                                    )
                                 else:
                                     logging.info(
                                         "reweight=%r sampler recursion detected; continuing without sampler",

@@ -438,6 +438,45 @@ def build_control_curves_for_stem(
     return curves
 
 
+def _smooth_cc(values: list[int], sr: int, window_ms: float) -> list[int]:
+    """Return a smoothed CC series preserving endpoints and non-empty output."""
+
+    if window_ms <= 0 or not values or sr <= 0:
+        return list(values)
+    win = max(1, int(round(float(sr) * float(window_ms) / 1000.0)))
+    win = min(win, len(values))
+    half = max(0, win // 2)
+    smoothed: list[float] = []
+    for idx in range(len(values)):
+        start = max(0, idx - half)
+        end = min(len(values), idx + half + 1)
+        segment = values[start:end]
+        if segment:
+            smoothed.append(sum(segment) / float(len(segment)))
+        else:  # pragma: no cover - defensive, segment should never be empty
+            smoothed.append(float(values[idx]))
+    if smoothed:
+        smoothed[0] = float(values[0])
+        smoothed[-1] = float(values[-1])
+    quantized = [max(0, min(127, int(round(v)))) for v in smoothed]
+    simplified: list[int] = []
+    for i, val in enumerate(quantized):
+        if i == 0:
+            simplified.append(val)
+            continue
+        if i == len(quantized) - 1:
+            if not simplified or val != simplified[-1]:
+                simplified.append(val)
+            continue
+        if not simplified or val != simplified[-1]:
+            simplified.append(val)
+    if len(simplified) < 2 and quantized:
+        base = quantized[0]
+        tail = quantized[-1] if len(quantized) > 1 else base
+        simplified = [base, tail]
+    return simplified or ([values[0], values[-1]] if values else [])
+
+
 def apply_cc_curves(
     inst: pretty_midi.Instrument,
     *,
@@ -492,41 +531,41 @@ def apply_cc_curves(
                     k = 9.0
                     env = np.log1p(k * env) / math.log1p(k)
                 raw = np.clip(env * float(cc11_gain) * 127.0, 0.0, 127.0)
-                raw_times = np.arange(raw.size) * hop / sr
-                series = raw
-                series_times = raw_times
-                len_raw = int(raw.size)
-                if cc11_smooth_ms > 0 and len_raw:
-                    win = max(1, int(sr * cc11_smooth_ms / 1000.0))
-                    if win > 1:
-                        kernel = np.ones(win, dtype=float) / float(win)
-                        smoothed = np.convolve(series, kernel, mode="same")
-                        idx = list(range(0, smoothed.size, win))
-                        if idx:
-                            last_idx = smoothed.size - 1
-                            if idx[-1] != last_idx:
-                                idx.append(last_idx)
-                        dedup_idx: list[int] = []
-                        prev_idx = -1
-                        for i in idx:
-                            if 0 <= i < smoothed.size and i != prev_idx:
-                                dedup_idx.append(i)
-                                prev_idx = i
-                        if dedup_idx:
-                            series = smoothed[dedup_idx]
-                            series_times = raw_times[dedup_idx]
-                        else:
-                            series = raw
-                            series_times = raw_times
-                len_smooth = int(series.size)
-                if len_smooth == 0 and len_raw:
-                    series = raw
-                    series_times = raw_times
-                    len_smooth = len_raw
-                logger.debug("cc11 raw=%d smoothed=%d", len_raw, len_smooth)
-                series = np.clip(series, 0.0, 127.0)
-                vals = np.rint(series).astype(int)
-                times = series_times.astype(float)
+                raw_times = np.arange(raw.size, dtype=float) * (hop / float(sr))
+                orig_len_raw = int(raw.size)
+                raw_vals = np.rint(raw).astype(int)
+                if orig_len_raw == 0:
+                    raw_vals = np.array([64, 64], dtype=int)
+                    span = hop / float(sr)
+                    raw_times = np.linspace(0.0, float(span), raw_vals.size, dtype=float)
+                series_vals = raw_vals.astype(float)
+                series_times = raw_times.astype(float)
+                if cc11_smooth_ms > 0 and sr and raw_vals.size:
+                    smoothed_list = _smooth_cc(
+                        raw_vals.tolist(), int(sr), float(cc11_smooth_ms)
+                    )
+                    if not smoothed_list:
+                        smoothed_list = raw_vals.tolist()
+                    series_vals = np.array(smoothed_list, dtype=float)
+                    if len(smoothed_list) > 1:
+                        span = float(series_times[-1]) if series_times.size else 0.0
+                        series_times = np.linspace(
+                            0.0, float(span), num=len(smoothed_list), dtype=float
+                        )
+                    else:
+                        base = float(smoothed_list[0])
+                        series_vals = np.array([base, base], dtype=float)
+                        span = float(series_times[-1]) if series_times.size else 0.0
+                        series_times = np.array([0.0, float(span)], dtype=float)
+                len_smooth = int(series_vals.size)
+                logger.debug(
+                    "cc11 counts: raw=%s smoothed=%d",
+                    orig_len_raw if orig_len_raw else "n/a",
+                    len_smooth,
+                )
+                series_vals = np.clip(series_vals, 0.0, 127.0)
+                vals = np.rint(series_vals).astype(int)
+                times = np.asarray(series_times, dtype=float)
                 dedup_vals: list[int] = []
                 dedup_times: list[float] = []
                 prev_sample: int | None = None
@@ -535,9 +574,9 @@ def apply_cc_curves(
                         dedup_vals.append(int(v))
                         dedup_times.append(float(t))
                         prev_sample = int(v)
-                if not dedup_vals and len_raw:
-                    dedup_vals = np.rint(np.clip(raw, 0.0, 127.0)).astype(int).tolist()
-                    dedup_times = raw_times.tolist()
+                if not dedup_vals and len(series_vals):
+                    dedup_vals = vals.tolist()
+                    dedup_times = times.tolist()
                 prev_val = None
                 last_t = -1e9
                 min_dt = cc11_min_dt_ms / 1000.0
@@ -560,21 +599,21 @@ def apply_cc_curves(
                         last_t = float(t)
                         cc11_count += 1
                         emitted = True
-                if not emitted and len_raw:
+                if not emitted and len(series_vals):
                     # Smoothing and hysteresis may suppress every interior sample when the
                     # envelope is nearly flat.  Preserve the endpoints so callers still
                     # observe a CC curve and the test fixture sees a non-empty list.
-                    first_time = float(raw_times[0])
-                    first_val = int(np.rint(np.clip(raw[0], 0.0, 127.0)))
+                    first_time = float(times[0]) if times.size else 0.0
+                    first_val = int(np.clip(vals[0], 0, 127))
                     inst.control_changes.append(
                         pretty_midi.ControlChange(
                             number=11, value=first_val, time=first_time
                         )
                     )
                     cc11_count += 1
-                    if len_raw > 1:
-                        last_time = float(raw_times[-1])
-                        last_val = int(np.rint(np.clip(raw[-1], 0.0, 127.0)))
+                    if len(series_vals) > 1:
+                        last_time = float(times[-1]) if times.size else first_time
+                        last_val = int(np.clip(vals[-1], 0, 127))
                         if last_time > first_time or last_val != first_val:
                             inst.control_changes.append(
                                 pretty_midi.ControlChange(

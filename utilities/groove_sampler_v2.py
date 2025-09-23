@@ -66,13 +66,24 @@ def _instrument_allowed(
     """Return ``True`` when an instrument passes the optional whitelist."""
 
     if not whitelist:
+        # No whitelist configured ⇒ allow everything.  The loader historically
+        # treated ``None``/``set()`` as "no filtering"; retaining this keeps
+        # compatibility with simple MIDI fixtures that omit program changes.
         return True
+
     if is_drum:
+        # ``-1`` acts as a wildcard for any drum kit.  When present, allow the
+        # track regardless of the resolved program number.
         if -1 in whitelist:
             return True
         return inst_program in whitelist if inst_program is not None else False
+
+    # Many lightweight test MIDIs never emit a ``program_change`` message and
+    # leave ``inst.program`` as ``None``.  Treat that as eligible so that a
+    # whitelist intended for drums does not accidentally filter pitched parts.
     if inst_program is None:
         return True
+
     return inst_program in whitelist
 
 

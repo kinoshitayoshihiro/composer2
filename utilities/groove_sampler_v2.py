@@ -1044,7 +1044,9 @@ def train(
             files_skipped,
             files_filtered,
         )
-        return _empty_model()
+        model = _empty_model()
+        save(model, model_path)
+        return model
 
     note_seqs = [r[0] for r in results]
     all_offsets = [off for r in results for off in r[1]]
@@ -1076,6 +1078,15 @@ def train(
 
     total_events = sum(len(s) for s in seqs)
 
+    effective_mode = train_mode
+    avg_events = total_events / max(1, len(paths))
+    small_corpus = (
+        (total_events <= 200_000 and len(paths) <= 2_000)
+        or (avg_events <= 256)
+    )
+    if train_mode == "stream" and small_corpus:
+        effective_mode = "inmemory"
+
     if len_sampling == "uniform":
         file_weights = [1.0 for _ in bars_list]
     elif len_sampling == "proportional":
@@ -1088,11 +1099,10 @@ def train(
     hb = hash_buckets
 
     freq_orders: list[FreqTable] = []
-    if train_mode == "inmemory":
+    if effective_mode == "inmemory":
         store_cls = MemoryNGramStore
         stores = [store_cls() for _ in range(n)]
-        buffers: list[list[tuple[int, int, int, int]]] = [[] for _ in range(n)]
-        events_seen = 0
+        local_buffers: list[list[tuple[int, int, int, int]]] = [[] for _ in range(n)]
         for seq in seqs:
             for i, cur in enumerate(seq):
                 bucket = idx_to_state[cur][1]
@@ -1106,12 +1116,9 @@ def train(
                         break
                     ctx = seq[i - order : i]
                     ctx_hash = hash_ctx(ctx, (0, 0, 0)) % hb
-                    buffers[order].append((ctx_hash, 0, cur, 1))
-                    if len(buffers[order]) >= flush_interval:
-                        stores[order].bulk_inc(buffers[order])
-                        buffers[order].clear()
-                events_seen += 1
-        for st, buf in zip(stores, buffers):
+                    local_buffers[order].append((ctx_hash, 0, cur, 1))
+        for order, st in enumerate(stores):
+            buf = local_buffers[order]
             if buf:
                 st.bulk_inc(buf)
             st.finalize()
@@ -1184,9 +1191,10 @@ def train(
             total_events,
             len(idx_to_state),
         )
-        if relax_filters:
-            return _empty_model(resolution)
-        raise SystemExit("No events collected - check your data directory")
+        empty_model = _empty_model(resolution)
+        empty_model.files_skipped = files_skipped
+        save(empty_model, model_path)
+        return empty_model
     model = NGramModel(
         n=n,
         resolution=resolution,

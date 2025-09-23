@@ -1487,26 +1487,25 @@ def train(
     if (memmap_dir_given or cache_probs_memmap) and model.idx_to_state:
         _write_prob_memmaps(model, memmap_dir)
     if aux_vocab_path:
-# ensure parent directory exists before writing
+        # ensure parent directory exists before writing
+        aux_vocab_path.parent.mkdir(parents=True, exist_ok=True)
 
-    aux_vocab_path.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        if hasattr(aux_vocab_obj, "to_json"):
-        # prefer native serializer when available
-        aux_vocab_obj.to_json(aux_vocab_path)
-    elif hasattr(aux_vocab_obj, "id_to_str"):
-        # fallback: list of strings
-        data = getattr(aux_vocab_obj, "id_to_str")
-        if not isinstance(data, list):
-            data = list(data)
-        aux_vocab_path.write_text(json.dumps(data))
-    else:
-        # last resort: best-effort JSON dump with vars() fallback
-        logger.warning("aux vocab compat path for %s", aux_vocab_path)
-        aux_vocab_path.write_text(json.dumps(aux_vocab_obj, default=vars))
-except Exception as exc:  # pragma: no cover - compatibility path
-    logger.warning("failed to write aux vocab to %s: %s", aux_vocab_path, exc)
+        try:
+            if hasattr(aux_vocab_obj, "to_json"):
+                # prefer native serializer when available
+                aux_vocab_obj.to_json(aux_vocab_path)
+            elif hasattr(aux_vocab_obj, "id_to_str"):
+                # fallback: list of strings
+                data = getattr(aux_vocab_obj, "id_to_str")
+                if not isinstance(data, list):
+                    data = list(data)
+                aux_vocab_path.write_text(json.dumps(data))
+            else:
+                # last resort: best-effort JSON dump with vars() fallback
+                logger.warning("aux vocab compat path for %s", aux_vocab_path)
+                aux_vocab_path.write_text(json.dumps(aux_vocab_obj, default=vars))
+        except Exception as exc:  # pragma: no cover - compatibility path
+            logger.warning("failed to write aux vocab to %s: %s", aux_vocab_path, exc)
 
     if resume:
         save(model, model_path)

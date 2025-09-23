@@ -9,7 +9,7 @@ import pathlib
 from bisect import bisect_right
 from collections import Counter, defaultdict
 from types import SimpleNamespace
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 try:  # optional dependency for writing MIDI; re-export for tests monkeypatching
     import mido  # type: ignore
@@ -301,7 +301,7 @@ def convert(args: SimpleNamespace) -> None:
     bar_index = 0
 
     def _emit_keyswitch(pitch: int, when: float) -> bool:
-        if getattr(args, "no_redundant_ks", False):
+        if no_redundant:
             prev = emitted_at.get(pitch)
             if prev is not None and abs(prev - when) <= 1e-6:
                 return False
@@ -317,11 +317,18 @@ def convert(args: SimpleNamespace) -> None:
         emitted_at[pitch] = when
         return True
 
-    periodic = max(0, int(getattr(args, "periodic_ks", 0)))
-    # periodic == 0 means the guard re-arms every bar.
-    ks_lead = float(getattr(args, "ks_lead", 60.0))
+    try:
+        periodic = int(getattr(args, "periodic_ks", 0))
+    except Exception:
+        periodic = 0
+    ks_lead_ms = float(getattr(args, "ks_lead", 60.0))
+    if not math.isfinite(ks_lead_ms):
+        ks_lead_ms = 60.0
+    ks_lead_ms = max(0.0, ks_lead_ms)
+    lead_with_head_ms = ks_lead_ms + 20.0
     ks_headroom = float(getattr(args, "ks_headroom", 10.0)) / 1000.0
     section_mode = getattr(args, "section_aware", "off")
+    no_redundant = bool(getattr(args, "no_redundant_ks", False))
 
     for bar in sorted(bar_blocks):
         blocks = bar_blocks[bar]
@@ -335,20 +342,33 @@ def convert(args: SimpleNamespace) -> None:
                 ks_notes.extend(pattern_to_keyswitches(b["strum"], pattern_lib, keymap))
         ks_tuple = tuple(ks_notes)
         same_tuple = last_sent == ks_tuple
-        periodic_due = (
-            periodic == 0
-            or not same_tuple
-            or last_sent_bar < 0
-            or (bar_index - last_sent_bar) >= periodic
-        )
-        # Allow periodic re-arming even when the tuple repeats across bars; only
-        # suppress true duplicates that occur within the same bar when the guard
-        # is enabled.
+        if periodic > 0:
+            periodic_due = (
+                not same_tuple
+                or last_sent_bar < 0
+                or (bar_index - last_sent_bar) >= periodic
+            )
+        else:
+            periodic_due = last_sent_bar < 0 or not same_tuple
         send = periodic_due
-        if send and getattr(args, "no_redundant_ks", False) and same_tuple and last_sent_bar == bar_index:
+        if send and no_redundant and same_tuple and last_sent_bar == bar_index:
             send = False
         if send:
-            ks_time = max(0.0, bar_start - (ks_lead + 20.0) / 1000.0)
+            bar_end = bar_start
+            if blocks:
+                for blk in blocks:
+                    nxt = blk.get("next_start", blk["start"])
+                    if nxt is None:
+                        nxt = blk["start"]
+                    try:
+                        candidate = float(nxt)
+                    except Exception:
+                        candidate = float(blk["start"])
+                    if candidate > bar_end:
+                        bar_end = candidate
+            bpm = _tempo_at(bar_end, tempo_times, tempo_values)
+            lead_beats = (lead_with_head_ms / 1000.0) * (bpm / 60.0)
+            ks_time = _ks_at_bar_end_with_headroom(bar_end, bpm, headroom_beats=lead_beats)
             def _record_emit() -> None:
                 # Update guards immediately after emitting any KS event.
                 nonlocal last_sent, last_sent_bar
@@ -685,6 +705,27 @@ def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
     return sorted(bar_times)
 
 
+def _tempo_at(time: float, tempo_times: Sequence[float], tempo_values: Sequence[float]) -> float:
+    idx = bisect_right(tempo_times, time) - 1
+    if idx < 0:
+        idx = 0
+    if idx >= len(tempo_values):
+        idx = len(tempo_values) - 1
+    bpm = float(tempo_values[idx]) if tempo_values else 120.0
+    if not math.isfinite(bpm) or bpm <= 0.0:
+        return 120.0
+    return bpm
+
+
+def _ks_at_bar_end_with_headroom(bar_end: float, bpm: float, headroom_beats: float = 0.08) -> float:
+    if not math.isfinite(bar_end):
+        return 0.0
+    if not math.isfinite(bpm) or bpm <= 0.0:
+        return max(0.0, bar_end)
+    headroom = max(0.0, headroom_beats)
+    return max(0.0, bar_end - (60.0 / bpm) * headroom)
+
+
 def _load_sections(path: pathlib.Path) -> Dict[int, str]:
     """Load bar index to section name mapping from *path*."""
     data = _load_yaml(path)
@@ -791,6 +832,13 @@ def convert(args) -> None:
             clip_other_ms=float(args.groove_clip_other),
         )
     utils.humanize(pm, float(args.humanize))
+
+    try:
+        tempo_times_arr, tempo_values_arr = pm.get_tempo_changes()
+    except Exception:
+        tempo_times_arr, tempo_values_arr = ([], [])
+    tempo_times = [float(t) for t in tempo_times_arr] if len(tempo_times_arr) else [0.0]
+    tempo_values = [float(v) for v in tempo_values_arr] if len(tempo_values_arr) else [120.0]
 
     bar_starts = _compute_bar_starts(pm)
 

@@ -968,14 +968,49 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
             total_seconds = max(total_seconds, float(getattr(midi_data, "length", 0.0)))
     except Exception:
         pass
+    if mido is not None:
+        midi_obj = None
+        try:
+            midi_obj = pm_to_mido(pm)
+        except Exception:
+            midi_obj = None
+        if midi_obj is None:
+            try:
+                midi_obj = mido.MidiFile(filename=str(path))
+            except Exception:
+                midi_obj = None
+        if midi_obj is not None:
+            try:
+                total_seconds = max(total_seconds, float(getattr(midi_obj, "length", 0.0)))
+            except Exception:
+                pass
+
     if not math.isfinite(beats_per_bar_local) or beats_per_bar_local <= 0:
         beats_per_bar_local = 4.0
+
+    def _total_beats_from_tempo_map(pm_obj, end_sec: float) -> float | None:
+        try:
+            times, bpms = pm_obj.get_tempo_changes()
+            if not len(bpms):
+                return None
+            beats = 0.0
+            for i, bpm in enumerate(bpms):
+                t0 = float(times[i])
+                t1 = float(times[i + 1]) if i + 1 < len(times) else float(end_sec)
+                if t1 > t0 and math.isfinite(bpm) and bpm > 0:
+                    beats += (t1 - t0) * (bpm / 60.0)
+            return beats
+        except Exception:
+            return None
+
     if not math.isfinite(total_seconds) or total_seconds <= 0:
         total_seconds = 0.0
-    if tempo and math.isfinite(tempo) and tempo > 0:
-        bars = (tempo / 60.0) * total_seconds / beats_per_bar_local if total_seconds > 0 else 0.0
-    else:
-        bars = 0.0
+
+    total_beats = _total_beats_from_tempo_map(pm, total_seconds)
+    if total_beats is None and tempo and math.isfinite(tempo) and tempo > 0 and total_seconds > 0:
+        total_beats = (tempo / 60.0) * total_seconds
+
+    bars = (total_beats / beats_per_bar_local) if (total_beats and total_beats > 0) else 0.0
 
     all_notes = [n for inst in pm.instruments for n in inst.notes]
     note_cnt = len(all_notes)

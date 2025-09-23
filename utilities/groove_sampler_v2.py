@@ -1484,40 +1484,73 @@ def next_prob_dist(
 
     _MODEL_CACHE[id(model)] = model
     n = model.n if model.n is not None else 4
-    aux_ids = _resolve_aux_ids(model.aux_vocab, cond, aux_fallback)
+    aux_vocab = getattr(model, "aux_vocab", None)
+    aux_ids = _resolve_aux_ids(aux_vocab, cond, aux_fallback)
     hb = model.hash_buckets
+
+    def _probe(order: int, ctx: list[int], aux_id: int) -> np.ndarray | None:
+        table = model.freq[order] if order < len(model.freq) else None
+        if not table:
+            return None
+
+        base_ctx_hash = _hash_ctx(list(ctx)) if ctx else 0
+        aux_name = (
+            aux_vocab.id_to_str[aux_id]
+            if aux_vocab and aux_id < len(aux_vocab.id_to_str)
+            else aux_id
+        )
+
+        arr = table.get((base_ctx_hash, aux_id))
+        if arr is not None:
+            arr = arr.astype(np.float64, copy=False)
+            if np.isfinite(arr).all():
+                total = float(arr.sum())
+                if total > 0:
+                    logger.debug("aux='%s' order=%d ctx=%s -> tuple-key hit", aux_name, order, ctx)
+                    return arr
+
+        ctx_hash = _hash_ctx(list(ctx) + [order, aux_id]) % hb
+        arr = _get_arr(id(model), order, ctx_hash)
+        if arr is not None:
+            arr = arr.astype(np.float64, copy=False)
+            if np.isfinite(arr).all():
+                total = float(arr.sum())
+                if total > 0:
+                    logger.debug("aux='%s' order=%d ctx=%s -> hashed-bucket hit", aux_name, order, ctx)
+                    return arr
+
+        return None
 
     arr: np.ndarray | None = None
     for order in range(min(len(history), n - 1), 0, -1):
         ctx = history[-order:]
         for aux_id in aux_ids:
-            ctx_hash = _hash_ctx(list(ctx) + [order, aux_id]) % hb
-            arr = _get_arr(id(model), order, ctx_hash)
-            if arr is not None and arr.sum() > 0:
-                arr = arr.astype(float)
+            arr = _probe(order, ctx, aux_id)
+            if arr is not None:
                 break
-        if arr is not None and arr.sum() > 0:
+        if arr is not None:
             break
     else:
         arr = None
         for aux_id in aux_ids:
-            ctx_hash = _hash_ctx([0, aux_id]) % hb
-            arr = _get_arr(id(model), 0, ctx_hash)
-            if arr is not None and arr.sum() > 0:
-                arr = arr.astype(float)
+            arr = _probe(0, [], aux_id)
+            if arr is not None:
                 break
-            if arr is not None and arr.sum() == 0:
-                arr = None
 
-    if arr is None or arr.sum() == 0:
+    if arr is None:
         b_arr = model.bucket_freq.get(bucket) if model.bucket_freq is not None else None
-        if b_arr is not None and b_arr.sum() > 0:
-            arr = b_arr.astype(float)
-        else:
-            num = len(model.idx_to_state) if model.idx_to_state else 1
-            arr = np.ones(num, dtype=float)
+        if b_arr is not None:
+            b_arr = b_arr.astype(np.float64, copy=False)
+            if np.isfinite(b_arr).all() and float(b_arr.sum()) > 0:
+                logger.debug("bucket=%d -> bucket_freq hit", bucket)
+                arr = b_arr
 
-    probs = arr.astype(float)
+    if arr is None:
+        num = len(model.idx_to_state) if model.idx_to_state else 1
+        arr = np.ones(num, dtype=np.float64)
+        logger.debug("bucket=%d -> uniform fallback", bucket)
+
+    probs = arr.astype(np.float64, copy=False)
     if temperature != 1.0:
         probs = np.power(probs, 1.0 / temperature)
     probs = _filter_probs(probs, top_k=top_k, top_p=top_p)

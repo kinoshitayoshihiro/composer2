@@ -108,30 +108,87 @@ def _make_const_sec_to_beats(tempo_bpm: float):
     return lambda t: t / spb
 
 
+def is_fallback(mapper: Callable[[float], float]) -> bool:
+    """Return whether *mapper* was produced via a fallback path."""
+
+    return bool(getattr(mapper, "_fallback", False))
+
+
 def build_beat_map(
     pm: "pretty_midi.PrettyMIDI", *, path: Path | None = None
-) -> tuple[Callable[[float], float], float, bool]:
-    """Return seconds->beats map, tempo estimate and fallback flag."""
+) -> tuple[Callable[[float], float], float]:
+    """Return a seconds→beats mapper and tempo estimate.
+
+    The mapper preserves piecewise tempo changes exposed by
+    :meth:`pretty_midi.PrettyMIDI.get_beats`.  When that information is
+    unavailable we gracefully fall back to a constant tempo derived from
+    :meth:`estimate_tempo` (or 120 BPM as a last resort).  The returned callable
+    carries a ``_fallback`` attribute so callers can detect whether the
+    simplified path was used without altering the public return arity.
+    """
+
+    beat_times: "np.ndarray[Any, np.dtype[np.float_]]"
+    fallback = False
+    try:
+        beat_times = pm.get_beats()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("get_beats failed for %s: %s", path, exc)
+        beat_times = np.array([], dtype=float)
+        fallback = True
 
     tempo_est: Optional[float] = None
-    try:
-        t = float(pm.estimate_tempo())
-        if math.isfinite(t) and t > 0:
-            tempo_est = t
-    except Exception as e:  # pragma: no cover
-        logger.debug("estimate_tempo failed for %s: %s", path, e)
-    fallback = False
-    if tempo_est is None:
-        _times, tempi = pm.get_tempo_changes()
-        if len(tempi) and math.isfinite(float(tempi[0])) and float(tempi[0]) > 0:
-            tempo_est = float(tempi[0])
-        else:
-            tempo_est = 120.0
+    if beat_times.size >= 2:
+        diffs = np.diff(beat_times)
+        valid = diffs > 0
+        if np.any(valid):
+            trimmed = diffs[valid]
+            if trimmed.size:
+                try:
+                    q_low, q_high = np.quantile(trimmed, [0.01, 0.99])
+                    mask = (trimmed >= q_low) & (trimmed <= q_high)
+                    if np.any(mask):
+                        trimmed = trimmed[mask]
+                except Exception:  # pragma: no cover - defensive
+                    pass
+            if trimmed.size:
+                avg = float(np.mean(trimmed))
+                if avg > 0:
+                    tempo_est = 60.0 / avg
+        else:  # pragma: no cover - degenerate beat grid
+            fallback = True
+    else:
         fallback = True
-        logger.debug("tempo fallback used for %s: %.1f", path, tempo_est)
 
-    sec_to_beats = _make_const_sec_to_beats(tempo_est)
-    return sec_to_beats, tempo_est, fallback
+    if tempo_est is None:
+        try:
+            t = float(pm.estimate_tempo())
+            if math.isfinite(t) and t > 0:
+                tempo_est = t
+        except Exception as exc:  # pragma: no cover - logging only
+            logger.debug("estimate_tempo failed for %s: %s", path, exc)
+    if tempo_est is None:
+        tempo_est = 120.0
+
+    if beat_times.size >= 2 and not fallback:
+        beat_idx = np.arange(len(beat_times), dtype=float)
+
+        def sec_to_beats(t: float) -> float:
+            if not math.isfinite(t):
+                return 0.0
+            if t <= beat_times[-1]:
+                return float(np.interp(t, beat_times, beat_idx))
+            extra = max(0.0, t - beat_times[-1]) * tempo_est / 60.0
+            return float(beat_idx[-1] + extra)
+
+    else:
+
+        def sec_to_beats(t: float) -> float:
+            if not math.isfinite(t):
+                return 0.0
+            return max(0.0, t) * tempo_est / 60.0
+
+    setattr(sec_to_beats, "_fallback", fallback)
+    return sec_to_beats, tempo_est
 
 
 def get_time_signature(mid: "mido.MidiFile") -> Tuple[float, str]:
@@ -253,6 +310,7 @@ def split_samples(
     drums_only: bool,
     exclude_drums: bool,
     max_segments: int | None = None,
+    quant: int | None = None,
 ) -> Iterator[List["pretty_midi.Note"]]:
     """Yield note groups for each slice of ``bars_per_sample`` bars."""
 
@@ -260,7 +318,9 @@ def split_samples(
 
     segment_beats = bars_per_sample * beats_per_bar
     total_beats = sec_to_beats(pm.get_end_time())
-    n_segments = int(total_beats // segment_beats)
+    if quant:
+        total_beats = quantise_beats(total_beats, quant)
+    n_segments = int(max(0, math.floor(total_beats / segment_beats + 1e-8)))
     for i in range(n_segments):
         start = i * segment_beats
         end = start + segment_beats
@@ -276,14 +336,21 @@ def split_samples(
                 n_start = sec_to_beats(n.start)
                 if start <= n_start < end:
                     n_end = sec_to_beats(n.end)
-                    seg.append(
-                        pretty_midi.Note(
-                            velocity=n.velocity,
-                            pitch=n.pitch,
-                            start=n_start - start,
-                            end=min(n_end, end) - start,
+                    if quant:
+                        n_start = quantise_beats(n_start, quant)
+                        n_end = quantise_beats(n_end, quant)
+                    n_end = max(n_end, n_start)
+                    local_start = max(n_start, start)
+                    local_end = min(n_end, end)
+                    if local_end > local_start:
+                        seg.append(
+                            pretty_midi.Note(
+                                velocity=n.velocity,
+                                pitch=n.pitch,
+                                start=local_start - start,
+                                end=local_end - start,
+                            )
                         )
-                    )
         if len(seg) >= min_notes:
             yield seg
         else:
@@ -358,7 +425,10 @@ def build_corpus(args: argparse.Namespace, files: Sequence[Path]) -> Dict[str, L
                 for res in ex.map(_worker, ((p, cfg) for p in paths)):
                     samples.extend(res)
         except Exception:
-            logger.warning("ProcessPoolExecutor failed; falling back to ThreadPoolExecutor")
+            logger.warning(
+                "ProcessPoolExecutor failed; falling back to ThreadPoolExecutor(max_workers=%d)",
+                args.num_workers,
+            )
             from concurrent.futures import ThreadPoolExecutor
 
             with ThreadPoolExecutor(max_workers=args.num_workers) as ex:
@@ -370,9 +440,15 @@ def build_corpus(args: argparse.Namespace, files: Sequence[Path]) -> Dict[str, L
         for p in iterator:
             samples.extend(process_path(p, cfg))
 
+    extra = {
+        "lyric_matches": lyric_matches,
+        "midi_file_count": len(files),
+        "midi_files": len(files),
+    }
+
     if not samples:
         logger.warning("no samples found under %s", args.in_dir)
-        return {"train": [], "valid": [], "test": []}, lyric_matches, len(files)
+        return {"train": [], "valid": [], "test": []}, {"extra": extra}
 
     rng = random.Random(args.seed)
     rng.shuffle(samples)
@@ -397,10 +473,12 @@ def build_corpus(args: argparse.Namespace, files: Sequence[Path]) -> Dict[str, L
     args._duv_stats = (keep_count, collapsed)
     args._duv_collapsed = True
 
-    return splits, lyric_matches, len(files)
+    return splits, {"extra": extra}
 
 
-def save_jsonl(path: Path, samples: Sequence[Sample], *, compress: str = "none") -> None:
+def save_jsonl(
+    path: Path, samples: Sequence[Sample], *, compress: str = "none"
+) -> Path:
     """Write ``samples`` to ``path`` as JSONL, optionally gzip-compressed."""
 
     actual_path = path
@@ -414,6 +492,7 @@ def save_jsonl(path: Path, samples: Sequence[Sample], *, compress: str = "none")
     with fh:
         for s in samples:
             fh.write(json.dumps({"tokens": s.tokens, "meta": s.meta}) + "\n")
+    return actual_path
 
 
 def build_vocab(samples: Iterable[Sample]) -> Dict[str, int]:
@@ -626,8 +705,8 @@ def process_path(midi_path: Path, ns: FastCfg) -> List[Sample]:
             _inc_skip("too_long")
             return []
 
-    sec_to_beats, tempo_est, fb = build_beat_map(pm, path=midi_path)
-    if fb:
+    sec_to_beats, tempo_est = build_beat_map(pm, path=midi_path)
+    if is_fallback(sec_to_beats):
         _TEMPO_FALLBACKS += 1
     rel = normalize_key(midi_path, _BASE or Path("."))
     segments: List[Sample] = []
@@ -662,6 +741,7 @@ def process_path(midi_path: Path, ns: FastCfg) -> List[Sample]:
             drums_only=_ARGS.drums_only,
             exclude_drums=_ARGS.exclude_drums,
             max_segments=_ARGS.max_samples_per_file,
+            quant=_ARGS.quant,
         )
     ):
         tokens = tokenize_notes(
@@ -762,7 +842,12 @@ def main(argv: list[str] | None = None) -> None:
         files = files[:max_files]
 
     # コーパス構築
-    splits, lyric_matches, midi_file_count = build_corpus(args, files)
+    splits, build_meta = build_corpus(args, files)
+    meta_extra = (build_meta or {}).get("extra", {}) if isinstance(build_meta, dict) else {}
+    lyric_matches = int(meta_extra.get("lyric_matches", 0))
+    midi_file_count = int(
+        meta_extra.get("midi_file_count", meta_extra.get("midi_files", len(files)))
+    )
     logger.info("tempo fallback used: %d", _TEMPO_FALLBACKS)
 
     if getattr(args, "_duv_collapsed", False):
@@ -794,6 +879,7 @@ def main(argv: list[str] | None = None) -> None:
     # メタデータ収集
     meta = {
         "midi_file_count": midi_file_count,
+        "midi_files": midi_file_count,
         "lyric_matches": lyric_matches,
         "vocab_size": len(vocab),
         "tag_vocab_size": len(tag_vocab),
@@ -814,17 +900,19 @@ def main(argv: list[str] | None = None) -> None:
         "skipped_invalid_midi": _SKIP_COUNTS.get("invalid_midi", 0),
         "skipped_too_long": _SKIP_COUNTS.get("too_long", 0),
         "tempo_fallback_used": _TEMPO_FALLBACKS,
+        "stats": {split: len(samples) for split, samples in splits.items()},
     }
     logger.info("meta: %s", json.dumps(meta, ensure_ascii=False, indent=2))
+    (out_dir / "meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     # サンプル書き出し
     logger.info("writing samples...")
     for split, samples in splits.items():
         out_path = out_dir / f"{split}.jsonl"
-        if args.compress == "gz":
-            out_path = out_path.with_suffix(out_path.suffix + ".gz")
-        save_jsonl(out_path, samples, compress=args.compress)
-        logger.info("  %s: %d samples", split, len(samples))
+        written_path = save_jsonl(out_path, samples, compress=args.compress)
+        logger.info("  %s: %d samples -> %s", split, len(samples), written_path)
 
     # ボキャブラリ書き出し
     if args.compress == "gz":

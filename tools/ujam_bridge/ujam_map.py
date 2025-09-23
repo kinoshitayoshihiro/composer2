@@ -248,6 +248,7 @@ def convert(args: SimpleNamespace) -> None:
         return True
 
     periodic = max(0, int(getattr(args, "periodic_ks", 0)))
+    # periodic == 0 means the guard re-arms every bar.
     ks_lead = float(getattr(args, "ks_lead", 60.0))
     ks_headroom = float(getattr(args, "ks_headroom", 10.0)) / 1000.0
     section_mode = getattr(args, "section_aware", "off")
@@ -278,21 +279,22 @@ def convert(args: SimpleNamespace) -> None:
             send = False
         if send:
             ks_time = max(0.0, bar_start - (ks_lead + 20.0) / 1000.0)
-            emitted_any = False
+            def _record_emit() -> None:
+                # Update guards immediately after emitting any KS event.
+                nonlocal last_sent, last_sent_bar
+                last_sent = ks_tuple
+                last_sent_bar = bar_index
             if section_mode == "on" and sections:
                 sec = _section_for_bar(bar, sections)
                 if sec:
                     for name in section_styles.get(sec, []):
                         pitch = keymap.get(name)
                         if pitch is not None:
-                            emitted_any |= _emit_keyswitch(pitch, ks_time)
+                            if _emit_keyswitch(pitch, ks_time):
+                                _record_emit()
             for pitch in ks_notes:
-                emitted_any |= _emit_keyswitch(pitch, ks_time)
-            if emitted_any:
-                # Update guards only when a keyswitch message was emitted so the
-                # redundant suppression logic tracks real transmissions.
-                last_sent = ks_tuple
-                last_sent_bar = bar_index
+                if _emit_keyswitch(pitch, ks_time):
+                    _record_emit()
         for b in blocks:
             chord = utils.chordify(b["pitches"], (play_low, play_high))
             total_notes += len(b["pitches"])
@@ -720,6 +722,7 @@ def convert(args) -> None:
     approx: List[str] = []
     csv_rows: List[Dict[str, object]] = []
     last_sent: tuple[int, ...] | None = None
+    last_sent_bar = -10**9
     emitted_at: dict[int, float] = {}
     bar_index = 0
 
@@ -752,9 +755,16 @@ def convert(args) -> None:
                 ks_notes.extend(pattern_to_keyswitches(b["strum"], pattern_lib, keymap))
         ks_tuple = tuple(ks_notes)
         periodic = max(0, int(args.periodic_ks))
-        due_periodic = periodic == 0 or (bar_index % periodic == 0)
+        # periodic == 0 means the guard re-arms every bar.
+        same_tuple = last_sent == ks_tuple
+        due_periodic = (
+            periodic == 0
+            or not same_tuple
+            or last_sent_bar < 0
+            or (bar_index - last_sent_bar) >= periodic
+        )
         send = due_periodic
-        if send and args.no_redundant_ks and periodic == 0 and last_sent == ks_tuple:
+        if send and args.no_redundant_ks and same_tuple and last_sent_bar == bar_index:
             send = False
         if send:
             ks_time = max(0.0, bar_start - (float(args.ks_lead) + 20.0) / 1000.0)
@@ -771,6 +781,7 @@ def convert(args) -> None:
             if emitted_any:
                 # Track the last tuple only when a keyswitch actually went out.
                 last_sent = ks_tuple
+                last_sent_bar = bar_index
         for b in blocks:
             chord = utils.chordify(b["pitches"], (play_low, play_high))
             total_notes += len(b["pitches"])

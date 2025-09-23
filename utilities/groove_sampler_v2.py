@@ -1038,6 +1038,10 @@ def train(
             logger.info("skipped files: %s", preview)
 
     if not results:
+        if relax_filters:
+            logger.info(
+                "relaxed filters active; returning empty model with zero events"
+            )
         logger.warning(
             "No events collected — returning empty model (files=%d skipped=%d filtered=%d)",
             len(paths),
@@ -1045,6 +1049,7 @@ def train(
             files_filtered,
         )
         model = _empty_model()
+        model.files_skipped = files_skipped
         save(model, model_path)
         return model
 

@@ -57,6 +57,23 @@ class _LoadWorkerConfig:
     min_notes: int
     allow_drums: bool | None = None
     allow_pitched: bool | None = None
+    instrument_whitelist: set[int] | None = None
+
+
+def _instrument_allowed(
+    inst_program: int | None, is_drum: bool, whitelist: set[int] | None
+) -> bool:
+    """Return ``True`` when an instrument passes the optional whitelist."""
+
+    if not whitelist:
+        return True
+    if is_drum:
+        if -1 in whitelist:
+            return True
+        return inst_program in whitelist if inst_program is not None else False
+    if inst_program is None:
+        return True
+    return inst_program in whitelist
 
 
 @dataclass(frozen=True)
@@ -1046,6 +1063,7 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
 
     allow_drums = True if cfg.allow_drums is None else bool(cfg.allow_drums)
     allow_pitched = True if cfg.allow_pitched is None else bool(cfg.allow_pitched)
+    instrument_whitelist = cfg.instrument_whitelist if cfg.instrument_whitelist else None
     logger.debug(
         "[groove loader] effective filters for %s: allow_drums=%s allow_pitched=%s",
         path.name,
@@ -1075,6 +1093,7 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
         max_tick = 0
         allowed_notes = 0
         has_drum = False
+        program_by_channel: dict[int, int | None] = {}
 
         def _close(channel: int, note: int) -> None:
             nonlocal allowed_notes, has_drum
@@ -1089,7 +1108,9 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
             drum = channel == 9
             if drum:
                 has_drum = True
-            if (drum and allow_drums) or ((not drum) and allow_pitched):
+            if _instrument_allowed(
+                program_by_channel.get(channel), drum, instrument_whitelist
+            ) and ((drum and allow_drums) or ((not drum) and allow_pitched)):
                 allowed_notes += 1
 
         for track in getattr(local_midi, "tracks", []):
@@ -1109,6 +1130,10 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                     channel = int(getattr(msg, "channel", 0) or 0)
                     note = int(getattr(msg, "note", 0) or 0)
                     _close(channel, note)
+                elif msg_type == "program_change":
+                    channel = int(getattr(msg, "channel", 0) or 0)
+                    program = getattr(msg, "program", None)
+                    program_by_channel[channel] = int(program) if program is not None else None
                 max_tick = max(max_tick, tick)
 
         if not events:
@@ -1133,6 +1158,8 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
 
     raw_note_count = 0
     for inst in pm.instruments:
+        if not _instrument_allowed(inst.program, inst.is_drum, instrument_whitelist):
+            continue
         if (inst.is_drum and allow_drums) or (not inst.is_drum and allow_pitched):
             raw_note_count += len(inst.notes)
 
@@ -1141,10 +1168,17 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
     notes = midi_to_events(pm, tempo)
     note_cnt = len(notes)
     uniq_pitches = len({pitch for _, pitch in notes}) if notes else 0
-    is_drum = any(inst.is_drum for inst in pm.instruments)
+    is_drum = any(
+        inst.is_drum
+        for inst in pm.instruments
+        if _instrument_allowed(inst.program, inst.is_drum, instrument_whitelist)
+    )
 
     fallback_data = None
-    if (not notes or raw_note_count == 0) and mido is not None:
+    need_fallback = (not notes or raw_note_count == 0)
+    if not need_fallback and mido is not None and min_bars > 0 and bars < min_bars:
+        need_fallback = True
+    if need_fallback and mido is not None:
         fallback_data = _fallback_events_from_mido()
         if fallback_data is not None:
             if not notes:
@@ -1153,10 +1187,9 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                 uniq_pitches = fallback_data.get("uniq_pitches", uniq_pitches)
             if raw_note_count == 0:
                 raw_note_count = int(fallback_data.get("note_count", raw_note_count))
-            if (not math.isfinite(bars) or bars <= 0.0) and float(
-                fallback_data.get("bars", 0.0)
-            ) > 0.0:
-                bars = float(fallback_data["bars"])
+            fb_bars = float(fallback_data.get("bars", 0.0))
+            if fb_bars > 0.0 and (not math.isfinite(bars) or bars <= 0.0 or fb_bars > bars):
+                bars = fb_bars
             if not is_drum and bool(fallback_data.get("has_drum", False)):
                 is_drum = True
 
@@ -1223,7 +1256,11 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
     uniq_pitches = len({pitch for _, pitch in notes})
     if fallback_data is not None and uniq_pitches == 0:
         uniq_pitches = int(fallback_data.get("uniq_pitches", 0))
-    is_drum = is_drum or any(inst.is_drum for inst in pm.instruments)
+    is_drum = is_drum or any(
+        inst.is_drum
+        for inst in pm.instruments
+        if _instrument_allowed(inst.program, inst.is_drum, instrument_whitelist)
+    )
     is_fill = bool(
         cfg.tag_fill_from_filename and re.search(r"\bfill\b", path.name, re.IGNORECASE)
     )

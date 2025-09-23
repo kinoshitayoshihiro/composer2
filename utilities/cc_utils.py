@@ -72,7 +72,58 @@ def energy_to_cc11(
     for v in x:
         z = alpha * v + (1 - alpha) * z
         ema.append(z)
-    return [(i * hop / sr, int(round(127 * v))) for i, v in enumerate(ema)]
+    if not ema:
+        return []
+    ema_arr = np.asarray(ema, dtype=float)
+    times = (np.arange(ema_arr.size, dtype=float) * hop) / float(sr)
+    if smooth_ms > 0 and ema_arr.size:
+        window = int(round(sr * smooth_ms / 1000.0))
+        window = max(1, min(window, ema_arr.size))
+        if window > 1:
+            pad = window // 2
+            padded = np.pad(ema_arr, (pad, pad), mode="edge")
+            smoothed = np.convolve(padded, np.ones(window) / float(window), mode="valid")
+            if smoothed.size > ema_arr.size:
+                smoothed = smoothed[: ema_arr.size]
+            ema_arr = smoothed
+        step = max(1, int(round(smooth_ms / hop_ms))) if hop_ms > 0 else 1
+        if step > 1 and ema_arr.size > 2:
+            idx = list(range(0, ema_arr.size, step))
+            last_idx = ema_arr.size - 1
+            if idx[-1] != last_idx:
+                idx.append(last_idx)
+            dedup_idx: list[int] = []
+            prev_idx = -1
+            for i in idx:
+                if 0 <= i < ema_arr.size and i != prev_idx:
+                    dedup_idx.append(i)
+                    prev_idx = i
+            if dedup_idx:
+                ema_arr = ema_arr[dedup_idx]
+                times = times[dedup_idx]
+    clipped = np.clip(ema_arr, 0.0, 1.0)
+    values = np.rint(clipped * 127.0).astype(int)
+    if values.size == 0:
+        return []
+    times_list = times.tolist()
+    vals_list = values.tolist()
+    events: List[Tuple[float, int]] = []
+    first_val = int(vals_list[0])
+    events.append((float(times_list[0]), first_val))
+    prev_val = first_val
+    for idx in range(1, len(vals_list) - 1):
+        val = int(vals_list[idx])
+        if val != prev_val:
+            events.append((float(times_list[idx]), val))
+            prev_val = val
+    if len(vals_list) > 1:
+        last_val = int(vals_list[-1])
+        last_time = float(times_list[-1])
+        if last_val != prev_val:
+            events.append((last_time, last_val))
+        else:
+            events[-1] = (last_time, events[-1][1])
+    return events
 
 
 def infer_cc64_from_overlaps(

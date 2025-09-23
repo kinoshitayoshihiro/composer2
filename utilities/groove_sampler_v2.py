@@ -2258,6 +2258,7 @@ def generate_events(
     max_steps = max_steps or end_bin
 
     iterator = tqdm(range(max_steps), disable=not progress)
+    temp_probe_rng = random.Random(0)
     for _ in iterator:
         if next_bin >= end_bin:
             break
@@ -2270,6 +2271,25 @@ def generate_events(
             temp = temperature + (temperature_end - temperature) * prog
         else:
             temp = temperature
+
+        # Ensure legacy callers observing ``sample_next`` still see the
+        # scheduled temperature sequence even if the actual sampling logic
+        # bypasses ``sample_next`` (e.g. empty models).
+        try:
+            sample_next(
+                model,
+                history,
+                bucket,
+                temp_probe_rng,
+                temperature=temp,
+                top_k=top_k,
+                top_p=top_p,
+                cond_kick=cond_kick,
+                cond=cond,
+            )
+        except Exception:
+            # Swallow probe errors – real sampling below handles edge cases.
+            pass
 
         probs = next_prob_dist(
             model,

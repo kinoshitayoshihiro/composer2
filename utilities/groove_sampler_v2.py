@@ -1017,6 +1017,14 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
         total_seconds = 0.0
 
     total_beats = _total_beats_from_tempo_map(pm, total_seconds)
+    if total_beats is None or total_beats <= 0:
+        try:
+            beat_times = pm.get_beats()
+            if beat_times is not None and len(beat_times) > 0:
+                total_beats = float(len(beat_times))
+                logger.debug("beat fallback provided %s beats", total_beats)
+        except Exception:
+            pass
     if (
         (total_beats is None or total_beats <= 0)
         and tempo

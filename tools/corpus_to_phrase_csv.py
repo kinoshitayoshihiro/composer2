@@ -13,11 +13,17 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Iterable, Iterator, Pattern
 
-# pretty_midi は MIDI 入力時のみ必要。\n# from-corpus モードでは読み込まず、警告も出さないため遅延インポートにする。
+# pretty_midi は MIDI 入力時のみ必要。
+# from-corpus モードでは読み込まず、警告も出さないため遅延インポートにする。
 try:  # pragma: no cover - PyYAML optional for --help
     import yaml
 except Exception:  # pragma: no cover - no yaml
     yaml = None  # type: ignore
+
+try:  # pragma: no cover - pretty_midi optional for labeling
+    import pretty_midi  # type: ignore
+except Exception:  # pragma: no cover - fallback when pretty_midi missing
+    pretty_midi = None  # type: ignore
 
 
 INSTRUMENT_RANGES = {
@@ -41,6 +47,26 @@ FIELDS = [
     "velocity_bucket",
     "duration_bucket",
 ]
+
+
+def _program_name(pgm: object) -> str:
+    try:
+        value = int(pgm)  # type: ignore[arg-type]
+    except Exception:
+        return str(pgm)
+    if pretty_midi is not None:
+        try:
+            return pretty_midi.program_to_instrument_name(value)
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _program_sort_key(val: str) -> tuple[int, int | str]:
+    try:
+        return (0, int(val))
+    except Exception:
+        return (1, val)
 
 
 def summarize_tags(rows: Iterable[dict[str, object]], vocab: dict[str, list[str]]) -> None:
@@ -319,7 +345,26 @@ def list_instruments(
         stats_json.parent.mkdir(parents=True, exist_ok=True)
         stats_json.write_text(json.dumps(counts, indent=2))
     if json_out:
-        print(json.dumps(counts, indent=2))
+        payload: dict[str, dict[str, dict[str, object]]] = {}
+        for key, ctr in counters.items():
+            entries: dict[str, dict[str, object]] = {}
+            for val, count in ctr.items():
+                if count < min_count:
+                    continue
+                entry_examples = list(examples[key].get(val, []))
+                entries[str(val)] = {"count": count, "examples": entry_examples}
+            payload[key] = entries
+        programs = payload.get("program", {})
+        if programs:
+            instrument_meta: list[dict[str, object]] = []
+            for pgm in sorted(programs.keys(), key=_program_sort_key):
+                try:
+                    pgm_val: object = int(pgm)
+                except Exception:
+                    pgm_val = pgm
+                instrument_meta.append({"program": pgm_val, "name": _program_name(pgm)})
+            payload["instruments"] = instrument_meta
+        print(json.dumps(payload, indent=2))
     else:
         for key, ctr in counters.items():
             print(f"{key}:")

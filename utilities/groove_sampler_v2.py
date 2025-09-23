@@ -30,6 +30,7 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
+from math import isfinite
 from pathlib import Path
 from random import Random
 from typing import Any
@@ -52,10 +53,10 @@ class _LoadWorkerConfig:
     max_bpm: float
     fold_halves: bool
     tag_fill_from_filename: bool
-    allow_drums: bool | None
-    allow_pitched: bool | None
     min_bars: float
     min_notes: int
+    allow_drums: bool | None = None
+    allow_pitched: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -895,6 +896,8 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
     audio_failed = False
     tempo_error: str | None = None
     tempo_injected = False
+    total_seconds = 0.0
+    midi_obj = None
     try:
         if path.suffix.lower() in {".wav", ".wave"}:
             pm = convert_wav_to_midi(path, fixed_bpm=cfg.fixed_bpm)
@@ -963,6 +966,8 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
         total_seconds = float(pm.get_end_time())
     except Exception:
         total_seconds = 0.0
+    if not isfinite(total_seconds) or total_seconds < 0:
+        total_seconds = 0.0
     try:
         midi_data = getattr(pm, "midi_data", None)
         if midi_data is not None:
@@ -979,7 +984,6 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
     if latest_note > total_seconds:
         total_seconds = float(latest_note)
     if mido is not None:
-        midi_obj = None
         try:
             midi_obj = pm_to_mido(pm)
         except Exception:
@@ -1013,7 +1017,7 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
         except Exception:
             return None
 
-    if not math.isfinite(total_seconds) or total_seconds <= 0:
+    if not isfinite(total_seconds) or total_seconds <= 0:
         total_seconds = 0.0
 
     total_beats = _total_beats_from_tempo_map(pm, total_seconds)
@@ -1022,7 +1026,11 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
             beat_times = pm.get_beats()
             if beat_times is not None and len(beat_times) > 0:
                 total_beats = float(len(beat_times))
-                logger.debug("beat fallback provided %s beats", total_beats)
+                logger.debug(
+                    "[groove loader] beat fallback provided %s beats for %s",
+                    total_beats,
+                    path.name,
+                )
         except Exception:
             pass
     if (
@@ -1039,8 +1047,89 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
     allow_drums = True if cfg.allow_drums is None else bool(cfg.allow_drums)
     allow_pitched = True if cfg.allow_pitched is None else bool(cfg.allow_pitched)
     logger.debug(
-        "loader filters: allow_drums=%s allow_pitched=%s", allow_drums, allow_pitched
+        "[groove loader] effective filters for %s: allow_drums=%s allow_pitched=%s",
+        path.name,
+        allow_drums,
+        allow_pitched,
     )
+
+    def _fallback_events_from_mido() -> dict[str, object] | None:
+        """Derive note events via :mod:`mido` when PrettyMIDI yields nothing."""
+
+        if mido is None:
+            return None
+
+        nonlocal midi_obj
+
+        local_midi = midi_obj
+        if local_midi is None:
+            try:
+                local_midi = mido.MidiFile(filename=str(path))
+            except Exception:
+                return None
+
+        ticks_per_beat = float(getattr(local_midi, "ticks_per_beat", 480) or 480)
+        starts: dict[tuple[int, int], list[int]] = {}
+        events: list[tuple[float, int]] = []
+        uniq: set[int] = set()
+        max_tick = 0
+        allowed_notes = 0
+        has_drum = False
+
+        def _close(channel: int, note: int) -> None:
+            nonlocal allowed_notes, has_drum
+            key = (channel, note)
+            start_list = starts.get(key)
+            if not start_list:
+                return
+            start_tick = start_list.pop(0)
+            beat_pos = start_tick / ticks_per_beat
+            events.append((beat_pos, note))
+            uniq.add(note)
+            drum = channel == 9
+            if drum:
+                has_drum = True
+            if (drum and allow_drums) or ((not drum) and allow_pitched):
+                allowed_notes += 1
+
+        for track in getattr(local_midi, "tracks", []):
+            tick = 0
+            for msg in track:
+                tick += int(getattr(msg, "time", 0) or 0)
+                msg_type = getattr(msg, "type", None)
+                if msg_type == "note_on":
+                    channel = int(getattr(msg, "channel", 0) or 0)
+                    note = int(getattr(msg, "note", 0) or 0)
+                    velocity = int(getattr(msg, "velocity", 0) or 0)
+                    if velocity > 0:
+                        starts.setdefault((channel, note), []).append(tick)
+                    else:
+                        _close(channel, note)
+                elif msg_type == "note_off":
+                    channel = int(getattr(msg, "channel", 0) or 0)
+                    note = int(getattr(msg, "note", 0) or 0)
+                    _close(channel, note)
+                max_tick = max(max_tick, tick)
+
+        if not events:
+            return None
+
+        events.sort(key=lambda x: x[0])
+        if allowed_notes <= 0:
+            allowed_notes = len(events)
+
+        bars_fb = 0.0
+        if beats_per_bar_local > 0:
+            bars_fb = (max_tick / ticks_per_beat) / float(beats_per_bar_local)
+
+        midi_obj = local_midi
+        return {
+            "events": events,
+            "note_count": allowed_notes,
+            "uniq_pitches": len(uniq) if uniq else len({p for _, p in events}),
+            "has_drum": has_drum,
+            "bars": bars_fb,
+        }
 
     raw_note_count = 0
     for inst in pm.instruments:
@@ -1049,7 +1138,39 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
 
     min_bars = float(cfg.min_bars)
     min_notes = int(cfg.min_notes)
+    notes = midi_to_events(pm, tempo)
+    note_cnt = len(notes)
+    uniq_pitches = len({pitch for _, pitch in notes}) if notes else 0
+    is_drum = any(inst.is_drum for inst in pm.instruments)
+
+    fallback_data = None
+    if (not notes or raw_note_count == 0) and mido is not None:
+        fallback_data = _fallback_events_from_mido()
+        if fallback_data is not None:
+            if not notes:
+                notes = list(fallback_data["events"])
+                note_cnt = len(notes)
+                uniq_pitches = fallback_data.get("uniq_pitches", uniq_pitches)
+            if raw_note_count == 0:
+                raw_note_count = int(fallback_data.get("note_count", raw_note_count))
+            if (not math.isfinite(bars) or bars <= 0.0) and float(
+                fallback_data.get("bars", 0.0)
+            ) > 0.0:
+                bars = float(fallback_data["bars"])
+            if not is_drum and bool(fallback_data.get("has_drum", False)):
+                is_drum = True
+
+    raw_note_count = max(raw_note_count, note_cnt)
+
     if min_bars > 0 and bars < min_bars:
+        logger.debug(
+            "[groove loader] skip(bars) %s: bars=%.3f < min=%.3f  beats=%.3f secs=%.3f",
+            path.name,
+            bars,
+            min_bars,
+            (total_beats or 0.0),
+            total_seconds,
+        )
         return _LoadResult(
             None,
             "bars",
@@ -1063,6 +1184,14 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
         )
 
     if min_notes > 0 and raw_note_count < min_notes:
+        logger.debug(
+            "[groove loader] skip(notes) %s: notes=%d < min=%d  allow_d=%s allow_p=%s",
+            path.name,
+            raw_note_count,
+            min_notes,
+            allow_drums,
+            allow_pitched,
+        )
         return _LoadResult(
             None,
             "notes",
@@ -1075,7 +1204,6 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
             invalid_bpm,
         )
 
-    notes = midi_to_events(pm, tempo)
     if not notes:
         return _LoadResult(
             None,
@@ -1093,7 +1221,9 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
 
     note_cnt = len(notes)
     uniq_pitches = len({pitch for _, pitch in notes})
-    is_drum = any(inst.is_drum for inst in pm.instruments)
+    if fallback_data is not None and uniq_pitches == 0:
+        uniq_pitches = int(fallback_data.get("uniq_pitches", 0))
+    is_drum = is_drum or any(inst.is_drum for inst in pm.instruments)
     is_fill = bool(
         cfg.tag_fill_from_filename and re.search(r"\bfill\b", path.name, re.IGNORECASE)
     )
@@ -1281,6 +1411,9 @@ def train(
         )
 
     if drum_only and pitched_only:
+        logger.warning(
+            "Both --drums-only and --pitched-only were set; treating as 'allow both'."
+        )
         allow_drums_flag: bool | None = True
         allow_pitched_flag: bool | None = True
     elif drum_only:

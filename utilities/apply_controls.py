@@ -195,7 +195,12 @@ def apply_controls(
     :meth:`ControlCurve.to_pitch_bend` and are forwarded accordingly.
     """
 
-    sr_map = sample_rate_hz or {"cc11": 30.0, "cc64": 30.0, "bend": 120.0}
+    sr_map = sample_rate_hz or {
+        "cc": 30.0,
+        "cc11": 30.0,
+        "cc64": 30.0,
+        "bend": 120.0,
+    }
     max_map = max_events or {}
     tempo_pairs = None
     if isinstance(tempo_map, (list, tuple)):
@@ -298,34 +303,36 @@ def apply_controls(
                         and getattr(new_pb[-2], "pitch", None) != 0
                     ):
                         inst.pitch_bends.pop(-2)
-            if write_rpn:
-                prev_written = getattr(inst, "_rpn_written", False)
-                prev_range = getattr(inst, "_rpn_range", None)
-                prev_precision = getattr(inst, "_rpn_precision", "midi128")
-                target_precision = "midi128"
-                need_rpn = not prev_written
-                if not need_rpn and prev_precision != target_precision:
-                    need_rpn = True
-                if not need_rpn and prev_range is not None:
-                    if abs(float(prev_range) - float(bend_range_semitones)) > 0.01:
+                if write_rpn:
+                    prev_written = getattr(inst, "_rpn_written", False)
+                    prev_range = getattr(inst, "_rpn_range", None)
+                    prev_precision = getattr(inst, "_rpn_precision", "midi128")
+                    target_precision = "midi128"
+                    need_rpn = not prev_written
+                    if not need_rpn and prev_precision != target_precision:
                         need_rpn = True
-                if need_rpn:
-                    first_pb = min((pb.time for pb in inst.pitch_bends), default=None)
-                    t = _rpn_time(rpn_at, first_pb)
-                    write_bend_range_rpn(
-                        inst,
-                        bend_range_semitones,
-                        at_time=t,
-                        precision=target_precision,
-                    )
-                    inst._rpn_written = True  # type: ignore[attr-defined]
-                    inst._rpn_range = getattr(
-                        inst, "_rpn_range", float(bend_range_semitones)
-                    )  # type: ignore[attr-defined]
-                    inst._rpn_precision = getattr(
-                        inst, "_rpn_precision", target_precision
-                    )  # type: ignore[attr-defined]
-            elif name in _CC_MAP:
+                    if not need_rpn and prev_range is not None:
+                        if abs(float(prev_range) - float(bend_range_semitones)) > 0.01:
+                            need_rpn = True
+                    if need_rpn:
+                        first_pb = min((pb.time for pb in inst.pitch_bends), default=None)
+                        t = _rpn_time(rpn_at, first_pb)
+                        write_bend_range_rpn(
+                            inst,
+                            bend_range_semitones,
+                            at_time=t,
+                            precision=target_precision,
+                        )
+                        inst._rpn_written = True  # type: ignore[attr-defined]
+                        inst._rpn_range = getattr(
+                            inst, "_rpn_range", float(bend_range_semitones)
+                        )  # type: ignore[attr-defined]
+                        inst._rpn_precision = getattr(
+                            inst, "_rpn_precision", target_precision
+                        )  # type: ignore[attr-defined]
+                continue
+
+            if name in _CC_MAP:
                 cc_num = _CC_MAP[name]
                 sr = sr_map.get(name)
                 # ``max_events`` allows callers to specify a global cap for all
@@ -378,6 +385,8 @@ def _downsample_keep_endpoints(events: list, target: int) -> list:
         return []
     if target >= len(events):
         return list(events)
+    if target == 1:
+        return [events[0]]
     idxs = [round(i * (len(events) - 1) / (target - 1)) for i in range(target)]
     seen: set[int] = set()
     out = []
@@ -406,6 +415,8 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             total += len(notes)
         cc_map: dict[int, list[pretty_midi.ControlChange]] = {}
         for cc in inst.control_changes:
+            if int(cc.number) in {100, 101, 6, 38}:
+                continue
             cc_map.setdefault(cc.number, []).append(cc)
         for number, changes in cc_map.items():
             groups.append(
@@ -517,6 +528,11 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             new_cc.setdefault(inst, {})[key] = kept
 
     for inst in pm.instruments:
+        preserved_rpn = [
+            cc
+            for cc in inst.control_changes
+            if int(cc.number) in {100, 101, 6, 38}
+        ]
         if inst in new_notes:
             inst.notes = sorted(
                 new_notes[inst],
@@ -532,7 +548,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
                 new_pb[inst], key=lambda pb: (float(pb.time), int(getattr(pb, "pitch", 0)))
             )
         if inst in new_cc:
-            merged: list[pretty_midi.ControlChange] = []
+            merged: list[pretty_midi.ControlChange] = list(preserved_rpn)
             for number, events in new_cc[inst].items():
                 deduped: list[pretty_midi.ControlChange] = []
                 seen: set[tuple[int, float, int]] = set()
@@ -545,6 +561,8 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
                 merged.extend(deduped)
             merged.sort(key=lambda c: (float(c.time), int(c.number), int(c.value)))
             inst.control_changes = merged
+        else:
+            inst.control_changes = preserved_rpn
         _sort_events(inst)
 
 

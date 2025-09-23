@@ -671,6 +671,9 @@ def _resolve_tempo(
     (``pretty_midi`` or ``mido``).
     """
 
+    if tempo_policy == "accept_warn":
+        tempo_policy = "accept"
+
     bpm: float | None = None
     source = "unknown"
     _times, tempi = pm.get_tempo_changes()
@@ -1047,11 +1050,11 @@ def train(
         logger.warning(
             "No events collected — returning empty model (files=%d skipped=%d filtered=%d)",
             len(paths),
-            files_skipped,
+            files_skipped + files_filtered,
             files_filtered,
         )
         model = _empty_model()
-        model.files_skipped = files_skipped
+        model.files_skipped = files_skipped + files_filtered
         model.files_scanned = len(paths)
         save(model, model_path)
         return model
@@ -1184,10 +1187,11 @@ def train(
     aux_hit = sum(1 for v in aux_values if v)
     if aux_values:
         logger.info("aux hit rate=%.2f", aux_hit / len(aux_values))
+    skipped_total = files_skipped + files_filtered
     logger.info(
         "Scanned %d files (skipped %d) \u2192 %d events \u2192 %d states",
         len(paths),
-        files_skipped,
+        skipped_total,
         total_events,
         len(idx_to_state),
     )
@@ -1200,7 +1204,7 @@ def train(
             len(idx_to_state),
         )
         empty_model = _empty_model(resolution)
-        empty_model.files_skipped = files_skipped
+        empty_model.files_skipped = skipped_total
         empty_model.files_scanned = len(paths)
         save(empty_model, model_path)
         return empty_model
@@ -1219,7 +1223,7 @@ def train(
         version=2,
         file_weights=file_weights,
         files_scanned=len(paths),
-        files_skipped=files_skipped,
+        files_skipped=skipped_total,
         total_events=total_events,
         hash_buckets=hb,
     )
@@ -1431,6 +1435,40 @@ else:  # pragma: no cover - environment toggle
     _get_arr = _get_arr_internal
 
 
+def _resolve_aux_ids(
+    aux_vocab: AuxVocab | None,
+    cond: dict[str, str] | None,
+    fallback: str | None,
+) -> list[int]:
+    """Return auxiliary ids to probe ordered by preference."""
+
+    if aux_vocab is None:
+        return [0]
+    if not cond:
+        return [0]
+
+    key = "|".join(f"{k}={v}" for k, v in sorted(cond.items()))
+    aux_any = 0
+    aux_unknown = aux_vocab.str_to_id.get("<UNK>")
+    idx = aux_vocab.str_to_id.get(key)
+
+    if idx is not None:
+        order = [idx]
+        if fallback in {"allow", "prefer"} and aux_any not in order:
+            order.append(aux_any)
+        return order
+
+    order: list[int] = []
+    if fallback == "prefer":
+        order.append(aux_any)
+    if aux_unknown is not None:
+        order.append(aux_unknown)
+    if fallback != "prefer" and aux_any not in order:
+        order.append(aux_any)
+
+    return order or [aux_any]
+
+
 def next_prob_dist(
     model: "NGramModel",
     history: list[int],
@@ -1440,27 +1478,36 @@ def next_prob_dist(
     top_k: int | None = None,
     top_p: float | None = None,
     cond: dict[str, str] | None = None,
+    aux_fallback: str | None = None,
 ) -> np.ndarray:
     """Return probability distribution for next state."""
 
     _MODEL_CACHE[id(model)] = model
     n = model.n if model.n is not None else 4
-    aux_id = model.aux_vocab.encode(cond) if cond and model.aux_vocab else 0
+    aux_ids = _resolve_aux_ids(model.aux_vocab, cond, aux_fallback)
     hb = model.hash_buckets
 
     arr: np.ndarray | None = None
     for order in range(min(len(history), n - 1), 0, -1):
         ctx = history[-order:]
-        ctx_hash = _hash_ctx(list(ctx) + [order, aux_id]) % hb
-        arr = _get_arr(id(model), order, ctx_hash)
+        for aux_id in aux_ids:
+            ctx_hash = _hash_ctx(list(ctx) + [order, aux_id]) % hb
+            arr = _get_arr(id(model), order, ctx_hash)
+            if arr is not None and arr.sum() > 0:
+                arr = arr.astype(float)
+                break
         if arr is not None and arr.sum() > 0:
-            arr = arr.astype(float)
             break
     else:
-        ctx_hash = _hash_ctx([0, aux_id]) % hb
-        arr = _get_arr(id(model), 0, ctx_hash)
-        if arr is not None and arr.sum() == 0:
-            arr = None
+        arr = None
+        for aux_id in aux_ids:
+            ctx_hash = _hash_ctx([0, aux_id]) % hb
+            arr = _get_arr(id(model), 0, ctx_hash)
+            if arr is not None and arr.sum() > 0:
+                arr = arr.astype(float)
+                break
+            if arr is not None and arr.sum() == 0:
+                arr = None
 
     if arr is None or arr.sum() == 0:
         b_arr = model.bucket_freq.get(bucket) if model.bucket_freq is not None else None
@@ -1494,6 +1541,7 @@ def sample_next(
     cond_kick: str | None = None,
     cond: dict[str, str] | None = None,
     strength: float | None = None,
+    aux_fallback: str | None = None,
     **_: object,
 ) -> int:
     """Sample next state index using hashed back-off."""
@@ -1509,6 +1557,7 @@ def sample_next(
         top_k=top_k,
         top_p=top_p,
         cond=cond,
+        aux_fallback=aux_fallback,
     )
     if cond_kick and model.idx_to_state:
         labels = [s[2] for s in model.idx_to_state]
@@ -1886,7 +1935,7 @@ def _cmd_train(args: list[str], *, quiet: bool = False, no_tqdm: bool = False) -
     )
     parser.add_argument(
         "--tempo-policy",
-        choices=["skip", "fallback", "accept"],
+        choices=["skip", "fallback", "accept", "accept_warn"],
         default="fallback",
     )
     parser.add_argument("--fallback-bpm", type=float, default=120.0)

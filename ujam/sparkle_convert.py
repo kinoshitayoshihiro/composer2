@@ -5456,9 +5456,10 @@ def build_sparkle_midi(
     """Render Sparkle-compatible MIDI with optional statistics payload.
 
     When ``stats`` is supplied a schema version of ``1.1`` is recorded alongside
-    ``bar_pulse_grid`` (meter-derived reference grid), ``bar_pulses`` (grid mirror
-    for legacy consumers), and ``bar_triggers`` (actual emitted trigger pulses,
-    also mirrored to ``bar_trigger_pulses``/``bar_trigger_pulses_compat``).
+    ``bar_pulse_grid`` (meter-derived reference grid), ``bar_pulses`` (legacy
+    alias containing the same ``[(rel_beat, time), ...]`` tuples), and
+    ``bar_triggers`` (actual emitted trigger pulses, also mirrored to
+    ``bar_trigger_pulses``/``bar_trigger_pulses_compat``).
     """
     rng = rng_human or rng
     if rng is None:
@@ -6104,10 +6105,15 @@ def build_sparkle_midi(
     if stats is not None:
         bar_grid = stats.setdefault("bar_pulse_grid", {})
         bar_triggers = stats.setdefault("bar_triggers", {})
+        stats["bar_trigger_pulses"] = bar_triggers
+        stats["bar_trigger_pulses_compat"] = bar_triggers
         bar_pulses_dict = stats.setdefault("bar_pulses", {})
         bar_grid.clear()
         bar_triggers.clear()
         bar_pulses_dict.clear()
+        # ``bar_pulses`` intentionally mirrors ``bar_pulse_grid`` so legacy
+        # callers that still read "pulses" receive the metre-derived grid
+        # rather than phrase note pitches.
         for i, (start, next_start) in enumerate(zip(downbeats[:-1], downbeats[1:])):
             num, den = get_meter_at(meter_map, start, times=meter_times)
             sb = time_to_beat(start)
@@ -6119,7 +6125,7 @@ def build_sparkle_midi(
                 pulse = (0.0, float(start))
                 grid_list = [pulse]
                 bar_grid[i] = grid_list
-                bar_pulses_dict[i] = [phrase_note] * len(grid_list)
+                bar_pulses_dict[i] = list(grid_list)
                 continue
             offsets = [k * pulse_subdiv_beats for k in range(total)]
             grid: List[Tuple[float, float]] = []
@@ -6149,9 +6155,14 @@ def build_sparkle_midi(
                 grid.append((rel_beat, float(time_val)))
             if not grid:
                 grid = [(0.0, float(start))]
+            grid.sort(key=lambda item: item[1])
+            if __debug__ and len(grid) > 1:
+                assert all(
+                    grid[idx][1] <= grid[idx + 1][1] for idx in range(len(grid) - 1)
+                ), "bar pulse times must be monotonic"
             grid_list = list(grid)
             bar_grid[i] = grid_list
-            bar_pulses_dict[i] = [phrase_note] * len(grid_list)
+            bar_pulses_dict[i] = list(grid_list)
 
     # Velocity curve helper
     bar_progress: Dict[int, int] = {}

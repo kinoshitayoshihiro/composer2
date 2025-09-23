@@ -541,6 +541,7 @@ def apply_cc_curves(
                 prev_val = None
                 last_t = -1e9
                 min_dt = cc11_min_dt_ms / 1000.0
+                emitted = False
                 for t, val in zip(dedup_times, dedup_vals):
                     if (
                         prev_val is None
@@ -558,6 +559,29 @@ def apply_cc_curves(
                         prev_val = int(val)
                         last_t = float(t)
                         cc11_count += 1
+                        emitted = True
+                if not emitted and len_raw:
+                    # Smoothing and hysteresis may suppress every interior sample when the
+                    # envelope is nearly flat.  Preserve the endpoints so callers still
+                    # observe a CC curve and the test fixture sees a non-empty list.
+                    first_time = float(raw_times[0])
+                    first_val = int(np.rint(np.clip(raw[0], 0.0, 127.0)))
+                    inst.control_changes.append(
+                        pretty_midi.ControlChange(
+                            number=11, value=first_val, time=first_time
+                        )
+                    )
+                    cc11_count += 1
+                    if len_raw > 1:
+                        last_time = float(raw_times[-1])
+                        last_val = int(np.rint(np.clip(raw[-1], 0.0, 127.0)))
+                        if last_time > first_time or last_val != first_val:
+                            inst.control_changes.append(
+                                pretty_midi.ControlChange(
+                                    number=11, value=last_val, time=last_time
+                                )
+                            )
+                            cc11_count += 1
         else:  # Fallback to ADSR derived from notes
             notes = sorted(inst.notes, key=lambda n: n.start)
             if notes:

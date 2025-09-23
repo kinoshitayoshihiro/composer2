@@ -37,7 +37,7 @@ def _stub_transcribe(
     bend_alpha: float = 0.25,
     bend_fixed_base: bool = False,
     cc_strategy: str = "none",
-    cc11_smoothing_ms: int = 80,
+    cc11_smoothing_ms: int = 60,
     sustain_threshold: float = 0.6,
     cc11_min_dt_ms: int = 30,
     cc11_min_delta: int = 3,
@@ -423,7 +423,7 @@ def test_cc11_energy(tmp_path, monkeypatch):
         events = audio_to_midi_batch.cc_utils.energy_to_cc11(
             audio,
             sr,
-            smooth_ms=kwargs.get("cc11_smoothing_ms", 80),
+            smooth_ms=kwargs.get("cc11_smoothing_ms", 60),
             strategy=kwargs.get("cc_strategy", "none"),
         )
         prev = -1
@@ -458,7 +458,7 @@ def test_sustain_threshold(tmp_path, monkeypatch):
             events = audio_to_midi_batch.cc_utils.energy_to_cc11(
                 audio,
                 sr,
-                smooth_ms=kwargs.get("cc11_smoothing_ms", 80),
+                smooth_ms=kwargs.get("cc11_smoothing_ms", 60),
                 strategy=kwargs.get("cc_strategy", "none"),
             )
             prev = -1

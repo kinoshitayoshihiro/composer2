@@ -485,7 +485,11 @@ def main(argv: list[str] | None = None) -> None:
         # Fallback: generate a constant-length, random-velocity sequence
         for _ in range(args.length):
             pitch = random.randint(args.pitch_min, args.pitch_max)
-            out_events.append({"pitch": pitch, "velocity": 64, "duration_beats": 0.25})
+            dur = 0.25
+            if args.bars is not None and total_beats + dur > 4 * args.bars:
+                break
+            out_events.append({"pitch": pitch, "velocity": 64, "duration_beats": dur})
+            total_beats += dur
         logging.warning("Torch not available; generated fallback events without model")
     else:
         with torch.no_grad():
@@ -513,17 +517,18 @@ def main(argv: list[str] | None = None) -> None:
                 # Velocity/Duration decoding
                 vel, dur = decode_duv(out_dict, vel_mode, dur_mode, meta, args.dur_max_beats)
 
+                next_total = total_beats + float(dur)
+                if args.bars is not None and next_total > 4 * args.bars:
+                    break
                 ev = {"pitch": pitch, "velocity": vel, "duration_beats": dur}
                 out_events.append(ev)
-                total_beats += float(dur)
+                total_beats = next_total
 
                 # Advance model state if supported
                 if hasattr(model, "update_state"):
                     state_enc = model.update_state(state_enc, ev)  # type: ignore[attr-defined]
 
-                # Optional early stop by bars
-                if args.bars is not None and total_beats >= 4 * args.bars:
-                    break
+                # Optional early stop by bars handled above
 
     # Outputs ---------------------------------------------------------------
     if args.out_csv:

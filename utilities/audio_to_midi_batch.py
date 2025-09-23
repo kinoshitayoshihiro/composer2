@@ -194,7 +194,7 @@ def _transcribe_stem(
     bend_fixed_base: bool = False,
     cc11_strategy: str = "energy",
     cc11_map: str = "linear",
-    cc11_smooth_ms: float = 80.0,
+    cc11_smooth_ms: float = 60.0,
     cc11_gain: float = 1.0,
     cc11_hyst_up: float = 3.0,
     cc11_hyst_down: float = 3.0,
@@ -707,7 +707,7 @@ def _transcribe_stem_impl(
     bend_fixed_base: bool = False,
     cc11_strategy: str = "energy",
     cc11_map: str = "linear",
-    cc11_smooth_ms: float = 80.0,
+    cc11_smooth_ms: float = 60.0,
     cc11_gain: float = 1.0,
     cc11_hyst_up: float = 3.0,
     cc11_hyst_down: float = 3.0,
@@ -970,7 +970,7 @@ def convert_directory(
     bend_integer_range: bool = False,
     cc11_strategy: str = "energy",
     cc11_map: str = "linear",
-    cc11_smooth_ms: float = 80.0,
+    cc11_smooth_ms: float = 60.0,
     cc11_gain: float = 1.0,
     cc11_hyst_up: float = 3.0,
     cc11_hyst_down: float = 3.0,
@@ -1866,7 +1866,7 @@ def main(argv: list[str] | None = None) -> None:
     controls.add_argument(
         "--cc11-smoothing-ms",
         type=float,
-        default=150.0,
+        default=60.0,
         help="Smoothing window for CC11 strategies",
     )
     controls.add_argument(

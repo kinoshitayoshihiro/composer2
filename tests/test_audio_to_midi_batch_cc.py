@@ -28,7 +28,7 @@ def _write(path: Path, data: np.ndarray, sr: int) -> None:
         f.writeframes((data * 32767).astype("<i2").tobytes())
 
 
-def _stub_transcribe(path: Path, *, cc_strategy: str = "none", cc11_smoothing_ms: int = 80, sustain_threshold: float = 0.0, **kwargs) -> StemResult:
+def _stub_transcribe(path: Path, *, cc_strategy: str = "none", cc11_smoothing_ms: int = 60, sustain_threshold: float = 0.0, **kwargs) -> StemResult:
     inst = pretty_midi.Instrument(program=0, name=path.stem)
     inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=0.3))
     inst.notes.append(pretty_midi.Note(velocity=100, pitch=64, start=0.35, end=0.6))

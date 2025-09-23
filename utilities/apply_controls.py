@@ -20,6 +20,9 @@ from .controls_spline import ControlCurve
 logger = logging.getLogger(__name__)
 
 
+_INITIAL_RPN_WINDOW = 0.05
+
+
 def ensure_instrument_for_channel(pm: pretty_midi.PrettyMIDI, ch: int) -> pretty_midi.Instrument:
     """Return an instrument routed to MIDI channel ``ch``.
 
@@ -46,8 +49,51 @@ def _sort_events(inst: pretty_midi.Instrument) -> None:
     for pb in inst.pitch_bends:
         events.append((pb.time, 2, "pb", pb))
     events.sort(key=lambda e: (e[0], e[1]))
-    inst.control_changes = [e[3] for e in events if e[2] == "cc"]
+    inst.control_changes = _dedup_rpn_blocks([e[3] for e in events if e[2] == "cc"])
     inst.pitch_bends = [e[3] for e in events if e[2] == "pb"]
+
+
+def _dedup_rpn_blocks(
+    ccs: list[pretty_midi.ControlChange],
+) -> list[pretty_midi.ControlChange]:
+    """Keep only the initial RPN block cluster in *ccs*.
+
+    Consecutive 101/100/6[/38] events sharing the same timestamp within the
+    first :data:`_INITIAL_RPN_WINDOW` seconds are collapsed, while later blocks
+    are preserved verbatim to allow bend range changes mid-song.
+    """
+
+    out: list[pretty_midi.ControlChange] = []
+    seen_initial_times: set[float] = set()
+    i = 0
+    while i < len(ccs):
+        cc = ccs[i]
+        if (
+            (cc.number, cc.value) == (101, 0)
+            and i + 2 < len(ccs)
+            and (ccs[i + 1].number, ccs[i + 1].value) == (100, 0)
+            and ccs[i + 2].number == 6
+        ):
+            block_len = 3
+            if i + 3 < len(ccs) and ccs[i + 3].number == 38:
+                block_len = 4
+            block_time = float(cc.time)
+            same_time_cluster = all(
+                abs(float(ccs[i + offset].time) - block_time) <= 1e-6
+                for offset in range(block_len)
+            )
+            if block_time <= _INITIAL_RPN_WINDOW and same_time_cluster:
+                key = round(block_time, 6)
+                if key in seen_initial_times:
+                    i += block_len
+                    continue
+                seen_initial_times.add(key)
+            out.extend(ccs[i : i + block_len])
+            i += block_len
+            continue
+        out.append(cc)
+        i += 1
+    return out
 
 
 def write_bend_range_rpn(

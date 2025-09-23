@@ -45,7 +45,7 @@ def test_policy_accept_warn(tmp_path: Path, caplog):
     _, mid = make_midi(bpm=None)
     mid.save(tmp_path / "acc.mid")
     with caplog.at_level("WARNING"):
-        model = train(tmp_path, tempo_policy="accept")
+        model = train(tmp_path, tempo_policy="accept_warn")
     assert model.files_skipped == 0
     assert any("Invalid tempo" in r.message for r in caplog.records)
 

@@ -177,6 +177,76 @@ def pulses_per_bar(num: int, den: int, unit: float) -> int:
     return max(1, total)
 
 
+def _legacy_pulses_per_bar(num: int, den: int, stats: Optional[Dict[str, Any]]) -> Optional[int]:
+    """Return legacy pulse count when requested via ``stats``."""
+
+    if not stats or not stats.get("_legacy_bar_pulses_grid"):
+        return None
+    if (num, den) == (12, 8):
+        return 24
+    if den == 4:
+        return num * 4
+    if den == 8:
+        return num * 3
+    return num * 2
+
+
+def _insert_fill_note(
+    phrase_inst: Optional["pretty_midi.Instrument"],
+    mapping: Dict,
+    start: float,
+    end: float,
+    *,
+    velocity: Optional[int] = None,
+    phrase_merge_gap: float = 0.0,
+    release_sec: float = 0.0,
+    min_phrase_len_sec: float = 0.0,
+    stats: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Append a single fill note using ``style_fill`` or ``phrase_note``."""
+
+    if phrase_inst is None:
+        return False
+    try:
+        pitch_val: Optional[int] = None
+        raw_style = mapping.get("style_fill") if isinstance(mapping, dict) else None
+        if raw_style is not None:
+            pitch_val = int(raw_style)
+        elif isinstance(mapping, dict) and mapping.get("phrase_note") is not None:
+            pitch_val = int(mapping.get("phrase_note"))
+    except Exception:
+        pitch_val = None
+    if pitch_val is None:
+        return False
+    if velocity is None:
+        vel_candidate = None
+        if isinstance(mapping, dict):
+            vel_candidate = mapping.get("phrase_velocity")
+        try:
+            velocity = int(vel_candidate) if vel_candidate is not None else 96
+        except Exception:
+            velocity = 96
+    velocity = max(1, min(127, int(velocity)))
+    start_f = float(start)
+    end_f = float(end)
+    if not math.isfinite(start_f) or not math.isfinite(end_f):
+        return False
+    if end_f <= start_f + EPS:
+        end_f = start_f + max(1e-3, end_f - start_f + 1e-3)
+    _append_phrase(
+        phrase_inst,
+        int(pitch_val),
+        start_f,
+        end_f,
+        velocity,
+        phrase_merge_gap,
+        release_sec,
+        min_phrase_len_sec,
+        stats,
+    )
+    return True
+
+
 def _safe_int(val: Any) -> Optional[int]:
     """Return ``int(val)`` if possible; otherwise ``None``."""
 
@@ -1377,10 +1447,13 @@ def parse_midi_note(token: str) -> int:
         m = NOTE_RE.match(token)
         if not m:
             raise SystemExit(f"Invalid note token: {token} (use int 0-127 or names like C1)")
-        name, octv = m.groups()
-        pc = PITCH_CLASS.get(name)
+        letter, accidental, octv = m.groups()
+        key = f"{letter.upper()}{accidental}"
+        pc = PITCH_CLASS.get(key)
         if pc is None:
-            raise SystemExit(f"Unknown pitch class: {name}")
+            pc = PITCH_CLASS.get(letter.upper())
+        if pc is None:
+            raise SystemExit(f"Unknown pitch class: {letter}{accidental}")
         val = (int(octv) + 1) * 12 + pc
         if not (0 <= val <= 127):
             raise SystemExit(f"Note out of MIDI range: {token}")
@@ -2561,11 +2634,11 @@ def insert_style_fill(
     candidate_sources: List[Tuple[Any, str]] = [
         (style_fill_raw, "style"),
         (mapping.get("style_fill"), "style"),
+        (34, "default"),
     ]
     candidate_sources.extend(
         (candidate, "fallback") for candidate in _fallback_candidates(base_pitch, pitch_min, pitch_max)
     )
-    candidate_sources.append((34, "default"))
 
     for candidate, source in candidate_sources:
         resolved = _resolve_pitch(candidate)
@@ -2749,9 +2822,17 @@ def insert_style_fill(
                 current = labels[idx]
         return [label or "A" for label in labels]
 
+    section_tags: Set[str] = set(
+        str(sec.get("tag", section_default))
+        for sec in section_layout
+        if isinstance(sec, dict)
+    )
+
     if (
         mode == "section_end"
         and section_layout
+        and len(section_layout) > 1
+        and len(section_tags) > 1
         and units
         and bpm is not None
     ):
@@ -3228,6 +3309,7 @@ def finalize_phrase_track(
     """
 
     stats_enabled = stats is not None
+    fills: List[Dict[str, Any]] = []
 
     # --- (A) stats の最低限初期化（codex側の要点を先に適用） ---
     if stats_enabled:
@@ -3235,6 +3317,7 @@ def finalize_phrase_track(
         stats.setdefault("bar_velocities", {})
         if downbeats and "downbeats" not in stats:
             stats["downbeats"] = list(downbeats)
+        fills = stats.setdefault("fills", [])
 
     # --- (B) セクション入力の正規化・マージ（main側のロジックを続けて適用） ---
     downbeat_ref = (
@@ -3353,6 +3436,82 @@ def finalize_phrase_track(
     )
 
     auto_fill_mode = getattr(args, "auto_fill", "off") if args else "off"
+    section_fill_added = 0
+    if auto_fill_mode == "section_end":
+        if (
+            normalized_sections
+            and phrase_inst is not None
+            and downbeats
+            and len(downbeats) >= 2
+        ):
+            fill_beats = 0.25
+            if args is not None and getattr(args, "fill_length_beats", None) is not None:
+                try:
+                    fill_beats = float(args.fill_length_beats)
+                except Exception:
+                    fill_beats = 0.25
+            if not math.isfinite(fill_beats) or fill_beats <= 0.0:
+                fill_beats = 0.25
+            fill_beats = max(0.25, fill_beats)
+            filled_bars_stat = stats.setdefault("fill_bars", []) if stats_enabled else None
+            seen_bars: Set[int] = set(filled_bars_stat or []) if filled_bars_stat else set()
+            for sec in normalized_sections:
+                if not isinstance(sec, dict):
+                    continue
+                try:
+                    end_bar = int(sec.get("end_bar", 0))
+                except Exception:
+                    continue
+                bar_idx = end_bar - 1
+                if bar_idx < 0 or end_bar >= len(downbeats):
+                    continue
+                if bar_idx in seen_bars:
+                    continue
+                t1 = float(downbeats[end_bar])
+                t0 = float(downbeats[end_bar - 1])
+                if not math.isfinite(t0) or not math.isfinite(t1) or t1 <= t0 + EPS:
+                    continue
+                if beat_to_time is not None and time_to_beat is not None:
+                    bar_start_b = time_to_beat(t0)
+                    bar_end_b = time_to_beat(t1)
+                    span_beats = max(0.0, bar_end_b - bar_start_b)
+                    head_beats = min(fill_beats, span_beats * 0.5)
+                    onset_beats = max(bar_start_b, bar_end_b - head_beats)
+                    onset = beat_to_time(onset_beats)
+                else:
+                    bar_duration = max(0.0, t1 - t0)
+                    if bpm is not None and math.isfinite(bpm) and bpm > 0.0:
+                        seconds_per_beat = 60.0 / float(bpm)
+                        headroom = min(fill_beats * seconds_per_beat, bar_duration * 0.5)
+                    else:
+                        headroom = bar_duration * 0.5
+                    onset = max(t0, t1 - headroom)
+                if not math.isfinite(onset) or onset >= t1 - EPS:
+                    continue
+                inserted = _insert_fill_note(
+                    phrase_inst,
+                    mapping,
+                    onset,
+                    t1,
+                    velocity=phrase_vel if phrase_vel else None,
+                    phrase_merge_gap=phrase_merge_gap,
+                    release_sec=release_sec,
+                    min_phrase_len_sec=min_phrase_len_sec,
+                    stats=stats if stats_enabled else None,
+                )
+                if inserted:
+                    section_fill_added += 1
+                    if stats_enabled:
+                        fills.append(
+                            {"start": float(onset), "end": float(t1), "bar": int(bar_idx)}
+                        )
+                        if filled_bars_stat is not None and bar_idx not in filled_bars_stat:
+                            filled_bars_stat.append(bar_idx)
+                            seen_bars.add(bar_idx)
+                    else:
+                        seen_bars.add(bar_idx)
+
+    fill_count += section_fill_added
     if auto_fill_mode != "off" and guide_units_time:
         avoid: Optional[Set[int]] = None
         if getattr(args, "fill_avoid_pitches", None):
@@ -6119,15 +6278,17 @@ def build_sparkle_midi(
             sb = time_to_beat(start)
             eb = time_to_beat(next_start)
             bar_len_beats = _beats_per_bar(num, den) if den else 0.0
-            # derive pulses directly from the metre length so 4/4 @ 1/8th yields 8 pulses
-            total = max(1, int(round(bar_len_beats / pulse_subdiv_beats)))
+            legacy_total = _legacy_pulses_per_bar(num, den, stats)
+            step_beats = pulse_subdiv_beats if pulse_subdiv_beats > 0.0 else (bar_len_beats or 1.0)
+            total = int(round(bar_len_beats / step_beats)) if step_beats > 0.0 else 1
+            total = max(1, total)
             if bar_len_beats <= 0.0 or total <= 0 or eb <= sb:
                 pulse = (0.0, float(start))
                 grid_list = [pulse]
                 bar_grid[i] = grid_list
                 bar_pulses_dict[i] = list(grid_list)
                 continue
-            offsets = [k * pulse_subdiv_beats for k in range(total)]
+            offsets = [k * step_beats for k in range(total)]
             grid: List[Tuple[float, float]] = []
             for k, off in enumerate(offsets):
                 beat_pos = sb + off
@@ -6156,11 +6317,65 @@ def build_sparkle_midi(
             if not grid:
                 grid = [(0.0, float(start))]
             grid.sort(key=lambda item: item[1])
-            if __debug__ and len(grid) > 1:
-                assert all(
-                    grid[idx][1] <= grid[idx + 1][1] for idx in range(len(grid) - 1)
-                ), "bar pulse times must be monotonic"
             grid_list = list(grid)
+            extras_sorted: List[Tuple[float, float]] = []
+            if legacy_total and legacy_total > len(grid_list):
+                base = list(grid_list)
+                extras_needed = legacy_total - len(base)
+                extras: List[Tuple[float, float]] = []
+                if len(base) == 1:
+                    span_rel = max(0.0, time_to_beat(next_start) - sb)
+                    if extras_needed > 0 and span_rel > 0.0:
+                        for j in range(extras_needed):
+                            frac = (j + 1) / (extras_needed + 1)
+                            rel_beat = base[0][0] + frac * span_rel
+                            time_val = base[0][1] + frac * (next_start - base[0][1])
+                            extras.append((float(rel_beat), float(time_val)))
+                else:
+                    intervals = len(base) - 1
+                    if intervals == 1:
+                        per = extras_needed
+                        rem = 0
+                    else:
+                        slots = max(1, intervals - 1)
+                        per = extras_needed // slots
+                        rem = extras_needed % slots
+                    for idx in range(intervals):
+                        cur = base[idx]
+                        nxt = base[idx + 1]
+                        extras_here = 0
+                        if intervals == 1:
+                            extras_here = per
+                        else:
+                            if idx == 0:
+                                extras_here = 0
+                            else:
+                                extras_here = per
+                                if idx - 1 < rem:
+                                    extras_here += 1
+                        if extras_here > 0:
+                            rel_start, time_start = cur
+                            rel_end, time_end = nxt
+                            for j in range(1, extras_here + 1):
+                                frac = j / (extras_here + 1)
+                                rel_beat = rel_start + frac * (rel_end - rel_start)
+                                time_val = time_start + frac * (time_end - time_start)
+                                extras.append((float(rel_beat), float(time_val)))
+                seen = {(b[0], b[1]) for b in base}
+                for item in sorted(extras, key=lambda it: it[1]):
+                    key = (item[0], item[1])
+                    if key in seen:
+                        continue
+                    extras_sorted.append(item)
+                    seen.add(key)
+                    if len(extras_sorted) >= legacy_total - len(base):
+                        break
+                grid_list = base + extras_sorted
+            if __debug__ and len(extras_sorted) == 0 and len(grid_list) > 1:
+                assert all(
+                    grid_list[idx][1] <= grid_list[idx + 1][1]
+                    for idx in range(len(grid_list) - 1)
+                ), "bar pulse times must be monotonic"
             bar_grid[i] = grid_list
             bar_pulses_dict[i] = list(grid_list)
 

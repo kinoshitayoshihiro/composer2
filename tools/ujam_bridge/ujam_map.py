@@ -623,38 +623,28 @@ def _group_chords(notes: List[pretty_midi.Note], window: float = 0.03) -> List[L
 def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
     """Return bar start times accounting for time signature changes."""
 
-    starts: List[float] = [0.0]
+    starts: set[float] = {0.0}
     try:
         downbeats = pm.get_downbeats()
     except Exception:
         downbeats = []
-    has_downbeats = False
-    size = getattr(downbeats, "size", None)
-    if isinstance(size, (int, float)):
+    try:
+        values = downbeats.tolist() if hasattr(downbeats, "tolist") else list(downbeats)
+    except Exception:
+        values = []
+    for value in values:
         try:
-            has_downbeats = size > 0
+            starts.add(float(value))
         except Exception:
-            has_downbeats = False
-    if not has_downbeats:
-        try:
-            has_downbeats = len(downbeats) > 0  # type: ignore[arg-type]
-        except Exception:
-            has_downbeats = False
-    if has_downbeats:
-        values = downbeats.tolist() if hasattr(downbeats, "tolist") else downbeats
-        for value in values:
-            try:
-                starts.append(float(value))
-            except Exception:
-                continue
+            continue
     ts_changes = getattr(pm, "time_signature_changes", None) or []
     for ts in ts_changes:
         try:
             t = float(getattr(ts, "time", 0.0) or 0.0)
         except Exception:
             continue
-        starts.append(max(0.0, t))
-    return sorted(set(starts))
+        starts.add(max(0.0, t))
+    return sorted(starts)
 
 
 def _ks_lead_time(bar_len_sec: float, args) -> float:

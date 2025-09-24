@@ -340,19 +340,30 @@ def convert(args: SimpleNamespace) -> None:
             ks_notes = []
             for b in blocks:
                 ks_notes.extend(pattern_to_keyswitches(b["strum"], pattern_lib, keymap))
-        ks_tuple = tuple(ks_notes)
-        same_tuple = last_sent == ks_tuple
+        section_pitches: List[int] = []
+        if section_mode == "on" and sections:
+            sec = _section_for_bar(bar, sections)
+            if sec:
+                for name in section_styles.get(sec, []):
+                    pitch = keymap.get(name)
+                    if isinstance(pitch, int):
+                        section_pitches.append(pitch)
+        desired_tuple = tuple(section_pitches + ks_notes)
+        same_tuple = last_sent == desired_tuple
         if periodic > 0:
-            periodic_due = (last_sent_bar < 0) or ((bar_index - last_sent_bar) >= periodic)
+            periodic_due = (last_sent_bar < 0) or (
+                last_sent_bar >= 0
+                and (bar_index - last_sent_bar) % periodic == 0
+            )
         else:
             periodic_due = last_sent_bar < 0
-        send = (not same_tuple) or periodic_due
-        if send and no_redundant and same_tuple:
-            if periodic <= 0:
+        if same_tuple:
+            send = periodic_due
+            if send and no_redundant and last_sent_bar == bar_index and periodic <= 0:
                 send = False
-            elif last_sent_bar == bar_index:
-                send = False
-        if send:
+        else:
+            send = True
+        if send and desired_tuple:
             bar_end = bar_start
             if blocks:
                 for blk in blocks:
@@ -368,22 +379,16 @@ def convert(args: SimpleNamespace) -> None:
             bpm = _tempo_at(bar_end, tempo_times, tempo_values)
             lead_beats = (lead_with_head_ms / 1000.0) * (bpm / 60.0)
             ks_time = _ks_at_bar_end_with_headroom(bar_end, bpm, headroom_beats=lead_beats)
-            def _record_emit() -> None:
-                # Update guards immediately after emitting any KS event.
-                nonlocal last_sent, last_sent_bar
-                last_sent = ks_tuple
-                last_sent_bar = bar_index
-            if section_mode == "on" and sections:
-                sec = _section_for_bar(bar, sections)
-                if sec:
-                    for name in section_styles.get(sec, []):
-                        pitch = keymap.get(name)
-                        if pitch is not None:
-                            if _emit_keyswitch(pitch, ks_time):
-                                _record_emit()
+            emitted_any = False
+            for pitch in section_pitches:
+                if _emit_keyswitch(pitch, ks_time):
+                    emitted_any = True
             for pitch in ks_notes:
                 if _emit_keyswitch(pitch, ks_time):
-                    _record_emit()
+                    emitted_any = True
+            if emitted_any:
+                last_sent = desired_tuple
+                last_sent_bar = bar_index
         for b in blocks:
             chord = utils.chordify(b["pitches"], (play_low, play_high))
             total_notes += len(b["pitches"])
@@ -928,34 +933,40 @@ def convert(args) -> None:
             ks_notes = []
             for b in blocks:
                 ks_notes.extend(pattern_to_keyswitches(b["strum"], pattern_lib, keymap))
-        ks_tuple = tuple(ks_notes)
+        section_pitches: List[int] = []
+        if args.section_aware == "on" and sections:
+            sec = _section_for_bar(bar, sections)
+            if sec:
+                for name in section_styles.get(sec, []):
+                    pitch = keymap.get(name)
+                    if isinstance(pitch, int):
+                        section_pitches.append(pitch)
+        desired_tuple = tuple(section_pitches + ks_notes)
         periodic = max(0, int(args.periodic_ks))
-        same_tuple = last_sent == ks_tuple
+        same_tuple = last_sent == desired_tuple
         if periodic > 0:
-            periodic_due = (last_sent_bar < 0) or ((bar_index - last_sent_bar) >= periodic)
+            periodic_due = (last_sent_bar < 0) or (
+                last_sent_bar >= 0
+                and (bar_index - last_sent_bar) % periodic == 0
+            )
         else:
             periodic_due = last_sent_bar < 0
-        send = (not same_tuple) or periodic_due
-        if send and args.no_redundant_ks and same_tuple:
-            if periodic <= 0:
+        if same_tuple:
+            send = periodic_due
+            if send and args.no_redundant_ks and last_sent_bar == bar_index and periodic <= 0:
                 send = False
-            elif last_sent_bar == bar_index:
-                send = False
-        if send:
+        else:
+            send = True
+        if send and desired_tuple:
             ks_time = max(0.0, bar_start - (float(args.ks_lead) + 20.0) / 1000.0)
             emitted_any = False
-            if args.section_aware == "on" and sections:
-                sec = _section_for_bar(bar, sections)
-                if sec:
-                    for name in section_styles.get(sec, []):
-                        pitch = keymap.get(name)
-                        if pitch is not None:
-                            emitted_any |= _emit_keyswitch(pitch, ks_time)
+            for pitch in section_pitches:
+                emitted_any |= _emit_keyswitch(pitch, ks_time)
             for pitch in ks_notes:
                 emitted_any |= _emit_keyswitch(pitch, ks_time)
             if emitted_any:
                 # Track the last tuple only when a keyswitch actually went out.
-                last_sent = ks_tuple
+                last_sent = desired_tuple
                 last_sent_bar = bar_index
         for b in blocks:
             chord = utils.chordify(b["pitches"], (play_low, play_high))

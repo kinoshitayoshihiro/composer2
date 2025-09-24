@@ -284,6 +284,32 @@ def convert(args: SimpleNamespace) -> None:
         info["next_start"] = next_start
         bar_blocks[info["bar"]].append(info)
 
+    max_bar_index = max(bar_blocks) if bar_blocks else 0
+
+    def _bar_start_for(index: int) -> float:
+        segment = segments[0]
+        for candidate in segments[1:]:
+            if index + 1e-9 >= float(candidate["bar_offset"]):
+                segment = candidate
+            else:
+                break
+        beats_in_bar = max(float(segment["beats_per_bar"]), 1.0)
+        offset_base = int(float(segment["bar_offset"]))
+        rel = index - offset_base
+        if rel < 0:
+            rel = 0
+        bar_start_beat = float(segment["start_beat"]) + rel * beats_in_bar
+        tick_value = bar_start_beat * resolution
+        try:
+            bar_time = pm.tick_to_time(tick_value)
+        except Exception:
+            bar_time = float(segment["start_time"]) + rel * beats_in_bar * 0.5
+        if not math.isfinite(bar_time):
+            bar_time = float(segment["start_time"]) if math.isfinite(float(segment["start_time"])) else 0.0
+        return float(bar_time)
+
+    bar_starts = [_bar_start_for(i) for i in range(max_bar_index + 1)] or [0.0]
+
     out_pm = pretty_midi.PrettyMIDI(resolution=pm.resolution)
     ks_inst = pretty_midi.Instrument(program=0, name="Keyswitches")
     ks_channel = max(0, min(15, int(getattr(args, "ks_channel", 16)) - 1))
@@ -443,6 +469,9 @@ def convert(args: SimpleNamespace) -> None:
         print("Approximate patterns for bars:", ", ".join(approx))
 
 
+_convert_impl = convert
+
+
 def pattern_to_keyswitches(pattern: str, library: Dict[str, List[str]], keymap: Dict[str, int]) -> List[int]:
     """Resolve a space separated *pattern* to key switch MIDI notes."""
     names = library.get(pattern, [])
@@ -472,6 +501,19 @@ def _parse_simple(text: str) -> Dict:
                     i += 1
                 items.append(item)
             data["keyswitches"] = items
+        elif line.endswith(":") and not line.startswith("  -"):
+            key = line[:-1].strip()
+            i += 1
+            block: Dict[str, object] = {}
+            while i < len(lines) and lines[i].startswith("  "):
+                inner = lines[i].strip()
+                if ":" not in inner:
+                    i += 1
+                    continue
+                k, v = inner.split(":", 1)
+                block[k.strip()] = _coerce(v.strip())
+                i += 1
+            data[key] = block if block else ""
         else:
             k, v = line.split(":", 1)
             data[k.strip()] = _coerce(v.strip())
@@ -663,27 +705,21 @@ def _ks_lead_time(bar_len_sec: float, args) -> float:
 
 
 def _keyswitch_time_for_bar(bar_index: int, bar_starts: Sequence[float], args) -> float:
-    """Compute when to emit a key switch for *bar_index* using bar boundaries."""
+    """Compute when to emit a key switch for *bar_index* using the bar boundaries."""
 
     if not bar_starts:
         return 0.0
-    if bar_index <= 0:
-        return 0.0
-    if bar_index < len(bar_starts):
-        current = float(bar_starts[bar_index])
-        prev_idx = bar_index - 1
+    i = max(0, min(bar_index, len(bar_starts) - 1))
+    start = float(bar_starts[i])
+    if i + 1 < len(bar_starts):
+        bar_len = max(0.0, float(bar_starts[i + 1]) - start)
+    elif i > 0:
+        bar_len = max(0.0, start - float(bar_starts[i - 1]))
     else:
-        current = float(bar_starts[-1])
-        prev_idx = len(bar_starts) - 2
-    if prev_idx < 0:
-        return max(0.0, current)
-    prev = float(bar_starts[prev_idx])
-    delta = current - prev
-    if not math.isfinite(delta) or delta <= 0.0:
-        return max(0.0, current)
-    lead = _ks_lead_time(delta, args)
-    lead = min(lead, max(0.0, delta))
-    return max(0.0, current - lead)
+        bar_len = 0.0
+    lead = _ks_lead_time(bar_len, args)
+    when = start - lead
+    return when if when > 1e-9 else 0.0
 
 
 def _tempo_at(time: float, tempo_times: Sequence[float], tempo_values: Sequence[float]) -> float:
@@ -737,269 +773,7 @@ def _section_for_bar(bar: int, sections: Dict[int, str]) -> str | None:
 
 
 def convert(args) -> None:
-    if pretty_midi is None:
-        raise RuntimeError("pretty_midi is required for conversion")
-    mapping_arg = getattr(args, "mapping", "")
-    mapping_path = pathlib.Path(mapping_arg)
-    mapping_data: Dict
-    if mapping_path.is_file():
-        mapping_data = _load_yaml(mapping_path)
-        issues = _validate_map(mapping_data)
-        if issues:
-            raise ValueError(", ".join(issues))
-    else:
-        candidate_name = mapping_path.name if mapping_path.suffix else f"{mapping_path.name}.yaml"
-        candidate = MAP_DIR / candidate_name
-        if candidate.is_file():
-            mapping_data = _load_yaml(candidate)
-            issues = _validate_map(mapping_data)
-            if issues:
-                raise ValueError(", ".join(issues))
-        else:
-            mapping_key = mapping_path.stem if mapping_path.suffix else mapping_path.name
-            mapping_data = load_map(mapping_key)
-    keymap: Dict[str, int] = {}
-    for item in mapping_data.get("keyswitches", []) or []:
-        if isinstance(item, dict):
-            name = item.get("name")
-            note = item.get("note")
-            if isinstance(name, str) and isinstance(note, int):
-                keymap[name] = int(note)
-    extra = mapping_data.get("keyswitch")
-    if isinstance(extra, dict):
-        for name, note in extra.items():
-            if isinstance(name, str) and isinstance(note, int):
-                keymap[name] = int(note)
-    if not keymap:
-        raise ValueError("mapping did not define any keyswitch notes")
-    pattern_lib = _load_patterns()
-    section_styles = mapping_data.get("section_styles", {}) or {}
-    play_cfg = mapping_data.get("play_range", {}) or {}
-    try:
-        play_low = int(play_cfg.get("low", KS_MIN))
-        play_high = int(play_cfg.get("high", KS_MAX))
-    except Exception:
-        play_low, play_high = KS_MIN, KS_MAX
-    sections: Dict[int, str] = {}
-    tags_path = getattr(args, "tags", None)
-    if tags_path:
-        tag_path = pathlib.Path(tags_path)
-        if tag_path.is_file():
-            sections = _load_sections(tag_path)
-    pm = pretty_midi.PrettyMIDI(str(args.in_midi))
-    # 初期テンポ注入（無テンポや非正テンポの救済）
-    try:
-        # pretty_midi.get_tempo_changes() は (times, tempi) を返す
-        times, tempi = pm.get_tempo_changes()
-        if len(tempi) == 0 or not (float(tempi[0]) > 0):
-            # 120 BPM を仮定して tick→sec のスケールを初期化
-            scale = 60.0 / (120.0 * pm.resolution)
-            pm._tick_scales = [(0, scale)]
-            if hasattr(pm, "_update_tick_to_time"):
-                pm._update_tick_to_time(pm.resolution)
-    except Exception:
-        pass
-    utils.quantize(pm, int(args.quant), float(args.swing))
-    beats_per_bar = pm.time_signature_changes[0].numerator if pm.time_signature_changes else 4
-    if args.use_groove_profile:
-        vocal = pretty_midi.PrettyMIDI(str(args.use_groove_profile))
-        events = [{"offset": vocal.time_to_tick(n.start) / vocal.resolution} for n in vocal.instruments[0].notes]
-        profile = gp.extract_groove_profile(events)  # type: ignore[arg-type]
-        utils.apply_groove_profile(
-            pm,
-            profile,
-            beats_per_bar=beats_per_bar,
-            clip_head_ms=float(args.groove_clip_head),
-            clip_other_ms=float(args.groove_clip_other),
-        )
-    utils.humanize(pm, float(args.humanize))
-
-    try:
-        tempo_times_arr, tempo_values_arr = pm.get_tempo_changes()
-    except Exception:
-        tempo_times_arr, tempo_values_arr = ([], [])
-    tempo_times = [float(t) for t in tempo_times_arr] if len(tempo_times_arr) else [0.0]
-    tempo_values = [float(v) for v in tempo_values_arr] if len(tempo_values_arr) else [120.0]
-
-    bar_starts = _compute_bar_starts(pm)
-
-    instrument = pm.instruments[0]
-    chord_blocks = _group_chords(instrument.notes)
-
-    bar_blocks: Dict[int, List[Dict]] = defaultdict(list)
-    all_blocks: List[Dict] = []
-    prev_beat: float | None = None
-    prev_strum: str | None = None
-    for block in chord_blocks:
-        start = block[0].start
-        duration = min(n.end - n.start for n in block)
-        beat = pm.time_to_tick(start) / pm.resolution
-        bar = max(0, bisect_right(bar_starts, start) - 1)
-        if bar >= len(bar_starts):
-            bar = len(bar_starts) - 1
-        bar_start_tick = pm.time_to_tick(bar_starts[bar])
-        beat_in_bar = (pm.time_to_tick(start) - bar_start_tick) / pm.resolution
-        if prev_beat is None or beat_in_bar < 0.1 or (beat - prev_beat) > 1.5:
-            strum = "D"
-        else:
-            strum = "U" if prev_strum != "U" else "D"
-        pitches = [n.pitch for n in block]
-        info = {
-            "start": start,
-            "duration": duration,
-            "pitches": pitches,
-            "strum": strum,
-            "beat": beat,
-            "bar": bar,
-        }
-        all_blocks.append(info)
-        prev_beat = beat
-        prev_strum = strum
-
-    for i, info in enumerate(all_blocks):
-        info["next_start"] = all_blocks[i + 1]["start"] if i + 1 < len(all_blocks) else info["start"] + info["duration"]
-        bar_blocks[info["bar"]].append(info)
-
-    out_pm = pretty_midi.PrettyMIDI(resolution=pm.resolution)
-    ks_inst = pretty_midi.Instrument(program=0, name="Keyswitches")
-    ks_inst.midi_channel = int(args.ks_channel) - 1
-    perf_inst = pretty_midi.Instrument(program=instrument.program, name="Performance")
-
-    ks_hist: Counter[int] = Counter()
-    clamp_notes = 0
-    total_notes = 0
-    approx: List[str] = []
-    csv_rows: List[Dict[str, object]] = []
-    last_sent: tuple[int, ...] | None = None
-    last_sent_bar = -10**9
-    emitted_at: dict[int, float] = {}
-    bar_index = 0
-
-    def _emit_keyswitch(pitch: int, when: float) -> bool:
-        if args.no_redundant_ks:
-            prev = emitted_at.get(pitch)
-            if prev is not None and abs(prev - when) <= 1e-6:
-                return False
-        ks_inst.notes.append(
-            pretty_midi.Note(
-                velocity=int(args.ks_vel),
-                pitch=pitch,
-                start=when,
-                end=when + 0.05,
-            )
-        )
-        ks_hist[pitch] += 1
-        emitted_at[pitch] = when
-        return True
-
-    for bar in sorted(bar_blocks):
-        blocks = bar_blocks[bar]
-        bar_start = bar_starts[bar] if bar < len(bar_starts) else bar_starts[-1]
-        pattern = " ".join(b["strum"] for b in blocks)
-        ks_notes = pattern_to_keyswitches(pattern, pattern_lib, keymap)
-        if not ks_notes:
-            approx.append(pattern)
-            ks_notes = []
-            for b in blocks:
-                ks_notes.extend(pattern_to_keyswitches(b["strum"], pattern_lib, keymap))
-        section_pitches: List[int] = []
-        if args.section_aware == "on" and sections:
-            sec = _section_for_bar(bar, sections)
-            if sec:
-                for name in section_styles.get(sec, []):
-                    pitch = keymap.get(name)
-                    if isinstance(pitch, int):
-                        section_pitches.append(pitch)
-        desired_tuple = tuple(section_pitches + ks_notes)
-        periodic = max(0, int(args.periodic_ks))
-        same_tuple = last_sent == desired_tuple
-        if periodic > 0:
-            periodic_due = (last_sent_bar < 0) or (
-                last_sent_bar >= 0
-                and (bar_index - last_sent_bar) % periodic == 0
-            )
-        else:
-            periodic_due = last_sent_bar < 0
-        if same_tuple:
-            send = periodic_due
-            if send and args.no_redundant_ks and last_sent_bar == bar_index and periodic <= 0:
-                send = False
-        else:
-            send = True
-        if send and desired_tuple:
-            ks_time = _keyswitch_time_for_bar(bar, bar_starts, args)
-            emitted_any = False
-            for pitch in section_pitches:
-                emitted_any |= _emit_keyswitch(pitch, ks_time)
-            for pitch in ks_notes:
-                emitted_any |= _emit_keyswitch(pitch, ks_time)
-            if emitted_any:
-                # Track the last tuple only when a keyswitch actually went out.
-                last_sent = desired_tuple
-                last_sent_bar = bar_index
-        for b in blocks:
-            chord = utils.chordify(b["pitches"], (play_low, play_high))
-            total_notes += len(b["pitches"])
-            clamp_notes += sum(1 for p in b["pitches"] if p < play_low or p > play_high)
-            end_time = b["start"] + b["duration"]
-            next_start = b.get("next_start", end_time)
-            head = float(args.ks_headroom) / 1000.0
-            if next_start - head < end_time:
-                end_time = next_start - head
-            if end_time < b["start"]:
-                end_time = b["start"]
-            for p in chord:
-                perf_inst.notes.append(pretty_midi.Note(velocity=100, pitch=p, start=b["start"], end=end_time))
-            if args.dry_run:
-                csv_rows.append({"start": b["start"], "chord": chord, "keyswitches": ks_notes})
-        bar_index += 1
-
-    if args.dry_run:
-        csv_path = pathlib.Path(args.out_midi).with_suffix(".csv")
-        with open(csv_path, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.writer(fh)
-            writer.writerow(["start", "chord", "keyswitches"])
-            for row in csv_rows:
-                writer.writerow([f"{row['start']:.3f}", " ".join(map(str, row['chord'])), " ".join(map(str, row['keyswitches']))])
-    else:
-        out_pm.instruments.append(ks_inst)
-        out_pm.instruments.append(perf_inst)
-        out_pm.write(str(args.out_midi))
-        if getattr(mido, "MidiFile", None) is not None:
-            try:
-                mf = mido.MidiFile(str(args.out_midi))  # type: ignore[attr-defined]
-                ks_ch = int(args.ks_channel) - 1
-                ks_track_index = None
-                for idx, track in enumerate(mf.tracks):
-                    track_name = None
-                    for msg in track:
-                        if msg.type == "track_name":
-                            track_name = msg.name
-                            break
-                    if track_name == "Keyswitches":
-                        ks_track_index = idx
-                        break
-                if ks_track_index is not None:
-                    ks_track = mf.tracks[ks_track_index]
-                    for msg in ks_track:
-                        if msg.type in {"note_on", "note_off"}:
-                            msg.channel = ks_ch
-                    if ks_track_index != 0:
-                        del mf.tracks[ks_track_index]
-                        mf.tracks.insert(0, ks_track)
-                    mf.save(str(args.out_midi))
-            except Exception:
-                pass
-
-    if ks_hist:
-        print("Keyswitch usage:")
-        for pitch, count in sorted(ks_hist.items()):
-            print(f"  {pitch}: {count}")
-    if total_notes:
-        pct = (clamp_notes / total_notes) * 100.0
-        print(f"Clamped notes: {clamp_notes}/{total_notes} ({pct:.1f}%)")
-    if approx:
-        print("Approximate patterns for bars:", ", ".join(approx))
+    return _convert_impl(args)
 
 
 

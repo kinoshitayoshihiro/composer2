@@ -25,7 +25,29 @@ def _load(path: pathlib.Path) -> Dict:
 def validate(path: pathlib.Path) -> List[str]:
     """Validate mapping *path* and return a list of problems."""
     data = _load(path)
-    return _validate_map(data)
+    issues = _validate_map(data)
+
+    # --- keyswitch のレンジ検証を追加 ---
+    pr = data.get("play_range", {}) if isinstance(data, dict) else {}
+    low = int(pr.get("low", KS_MIN))
+    high = int(pr.get("high", KS_MAX))
+    if low > high:
+        low, high = high, low  # 入れ替えで自衛
+
+    ks = data.get("keyswitch", {}) if isinstance(data, dict) else {}
+    if isinstance(ks, dict):
+        for name, val in ks.items():
+            try:
+                note = int(val)
+            except Exception:
+                issues.append(f"keyswitch '{name}' not an int (got {val!r})")
+                continue
+            if note < low or note > high:
+                issues.append(
+                    f"keyswitch '{name}' out of range {low}..{high} (got {note})"
+                )
+
+    return issues
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:

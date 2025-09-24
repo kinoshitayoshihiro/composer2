@@ -321,11 +321,6 @@ def convert(args: SimpleNamespace) -> None:
         periodic = int(getattr(args, "periodic_ks", 0))
     except Exception:
         periodic = 0
-    ks_lead_ms = float(getattr(args, "ks_lead", 60.0))
-    if not math.isfinite(ks_lead_ms):
-        ks_lead_ms = 60.0
-    ks_lead_ms = max(0.0, ks_lead_ms)
-    lead_with_head_ms = ks_lead_ms + 20.0
     ks_headroom = float(getattr(args, "ks_headroom", 10.0)) / 1000.0
     section_mode = getattr(args, "section_aware", "off")
     no_redundant = bool(getattr(args, "no_redundant_ks", False))
@@ -364,21 +359,7 @@ def convert(args: SimpleNamespace) -> None:
         else:
             send = True
         if send and desired_tuple:
-            bar_end = bar_start
-            if blocks:
-                for blk in blocks:
-                    nxt = blk.get("next_start", blk["start"])
-                    if nxt is None:
-                        nxt = blk["start"]
-                    try:
-                        candidate = float(nxt)
-                    except Exception:
-                        candidate = float(blk["start"])
-                    if candidate > bar_end:
-                        bar_end = candidate
-            bpm = _tempo_at(bar_end, tempo_times, tempo_values)
-            lead_beats = (lead_with_head_ms / 1000.0) * (bpm / 60.0)
-            ks_time = _ks_at_bar_end_with_headroom(bar_end, bpm, headroom_beats=lead_beats)
+            ks_time = _keyswitch_time_for_bar(bar, bar_starts, args)
             emitted_any = False
             for pitch in section_pitches:
                 if _emit_keyswitch(pitch, ks_time):
@@ -717,6 +698,39 @@ def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
     return sorted(bar_times)
 
 
+def _ks_lead_time(bar_len_sec: float, args) -> float:
+    """Return lead time in seconds before a bar boundary for key switches."""
+
+    if not math.isfinite(bar_len_sec) or bar_len_sec <= 0.0:
+        return 0.0
+    lead_sec = 0.08
+    return min(lead_sec, bar_len_sec)
+
+
+def _keyswitch_time_for_bar(bar_index: int, bar_starts: Sequence[float], args) -> float:
+    """Compute when to emit a key switch for *bar_index* using bar boundaries."""
+
+    if not bar_starts:
+        return 0.0
+    if bar_index <= 0:
+        return 0.0
+    if bar_index < len(bar_starts):
+        current = float(bar_starts[bar_index])
+        prev_idx = bar_index - 1
+    else:
+        current = float(bar_starts[-1])
+        prev_idx = len(bar_starts) - 2
+    if prev_idx < 0:
+        return max(0.0, current)
+    prev = float(bar_starts[prev_idx])
+    delta = current - prev
+    if not math.isfinite(delta) or delta <= 0.0:
+        return max(0.0, current)
+    lead = _ks_lead_time(delta, args)
+    lead = min(lead, max(0.0, delta))
+    return max(0.0, current - lead)
+
+
 def _tempo_at(time: float, tempo_times: Sequence[float], tempo_values: Sequence[float]) -> float:
     idx = bisect_right(tempo_times, time) - 1
     if idx < 0:
@@ -958,7 +972,7 @@ def convert(args) -> None:
         else:
             send = True
         if send and desired_tuple:
-            ks_time = max(0.0, bar_start - (float(args.ks_lead) + 20.0) / 1000.0)
+            ks_time = _keyswitch_time_for_bar(bar, bar_starts, args)
             emitted_any = False
             for pitch in section_pitches:
                 emitted_any |= _emit_keyswitch(pitch, ks_time)

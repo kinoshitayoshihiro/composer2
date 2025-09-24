@@ -628,8 +628,21 @@ def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
         downbeats = pm.get_downbeats()
     except Exception:
         downbeats = []
-    if downbeats:
-        for value in downbeats:
+    has_downbeats = False
+    size = getattr(downbeats, "size", None)
+    if isinstance(size, (int, float)):
+        try:
+            has_downbeats = size > 0
+        except Exception:
+            has_downbeats = False
+    if not has_downbeats:
+        try:
+            has_downbeats = len(downbeats) > 0  # type: ignore[arg-type]
+        except Exception:
+            has_downbeats = False
+    if has_downbeats:
+        values = downbeats.tolist() if hasattr(downbeats, "tolist") else downbeats
+        for value in values:
             try:
                 starts.append(float(value))
             except Exception:

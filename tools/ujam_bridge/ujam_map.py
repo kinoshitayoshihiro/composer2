@@ -465,7 +465,7 @@ def convert(args: SimpleNamespace) -> None:
         else:
             send = True
         if send and desired_tuple:
-            ks_time = _keyswitch_time_for_bar(bar, bar_starts, args, pm)
+            ks_time = _keyswitch_time_for_bar(bar, bar_starts, args)
             emitted_any = False
             for pitch in section_pitches:
                 if _emit_keyswitch(pitch, ks_time):
@@ -785,28 +785,18 @@ def _keyswitch_time_for_bar(
     bar_index: int,
     bar_starts: Sequence[float],
     args,
-    pm: "pretty_midi.PrettyMIDI",
 ) -> float:
     """Compute when to emit a key switch for *bar_index* using the bar boundaries."""
 
-    starts = list(bar_starts)
-    if pm is not None:
-        try:
-            computed = _compute_bar_starts(pm)
-        except Exception:
-            computed = []
-        if computed and len(computed) > int(bar_index):
-            starts = computed
-    if not starts:
+    if not bar_starts:
         return 0.0
-    count = len(starts)
     idx = int(bar_index)
     if idx <= 0:
         return 0.0
-    if idx >= count:
-        idx = count - 1
-    start = float(starts[idx])
-    prev = float(starts[idx - 1]) if idx - 1 >= 0 else 0.0
+    if idx >= len(bar_starts):
+        idx = len(bar_starts) - 1
+    start = float(bar_starts[idx])
+    prev = float(bar_starts[idx - 1]) if idx - 1 >= 0 else 0.0
     if not math.isfinite(start):
         return 0.0
     if not math.isfinite(prev):

@@ -1503,6 +1503,12 @@ def train(
 
     def _bump_reason(key: str) -> None:
         reason_counts[key] = reason_counts.get(key, 0) + 1
+
+    fallback_candidate: tuple[list[tuple[float, int]], list[float]] | None = None
+    fallback_bars: float | None = None
+    fallback_aux: str | None = None
+    fallback_path: Path | None = None
+    fallback_reason: str | None = None
     for p, res in zip(paths, loaded):
         if res.reason == "error":
             if res.tempo_error:
@@ -1588,6 +1594,17 @@ def train(
             reason = None
 
         if reason is not None:
+            if (
+                reason == "notes"
+                and note_cnt > 0
+                and fallback_candidate is None
+            ):
+                meta = load_meta(p)
+                fallback_candidate = (notes, offs)
+                fallback_bars = bars
+                fallback_aux = meta.get(aux_key) if aux_key else None
+                fallback_path = p
+                fallback_reason = reason
             skipped_paths.append(p)
             _bump_reason(reason)
             files_filtered += 1
@@ -1620,6 +1637,27 @@ def train(
             if len(skipped_paths) > 20:
                 preview += f", ... and {len(skipped_paths) - 20} more"
             logger.info("skipped files: %s", preview)
+
+    if not results and fallback_candidate is not None and fallback_bars is not None:
+        logger.warning(
+            "No events collected with min_notes=%d; relaxing filter to keep %s",
+            worker_cfg.min_notes,
+            fallback_path,
+        )
+        results.append(fallback_candidate)
+        bars_list.append(fallback_bars)
+        aux_values.append(fallback_aux)
+        if fallback_path is not None:
+            try:
+                skipped_paths.remove(fallback_path)
+            except ValueError:
+                pass
+        if fallback_reason:
+            count = reason_counts.get(fallback_reason, 0)
+            if count > 0:
+                reason_counts[fallback_reason] = count - 1
+        if files_filtered > 0:
+            files_filtered -= 1
 
     if not results:
         if relax_filters:

@@ -1193,47 +1193,25 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
 
     raw_note_count = max(raw_note_count, note_cnt)
 
-    if min_bars > 0 and bars < min_bars:
+    if not math.isfinite(bars) or bars < 0.0:
+        bars = 0.0
+
+    short_bars = min_bars > 0 and bars < min_bars
+    few_notes = min_notes > 0 and raw_note_count < min_notes
+    try:
         logger.debug(
-            "[groove loader] skip(bars) %s: bars=%.3f < min=%.3f  beats=%.3f secs=%.3f",
+            "[groove loader] %s summary: bars=%.3f notes=%d uniq=%d drum=%s fallback=%s short_bars=%s few_notes=%s",
             path.name,
             bars,
-            min_bars,
-            (total_beats or 0.0),
-            total_seconds,
-        )
-        return _LoadResult(
-            None,
-            "bars",
-            audio_failed,
-            tempo,
-            tempo_reason,
-            tempo_source,
-            tempo_injected,
-            tempo_error,
-            invalid_bpm,
-        )
-
-    if min_notes > 0 and raw_note_count < min_notes:
-        logger.debug(
-            "[groove loader] skip(notes) %s: notes=%d < min=%d  allow_d=%s allow_p=%s",
-            path.name,
             raw_note_count,
-            min_notes,
-            allow_drums,
-            allow_pitched,
+            uniq_pitches,
+            is_drum,
+            fallback_data is not None,
+            short_bars,
+            few_notes,
         )
-        return _LoadResult(
-            None,
-            "notes",
-            audio_failed,
-            tempo,
-            tempo_reason,
-            tempo_source,
-            tempo_injected,
-            tempo_error,
-            invalid_bpm,
-        )
+    except Exception:
+        pass
 
     if not notes:
         return _LoadResult(
@@ -1248,6 +1226,10 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
             invalid_bpm,
         )
 
+    try:
+        notes.sort(key=lambda x: (x[0], x[1]))
+    except Exception:
+        pass
     offs = [off for off, _ in notes]
 
     note_cnt = len(notes)

@@ -623,28 +623,34 @@ def _group_chords(notes: List[pretty_midi.Note], window: float = 0.03) -> List[L
 def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
     """Return bar start times accounting for time signature changes."""
 
-    starts: set[float] = {0.0}
+    starts: List[float] = [0.0]
     try:
-        downbeats = pm.get_downbeats()
+        downbeats_raw = pm.get_downbeats()
     except Exception:
-        downbeats = []
-    try:
-        values = downbeats.tolist() if hasattr(downbeats, "tolist") else list(downbeats)
-    except Exception:
-        values = []
-    for value in values:
+        downbeats_raw = []
+    if hasattr(downbeats_raw, "tolist"):
+        downbeats = downbeats_raw.tolist()
+    else:
+        downbeats = list(downbeats_raw or [])
+    for value in downbeats:
         try:
-            starts.add(float(value))
+            starts.append(float(value))
         except Exception:
             continue
     ts_changes = getattr(pm, "time_signature_changes", None) or []
     for ts in ts_changes:
         try:
-            t = float(getattr(ts, "time", 0.0) or 0.0)
+            t = float(getattr(ts, "time", 0.0))
         except Exception:
             continue
-        starts.add(max(0.0, t))
-    return sorted(starts)
+        starts.append(t)
+    starts = [t for t in starts if math.isfinite(t) and t >= 0.0]
+    unique = sorted({round(t, 6) for t in starts})
+    dedup: List[float] = []
+    for t in unique:
+        if not dedup or t - dedup[-1] > 1e-6:
+            dedup.append(t)
+    return dedup
 
 
 def _ks_lead_time(bar_len_sec: float, args) -> float:

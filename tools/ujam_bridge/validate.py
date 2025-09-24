@@ -17,23 +17,12 @@ from .ujam_map import KS_MIN, KS_MAX, MAP_DIR, _parse_simple, _validate_map
 
 def _load(path: pathlib.Path) -> Dict[str, Any]:
     text = path.read_text(encoding="utf-8")
-    loader = yaml
-    if loader is None:
-        try:
-            import yaml as _yaml  # type: ignore
-        except Exception:
-            _yaml = None  # type: ignore
-        loader = _yaml
-        if loader is not None:
-            globals()["yaml"] = loader
-    if loader is not None:
-        data = loader.safe_load(text)
-        if isinstance(data, list):
-            data = next((item for item in data if isinstance(item, dict)), {})
-        if not isinstance(data, dict):
-            data = _parse_simple(text)
+    if yaml is not None:
+        data = yaml.safe_load(text)
     else:
         data = _parse_simple(text)
+    if isinstance(data, list):
+        data = next((item for item in data if isinstance(item, dict)), {})
     if not isinstance(data, dict):
         data = {}
     return data
@@ -44,42 +33,39 @@ def _validate_keyswitch_range(data: Dict[str, Any]) -> List[str]:
     if not isinstance(data, dict):
         return issues
 
-    def _coerce_int(value: object, default: int) -> int:
+    def _check_note(label: str, value: object) -> int | None:
+        if not isinstance(value, int):
+            issues.append(f"keyswitch '{label}' note {value!r} is not an integer")
+            return None
+        note = int(value)
+        if note < 0 or note > 127:
+            issues.append(f"keyswitch '{label}' note {note} out of range 0..127")
+        return note
+
+    play_range = data.get("play_range")
+    if isinstance(play_range, dict):
         try:
-            return int(value)
+            low = int(play_range.get("low", KS_MIN))
         except Exception:
-            return default
-
-    play_raw = data.get("play_range")
-    play_range = play_raw if isinstance(play_raw, dict) else {}
-    play_low_raw = _coerce_int(play_range.get("low"), KS_MIN)
-    play_high_raw = _coerce_int(play_range.get("high"), KS_MAX)
-    if play_low_raw > play_high_raw:
-        play_low_raw, play_high_raw = play_high_raw, play_low_raw
-    play_low = max(0, min(play_low_raw, 127))
-    play_high = max(play_low, min(play_high_raw, 127))
-    ks_low = play_low if play_range else KS_MIN
-    ks_high = play_high if play_range else KS_MAX
-
-    ks_dict = data.get("keyswitch")
-    if isinstance(ks_dict, dict):
-        for name, value in ks_dict.items():
+            low = KS_MIN
+        try:
+            high = int(play_range.get("high", KS_MAX))
+        except Exception:
+            high = KS_MAX
+        if low > high:
+            low, high = high, low
+    else:
+        low, high = KS_MIN, KS_MAX
+    ks = data.get("keyswitch")
+    if isinstance(ks, dict):
+        for name, value in ks.items():
             if not isinstance(name, str):
                 continue
-            try:
-                pitch = int(value)
-            except Exception:
-                issues.append(f"keyswitch '{name}' note {value!r} is not an integer")
+            pitch = _check_note(name, value)
+            if pitch is None:
                 continue
-            if pitch < 0 or pitch > 127:
-                issues.append(
-                    f"keyswitch '{name}' out of MIDI range 0..127 (got {pitch})"
-                )
-            elif pitch < ks_low or pitch > ks_high:
-                issues.append(
-                    f"keyswitch '{name}' out of range {ks_low}..{ks_high} (got {pitch})"
-                )
-
+            if pitch < low or pitch > high:
+                issues.append(f"keyswitch '{name}' out of range {low}..{high} (got {pitch})")
     ks_list = data.get("keyswitches")
     if isinstance(ks_list, list):
         for idx, item in enumerate(ks_list):
@@ -87,20 +73,7 @@ def _validate_keyswitch_range(data: Dict[str, Any]) -> List[str]:
                 continue
             name = item.get("name")
             label = name if isinstance(name, str) and name else f"#{idx}"
-            note = item.get("note")
-            try:
-                pitch = int(note)
-            except Exception:
-                issues.append(f"keyswitch '{label}' note {note!r} is not an integer")
-                continue
-            if pitch < 0 or pitch > 127:
-                issues.append(
-                    f"keyswitch '{label}' out of MIDI range 0..127 (got {pitch})"
-                )
-            elif pitch < ks_low or pitch > ks_high:
-                issues.append(
-                    f"keyswitch '{label}' out of range {ks_low}..{ks_high} (got {pitch})"
-                )
+            _check_note(label, item.get("note"))
     return issues
 
 
@@ -116,6 +89,7 @@ def validate(path: pathlib.Path) -> List[str]:
         play_range_raw = data.get("play_range")
         play_range = play_range_raw if isinstance(play_range_raw, dict) else {}
         play_defined = bool(play_range)
+
         def _emit(msg: str) -> None:
             if msg not in issues:
                 issues.append(msg)
@@ -135,22 +109,16 @@ def validate(path: pathlib.Path) -> List[str]:
             low, high = high, low
         low = max(0, min(low, 127))
         high = max(low, min(high, 127))
-        play_low = low
-        play_high = high
-        ks_low = min(play_low, KS_MIN)
-        ks_high = max(play_high, KS_MAX)
 
         def _check_range(name: str, value: object) -> None:
             try:
                 note = int(value)  # type: ignore[arg-type]
             except Exception:
                 return
-            if note < ks_low or note > ks_high:
-                _emit(f"keyswitch '{name}' out of range {ks_low}..{ks_high} (got {note})")
-            elif play_defined and play_low <= note <= play_high:
-                _emit(
-                    f"keyswitch '{name}' overlaps play range {play_low}..{play_high} (got {note})"
-                )
+            if note < low or note > high:
+                _emit(f"keyswitch '{name}' out of range {low}..{high} (got {note})")
+            elif play_defined:
+                _emit(f"keyswitch '{name}' overlaps play range {low}..{high} (got {note})")
 
         ks_dict = data.get("keyswitch")
         if isinstance(ks_dict, dict):
@@ -175,6 +143,32 @@ def validate(path: pathlib.Path) -> List[str]:
                 name = item.get("name")
                 if isinstance(name, str):
                     _check_range(name, item.get("note"))
+
+        rng_low, rng_high = KS_MIN, KS_MAX
+        if isinstance(play_range_raw, dict):
+            try:
+                rng_low = int(play_range_raw.get("low", KS_MIN))
+            except Exception:
+                rng_low = KS_MIN
+            try:
+                rng_high = int(play_range_raw.get("high", KS_MAX))
+            except Exception:
+                rng_high = KS_MAX
+        if rng_low > rng_high:
+            rng_low, rng_high = rng_high, rng_low
+        ks_map = data.get("keyswitch")
+        if isinstance(ks_map, dict):
+            for name, value in ks_map.items():
+                if not isinstance(name, str):
+                    continue
+                try:
+                    pitch = int(value)
+                except Exception:
+                    continue
+                if pitch < rng_low or pitch > rng_high:
+                    msg = f"keyswitch '{name}' pitch {pitch} out of range {rng_low}..{rng_high}"
+                    if msg not in issues:
+                        issues.append(msg)
 
     return issues
 

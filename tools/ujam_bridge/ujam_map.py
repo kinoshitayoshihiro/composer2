@@ -38,8 +38,7 @@ __all__ = [
 
 PATTERN_PATH = pathlib.Path(__file__).with_name("patterns") / "strum_library.yaml"
 MAP_DIR = pathlib.Path(__file__).with_name("maps")
-KS_MIN, KS_MAX = 0, 127
-
+KS_MIN, KS_MAX = 36, 88
 
 
 def convert(args: SimpleNamespace) -> None:
@@ -87,9 +86,7 @@ def convert(args: SimpleNamespace) -> None:
 
     for name, note in keymap.items():
         if not (KS_MIN <= int(note) <= KS_MAX):
-            raise ValueError(
-                f"keyswitch '{name}' out of range {KS_MIN}..{KS_MAX} (got {note})"
-            )
+            raise ValueError(f"keyswitch '{name}' out of range {KS_MIN}..{KS_MAX} (got {note})")
 
     play = map_data.get("play_range", {}) if isinstance(map_data, dict) else {}
     try:
@@ -137,20 +134,7 @@ def convert(args: SimpleNamespace) -> None:
     except Exception:
         pass
 
-    quant = int(getattr(args, "quant", 120))
-    utils.quantize(pm, quant, float(getattr(args, "swing", 0.0)))
-    setattr(pm, "_quant_grid", quant)
-    try:
-        tempo_times_raw, tempo_values_raw = pm.get_tempo_changes()
-        tempo_values = (
-            tempo_values_raw.tolist()
-            if hasattr(tempo_values_raw, "tolist")
-            else list(tempo_values_raw)
-        )
-        first_tempo = float(tempo_values[0]) if tempo_values else 120.0
-    except Exception:
-        first_tempo = 120.0
-    setattr(pm, "_quant_bpm", first_tempo)
+    utils.quantize(pm, int(getattr(args, "quant", 120)), float(getattr(args, "swing", 0.0)))
 
     ts_raw = list(getattr(pm, "time_signature_changes", []))
     if not ts_raw:
@@ -297,7 +281,11 @@ def convert(args: SimpleNamespace) -> None:
         prev_strum = strum
 
     for i, info in enumerate(all_blocks):
-        next_start = all_blocks[i + 1]["start"] if i + 1 < len(all_blocks) else info["start"] + info["duration"]
+        next_start = (
+            all_blocks[i + 1]["start"]
+            if i + 1 < len(all_blocks)
+            else info["start"] + info["duration"]
+        )
         info["next_start"] = next_start
         bar_blocks[info["bar"]].append(info)
 
@@ -353,7 +341,9 @@ def convert(args: SimpleNamespace) -> None:
         except Exception:
             bar_time = float(segment["start_time"]) + rel * beats_in_bar * 0.5
         if not math.isfinite(bar_time):
-            bar_time = float(segment["start_time"]) if math.isfinite(float(segment["start_time"])) else 0.0
+            bar_time = (
+                float(segment["start_time"]) if math.isfinite(float(segment["start_time"])) else 0.0
+            )
         return float(bar_time)
 
     bar_starts = [_bar_start_for(i) for i in range(max_bar_index + 1)] or [0.0]
@@ -402,7 +392,7 @@ def convert(args: SimpleNamespace) -> None:
     approx: List[str] = []
     csv_rows: List[Dict[str, object]] = []
     last_sent: tuple[int, ...] | None = None
-    last_sent_bar = -10**9
+    last_sent_bar = -(10**9)
     emitted_at: dict[int, float] = {}
 
     def _emit_keyswitch(pitch: int, when: float) -> bool:
@@ -449,7 +439,11 @@ def convert(args: SimpleNamespace) -> None:
                     pitch = keymap.get(name)
                     if isinstance(pitch, int):
                         section_pitches.append(pitch)
-        signature_time = ts_bar_starts[bar] if bar < len(ts_bar_starts) else ts_bar_starts[-1] if ts_bar_starts else 0.0
+        signature_time = (
+            ts_bar_starts[bar]
+            if bar < len(ts_bar_starts)
+            else ts_bar_starts[-1] if ts_bar_starts else 0.0
+        )
         prefix = _time_signature_key(float(signature_time)) if ts_raw else (4, 4)
         desired_notes = section_pitches + ks_notes
         periodic_key = (seq_index // periodic,) if periodic > 0 else tuple()
@@ -457,8 +451,7 @@ def convert(args: SimpleNamespace) -> None:
         same_tuple = last_sent == desired_tuple
         if periodic > 0:
             periodic_due = (last_sent_bar < 0) or (
-                last_sent_bar >= 0
-                and (seq_index - last_sent_bar) % periodic == 0
+                last_sent_bar >= 0 and (seq_index - last_sent_bar) % periodic == 0
             )
         else:
             periodic_due = last_sent_bar < 0
@@ -558,7 +551,9 @@ def convert(args: SimpleNamespace) -> None:
 _convert_impl = convert
 
 
-def pattern_to_keyswitches(pattern: str, library: Dict[str, List[str]], keymap: Dict[str, int]) -> List[int]:
+def pattern_to_keyswitches(
+    pattern: str, library: Dict[str, List[str]], keymap: Dict[str, int]
+) -> List[int]:
     """Resolve a space separated *pattern* to key switch MIDI notes."""
     names = library.get(pattern, [])
     return [keymap[n] for n in names if n in keymap]
@@ -689,14 +684,10 @@ def _validate_map(data: Dict) -> List[str]:
 
     for name, note in key_lookup.items():
         if note < KS_MIN or note > KS_MAX:
-            range_issues.append(
-                f"keyswitch '{name}' out of range {KS_MIN}..{KS_MAX} (got {note})"
-            )
+            range_issues.append(f"keyswitch '{name}' out of range {KS_MIN}..{KS_MAX} (got {note})")
             continue
         if note < ks_low or note > ks_high:
-            range_issues.append(
-                f"keyswitch '{name}' out of range {ks_low}..{ks_high} (got {note})"
-            )
+            range_issues.append(f"keyswitch '{name}' out of range {ks_low}..{ks_high} (got {note})")
         elif play_defined and play_low <= note <= play_high:
             range_issues.append(
                 f"keyswitch '{name}' overlaps play range {play_low}..{play_high} (got {note})"
@@ -734,7 +725,9 @@ def _load_patterns() -> Dict[str, List[str]]:
     return data.get("patterns", {})  # type: ignore[return-value]
 
 
-def _group_chords(notes: List[pretty_midi.Note], window: float = 0.03) -> List[List[pretty_midi.Note]]:
+def _group_chords(
+    notes: List[pretty_midi.Note], window: float = 0.03
+) -> List[List[pretty_midi.Note]]:
     blocks: List[List[pretty_midi.Note]] = []
     current: List[pretty_midi.Note] = []
     for n in sorted(notes, key=lambda x: x.start):
@@ -751,122 +744,27 @@ def _group_chords(notes: List[pretty_midi.Note], window: float = 0.03) -> List[L
 def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
     """Return bar start times accounting for time signature changes."""
 
-    starts: List[float] = []
+    starts: List[float] = [0.0]
     try:
         downbeats_raw = pm.get_downbeats()
     except Exception:
         downbeats_raw = []
-    if hasattr(downbeats_raw, "tolist"):
-        downbeat_values = downbeats_raw.tolist()
-    elif isinstance(downbeats_raw, (list, tuple)):
-        downbeat_values = list(downbeats_raw)
-    elif isinstance(downbeats_raw, (int, float)):
-        downbeat_values = [float(downbeats_raw)]
-    else:
-        try:
-            downbeat_values = list(downbeats_raw)
-        except Exception:
-            downbeat_values = []
-    for value in downbeat_values:
-        try:
-            val = float(value)
-        except Exception:
-            continue
-        if math.isfinite(val) and val >= 0.0:
-            starts.append(val)
-    if not starts:
-        starts = [0.0]
-    if starts[0] != 0.0:
-        starts.insert(0, 0.0)
-
+    if hasattr(downbeats_raw, "__len__") and len(downbeats_raw) > 0:
+        values = downbeats_raw.tolist() if hasattr(downbeats_raw, "tolist") else list(downbeats_raw)
+        for value in values:
+            try:
+                starts.append(float(value))
+            except Exception:
+                continue
     ts_changes = getattr(pm, "time_signature_changes", None) or []
-    ts_sorted = sorted(ts_changes, key=lambda ts: float(getattr(ts, "time", 0.0) or 0.0))
-    tempo_times: List[float]
-    tempo_values: List[float]
-    try:
-        tempo_times_raw, tempo_values_raw = pm.get_tempo_changes()
-        tempo_times = (
-            tempo_times_raw.tolist()
-            if hasattr(tempo_times_raw, "tolist")
-            else list(tempo_times_raw)
-        )
-        tempo_values = (
-            tempo_values_raw.tolist()
-            if hasattr(tempo_values_raw, "tolist")
-            else list(tempo_values_raw)
-        )
-    except Exception:
-        tempo_times = [0.0]
-        tempo_values = [float(getattr(pm, "_quant_bpm", 120.0))]
-    if not tempo_values:
-        tempo_times = [0.0]
-        tempo_values = [float(getattr(pm, "_quant_bpm", 120.0))]
-
-    quant = int(getattr(pm, "_quant_grid", 0))
-    resolution = float(getattr(pm, "resolution", 480) or 480.0)
-    total_duration = 0.0
-    try:
-        total_duration = float(pm.get_end_time())
-    except Exception:
-        pass
-    last_known = starts[-1] if starts else 0.0
-    total_duration = max(total_duration, last_known)
-
-    def _tempo_at(time: float) -> float:
-        idx = bisect_right(tempo_times, time) - 1
-        if idx < 0:
-            idx = 0
-        if idx >= len(tempo_values):
-            idx = len(tempo_values) - 1
-        bpm = float(tempo_values[idx]) if tempo_values else 120.0
-        return bpm if math.isfinite(bpm) and bpm > 0.0 else 120.0
-
-    segments: List[tuple[float, float, float]] = []
-    prev_time = 0.0
-    for ts in ts_sorted:
+    for ts in ts_changes:
         try:
-            ts_time = float(getattr(ts, "time", 0.0) or 0.0)
+            t = float(getattr(ts, "time", 0.0))
         except Exception:
             continue
-        if ts_time < 0.0:
-            continue
-        if ts_time > prev_time:
-            segments.append((prev_time, ts_time, prev_time))
-        prev_time = ts_time
-    if total_duration > prev_time:
-        segments.append((prev_time, total_duration, prev_time))
-
-    ts_iter = iter(ts_sorted)
-    current_ts = next(ts_iter, None)
-    beats_per_bar = 4.0
-    while current_ts is not None and getattr(current_ts, "time", 0.0) <= 0.0:
-        beats_per_bar = _beats_per_bar(current_ts)
-        current_ts = next(ts_iter, None)
-
-    for start, end, anchor in segments:
-        if current_ts is not None and start >= getattr(current_ts, "time", 0.0):
-            beats_per_bar = _beats_per_bar(current_ts)
-            current_ts = next(ts_iter, None)
-        bpm = _tempo_at(start)
-        beat_len = 60.0 / bpm if bpm > 0.0 else 0.5
-        if quant > 0 and resolution > 0:
-            step_sec = (quant / resolution) * beat_len
-            steps_per_bar = max(1, round((beats_per_bar * resolution) / quant))
-            bar_len = step_sec * steps_per_bar
-        else:
-            bar_len = beats_per_bar * beat_len
-        if not math.isfinite(bar_len) or bar_len <= 0.0:
-            continue
-        pos = max(anchor, starts[-1] if starts else 0.0)
-        if pos < start:
-            pos = start
-        while pos + bar_len <= end + 1e-6:
-            pos = pos + bar_len
-            if pos > 0.0:
-                starts.append(pos)
-
-    filtered = [t for t in starts if math.isfinite(t) and t >= 0.0]
-    unique = sorted({round(t, 6) for t in filtered})
+        starts.append(t)
+    starts = [t for t in starts if math.isfinite(t) and t >= 0.0]
+    unique = sorted({round(t, 6) for t in starts})
     dedup: List[float] = []
     for t in unique:
         if not dedup or t - dedup[-1] > 1e-6:
@@ -972,7 +870,6 @@ def _section_for_bar(bar: int, sections: Dict[int, str]) -> str | None:
 
 def convert(args) -> None:
     return _convert_impl(args)
-
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

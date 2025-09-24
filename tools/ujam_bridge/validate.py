@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-from typing import Dict, List
+from typing import Any, Dict, List
 
 try:
     import yaml
@@ -15,11 +15,17 @@ except Exception:  # pragma: no cover
 from .ujam_map import KS_MIN, KS_MAX, MAP_DIR, _parse_simple, _validate_map
 
 
-def _load(path: pathlib.Path) -> Dict:
+def _load(path: pathlib.Path) -> Dict[str, Any]:
     text = path.read_text(encoding="utf-8")
     if yaml is not None:
-        return yaml.safe_load(text)
-    return _parse_simple(text)
+        data = yaml.safe_load(text)
+    else:
+        data = _parse_simple(text)
+    if isinstance(data, list):
+        data = next((item for item in data if isinstance(item, dict)), {})
+    if not isinstance(data, dict):
+        data = {}
+    return data
 
 
 def validate(path: pathlib.Path) -> List[str]:
@@ -27,25 +33,39 @@ def validate(path: pathlib.Path) -> List[str]:
     data = _load(path)
     issues = _validate_map(data)
 
-    # --- keyswitch のレンジ検証を追加 ---
-    pr = data.get("play_range", {}) if isinstance(data, dict) else {}
-    low = int(pr.get("low", KS_MIN))
-    high = int(pr.get("high", KS_MAX))
+    # --- play_range の型を厳密に ---
+    pr = data.get("play_range")
+    if not isinstance(pr, dict):
+        pr = {}
+
+    def _to_int(value: object, default: int | None) -> int | None:
+        try:
+            return int(value)  # type: ignore[arg-type]
+        except Exception:
+            return default
+
+    low = _to_int(pr.get("low"), KS_MIN)
+    high = _to_int(pr.get("high"), KS_MAX)
+    if low is None:
+        low = KS_MIN
+    if high is None:
+        high = KS_MAX
     if low > high:
         low, high = high, low  # 入れ替えで自衛
 
-    ks = data.get("keyswitch", {}) if isinstance(data, dict) else {}
-    if isinstance(ks, dict):
-        for name, val in ks.items():
-            try:
-                note = int(val)
-            except Exception:
-                issues.append(f"keyswitch '{name}' not an int (got {val!r})")
-                continue
-            if note < low or note > high:
-                issues.append(
-                    f"keyswitch '{name}' out of range {low}..{high} (got {note})"
-                )
+    # --- keyswitch の検証 ---
+    ks = data.get("keyswitch")
+    if not isinstance(ks, dict):
+        ks = {}
+    for name, pitch in ks.items():
+        note = _to_int(pitch, None)
+        if note is None:
+            issues.append(f"keyswitch '{name}' has non-integer pitch: {pitch}")
+            continue
+        if not (low <= note <= high):
+            issues.append(
+                f"keyswitch '{name}' out of range {low}..{high} (got {note})"
+            )
 
     return issues
 

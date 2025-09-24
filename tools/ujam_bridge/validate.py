@@ -32,6 +32,16 @@ def _validate_keyswitch_range(data: Dict[str, Any]) -> List[str]:
     issues: List[str] = []
     if not isinstance(data, dict):
         return issues
+
+    def _check_note(label: str, value: object) -> int | None:
+        if not isinstance(value, int):
+            issues.append(f"keyswitch '{label}' note {value!r} is not an integer")
+            return None
+        note = int(value)
+        if note < 0 or note > 127:
+            issues.append(f"keyswitch '{label}' note {note} out of range 0..127")
+        return note
+
     play_range = data.get("play_range")
     if isinstance(play_range, dict):
         try:
@@ -51,17 +61,21 @@ def _validate_keyswitch_range(data: Dict[str, Any]) -> List[str]:
         for name, value in ks.items():
             if not isinstance(name, str):
                 continue
-            try:
-                pitch = int(value)
-            except Exception:
-                issues.append(
-                    f"keyswitch '{name}' out of range {low}..{high} (got {value})"
-                )
+            pitch = _check_note(name, value)
+            if pitch is None:
                 continue
             if pitch < low or pitch > high:
                 issues.append(
                     f"keyswitch '{name}' out of range {low}..{high} (got {pitch})"
                 )
+    ks_list = data.get("keyswitches")
+    if isinstance(ks_list, list):
+        for idx, item in enumerate(ks_list):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            label = name if isinstance(name, str) and name else f"#{idx}"
+            _check_note(label, item.get("note"))
     return issues
 
 

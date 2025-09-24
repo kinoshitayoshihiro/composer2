@@ -53,19 +53,38 @@ def validate(path: pathlib.Path) -> List[str]:
     if low > high:
         low, high = high, low  # 入れ替えで自衛
 
-    # --- keyswitch の検証 ---
-    ks = data.get("keyswitch")
-    if not isinstance(ks, dict):
-        ks = {}
-    for name, pitch in ks.items():
+    def _add_range_issue(name: str, pitch: object) -> None:
         note = _to_int(pitch, None)
         if note is None:
             issues.append(f"keyswitch '{name}' has non-integer pitch: {pitch}")
-            continue
+            return
         if not (low <= note <= high):
-            issues.append(
-                f"keyswitch '{name}' out of range {low}..{high} (got {note})"
-            )
+            msg = f"keyswitch '{name}' out of range {low}..{high} (got {note})"
+            if msg not in issues:
+                issues.append(msg)
+
+    # --- keyswitch の検証 ---
+    ks = data.get("keyswitch")
+    if isinstance(ks, dict):
+        for name, pitch in ks.items():
+            if isinstance(name, str):
+                _add_range_issue(name, pitch)
+    elif isinstance(ks, list):
+        for item in ks:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if isinstance(name, str):
+                _add_range_issue(name, item.get("note"))
+
+    ks_list = data.get("keyswitches")
+    if isinstance(ks_list, list):
+        for item in ks_list:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if isinstance(name, str):
+                _add_range_issue(name, item.get("note"))
 
     return issues
 

@@ -623,100 +623,25 @@ def _group_chords(notes: List[pretty_midi.Note], window: float = 0.03) -> List[L
 def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
     """Return bar start times accounting for time signature changes."""
 
-    downbeats: List[float] = []
+    starts: List[float] = [0.0]
     try:
-        raw_downbeats = pm.get_downbeats()
+        downbeats = pm.get_downbeats()
     except Exception:
-        raw_downbeats = []
-    if raw_downbeats is not None:
-        try:
-            downbeats = [float(t) for t in raw_downbeats]
-        except Exception:
-            downbeats = []
-    if len(downbeats) >= 2:
-        return downbeats
-    resolution = float(getattr(pm, "resolution", 480) or 480.0)
-    ts_changes = list(getattr(pm, "time_signature_changes", []))
-    if not ts_changes:
-        if hasattr(pretty_midi, "TimeSignature"):
-            ts_changes = [pretty_midi.TimeSignature(4, 4, 0.0)]
-        else:
-            ts_changes = [SimpleNamespace(numerator=4, denominator=4, time=0.0)]
-    ts_changes = sorted(ts_changes, key=lambda ts: float(getattr(ts, "time", 0.0) or 0.0))
-
-    def _beats_per_bar(ts_obj: object) -> float:
-        num = getattr(ts_obj, "numerator", 4)
-        den = getattr(ts_obj, "denominator", 4)
-        try:
-            num = int(num)
-        except Exception:
-            num = 4
-        try:
-            den = int(den)
-        except Exception:
-            den = 4
-        if den <= 0:
-            den = 4
-        beats = float(num) * (4.0 / float(den))
-        return beats if beats > 0 else 4.0
-
-    def _time_to_beats(value: float) -> float:
-        try:
-            tick_val = pm.time_to_tick(value)
-        except Exception:
-            tick_val = value * resolution
-        return float(tick_val) / resolution if resolution else float(value)
-
-    segments: List[Dict[str, float]] = []
-    prev_start_beat = 0.0
-    prev_beats = _beats_per_bar(ts_changes[0])
-    bar_offset = 0
-    for idx, ts in enumerate(ts_changes):
-        start_time = float(getattr(ts, "time", 0.0) or 0.0)
-        start_beat = _time_to_beats(start_time)
-        if idx > 0:
-            beats_since_prev = max(0.0, start_beat - prev_start_beat)
-            if prev_beats > 0:
-                bar_offset += int(math.floor(beats_since_prev / prev_beats + 1e-9))
-        beats_cur = max(_beats_per_bar(ts), 1.0)
-        segments.append(
-            {
-                "start_time": start_time,
-                "start_beat": start_beat,
-                "beats_per_bar": beats_cur,
-                "bar_offset": bar_offset,
-            }
-        )
-        prev_start_beat = start_beat
-        prev_beats = beats_cur
-
-    def _locate_bar_start(time: float) -> float:
-        beat_pos = _time_to_beats(time)
-        segment = segments[0]
-        for candidate in segments[1:]:
-            if beat_pos + 1e-9 >= candidate["start_beat"]:
-                segment = candidate
-            else:
-                break
-        beats_in_bar = max(segment["beats_per_bar"], 1.0)
-        rel_beats = max(0.0, beat_pos - segment["start_beat"])
-        bar_in_segment = int(math.floor(rel_beats / beats_in_bar + 1e-9))
-        bar_start_beat = segment["start_beat"] + bar_in_segment * beats_in_bar
-        tick_val = bar_start_beat * resolution
-        try:
-            return float(pm.tick_to_time(tick_val))
-        except Exception:
-            return float(bar_start_beat)
-
-    bar_times = {0.0}
-    for inst in getattr(pm, "instruments", []):
-        for note in getattr(inst, "notes", []):
-            bar_times.add(_locate_bar_start(float(getattr(note, "start", 0.0))))
+        downbeats = []
+    if downbeats:
+        for value in downbeats:
+            try:
+                starts.append(float(value))
+            except Exception:
+                continue
+    ts_changes = getattr(pm, "time_signature_changes", None) or []
     for ts in ts_changes:
-        ts_time = float(getattr(ts, "time", 0.0) or 0.0)
-        bar_times.add(_locate_bar_start(ts_time))
-        bar_times.add(max(0.0, ts_time))
-    return sorted(bar_times)
+        try:
+            t = float(getattr(ts, "time", 0.0) or 0.0)
+        except Exception:
+            continue
+        starts.append(max(0.0, t))
+    return sorted(set(starts))
 
 
 def _ks_lead_time(bar_len_sec: float, args) -> float:

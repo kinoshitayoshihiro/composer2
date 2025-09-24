@@ -385,7 +385,7 @@ def convert(args: SimpleNamespace) -> None:
         else:
             send = True
         if send and desired_tuple:
-            ks_time = _keyswitch_time_for_bar(bar, bar_starts, args)
+            ks_time = _keyswitch_time_for_bar(bar, bar_starts, args, pm)
             emitted_any = False
             for pitch in section_pitches:
                 if _emit_keyswitch(pitch, ks_time):
@@ -696,44 +696,43 @@ def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
     return dedup
 
 
-def _ks_lead_time(bar_len_sec: float, args) -> float:
-    """Return lead time in seconds before a bar boundary for key switches."""
-
-    if not math.isfinite(bar_len_sec) or bar_len_sec <= 0.0:
-        return 0.0
-    lead_sec = 0.08
-    return min(lead_sec, bar_len_sec)
-
-
-def _keyswitch_time_for_bar(bar_index: int, bar_starts: Sequence[float], args) -> float:
+def _keyswitch_time_for_bar(
+    bar_index: int,
+    bar_starts: Sequence[float],
+    args,
+    pm: "pretty_midi.PrettyMIDI",
+) -> float:
     """Compute when to emit a key switch for *bar_index* using the bar boundaries."""
 
-    if not bar_starts:
+    if pm is None or not bar_starts:
         return 0.0
     i = max(0, min(bar_index, len(bar_starts) - 1))
     t_bar = float(bar_starts[i])
     if not math.isfinite(t_bar):
         return 0.0
     try:
-        quant = float(getattr(args, "quant", 120))
+        bar_tick = int(pm.time_to_tick(t_bar))
     except Exception:
-        quant = 120.0
-    if not math.isfinite(quant) or quant <= 0.0:
-        quant = 120.0
-    fallback_len = 60.0 / quant * 4.0
-    if not math.isfinite(fallback_len) or fallback_len <= 0.0:
-        fallback_len = 0.5
-    if i + 1 < len(bar_starts):
-        bar_len = float(bar_starts[i + 1]) - t_bar
-    else:
-        bar_len = fallback_len
-    if not math.isfinite(bar_len) or bar_len <= 0.0:
-        bar_len = fallback_len
-    bar_len = max(0.0, bar_len)
-    ks_t = t_bar - _ks_lead_time(bar_len, args)
-    if not math.isfinite(ks_t):
+        resolution = int(getattr(pm, "resolution", 480) or 480)
+        bar_tick = int(round(t_bar * resolution))
+    try:
+        lead_ticks = int(getattr(args, "ks_lead", 60))
+    except Exception:
+        lead_ticks = 60
+    if not math.isfinite(float(lead_ticks)):
+        lead_ticks = 60
+    lead_ticks = max(0, int(lead_ticks))
+    ks_tick = max(0, bar_tick - lead_ticks)
+    try:
+        ks_time = float(pm.tick_to_time(int(ks_tick)))
+    except Exception:
+        resolution = float(getattr(pm, "resolution", 480) or 480.0)
+        if not math.isfinite(resolution) or resolution <= 0.0:
+            resolution = 480.0
+        ks_time = float(ks_tick) / resolution
+    if not math.isfinite(ks_time):
         return 0.0
-    return max(0.0, ks_t)
+    return max(0.0, ks_time)
 
 
 def _tempo_at(time: float, tempo_times: Sequence[float], tempo_values: Sequence[float]) -> float:

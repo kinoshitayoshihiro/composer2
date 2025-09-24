@@ -1059,6 +1059,7 @@ def train_model(
     sampler = None
     weight_stats: dict[str, float] | None = None
     shuffle_train = True
+    weights: list[float] | torch.Tensor | None = None
     if reweight:
         tag_name = "section"
         stripped = reweight.strip()
@@ -1076,6 +1077,7 @@ def train_model(
         inv = compute_inv_freq_weights(ds_train, tag=tag_name)
         if inv is not None:
             weights_tensor, weight_stats = inv
+            weights = weights_tensor
             logging.info(
                 "reweight tag=%s using inv_freq sampler (%d samples)",
                 tag_name,
@@ -1377,7 +1379,7 @@ def train_model(
                                 if sampler_mod is not None
                                 else None
                             )
-                        if callable(sampler_fn):
+                        if callable(sampler_fn) and len(weights) == len(ds_train):
                             try:
                                 weight_tensor = torch.as_tensor(weights, dtype=torch.float64)
                             except Exception:
@@ -1407,6 +1409,32 @@ def train_model(
                                     sampler = None
                             if sampler is not None:
                                 shuffle_train = False
+
+    if (
+        sampler is None
+        and weights is not None
+        and torch is not None
+        and len(weights) == len(ds_train)
+    ):
+        sampler_fn = getattr(torch.utils.data, "WeightedRandomSampler", None)
+        if sampler_fn is None:
+            sampler_mod = getattr(torch.utils.data, "sampler", None)
+            sampler_fn = (
+                getattr(sampler_mod, "WeightedRandomSampler", None)
+                if sampler_mod is not None
+                else None
+            )
+        if callable(sampler_fn):
+            try:
+                weight_tensor = torch.as_tensor(weights, dtype=torch.float64)
+            except Exception:
+                weight_tensor = torch.tensor(weights, dtype=torch.float32)
+            try:
+                sampler = sampler_fn(weight_tensor, len(ds_train), replacement=True)
+            except TypeError:
+                sampler = sampler_fn(weight_tensor, len(ds_train), True)
+            if sampler is not None:
+                shuffle_train = False
 
     dl_train = DataLoader(
         ds_train,
@@ -1766,7 +1794,10 @@ def train_model(
                         zeros = torch.tensor(0.0, device=device)
                     outputs["boundary"] = zeros
                 m = mask.bool()
-                loss = torch.zeros((), device=device)
+                # 一部の極端な設定では損失項が一つも加算されず、loss が leaf tensor
+                # のまま backward() で勾配を要求しないことがある。その場合でも安全
+                # に backward を実行できるよう requires_grad=True で初期化する。
+                loss = torch.zeros((), device=device, requires_grad=True)
                 lb = torch.zeros((), device=device)
                 lv = torch.zeros((), device=device)
                 ld = torch.zeros((), device=device)
@@ -1810,10 +1841,11 @@ def train_model(
                 ldb_sum = ldb_sum + ldb.detach()
                 lp_sum = lp_sum + lp.detach()
             loss_sum = loss_sum + loss.detach()
-            if scaler.is_enabled():
-                scaler.scale(loss / grad_accum).backward()
-            else:
-                (loss / grad_accum).backward()
+            if loss.requires_grad:
+                if scaler.is_enabled():
+                    scaler.scale(loss / grad_accum).backward()
+                else:
+                    (loss / grad_accum).backward()
             if (step + 1) % grad_accum == 0:
                 if scaler.is_enabled():
                     if grad_clip > 0:

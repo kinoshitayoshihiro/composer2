@@ -28,44 +28,69 @@ def _load(path: pathlib.Path) -> Dict[str, Any]:
     return data
 
 
+def _as_mapping(value: object) -> Dict[str, object] | None:
+    """Coerce inline ``key:value`` pairs into a mapping if needed."""
+
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        entries: Dict[str, object] = {}
+        for chunk in value.replace(",", " ").split():
+            if ":" not in chunk:
+                continue
+            key, raw_val = chunk.split(":", 1)
+            key = key.strip()
+            raw_val = raw_val.strip()
+            if not key:
+                continue
+            entries[key] = raw_val
+        if entries:
+            return entries
+    return None
+
+
 def _validate_keyswitch_range(data: Dict[str, Any]) -> List[str]:
     issues: List[str] = []
     if not isinstance(data, dict):
         return issues
 
-    def _check_note(label: str, value: object) -> int | None:
-        if not isinstance(value, int):
-            issues.append(f"keyswitch '{label}' note {value!r} is not an integer")
-            return None
-        note = int(value)
-        if note < 0 or note > 127:
-            issues.append(f"keyswitch '{label}' note {note} out of range 0..127")
-        return note
-
-    play_range = data.get("play_range")
-    if isinstance(play_range, dict):
+    play_range_map = _as_mapping(data.get("play_range"))
+    if play_range_map is not None:
         try:
-            low = int(play_range.get("low", KS_MIN))
+            low = int(play_range_map.get("low", KS_MIN))
         except Exception:
             low = KS_MIN
         try:
-            high = int(play_range.get("high", KS_MAX))
+            high = int(play_range_map.get("high", KS_MAX))
         except Exception:
             high = KS_MAX
         if low > high:
             low, high = high, low
     else:
         low, high = KS_MIN, KS_MAX
-    ks = data.get("keyswitch")
+
+    def _emit(msg: str) -> None:
+        if msg not in issues:
+            issues.append(msg)
+
+    def _check_note(label: str, value: object) -> None:
+        try:
+            note = int(value)  # type: ignore[arg-type]
+        except Exception:
+            _emit(f"keyswitch '{label}' note {value!r} is not an integer")
+            return
+        if note < 0 or note > 127:
+            _emit(f"keyswitch '{label}' out of range 0..127 (got {note})")
+            return
+        if note < low or note > high:
+            _emit(f"keyswitch '{label}' out of range {low}..{high} (got {note})")
+
+    ks = _as_mapping(data.get("keyswitch"))
     if isinstance(ks, dict):
         for name, value in ks.items():
             if not isinstance(name, str):
                 continue
-            pitch = _check_note(name, value)
-            if pitch is None:
-                continue
-            if pitch < low or pitch > high:
-                issues.append(f"keyswitch '{name}' out of range {low}..{high} (got {pitch})")
+            _check_note(name, value)
     ks_list = data.get("keyswitches")
     if isinstance(ks_list, list):
         for idx, item in enumerate(ks_list):
@@ -87,7 +112,7 @@ def validate(path: pathlib.Path) -> List[str]:
 
     if isinstance(data, dict):
         play_range_raw = data.get("play_range")
-        play_range = play_range_raw if isinstance(play_range_raw, dict) else {}
+        play_range = _as_mapping(play_range_raw) or {}
         play_defined = bool(play_range)
 
         def _emit(msg: str) -> None:
@@ -120,7 +145,7 @@ def validate(path: pathlib.Path) -> List[str]:
             elif play_defined:
                 _emit(f"keyswitch '{name}' overlaps play range {low}..{high} (got {note})")
 
-        ks_dict = data.get("keyswitch")
+        ks_dict = _as_mapping(data.get("keyswitch"))
         if isinstance(ks_dict, dict):
             for name, value in ks_dict.items():
                 if isinstance(name, str):
@@ -145,18 +170,19 @@ def validate(path: pathlib.Path) -> List[str]:
                     _check_range(name, item.get("note"))
 
         rng_low, rng_high = KS_MIN, KS_MAX
-        if isinstance(play_range_raw, dict):
+        play_range_map = play_range if play_range else _as_mapping(play_range_raw)
+        if isinstance(play_range_map, dict):
             try:
-                rng_low = int(play_range_raw.get("low", KS_MIN))
+                rng_low = int(play_range_map.get("low", KS_MIN))
             except Exception:
                 rng_low = KS_MIN
             try:
-                rng_high = int(play_range_raw.get("high", KS_MAX))
+                rng_high = int(play_range_map.get("high", KS_MAX))
             except Exception:
                 rng_high = KS_MAX
         if rng_low > rng_high:
             rng_low, rng_high = rng_high, rng_low
-        ks_map = data.get("keyswitch")
+        ks_map = _as_mapping(data.get("keyswitch"))
         if isinstance(ks_map, dict):
             for name, value in ks_map.items():
                 if not isinstance(name, str):

@@ -33,46 +33,65 @@ def validate(path: pathlib.Path) -> List[str]:
     data = _load(path)
     issues = _validate_map(data)
 
-    pr = data["play_range"] if isinstance(data, dict) and isinstance(data.get("play_range"), dict) else {}
-    ks_dict = data["keyswitch"] if isinstance(data, dict) and isinstance(data.get("keyswitch"), dict) else {}
-    ks_raw = data.get("keyswitch") if isinstance(data, dict) else None
+    if isinstance(data, dict):
+        play_range_raw = data.get("play_range")
+        play_range = play_range_raw if isinstance(play_range_raw, dict) else {}
+        play_defined = bool(play_range)
+        def _emit(msg: str) -> None:
+            if msg not in issues:
+                issues.append(msg)
 
-    try:
-        low = int(pr.get("low", KS_MIN))
-        high = int(pr.get("high", KS_MAX))
-        if low < KS_MIN or high > KS_MAX:
-            issues.append(f"play_range out of range {KS_MIN}..{KS_MAX} (got {low}..{high})")
-    except Exception:
-        pass
-
-    def _check(name: str, value: object) -> None:
         try:
-            note = int(value)  # type: ignore[arg-type]
+            low = int(play_range.get("low", KS_MIN))
         except Exception:
-            return
-        if not (KS_MIN <= note <= KS_MAX):
-            issues.append(f"keyswitch '{name}' out of range {KS_MIN}..{KS_MAX} (got {note})")
+            low = KS_MIN
+        try:
+            high = int(play_range.get("high", KS_MAX))
+        except Exception:
+            high = KS_MAX
+        raw_low, raw_high = low, high
+        if raw_low < KS_MIN or raw_high > KS_MAX:
+            _emit(f"play_range out of range {KS_MIN}..{KS_MAX} (got {raw_low}..{raw_high})")
+        if low > high:
+            low, high = high, low
+        low = max(0, min(low, 127))
+        high = max(low, min(high, 127))
 
-    for name, value in ks_dict.items():
-        if isinstance(name, str):
-            _check(name, value)
+        def _check_range(name: str, value: object) -> None:
+            try:
+                note = int(value)  # type: ignore[arg-type]
+            except Exception:
+                return
+            if note < low or note > high:
+                _emit(f"keyswitch '{name}' out of range {low}..{high} (got {note})")
+            elif play_defined:
+                _emit(
+                    f"keyswitch '{name}' overlaps play range {low}..{high} (got {note})"
+                )
 
-    if isinstance(ks_raw, list):
-        for item in ks_raw:
-            if not isinstance(item, dict):
-                continue
-            name = item.get("name")
-            if isinstance(name, str):
-                _check(name, item.get("note"))
+        ks_dict = data.get("keyswitch")
+        if isinstance(ks_dict, dict):
+            for name, value in ks_dict.items():
+                if isinstance(name, str):
+                    _check_range(name, value)
 
-    ks_list = data.get("keyswitches")
-    if isinstance(ks_list, list):
-        for item in ks_list:
-            if not isinstance(item, dict):
-                continue
-            name = item.get("name")
-            if isinstance(name, str):
-                _check(name, item.get("note"))
+        ks_raw = data.get("keyswitch")
+        if isinstance(ks_raw, list):
+            for item in ks_raw:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name")
+                if isinstance(name, str):
+                    _check_range(name, item.get("note"))
+
+        ks_list = data.get("keyswitches")
+        if isinstance(ks_list, list):
+            for item in ks_list:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name")
+                if isinstance(name, str):
+                    _check_range(name, item.get("note"))
 
     return issues
 

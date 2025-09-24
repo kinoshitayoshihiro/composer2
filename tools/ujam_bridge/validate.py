@@ -33,49 +33,37 @@ def validate(path: pathlib.Path) -> List[str]:
     data = _load(path)
     issues = _validate_map(data)
 
-    # --- play_range の型を厳密に ---
-    pr = data.get("play_range")
-    if not isinstance(pr, dict):
-        pr = {}
+    pr = data["play_range"] if isinstance(data, dict) and isinstance(data.get("play_range"), dict) else {}
+    ks_dict = data["keyswitch"] if isinstance(data, dict) and isinstance(data.get("keyswitch"), dict) else {}
+    ks_raw = data.get("keyswitch") if isinstance(data, dict) else None
 
-    def _to_int(value: object, default: int | None) -> int | None:
+    try:
+        low = int(pr.get("low", KS_MIN))
+        high = int(pr.get("high", KS_MAX))
+        if low < KS_MIN or high > KS_MAX:
+            issues.append(f"play_range out of range {KS_MIN}..{KS_MAX} (got {low}..{high})")
+    except Exception:
+        pass
+
+    def _check(name: str, value: object) -> None:
         try:
-            return int(value)  # type: ignore[arg-type]
+            note = int(value)  # type: ignore[arg-type]
         except Exception:
-            return default
-
-    low = _to_int(pr.get("low"), KS_MIN)
-    high = _to_int(pr.get("high"), KS_MAX)
-    if low is None:
-        low = KS_MIN
-    if high is None:
-        high = KS_MAX
-    if low > high:
-        low, high = high, low  # 入れ替えで自衛
-
-    def _add_range_issue(name: str, pitch: object) -> None:
-        note = _to_int(pitch, None)
-        if note is None:
-            issues.append(f"keyswitch '{name}' has non-integer pitch: {pitch}")
             return
-        if not (low <= note <= high):
-            msg = f"keyswitch '{name}' out of range {low}..{high} (got {note})"
-            if msg not in issues:
-                issues.append(msg)
+        if not (KS_MIN <= note <= KS_MAX):
+            issues.append(f"keyswitch '{name}' out of range {KS_MIN}..{KS_MAX} (got {note})")
 
-    # --- keyswitch の検証 ---
-    ks = data.get("keyswitch")
-    if isinstance(ks, dict):
-        for name, pitch in ks.items():
-            if isinstance(name, str):
-                _add_range_issue(name, pitch)
-    elif isinstance(ks, list):
-        for item in ks:
+    for name, value in ks_dict.items():
+        if isinstance(name, str):
+            _check(name, value)
+
+    if isinstance(ks_raw, list):
+        for item in ks_raw:
             if not isinstance(item, dict):
                 continue
             name = item.get("name")
             if isinstance(name, str):
-                _add_range_issue(name, item.get("note"))
+                _check(name, item.get("note"))
 
     ks_list = data.get("keyswitches")
     if isinstance(ks_list, list):
@@ -84,7 +72,7 @@ def validate(path: pathlib.Path) -> List[str]:
                 continue
             name = item.get("name")
             if isinstance(name, str):
-                _add_range_issue(name, item.get("note"))
+                _check(name, item.get("note"))
 
     return issues
 

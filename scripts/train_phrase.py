@@ -1648,12 +1648,33 @@ def train_model(
                 raw_outputs = model(feats, mask)
                 if isinstance(raw_outputs, dict):
                     outputs = raw_outputs
-                elif isinstance(raw_outputs, (list, tuple)):
-                    first = raw_outputs[0] if raw_outputs else None
-                    outputs = {"boundary": first} if first is not None else {}
+                elif (
+                    isinstance(raw_outputs, (list, tuple))
+                    and raw_outputs
+                    and isinstance(raw_outputs[0], dict)
+                ):
+                    outputs = raw_outputs[0]
                 else:
-                    outputs = {"boundary": raw_outputs}
-                if "boundary" not in outputs and "boundary2" not in outputs:
+                    outputs = {"logits": raw_outputs}
+
+                boundary2 = None
+                if isinstance(outputs, dict) and "boundary2" in outputs:
+                    boundary2 = outputs["boundary2"]
+
+                if "boundary" not in outputs:
+                    if "logits" in outputs:
+                        outputs["boundary"] = outputs["logits"]
+                    else:
+                        try:
+                            logits_fallback = next(
+                                v for v in outputs.values() if torch.is_tensor(v)
+                            )
+                        except StopIteration:
+                            logits_fallback = None
+                        if logits_fallback is not None:
+                            outputs["boundary"] = logits_fallback
+
+                if "boundary" not in outputs and boundary2 is None:
                     try:
                         zeros = torch.zeros_like(targets["boundary"], dtype=torch.float32)
                     except Exception:
@@ -1662,17 +1683,17 @@ def train_model(
                 m = mask.bool()
                 mask_cpu = m.cpu()
                 loss_val = 0.0
-                if isinstance(outputs, dict) and ("boundary2" in outputs):
+                if boundary2 is not None:
                     # CRF/2-class logits present; use softmax prob of class 1
-                    logits2 = outputs["boundary2"][m].detach().cpu()
+                    logits2 = boundary2[m].detach().cpu()
                     logits_all.extend((logits2[:, 1] - logits2[:, 0]).tolist())
                     import torch as _t
                     probs.extend(_t.softmax(logits2, dim=-1)[:, 1].tolist())
                     if head == 'crf' and crf is not None:
-                        lb = crf.nll(outputs["boundary2"], targets["boundary"].long(), m)
+                        lb = crf.nll(boundary2, targets["boundary"].long(), m)
                     else:
                         lb = crit_boundary(
-                            outputs["boundary2"][m][:, 1] - outputs["boundary2"][m][:, 0],
+                            boundary2[m][:, 1] - boundary2[m][:, 0],
                             targets["boundary"][m],
                         )
                     loss_val += w_boundary * float(lb)

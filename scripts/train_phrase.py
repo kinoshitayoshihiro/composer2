@@ -1645,11 +1645,24 @@ def train_model(
                 feats = {k: v.to(device) for k, v in feats.items()}
                 targets = {k: v.to(device) for k, v in targets.items()}
                 mask = mask.to(device)
-                outputs = model(feats, mask)
+                raw_outputs = model(feats, mask)
+                if isinstance(raw_outputs, dict):
+                    outputs = raw_outputs
+                elif isinstance(raw_outputs, (list, tuple)):
+                    first = raw_outputs[0] if raw_outputs else None
+                    outputs = {"boundary": first} if first is not None else {}
+                else:
+                    outputs = {"boundary": raw_outputs}
+                if "boundary" not in outputs and "boundary2" not in outputs:
+                    try:
+                        zeros = torch.zeros_like(targets["boundary"], dtype=torch.float32)
+                    except Exception:
+                        zeros = torch.tensor(0.0, device=device)
+                    outputs["boundary"] = zeros
                 m = mask.bool()
                 mask_cpu = m.cpu()
                 loss_val = 0.0
-                if "boundary2" in outputs:
+                if isinstance(outputs, dict) and ("boundary2" in outputs):
                     # CRF/2-class logits present; use softmax prob of class 1
                     logits2 = outputs["boundary2"][m].detach().cpu()
                     logits_all.extend((logits2[:, 1] - logits2[:, 0]).tolist())

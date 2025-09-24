@@ -343,16 +343,15 @@ def convert(args: SimpleNamespace) -> None:
         ks_tuple = tuple(ks_notes)
         same_tuple = last_sent == ks_tuple
         if periodic > 0:
-            periodic_due = (
-                not same_tuple
-                or last_sent_bar < 0
-                or (bar_index - last_sent_bar) >= periodic
-            )
+            periodic_due = (last_sent_bar < 0) or ((bar_index - last_sent_bar) >= periodic)
         else:
-            periodic_due = last_sent_bar < 0 or not same_tuple
-        send = periodic_due
-        if send and no_redundant and same_tuple and last_sent_bar == bar_index:
-            send = False
+            periodic_due = last_sent_bar < 0
+        send = (not same_tuple) or periodic_due
+        if send and no_redundant and same_tuple:
+            if periodic <= 0:
+                send = False
+            elif last_sent_bar == bar_index:
+                send = False
         if send:
             bar_end = bar_start
             if blocks:
@@ -629,7 +628,10 @@ def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
     resolution = float(getattr(pm, "resolution", 480) or 480.0)
     ts_changes = list(getattr(pm, "time_signature_changes", []))
     if not ts_changes:
-        ts_changes = [pretty_midi.TimeSignature(4, 4, 0.0)]
+        if hasattr(pretty_midi, "TimeSignature"):
+            ts_changes = [pretty_midi.TimeSignature(4, 4, 0.0)]
+        else:
+            ts_changes = [SimpleNamespace(numerator=4, denominator=4, time=0.0)]
     ts_changes = sorted(ts_changes, key=lambda ts: float(getattr(ts, "time", 0.0) or 0.0))
 
     def _beats_per_bar(ts_obj: object) -> float:
@@ -923,17 +925,17 @@ def convert(args) -> None:
                 ks_notes.extend(pattern_to_keyswitches(b["strum"], pattern_lib, keymap))
         ks_tuple = tuple(ks_notes)
         periodic = max(0, int(args.periodic_ks))
-        # periodic == 0 means the guard re-arms every bar.
         same_tuple = last_sent == ks_tuple
-        due_periodic = (
-            periodic == 0
-            or not same_tuple
-            or last_sent_bar < 0
-            or (bar_index - last_sent_bar) >= periodic
-        )
-        send = due_periodic
-        if send and args.no_redundant_ks and same_tuple and last_sent_bar == bar_index:
-            send = False
+        if periodic > 0:
+            periodic_due = (last_sent_bar < 0) or ((bar_index - last_sent_bar) >= periodic)
+        else:
+            periodic_due = last_sent_bar < 0
+        send = (not same_tuple) or periodic_due
+        if send and args.no_redundant_ks and same_tuple:
+            if periodic <= 0:
+                send = False
+            elif last_sent_bar == bar_index:
+                send = False
         if send:
             ks_time = max(0.0, bar_start - (float(args.ks_lead) + 20.0) / 1000.0)
             emitted_any = False

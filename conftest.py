@@ -4,6 +4,24 @@ try:
 except Exception:
     pass
 
+# Ensure pretty_midi exposes TimeSignature even when a stub SimpleNamespace is injected.
+try:
+    import pretty_midi
+    _ = pretty_midi.TimeSignature
+except Exception:
+    class _TimeSignature:
+        def __init__(self, numerator, denominator, time):
+            self.numerator = int(numerator)
+            self.denominator = int(denominator)
+            self.time = float(time)
+
+    import sys
+    import types
+
+    pm = sys.modules.get("pretty_midi")
+    if isinstance(pm, types.SimpleNamespace):
+        setattr(pm, "TimeSignature", _TimeSignature)
+
 pytest_plugins = ("tests._asyncio_plugin",)
 
 import pytest

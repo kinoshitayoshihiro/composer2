@@ -228,7 +228,11 @@ def convert(args: SimpleNamespace) -> None:
         beat_pos = _time_to_beats(time)
         segment = segments[0]
         for candidate in segments[1:]:
-            if beat_pos + 1e-9 >= candidate["start_beat"]:
+            try:
+                candidate_time = float(candidate.get("start_time", 0.0))
+            except Exception:
+                candidate_time = 0.0
+            if time + 1e-6 >= candidate_time:
                 segment = candidate
             else:
                 break
@@ -284,6 +288,37 @@ def convert(args: SimpleNamespace) -> None:
         info["next_start"] = next_start
         bar_blocks[info["bar"]].append(info)
 
+    raw_max_index = max(bar_blocks) if bar_blocks else 0
+    try:
+        ts_bar_starts = _compute_bar_starts(pm)
+    except Exception:
+        ts_bar_starts = []
+    if ts_bar_starts and len(ts_bar_starts) <= raw_max_index:
+        ts_bar_starts = []
+    if ts_bar_starts:
+        remapped: defaultdict[int, List[Dict]] = defaultdict(list)
+        for info in all_blocks:
+            start_val = float(info.get("start", 0.0))
+            idx = bisect_right(ts_bar_starts, start_val + 1e-9) - 1
+            if idx < 0:
+                idx = 0
+            if idx >= len(ts_bar_starts):
+                idx = len(ts_bar_starts) - 1
+            next_idx = idx + 1
+            if next_idx < len(ts_bar_starts):
+                next_start = float(ts_bar_starts[next_idx])
+                cur_start = float(ts_bar_starts[idx])
+                bar_len = max(0.0, next_start - cur_start)
+                lead = _ks_lead_time(bar_len, args)
+                tolerance = max(lead, 0.12)
+                if start_val + tolerance >= next_start - 1e-9:
+                    idx = next_idx
+            info["bar"] = idx
+            remapped[idx].append(info)
+        bar_blocks = remapped
+    else:
+        ts_bar_starts = []
+
     max_bar_index = max(bar_blocks) if bar_blocks else 0
 
     def _bar_start_for(index: int) -> float:
@@ -309,6 +344,38 @@ def convert(args: SimpleNamespace) -> None:
         return float(bar_time)
 
     bar_starts = [_bar_start_for(i) for i in range(max_bar_index + 1)] or [0.0]
+    if not ts_bar_starts:
+        try:
+            ts_bar_starts = _compute_bar_starts(pm)
+        except Exception:
+            ts_bar_starts = []
+    if not ts_bar_starts or len(ts_bar_starts) <= 1:
+        ts_bar_starts = list(bar_starts)
+    if not ts_bar_starts:
+        ts_bar_starts = list(bar_starts)
+
+    def _time_signature_key(at_time: float) -> tuple[int, int]:
+        ts_current = ts_raw[0]
+        for candidate in ts_raw:
+            try:
+                candidate_time = float(getattr(candidate, "time", 0.0) or 0.0)
+            except Exception:
+                continue
+            if at_time + 1e-9 >= candidate_time:
+                ts_current = candidate
+            else:
+                break
+        try:
+            num = int(getattr(ts_current, "numerator", 4))
+        except Exception:
+            num = 4
+        try:
+            den = int(getattr(ts_current, "denominator", 4))
+        except Exception:
+            den = 4
+        if den <= 0:
+            den = 4
+        return num, den
 
     out_pm = pretty_midi.PrettyMIDI(resolution=pm.resolution)
     ks_inst = pretty_midi.Instrument(program=0, name="Keyswitches")
@@ -369,7 +436,11 @@ def convert(args: SimpleNamespace) -> None:
                     pitch = keymap.get(name)
                     if isinstance(pitch, int):
                         section_pitches.append(pitch)
-        desired_tuple = tuple(section_pitches + ks_notes)
+        signature_time = ts_bar_starts[bar] if bar < len(ts_bar_starts) else ts_bar_starts[-1] if ts_bar_starts else 0.0
+        prefix = _time_signature_key(float(signature_time)) if ts_raw else (4, 4)
+        desired_notes = section_pitches + ks_notes
+        periodic_key = (seq_index // periodic,) if periodic > 0 else tuple()
+        desired_tuple = prefix + periodic_key + tuple(desired_notes) if desired_notes else tuple()
         same_tuple = last_sent == desired_tuple
         if periodic > 0:
             periodic_due = (last_sent_bar < 0) or (
@@ -379,9 +450,12 @@ def convert(args: SimpleNamespace) -> None:
         else:
             periodic_due = last_sent_bar < 0
         if same_tuple:
-            send = periodic_due
-            if send and no_redundant and last_sent_bar == seq_index and periodic <= 0:
+            if periodic > 0:
+                send = periodic_due
+            elif no_redundant:
                 send = False
+            else:
+                send = True
         else:
             send = True
         if send and desired_tuple:
@@ -696,6 +770,15 @@ def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
     return dedup
 
 
+def _ks_lead_time(bar_len_sec: float, args) -> float:
+    """Return lead time in seconds for emitting keyswitches before a bar."""
+
+    if not math.isfinite(bar_len_sec) or bar_len_sec <= 0.0:
+        return 0.0
+    lead_sec = 0.08
+    return min(lead_sec, bar_len_sec)
+
+
 def _keyswitch_time_for_bar(
     bar_index: int,
     bar_starts: Sequence[float],
@@ -704,32 +787,30 @@ def _keyswitch_time_for_bar(
 ) -> float:
     """Compute when to emit a key switch for *bar_index* using the bar boundaries."""
 
-    if pm is None or not bar_starts:
+    starts = list(bar_starts)
+    if pm is not None:
+        try:
+            computed = _compute_bar_starts(pm)
+        except Exception:
+            computed = []
+        if computed and len(computed) > int(bar_index):
+            starts = computed
+    if not starts:
         return 0.0
-    i = max(0, min(bar_index, len(bar_starts) - 1))
-    t_bar = float(bar_starts[i])
-    if not math.isfinite(t_bar):
+    count = len(starts)
+    idx = int(bar_index)
+    if idx <= 0:
         return 0.0
-    try:
-        bar_tick = int(pm.time_to_tick(t_bar))
-    except Exception:
-        resolution = int(getattr(pm, "resolution", 480) or 480)
-        bar_tick = int(round(t_bar * resolution))
-    try:
-        lead_ticks = int(getattr(args, "ks_lead", 60))
-    except Exception:
-        lead_ticks = 60
-    if not math.isfinite(float(lead_ticks)):
-        lead_ticks = 60
-    lead_ticks = max(0, int(lead_ticks))
-    ks_tick = max(0, bar_tick - lead_ticks)
-    try:
-        ks_time = float(pm.tick_to_time(int(ks_tick)))
-    except Exception:
-        resolution = float(getattr(pm, "resolution", 480) or 480.0)
-        if not math.isfinite(resolution) or resolution <= 0.0:
-            resolution = 480.0
-        ks_time = float(ks_tick) / resolution
+    if idx >= count:
+        idx = count - 1
+    start = float(starts[idx])
+    prev = float(starts[idx - 1]) if idx - 1 >= 0 else 0.0
+    if not math.isfinite(start):
+        return 0.0
+    if not math.isfinite(prev):
+        prev = 0.0
+    bar_len = max(0.0, start - prev)
+    ks_time = start - _ks_lead_time(bar_len, args)
     if not math.isfinite(ks_time):
         return 0.0
     return max(0.0, ks_time)

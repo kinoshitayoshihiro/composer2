@@ -8,6 +8,7 @@ import math
 import pathlib
 from bisect import bisect_right
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from types import SimpleNamespace
 from typing import Dict, List, Sequence
 
@@ -749,21 +750,23 @@ def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
         downbeats_raw = pm.get_downbeats()
     except Exception:
         downbeats_raw = []
-    if hasattr(downbeats_raw, "__len__") and len(downbeats_raw) > 0:
-        values = downbeats_raw.tolist() if hasattr(downbeats_raw, "tolist") else list(downbeats_raw)
-        for value in values:
-            try:
-                starts.append(float(value))
-            except Exception:
-                continue
+    if hasattr(downbeats_raw, "tolist"):
+        downbeat_iter = downbeats_raw.tolist()
+    else:
+        downbeat_iter = list(downbeats_raw) if isinstance(downbeats_raw, Iterable) else []
+    for value in downbeat_iter:
+        try:
+            starts.append(max(0.0, float(value)))
+        except Exception:
+            continue
     ts_changes = getattr(pm, "time_signature_changes", None) or []
     for ts in ts_changes:
         try:
             t = float(getattr(ts, "time", 0.0))
         except Exception:
             continue
-        starts.append(t)
-    starts = [t for t in starts if math.isfinite(t) and t >= 0.0]
+        starts.append(max(0.0, t))
+    starts = [t for t in starts if math.isfinite(t)]
     unique = sorted({round(t, 6) for t in starts})
     dedup: List[float] = []
     for t in unique:

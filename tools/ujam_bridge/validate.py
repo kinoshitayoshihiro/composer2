@@ -192,7 +192,7 @@ def validate(path: pathlib.Path) -> List[str]:
                 except Exception:
                     continue
                 if pitch < rng_low or pitch > rng_high:
-                    msg = f"keyswitch '{name}' pitch {pitch} out of range {rng_low}..{rng_high}"
+                    msg = f"keyswitch '{name}' out of range {rng_low}..{rng_high} (got {pitch})"
                     if msg not in issues:
                         issues.append(msg)
 

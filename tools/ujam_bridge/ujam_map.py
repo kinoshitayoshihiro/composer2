@@ -524,6 +524,9 @@ def _validate_map(data: Dict) -> List[str]:
             issues.append(f"keyswitch '{name}' missing hold")
 
     ks_list = data.get("keyswitches", []) or []
+    if not isinstance(ks_list, list):
+        issues.append("keyswitches must be a list")
+        ks_list = []
     for idx, item in enumerate(ks_list):
         if not isinstance(item, dict):
             issues.append(f"keyswitch #{idx} not a mapping")
@@ -534,8 +537,15 @@ def _validate_map(data: Dict) -> List[str]:
     if isinstance(ks_dict, dict):
         for name, value in ks_dict.items():
             _register(name, value, require_hold=False)
+    elif ks_dict not in (None, {}):
+        issues.append("keyswitch must be a mapping")
 
-    play = data.get("play_range", {}) or {}
+    play_raw = data.get("play_range", {}) or {}
+    if isinstance(play_raw, dict):
+        play = play_raw
+    else:
+        issues.append("play_range must be a mapping")
+        play = {}
     play_defined = bool(play)
     try:
         low = int(play.get("low", KS_MIN))
@@ -613,9 +623,18 @@ def _group_chords(notes: List[pretty_midi.Note], window: float = 0.03) -> List[L
 def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
     """Return bar start times accounting for time signature changes."""
 
-    downbeats = list(pm.get_downbeats())
+    downbeats: List[float] = []
+    try:
+        raw_downbeats = pm.get_downbeats()
+    except Exception:
+        raw_downbeats = []
+    if raw_downbeats is not None:
+        try:
+            downbeats = [float(t) for t in raw_downbeats]
+        except Exception:
+            downbeats = []
     if len(downbeats) >= 2:
-        return [float(t) for t in downbeats]
+        return downbeats
     resolution = float(getattr(pm, "resolution", 480) or 480.0)
     ts_changes = list(getattr(pm, "time_signature_changes", []))
     if not ts_changes:
@@ -694,7 +713,9 @@ def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
         for note in getattr(inst, "notes", []):
             bar_times.add(_locate_bar_start(float(getattr(note, "start", 0.0))))
     for ts in ts_changes:
-        bar_times.add(_locate_bar_start(float(getattr(ts, "time", 0.0) or 0.0)))
+        ts_time = float(getattr(ts, "time", 0.0) or 0.0)
+        bar_times.add(_locate_bar_start(ts_time))
+        bar_times.add(max(0.0, ts_time))
     return sorted(bar_times)
 
 

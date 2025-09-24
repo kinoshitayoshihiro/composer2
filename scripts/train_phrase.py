@@ -1648,6 +1648,8 @@ def train_model(
                 raw_outputs = model(feats, mask)
                 if isinstance(raw_outputs, dict):
                     outputs = raw_outputs
+                elif torch is not None and isinstance(raw_outputs, torch.Tensor):
+                    outputs = {"boundary": raw_outputs}
                 elif (
                     isinstance(raw_outputs, (list, tuple))
                     and raw_outputs

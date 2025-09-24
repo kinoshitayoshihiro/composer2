@@ -28,14 +28,12 @@ def _load(path: pathlib.Path) -> Dict[str, Any]:
             globals()["yaml"] = loader
     if loader is not None:
         data = loader.safe_load(text)
-        if not isinstance(data, dict) or any(
-            isinstance(v, str) and ":" in v for v in (data.values() if isinstance(data, dict) else [])
-        ):
+        if isinstance(data, list):
+            data = next((item for item in data if isinstance(item, dict)), {})
+        if not isinstance(data, dict):
             data = _parse_simple(text)
     else:
         data = _parse_simple(text)
-    if isinstance(data, list):
-        data = next((item for item in data if isinstance(item, dict)), {})
     if not isinstance(data, dict):
         data = {}
     return data
@@ -52,17 +50,20 @@ def _validate_keyswitch_range(data: Dict[str, Any]) -> List[str]:
         except Exception:
             return default
 
-    play_range = data.get("play_range") if isinstance(data.get("play_range"), dict) else {}
-    play_low_raw = _coerce_int(play_range.get("low"), KS_MIN) if isinstance(play_range, dict) else KS_MIN
-    play_high_raw = _coerce_int(play_range.get("high"), KS_MAX) if isinstance(play_range, dict) else KS_MAX
-    play_low = max(0, min(play_low_raw, play_high_raw, 127))
-    play_high = max(play_low, min(max(play_low_raw, play_high_raw), 127))
-    ks_low = min(play_low, KS_MIN)
-    ks_high = max(play_high, KS_MAX)
+    play_raw = data.get("play_range")
+    play_range = play_raw if isinstance(play_raw, dict) else {}
+    play_low_raw = _coerce_int(play_range.get("low"), KS_MIN)
+    play_high_raw = _coerce_int(play_range.get("high"), KS_MAX)
+    if play_low_raw > play_high_raw:
+        play_low_raw, play_high_raw = play_high_raw, play_low_raw
+    play_low = max(0, min(play_low_raw, 127))
+    play_high = max(play_low, min(play_high_raw, 127))
+    ks_low = play_low if play_range else KS_MIN
+    ks_high = play_high if play_range else KS_MAX
 
-    ks = data.get("keyswitch")
-    if isinstance(ks, dict):
-        for name, value in ks.items():
+    ks_dict = data.get("keyswitch")
+    if isinstance(ks_dict, dict):
+        for name, value in ks_dict.items():
             if not isinstance(name, str):
                 continue
             try:

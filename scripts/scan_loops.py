@@ -1,7 +1,6 @@
 import argparse
 import csv
 import logging
-import os
 import re
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -35,32 +34,18 @@ def _ensure_tempo(pm: pretty_midi.PrettyMIDI, bpm: float, tempo_source: str) -> 
                 setattr(pm, "tempo_source", tempo_source)
                 return pm
 
-    # choose first track containing any meta messages; default to 0
-    target_idx = 0
-    for i, track in enumerate(midi.tracks):
-        if any(getattr(msg, "is_meta", False) for msg in track):
-            target_idx = i
-            break
+    target_idx = 1 if len(midi.tracks) > 1 else 0
+    track = midi.tracks[target_idx]
+    tempo_msg = mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(bpm), time=0)
+    track.insert(0, tempo_msg)
 
-    tmp_path: str | None = None
-    try:
-        track = midi.tracks[target_idx]
-        tempo_msg = mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(bpm), time=0)
-        # ensure tempo precedes any existing time-zero meta messages
-        track.insert(0, tempo_msg)
-        with NamedTemporaryFile(suffix=".mid", delete=False) as fh:
-            tmp_path = fh.name
-        midi.save(tmp_path)
-        pm2 = pretty_midi.PrettyMIDI(tmp_path)
-        setattr(pm2, "tempo_injected", True)
-        setattr(pm2, "tempo_source", tempo_source)
-        return pm2
-    finally:
-        if tmp_path is not None:
-            try:
-                os.remove(tmp_path)
-            except OSError as exc:
-                logging.debug("Temporary file cleanup failed: %s (%s)", tmp_path, exc)
+    with NamedTemporaryFile(suffix=".mid") as fh:
+        midi.save(fh.name)
+        fh.flush()
+        pm2 = pretty_midi.PrettyMIDI(fh.name)
+    setattr(pm2, "tempo_injected", True)
+    setattr(pm2, "tempo_source", tempo_source)
+    return pm2
 
 
 def _analyze(path: Path):

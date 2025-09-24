@@ -28,10 +28,50 @@ def _load(path: pathlib.Path) -> Dict[str, Any]:
     return data
 
 
+def _validate_keyswitch_range(data: Dict[str, Any]) -> List[str]:
+    issues: List[str] = []
+    if not isinstance(data, dict):
+        return issues
+    play_range = data.get("play_range")
+    if isinstance(play_range, dict):
+        try:
+            low = int(play_range.get("low", KS_MIN))
+        except Exception:
+            low = KS_MIN
+        try:
+            high = int(play_range.get("high", KS_MAX))
+        except Exception:
+            high = KS_MAX
+        if low > high:
+            low, high = high, low
+    else:
+        low, high = KS_MIN, KS_MAX
+    ks = data.get("keyswitch")
+    if isinstance(ks, dict):
+        for name, value in ks.items():
+            if not isinstance(name, str):
+                continue
+            try:
+                pitch = int(value)
+            except Exception:
+                issues.append(
+                    f"keyswitch '{name}' out of range {low}..{high} (got {value})"
+                )
+                continue
+            if pitch < low or pitch > high:
+                issues.append(
+                    f"keyswitch '{name}' out of range {low}..{high} (got {pitch})"
+                )
+    return issues
+
+
 def validate(path: pathlib.Path) -> List[str]:
     """Validate mapping *path* and return a list of problems."""
     data = _load(path)
     issues = _validate_map(data)
+    for msg in _validate_keyswitch_range(data):
+        if msg not in issues:
+            issues.append(msg)
 
     if isinstance(data, dict):
         play_range_raw = data.get("play_range")
@@ -92,6 +132,32 @@ def validate(path: pathlib.Path) -> List[str]:
                 name = item.get("name")
                 if isinstance(name, str):
                     _check_range(name, item.get("note"))
+
+        rng_low, rng_high = KS_MIN, KS_MAX
+        if isinstance(play_range_raw, dict):
+            try:
+                rng_low = int(play_range_raw.get("low", KS_MIN))
+            except Exception:
+                rng_low = KS_MIN
+            try:
+                rng_high = int(play_range_raw.get("high", KS_MAX))
+            except Exception:
+                rng_high = KS_MAX
+        if rng_low > rng_high:
+            rng_low, rng_high = rng_high, rng_low
+        ks_map = data.get("keyswitch")
+        if isinstance(ks_map, dict):
+            for name, value in ks_map.items():
+                if not isinstance(name, str):
+                    continue
+                try:
+                    pitch = int(value)
+                except Exception:
+                    continue
+                if pitch < rng_low or pitch > rng_high:
+                    msg = f"keyswitch '{name}' pitch {pitch} out of range {rng_low}..{rng_high}"
+                    if msg not in issues:
+                        issues.append(msg)
 
     return issues
 

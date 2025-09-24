@@ -324,7 +324,6 @@ def convert(args: SimpleNamespace) -> None:
     last_sent: tuple[int, ...] | None = None
     last_sent_bar = -10**9
     emitted_at: dict[int, float] = {}
-    bar_index = 0
 
     def _emit_keyswitch(pitch: int, when: float) -> bool:
         if no_redundant:
@@ -351,7 +350,8 @@ def convert(args: SimpleNamespace) -> None:
     section_mode = getattr(args, "section_aware", "off")
     no_redundant = bool(getattr(args, "no_redundant_ks", False))
 
-    for bar in sorted(bar_blocks):
+    sorted_bars = sorted(bar_blocks)
+    for seq_index, bar in enumerate(sorted_bars):
         blocks = bar_blocks[bar]
         bar_start = bar_starts[bar] if bar < len(bar_starts) else bar_starts[-1]
         pattern = " ".join(b["strum"] for b in blocks)
@@ -374,13 +374,13 @@ def convert(args: SimpleNamespace) -> None:
         if periodic > 0:
             periodic_due = (last_sent_bar < 0) or (
                 last_sent_bar >= 0
-                and (bar_index - last_sent_bar) % periodic == 0
+                and (seq_index - last_sent_bar) % periodic == 0
             )
         else:
             periodic_due = last_sent_bar < 0
         if same_tuple:
             send = periodic_due
-            if send and no_redundant and last_sent_bar == bar_index and periodic <= 0:
+            if send and no_redundant and last_sent_bar == seq_index and periodic <= 0:
                 send = False
         else:
             send = True
@@ -395,7 +395,7 @@ def convert(args: SimpleNamespace) -> None:
                     emitted_any = True
             if emitted_any:
                 last_sent = desired_tuple
-                last_sent_bar = bar_index
+                last_sent_bar = seq_index
         for b in blocks:
             chord = utils.chordify(b["pitches"], (play_low, play_high))
             total_notes += len(b["pitches"])
@@ -412,7 +412,6 @@ def convert(args: SimpleNamespace) -> None:
                 )
             if getattr(args, "dry_run", False):
                 csv_rows.append({"start": b["start"], "chord": chord, "keyswitches": ks_notes})
-        bar_index += 1
 
     if getattr(args, "dry_run", False):
         csv_path = out_path.with_suffix(".csv")
@@ -670,15 +669,17 @@ def _compute_bar_starts(pm: "pretty_midi.PrettyMIDI") -> List[float]:
         downbeats_raw = pm.get_downbeats()
     except Exception:
         downbeats_raw = []
-    if hasattr(downbeats_raw, "tolist"):
-        downbeats = downbeats_raw.tolist()
-    else:
-        downbeats = list(downbeats_raw or [])
-    for value in downbeats:
-        try:
-            starts.append(float(value))
-        except Exception:
-            continue
+    if hasattr(downbeats_raw, "__len__") and len(downbeats_raw) > 0:
+        values = (
+            downbeats_raw.tolist()
+            if hasattr(downbeats_raw, "tolist")
+            else list(downbeats_raw)
+        )
+        for value in values:
+            try:
+                starts.append(float(value))
+            except Exception:
+                continue
     ts_changes = getattr(pm, "time_signature_changes", None) or []
     for ts in ts_changes:
         try:
@@ -710,16 +711,29 @@ def _keyswitch_time_for_bar(bar_index: int, bar_starts: Sequence[float], args) -
     if not bar_starts:
         return 0.0
     i = max(0, min(bar_index, len(bar_starts) - 1))
-    start = float(bar_starts[i])
+    t_bar = float(bar_starts[i])
+    if not math.isfinite(t_bar):
+        return 0.0
+    try:
+        quant = float(getattr(args, "quant", 120))
+    except Exception:
+        quant = 120.0
+    if not math.isfinite(quant) or quant <= 0.0:
+        quant = 120.0
+    fallback_len = 60.0 / quant * 4.0
+    if not math.isfinite(fallback_len) or fallback_len <= 0.0:
+        fallback_len = 0.5
     if i + 1 < len(bar_starts):
-        bar_len = max(0.0, float(bar_starts[i + 1]) - start)
-    elif i > 0:
-        bar_len = max(0.0, start - float(bar_starts[i - 1]))
+        bar_len = float(bar_starts[i + 1]) - t_bar
     else:
-        bar_len = 0.0
-    lead = _ks_lead_time(bar_len, args)
-    when = start - lead
-    return when if when > 1e-9 else 0.0
+        bar_len = fallback_len
+    if not math.isfinite(bar_len) or bar_len <= 0.0:
+        bar_len = fallback_len
+    bar_len = max(0.0, bar_len)
+    ks_t = t_bar - _ks_lead_time(bar_len, args)
+    if not math.isfinite(ks_t):
+        return 0.0
+    return max(0.0, ks_t)
 
 
 def _tempo_at(time: float, tempo_times: Sequence[float], tempo_values: Sequence[float]) -> float:

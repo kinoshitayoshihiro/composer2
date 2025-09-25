@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/transformer/tokenizer_piano.py
-# hypothesis_version: 6.135.29
-
-[0.01, '<BAR>', '<LH>', '<REST_d8>', '<RH>', '<TS_4_4>', '<UNK>', '<VELO_80>', 'P', 'PianoTokenizer', 'bar', 'export_vocab', 'hand', 'lh', 'note', 'rh', 'utf-8', 'w']

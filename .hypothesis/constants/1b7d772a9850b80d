@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/pb_math.py
-# hypothesis_version: 6.138.15
-
-[-1.0, 0.0, 1.0, 100.0, 8191.0, -8191, 8191, 'BendRange', 'DELTA_MAX', 'PBMAX', 'PBMIN', 'PB_CENTER', 'PB_FS', 'PB_MAX', 'PB_MIN', 'PITCHWHEEL_CENTER', 'PITCHWHEEL_RAW_MAX', 'RAW_CENTER', 'RAW_MAX', '__len__', 'clip_delta', 'norm_to_pb', 'norm_to_raw', 'pb_to_norm', 'pb_to_semi', 'raw_to_norm', 'semi_to_pb', 'semito_pb']

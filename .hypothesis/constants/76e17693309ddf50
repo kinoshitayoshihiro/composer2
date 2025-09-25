@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/generator/base_part_generator.py
-# hypothesis_version: 6.136.0
-
-[0.0, 0.9, 1.0, 1.1, 1.2, 120.0, 127.0, 127, '/', '4/4', 'None', 'UnknownSection', '_measure_duration', 'cc', 'custom_params', 'default_subtle', 'effect_envelope', 'enable', 'extra_cc', 'fx_envelope', 'global_settings', 'high', 'intensity', 'lh', 'low', 'medium', 'metadata', 'ml_velocity_model', 'model_dump', 'musical_intent', 'offset_profile', 'offset_profile_lh', 'offset_profile_rh', 'part', 'part_name', 'part_params', 'predict', 'q_length', 'rh', 'section_name', 'shared_tracks', 'swing_ratio', 'template_name', 'time', 'time_signature', 'val', 'velocity_model', 'very_high']

@@ -1086,20 +1086,44 @@ def train_model(
             if weight_stats:
                 logging.info("top tag weights (tag=%s) %s", tag_name, weight_stats)
             if torch is not None:
-                try:
-                    sampler = torch.utils.data.WeightedRandomSampler(
-                        weights_tensor,
-                        int(weights_tensor.numel()),
-                        replacement=True,
-                    )
-                except TypeError:
-                    sampler = torch.utils.data.WeightedRandomSampler(
-                        weights_tensor,
-                        int(weights_tensor.numel()),
-                        True,
-                    )
-                if sampler is not None:
-                    shuffle_train = False
+                base_sampler = getattr(torch.utils.data, "WeightedRandomSampler", None)
+                if callable(base_sampler):
+                    try:
+                        sampler = base_sampler(
+                            weights_tensor,
+                            int(weights_tensor.numel()),
+                            replacement=True,
+                        )
+                    except TypeError:
+                        sampler = base_sampler(
+                            weights_tensor,
+                            int(weights_tensor.numel()),
+                            True,
+                        )
+                    except RecursionError:
+                        sampler_mod = getattr(torch.utils.data, "sampler", None)
+                        base_cls = (
+                            getattr(sampler_mod, "WeightedRandomSampler", None)
+                            if sampler_mod is not None
+                            else None
+                        )
+                        if callable(base_cls):
+                            try:
+                                sampler = base_cls(
+                                    weights_tensor,
+                                    int(weights_tensor.numel()),
+                                    replacement=True,
+                                )
+                            except TypeError:
+                                sampler = base_cls(
+                                    weights_tensor,
+                                    int(weights_tensor.numel()),
+                                    True,
+                                )
+                        else:
+                            sampler = None
+                    if sampler is not None:
+                        shuffle_train = False
         if sampler is None:
             parts = [p.strip() for p in reweight.split(",") if p.strip()]
             kv = {k.strip(): v.strip() for k, v in (p.split("=", 1) for p in parts if "=" in p)}
@@ -1433,6 +1457,22 @@ def train_model(
                 sampler = sampler_fn(weight_tensor, len(ds_train), replacement=True)
             except TypeError:
                 sampler = sampler_fn(weight_tensor, len(ds_train), True)
+            except RecursionError:
+                base_mod = getattr(torch.utils.data, "sampler", None)
+                base_cls = (
+                    getattr(base_mod, "WeightedRandomSampler", None)
+                    if base_mod is not None
+                    else None
+                )
+                if callable(base_cls):
+                    try:
+                        sampler = base_cls(
+                            weight_tensor, len(ds_train), replacement=True
+                        )
+                    except TypeError:
+                        sampler = base_cls(weight_tensor, len(ds_train), True)
+                else:
+                    sampler = None
             if sampler is not None:
                 shuffle_train = False
 

@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/realtime/phrase_ws.py
-# hypothesis_version: 6.138.15
-
-[0.5, 8000, 5000000, '/infer', '/warmup', '127.0.0.1', 'app', 'busy', 'error', 'ok', 'payload_too_large', 'phrase.ckpt', 'run', 'run_server', 'status', 'transformer', 'warning']

@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/sparkle_convert.py
-# hypothesis_version: 6.138.15
-
-['__', '__main__', '_dummy_pm', '_pm_dummy_for_docs', 'accent_map', 'build_sparkle_midi', 'emit_damping', 'parse_damp_arg', 'pretty_midi', 'ujam.sparkle_convert']

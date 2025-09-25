@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/consonant_extract.py
-# hypothesis_version: 6.135.29
-
-[0.25, 0.5, 512, 2048, '--algo', '--hop', '--hpf', '--lpf', '--output', '--thr', '--window', '-o', '__main__', 'consonant_peaks.json', 'essentia', 'highpass', 'input_wav', 'librosa', 'lowpass']

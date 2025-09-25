@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/transformer/piano_transformer.py
-# hypothesis_version: 6.135.29
-
-[512, 'PianoTransformer', 'c_attn', 'torch not available']

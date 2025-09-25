@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/scripts/train_velocity.py
-# hypothesis_version: 6.136.6
-
-[0.0, 0.01, 1.0, 30.0, 256, '*.wav', '+', '--augment', '--csv-out', '--csv-path', '--drums-dir', '--dry-run', '--json', '--out-dir', '--progress', '--rates', '--seed', '--shifts', '--snrs', '--stats-out', '--tracks-dir', '--wav-dir', '../configs', '1.3', 'Rebuild CSV files', '__main__', 'accelerator', 'augment', 'augment-data', 'build-velocity-csv', 'callbacks', 'checkpoint', 'checkpoint_path', 'checkpoints', 'command', 'csv', 'data/loops/drums', 'data/tracks', 'data/tracks_aug', 'device', 'devices', 'early_stopping', 'float32', 'json', 'logger', 'model', 'pandas required', 'path', 'pytest', 'space-sep floats', 'store_true', 'tests', 'train_MSE', 'train_loss', 'train_velocity.py', 'val_MSE', 'val_loss', 'velocity', 'velocity_model.yaml', 'wav']

@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/chordmap_merge.py
-# hypothesis_version: 6.138.15
-
-[0.5, 1.0, '--base', '--context', '--narr', '--out', '--policy', '?', 'Base chordmap YAML', 'IV↔ii', 'I↔vi', 'Merge policy YAML', 'Narrative edits YAML', 'V→V7sus4', '__main__', 'add', 'add_tension', 'all_in_one', 'allow_substitutions', 'bar', 'base_chords', 'bass', 'bass_guard', 'cadence_lock', 'chordmap.final.yaml', 'chords', 'dur', 'edits', 'final_chords', 'ii→ii7', 'key', 'max_stack', 'merge_policy', 'meter', 'narrative_chords', 'op', 'quality', 'r', 'root', 'root_change_allowed', 'root_change_bars', 'sections', 'slash', 'strong_beat_lock', 'substitute', 'tempo_map', 'tension_limits', 'tensions', 'to', 'utf-8', 'w', 'weight', 'weight_threshold']

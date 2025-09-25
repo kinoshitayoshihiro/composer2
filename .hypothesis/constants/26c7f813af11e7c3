@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/ngram_store.py
-# hypothesis_version: 6.138.15
-
-[256, 1024, 2000, 60000, 'ANALYZE', 'BEGIN IMMEDIATE', 'NGDB_CACHE_MB', 'NGDB_MMAP_MB', 'NGDB_SYNCHRONOUS', 'NORMAL', 'VACUUM', 'conn', 'contexts', 'rows', 'total']

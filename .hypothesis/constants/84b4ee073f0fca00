@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/ml_velocity.py
-# hypothesis_version: 6.135.29
-
-[0.1, 0.9, 64.0, 127, 256, '--json', '--model', 'MLVelocityModel', 'ModelV1_LSTM', '__main__', '_dummy', 'cpu', 'cuda', 'model.', 'state_dict', 'torch required', 'velocity_loss']

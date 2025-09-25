@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/velocity_curve.py
-# hypothesis_version: 6.135.29
-
-[0.0, 0.6, 0.8, 1.0, 127, 128, 'crescendo', 'decrescendo', 'linear', 'natural', 'spline']

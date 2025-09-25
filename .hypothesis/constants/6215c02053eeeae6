@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/rich_note_csv.py
-# hypothesis_version: 6.138.15
-
-[0.0, 1.0, 100, 101, 128, 200, '*.mid', '--coverage', '--emit-bend-events', '--emit-cc-events', '--include-cc11', '--no-bend', '--no-cc', '--out', '?', 'CC64', 'Output CSV path', '__main__', 'articulation', 'bar', 'bend', 'bend_max_semi', 'bend_range', 'bend_rms_semi', 'cc11_at_onset', 'cc11_mean', 'cc64', 'cc64_ratio', 'chord_symbol', 'duration', 'ignore', 'is_drum', 'pitch', 'position', 'pretty_midi required', 'program', 'q_duration', 'q_onset', 'semitone', 'src', 'store_true', 'time', 'track', 'value', 'value_14bit', 'velocity', 'vib_rate_hz', 'w']

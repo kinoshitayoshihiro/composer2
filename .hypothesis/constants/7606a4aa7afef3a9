@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/controls_utils.py
-# hypothesis_version: 6.138.15
-
-[0.02, 1.0, 2.0, 1000.0, 'add', 'replace', 'sine', 'skip', 'triangle']

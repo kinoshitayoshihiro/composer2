@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/groove_rnn_v2.py
-# hypothesis_version: 6.136.0
-
-[0.001, 0.25, 1.0, 4.0, 128, 256, '--batch', '--epochs', '--length', '--lr', '--out', '--seed', '--temperature', '-l', 'Infer aux metadata', 'Install extras: rnn', 'cpu', 'data', 'duration', 'instrument', 'kick', 'loops', 'lr', 'meta', 'model_path', 'offset', 'out_path', 'r', 'state_dict', 'tags', 'tokens', 'utf-8', 'velocity', 'vocab']

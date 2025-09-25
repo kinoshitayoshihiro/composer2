@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/ml_articulation.py
-# hypothesis_version: 6.136.6
-
-[0.2, 128, 256, 'ArticulationTagger', 'MLArticulationModel', 'NoteFeatureEmbedder', 'Prediction', 'bucket', 'cpu', 'decode', 'fc.weight', 'itertuples', 'label', 'labels', 'load', 'model.', 'pad_mask', 'pedal', 'pitch', 'predict', 'predict_many', 'qlen', 'state_dict', 'torch required', 'velocity', 'viterbi_decode']

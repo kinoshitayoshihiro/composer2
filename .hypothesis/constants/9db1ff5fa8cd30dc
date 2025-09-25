@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/api/vocal_server.py
-# hypothesis_version: 6.136.0
-
-[500, '/generate_vocal', 'bars', 'chords', 'detail', 'http']

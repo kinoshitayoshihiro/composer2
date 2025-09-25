@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/ujam/phrase_schedule.py
-# hypothesis_version: 6.138.15
-
-[-1000000000.0, 0.0, 0.5, 0.75, 0.8, 0.99, 1.0, 1.2, 1.25, '1', 'SectionLFO', 'T', 'accent', 'alternate', 'avoid_pitches', 'bar', 'bar_density', 'bar_reason', 'density', 'duration_beats', 'end_bar', 'existing', 'fill_cadence', 'fill_conflicts', 'first', 'high', 'last', 'len', 'lfo', 'linear', 'low', 'maj', 'markov', 'med', 'min', 'min_gap_beats', 'new', 'note', 'period', 'phrase_pool', 'policy', 'pool', 'pool_by_quality', 'pool_weights', 'section', 'sine', 'skip', 'source', 'start_bar', 'states', 'stride', 'style', 'tag', 'triangle', 'vel_scale']

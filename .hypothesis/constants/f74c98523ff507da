@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/cc_tools.py
-# hypothesis_version: 6.138.15
-
-[0.0, 0.01, 2.0, 40.0, 127, 'CCEvent', '_extra_cc', '_extra_cc_installed', 'add_cc_events', 'add_cc_ramp', 'add_cc_sine', 'cc', 'extra_cc', 'finalize_cc_events', 'merge_cc_events', 'metadata', 'scale_gate', 'time', 'to_sorted_dicts', 'val', 'value']

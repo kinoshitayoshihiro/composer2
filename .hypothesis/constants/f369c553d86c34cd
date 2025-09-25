@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/tempo_utils.py
-# hypothesis_version: 6.135.29
-
-[0.0, 0.1, 0.3, 0.5, 2.0, 40.0, 60.0, 120.0, 127, 480, 'bd', 'beat', 'bpm', 'crash', 'curve', 'cymbal', 'ease_in', 'ease_in_out', 'ease_out', 'hat', 'hh', 'hist', 'kick', 'linear', 'r', 'ride', 'snare', 'splash', 'step', 'tom', 'utf-8', 'value']

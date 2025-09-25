@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/tools/ujam_bridge/gen_staircase.py
-# hypothesis_version: 6.138.15
-
-[b'Keyswitches', b'MThd', b'MTrk', 0.1, 1.0, 120.0, 100, 127, 128, 144, 255, 480, 60000000, '--channel', '--gap', '--note-len', '--out', '--ppq', '--product', '--tempo', '--velocity', '__main__', 'ascii', 'big', 'keyswitches', 'name', 'note', 'wb']

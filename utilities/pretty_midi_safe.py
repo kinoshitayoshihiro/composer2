@@ -44,7 +44,7 @@ def pm_to_mido(pm: pretty_midi.PrettyMIDI):
         if not initial_bpm or not math.isfinite(initial_bpm) or initial_bpm <= 0:
             initial_bpm = float(getattr(pm, "initial_tempo", 120.0) or 120.0)
 
-        tempo_msg = MetaMessage("set_tempo", tempo=bpm2tempo(initial_bpm), time=0)
+        tempo_value = bpm2tempo(initial_bpm)
         if midi.tracks:
             track0 = midi.tracks[0]
         else:  # pragma: no cover - ensure track exists
@@ -53,15 +53,54 @@ def pm_to_mido(pm: pretty_midi.PrettyMIDI):
 
         # Ensure track0 has a tempo marker
         if not any(getattr(msg, "type", "") == "set_tempo" for msg in track0):
-            track0.insert(0, tempo_msg)
+            track0.insert(0, MetaMessage("set_tempo", tempo=tempo_value, time=0))
 
-        # Additionally, when a meta track (track1) exists, ensure it also starts
-        # with a tempo marker so downstream tools expecting track[1] metadata
-        # (name, time signature) see the tempo first.
-        if len(midi.tracks) > 1:
+        def _meta_exists(track, kind: str) -> bool:
+            return any(getattr(msg, "type", "") == kind for msg in track)
+
+        def _first_meta(kind: str):
+            for tr in midi.tracks:
+                for msg in tr:
+                    if getattr(msg, "type", "") == kind:
+                        return msg
+            return None
+
+        need_meta_track = len(midi.tracks) < 2
+        if not need_meta_track:
             track1 = midi.tracks[1]
-            if not any(getattr(msg, "type", "") == "set_tempo" for msg in track1):
-                track1.insert(0, MetaMessage("set_tempo", tempo=bpm2tempo(initial_bpm), time=0))
+            has_name = _meta_exists(track1, "track_name")
+            has_time_sig = _meta_exists(track1, "time_signature")
+            has_tempo = _meta_exists(track1, "set_tempo")
+            need_meta_track = not (has_name and has_time_sig)
+            if not need_meta_track and not has_tempo:
+                track1.insert(0, MetaMessage("set_tempo", tempo=tempo_value, time=0))
+
+        if need_meta_track:
+            meta_track = MidiTrack()
+            meta_track.append(MetaMessage("set_tempo", tempo=tempo_value, time=0))
+            name_msg = _first_meta("track_name")
+            if name_msg is not None:
+                meta_track.append(name_msg.copy(time=0))  # type: ignore[attr-defined]
+            else:
+                meta_track.append(MetaMessage("track_name", name="metadata", time=0))
+
+            time_sig_msg = _first_meta("time_signature")
+            if time_sig_msg is not None:
+                meta_track.append(time_sig_msg.copy(time=0))  # type: ignore[attr-defined]
+            else:
+                meta_track.append(
+                    MetaMessage(
+                        "time_signature",
+                        numerator=4,
+                        denominator=4,
+                        clocks_per_click=24,
+                        notated_32nd_notes_per_beat=8,
+                        time=0,
+                    )
+                )
+            meta_track.append(MetaMessage("end_of_track", time=0))
+            insert_idx = 1 if midi.tracks else 0
+            midi.tracks.insert(insert_idx, meta_track)
         return midi
     finally:
         try:

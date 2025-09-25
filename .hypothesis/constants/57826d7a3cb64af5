@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/groove_sampler_rnn.py
-# hypothesis_version: 6.135.29
-
-[0.0, 0.002, 0.1, 0.25, 1.0, 4.0, 6.0, 12.0, 100.0, 100, 120, 127, 128, 256, '--embed', '--epochs', '--hidden', '--length', '--out', '--temperature', '-l', '-o', 'aux', 'bar_beats', 'cpu', 'data', 'duration', 'embed', 'file', 'heat_bin', 'hidden', 'instrument', 'intensity', 'kick', 'loops', 'loops_auto.json', 'matrix', 'meta', 'minimize', 'model_path', 'offset', 'out_path', 'r', 'section', 'state', 'tempo_bpm', 'tokens', 'utf-8', 'velocity', 'vocab']

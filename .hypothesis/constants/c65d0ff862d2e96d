@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/loop_ingest.py
-# hypothesis_version: 6.138.15
-
-[0.0, 0.1, 0.2, 60.0, 120.0, 100, 120, 300, 480, 600, 1000, 3000, ',', '--ext', '--out', '--part', '--ppq', '--resolution', '.', '.meta.yaml', '.meta.yml', '.mid', '.midi', '.wav', 'Infer aux metadata', 'LoopEntry', 'Timed out loading %s', '__main__', 'aux', 'bar_beats', 'cache', 'cache.pkl', 'clap', 'cli', 'conga_cl', 'conga_op', 'cowbell', 'data', 'drums', 'drums or perc', 'file', 'float32', 'hann', 'heat_bin', 'high', 'info', 'intensity', 'invalid loop cache', 'load_cache', 'load_meta', 'low', 'main', 'mid', 'mid,wav', 'midi', 'out_path', 'paths', 'perc', 'perc_other', 'ppq', 'r', 'rb', 'resolution', 'save_cache', 'scan', 'scan_loops', 'section', 'shaker', 'tamb', 'tempo_bpm', 'tokens', 'unknown', 'utf-8', 'wav', 'wb', 'windows']

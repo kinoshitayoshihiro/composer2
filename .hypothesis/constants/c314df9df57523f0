@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/apply_controls_cli.py
-# hypothesis_version: 6.138.15
-
-[0.0, 0.0001, 1.0, 2.0, 100.0, 200, ',', '--controls', '--controls-domain', '--curves', '--dedup-eps-time', '--dedup-eps-value', '--dry-run', '--out', '--rpn-at', '--write-rpn', '.yaml', '.yml', ':', '__main__', 'beats', 'bend', 'cc11', 'cc64', 'domain', 'in_mid', 'knots', 'on', 'out.mid', 'safe', 'store_true', 'time']

@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/harmonic_utils.py
-# hypothesis_version: 6.135.29
-
-[0.8, 1.0, 'ArtificialHarmonic', 'FretIndication', 'NaturalHarmonic', 'StringIndication', 'TouchingPitch', 'artificial', 'fret', 'natural', 'open_midi', 'sounding_pitch', 'string', 'string_idx', 'touch_fret', 'touching', 'type']

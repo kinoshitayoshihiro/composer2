@@ -396,15 +396,29 @@ def build_control_curves_for_stem(
             env = np.abs(audio)
             if hop > 1:
                 env = env.reshape(-1, hop).mean(axis=1)
-            times_sec = np.arange(env.size) * hop / sr
             if env.max() > 0:
                 env = env / env.max() * 127.0
             values = env.tolist()
+            effective_rate_hz = float(sr) / float(hop)
+            total_sec = float(audio.size) / float(sr)
             if args.controls_domain == "beats":
-                bpm = tempo or 120.0
-                times = (times_sec * bpm / 60.0).tolist()
+                bpm = float(tempo or 120.0)
+                beat_step = (bpm / 60.0) / effective_rate_hz
+                times_beats = np.arange(env.size) * beat_step
+                total_beats = total_sec * (bpm / 60.0)
+                if times_beats.size == 0 or not np.isclose(times_beats[-1], total_beats):
+                    times_beats = np.append(times_beats, total_beats)
+                    values = values + [values[-1] if values else 0.0]
+                snap = max(1e-9, beat_step * 1e-9)
+                times = (np.round(times_beats / snap) * snap).tolist()
             else:
-                times = times_sec.tolist()
+                sec_step = 1.0 / effective_rate_hz
+                times_sec = np.arange(env.size) * sec_step
+                if times_sec.size == 0 or not np.isclose(times_sec[-1], total_sec):
+                    times_sec = np.append(times_sec, total_sec)
+                    values = values + [values[-1] if values else 0.0]
+                snap = max(1e-9, sec_step * 1e-9)
+                times = (np.round(times_sec / snap) * snap).tolist()
             curves["cc11"] = ControlCurve(
                 times,
                 values,
@@ -1104,6 +1118,10 @@ def convert_directory(
         "bend_alpha": bend_alpha,
         "bend_fixed_base": bend_fixed_base,
         "cc11_strategy": cc11_strategy,
+        # Back-compat: legacy stubs (including the test double) still expect
+        # ``cc_strategy`` instead of the newer ``cc11_strategy`` keyword.
+        # Provide both until we can fully drop the old signature.
+        "cc_strategy": cc11_strategy,
         "cc11_map": cc11_map,
         "cc11_smooth_ms": effective_cc11_smooth_ms,
         "cc11_gain": cc11_gain,

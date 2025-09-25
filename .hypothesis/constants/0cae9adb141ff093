@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/perc_sampler_v1.py
-# hypothesis_version: 6.138.15
-
-[0.0, 1.0, 60.0, 120.0, '*.mid*', '--auto-res', '--length', '--order', '--output', '-o', '<e>', '<s>', '@', '_', '__main__', '_h', '_s', 'clap', 'command', 'conga_cl', 'conga_op', 'cowbell', 'duration', 'h', 'instrument', 'no events', 'offset', 'path', 'perc.pkl', 'rb', 'sample', 'shaker', 'store_true', 'tamb', 'train', 'velocity', 'wb']

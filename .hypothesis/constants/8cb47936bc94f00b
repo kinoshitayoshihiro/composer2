@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/tools/streamlit_gui.py
-# hypothesis_version: 6.135.29
-
-[0.0, 1.0, 2.0, '.mid', 'Bars', 'Download MIDI', 'Generate', 'Groove Visualiser', 'Humanize micro', 'Humanize velocity', 'Model', 'Preview generated', 'Temperature', 'Top-k', '__main__', 'count', 'count:Q', 'instrument', 'instrument:O', 'offset', 'pkl', 'preview.mid', 'rb', 'step', 'step:O']

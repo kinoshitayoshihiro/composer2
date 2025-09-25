@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/drum_lint.py
-# hypothesis_version: 6.135.29
-
-['--file', '--rhythm-file', 'No issues found.', '__main__', 'drum_patterns', 'fill_ins', 'instrument', 'pattern', 'utf-8']

@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/rubato_csv.py
-# hypothesis_version: 6.136.0
-
-[1.0, 60.0, 112, 22050, 44100, '--beat-unit', '--json', '--log-level', '--no-librosa', '--out', '--overwrite', '--poly', '--quiet', '--score-bpm', '--smoothing', '--track', '--version', '-V', '-j', '-q', '.csv', '.json', '0.6.0-rc10', 'DEBUG', 'DataFrame', 'ERROR', 'Extracted %d beats', 'INFO', 'MIDI file path', 'MidiLike', 'RubatoCurve', 'RubatoRow', 'WARNING', '__main__', '__version__', '_rubato.csv', '_rubato.json', 'allow overwrite', 'as_json', 'beat', 'configure_logging', 'extract_tempo_curve', 'midi', 'nearest', 'polyorder', 'records', 'store_false', 'store_true', 'tempo_factor', 'time_sec', 'track_id', 'use_librosa']

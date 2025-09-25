@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/utilities/ml_duration.py
-# hypothesis_version: 6.136.0
-
-[0.0, 0.001, 10000.0, 512, 'DurationTransformer', 'PositionalEncoding', 'duration', 'loss', 'max_len', 'pe', 'pitch_class', 'position_in_bar', 'predict', 'val_loss', 'velocity']

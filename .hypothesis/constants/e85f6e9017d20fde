@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/audio_render.py
-# hypothesis_version: 6.135.29
-
-[-60.0, '.mid', 'auto', 'bit_depth', 'fast', 'id', 'ir_file', 'ir_name', 'midi', 'mix_opts', 'none', 'out.wav', 'out_path', 'oversample', 'part', 'quality', 'rendered_wav', 'sf2', 'stereo', 'tail_db_drop']

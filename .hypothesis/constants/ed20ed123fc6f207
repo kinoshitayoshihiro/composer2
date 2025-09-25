@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/velocity_model.py
-# hypothesis_version: 6.138.15
-
-[1.0, 60.0, 120.0, '*.mid', 'KDEVelocityModel', 'rb', 'velocity_model.pkl', 'wb']

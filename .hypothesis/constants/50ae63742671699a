@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/vibrato_engine.py
-# hypothesis_version: 6.135.29
-
-[0.0, 1e-09, 0.0625, 0.125, 1.0, 2.0, 10.0, -8192, 127, 8191, 8192, 'aftertouch', 'generate_gliss', 'generate_trill', 'generate_vibrato', 'pitch_wheel']

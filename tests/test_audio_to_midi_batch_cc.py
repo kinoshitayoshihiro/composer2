@@ -28,7 +28,14 @@ def _write(path: Path, data: np.ndarray, sr: int) -> None:
         f.writeframes((data * 32767).astype("<i2").tobytes())
 
 
-def _stub_transcribe(path: Path, *, cc_strategy: str = "none", cc11_smoothing_ms: int = 60, sustain_threshold: float = 0.0, **kwargs) -> StemResult:
+def _stub_transcribe(
+    path: Path,
+    *,
+    cc_strategy: str = "none",
+    cc11_smoothing_ms: int = 60,
+    sustain_threshold: float = 0.0,
+    **kwargs,
+) -> StemResult:
     inst = pretty_midi.Instrument(program=0, name=path.stem)
     inst.notes.append(pretty_midi.Note(velocity=100, pitch=60, start=0.0, end=0.3))
     inst.notes.append(pretty_midi.Note(velocity=100, pitch=64, start=0.35, end=0.6))
@@ -41,11 +48,17 @@ def _stub_transcribe(path: Path, *, cc_strategy: str = "none", cc11_smoothing_ms
         prev = None
         for t, v in events:
             if prev is None or v != prev:
-                inst.control_changes.append(pretty_midi.ControlChange(number=11, value=v, time=float(t)))
+                inst.control_changes.append(
+                    pretty_midi.ControlChange(number=11, value=v, time=float(t))
+                )
                 prev = v
     if sustain_threshold > 0 and "piano" in path.stem.lower():
-        for t, v in audio_to_midi_batch.cc_utils.infer_cc64_from_overlaps(inst.notes, sustain_threshold):
-            inst.control_changes.append(pretty_midi.ControlChange(number=64, value=v, time=float(t)))
+        for t, v in audio_to_midi_batch.cc_utils.infer_cc64_from_overlaps(
+            inst.notes, sustain_threshold
+        ):
+            inst.control_changes.append(
+                pretty_midi.ControlChange(number=64, value=v, time=float(t))
+            )
     return StemResult(inst, 120.0)
 
 
@@ -59,8 +72,12 @@ def test_cc11_smoothing(tmp_path, monkeypatch):
     wave = 0.1 * np.sin(2 * np.pi * 440 * t)
     _write(in_dir / "sample.wav", wave, sr)
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _stub_transcribe)
-    audio_to_midi_batch.main([str(in_dir), str(out0), "--cc-strategy", "energy", "--cc11-smoothing-ms", "0"])
-    audio_to_midi_batch.main([str(in_dir), str(out1), "--cc-strategy", "energy", "--cc11-smoothing-ms", "200"])
+    audio_to_midi_batch.main(
+        [str(in_dir), str(out0), "--cc-strategy", "energy", "--cc11-smoothing-ms", "0"]
+    )
+    audio_to_midi_batch.main(
+        [str(in_dir), str(out1), "--cc-strategy", "energy", "--cc11-smoothing-ms", "200"]
+    )
     pm0 = pretty_midi.PrettyMIDI(str(out0 / in_dir.name / "sample.mid"))
     pm1 = pretty_midi.PrettyMIDI(str(out1 / in_dir.name / "sample.mid"))
     cc0 = [cc.value for cc in pm0.instruments[0].control_changes if cc.number == 11]
@@ -78,14 +95,16 @@ def test_sustain_generation(tmp_path, monkeypatch):
     wave = 0.1 * np.sin(2 * np.pi * 440 * t)
     _write(in_dir / "piano.wav", wave, sr)
     monkeypatch.setattr(audio_to_midi_batch, "_transcribe_stem", _stub_transcribe)
-    audio_to_midi_batch.main([
-        str(in_dir),
-        str(out_dir),
-        "--cc-strategy",
-        "none",
-        "--sustain-threshold",
-        "0.1",
-    ])
+    audio_to_midi_batch.main(
+        [
+            str(in_dir),
+            str(out_dir),
+            "--cc-strategy",
+            "none",
+            "--sustain-threshold",
+            "0.1",
+        ]
+    )
     pm = pretty_midi.PrettyMIDI(str(out_dir / in_dir.name / "piano.mid"))
     cc64 = [cc.value for cc in pm.instruments[0].control_changes if cc.number == 64]
     assert cc64 == [127, 0]
@@ -140,10 +159,12 @@ def test_cc64_threshold_alias(tmp_path, monkeypatch):
 
     monkeypatch.setattr(audio_to_midi_batch, "convert_directory", fake_convert)
     with pytest.warns(DeprecationWarning):
-        audio_to_midi_batch.main([
-            str(in_dir),
-            str(out_dir),
-            "--cc64-threshold",
-            "0.5",
-        ])
+        audio_to_midi_batch.main(
+            [
+                str(in_dir),
+                str(out_dir),
+                "--cc64-threshold",
+                "0.5",
+            ]
+        )
     assert params.get("sustain_threshold") == pytest.approx(0.5)

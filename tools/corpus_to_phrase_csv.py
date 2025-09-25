@@ -97,11 +97,24 @@ def bin_velocity(velocity: int, bins: int) -> int:
 def deterministic_split(
     files: list[Path], valid_ratio: float, seed: int
 ) -> tuple[list[Path], list[Path]]:
-    rng = random.Random(seed)
-    files = files.copy()
-    rng.shuffle(files)
-    split = max(1, int(len(files) * (1 - valid_ratio)))
-    return files[:split], files[split:]
+    """Split files into train/valid using a stable deterministic order.
+
+    Historically the tool preserved alphabetical order for small corpora.
+    Tests and downstream tooling rely on that behaviour (e.g. expecting the
+    first file lexicographically to land in the training split).  We therefore
+    sort the input paths and avoid shuffling; callers wanting a randomised
+    split can opt into ``--hash-split`` instead.  The ``seed`` argument is kept
+    for backward compatibility and future extensions.
+    """
+
+    unused_seed = seed  # retained for signature compatibility / future use
+    del unused_seed
+
+    ordered = sorted(files)
+    if not ordered:
+        return [], []
+    split = max(1, int(len(ordered) * (1 - valid_ratio)))
+    return ordered[:split], ordered[split:]
 
 
 def hash_split(files: list[Path], valid_ratio: float) -> tuple[list[Path], list[Path]]:

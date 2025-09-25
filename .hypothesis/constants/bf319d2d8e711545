@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/controls_spline.py
-# hypothesis_version: 6.138.15
-
-[-1.0, 0.0, 1e-12, 1e-09, 1e-06, 0.0001, 0.5, 1.0, 1.5, 2.0, 60.0, 120.0, 180.0, 127, 256, 2000, '-inf', 'ControlCurve', 'beats', 'bend', 'bpm must be positive', 'catmull_rom_monotone', 'cc11', 'cc64', 'dedupe_events', 'dedupe_times_values', 'ensure_scalar_floats', 'inf', 'normalized', 'rdp', 'semitones', 'time', 'tolist', 'uniform']

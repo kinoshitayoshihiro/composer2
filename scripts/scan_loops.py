@@ -26,39 +26,53 @@ def _ensure_tempo(pm: pretty_midi.PrettyMIDI, bpm: float, tempo_source: str) -> 
     attributes.
     """
 
-    midi = pm_to_mido(pm)
-    # Prefer the meta track (index 1) when present; otherwise track 0.
-    target_idx = 1 if len(midi.tracks) > 1 else 0
+    def _pm_to_mido_raw(midi_pm: pretty_midi.PrettyMIDI) -> "mido.MidiFile":
+        if mido is None:  # pragma: no cover - handled at import time
+            raise RuntimeError("mido is required for tempo injection")
+        tmp_path: str | None = None
+        with NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            if not hasattr(midi_pm, "write"):
+                raise RuntimeError("PrettyMIDI.write unavailable in this environment")
+            midi_pm.write(tmp_path)
+            return mido.MidiFile(tmp_path)
+        finally:
+            if tmp_path:
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)  # type: ignore[arg-type]
+                except Exception:
+                    pass
+
+    midi = _pm_to_mido_raw(pm)
 
     def _track_has_explicit_tempo(track) -> bool:
         return any(getattr(msg, "type", "") == "set_tempo" for msg in track)
 
-    # If the target track already has an explicit tempo, return original pm with flags.
-    if _track_has_explicit_tempo(midi.tracks[target_idx]):
+    target_idx = 1 if len(midi.tracks) > 1 else 0
+    if target_idx < len(midi.tracks) and _track_has_explicit_tempo(midi.tracks[target_idx]):
         setattr(pm, "tempo_injected", False)
         setattr(pm, "tempo_source", tempo_source)
         return pm
 
-    # Insert set_tempo at the very beginning of the target track.
-    track = midi.tracks[target_idx]
-    track.insert(0, mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(bpm), time=0))
+    enriched_midi = pm_to_mido(pm)
 
     tmp_path: str | None = None
-    # Reserve a temp file path using context manager (compatible with test Dummy)
     with NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
         tmp_path = tmp.name
     try:
-        midi.save(tmp_path)
+        enriched_midi.save(tmp_path)
         pm2 = pretty_midi.PrettyMIDI(tmp_path)
-        setattr(pm2, "tempo_injected", True)
-        setattr(pm2, "tempo_source", tempo_source)
-        return pm2
     finally:
         if tmp_path:
             try:
                 Path(tmp_path).unlink(missing_ok=True)  # type: ignore[arg-type]
             except Exception:
                 pass
+
+    setattr(pm2, "tempo_injected", True)
+    setattr(pm2, "tempo_source", tempo_source)
+    return pm2
 
 
 def _analyze(path: Path):

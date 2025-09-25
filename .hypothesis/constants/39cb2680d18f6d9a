@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/scripts/segment_phrase.py
-# hypothesis_version: 6.138.15
-
-[0.0, 0.1, 0.5, 1.0, 256, '--arch', '--ckpt', '--instrument-index', '--instrument-regex', '--out-tsv', '--pitch-range', '--threshold', 'HIGH', 'LOW', '__main__', 'arch', 'both', 'boundary', 'cls', 'cpu', 'd_model', 'detach', 'dropout', 'dur_bins', 'dur_cls', 'dur_reg', 'duration', 'duv_mode', 'lstm', 'max_len', 'meta', 'midi', 'model', 'n_heads', 'n_layers', 'ndim', 'none', 'phrase.ckpt', 'pitch_class', 'position', 'program', 'reg', 'tolist', 'transformer', 'vel_bins', 'vel_cls', 'vel_reg', 'velocity', 'w']

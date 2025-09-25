@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/ai_sampler.py
-# hypothesis_version: 6.135.29
-
-[1024, 'bars', 'events', 'generated_text', 'gpt2-medium', 'text-generation']

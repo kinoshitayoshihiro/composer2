@@ -21,6 +21,29 @@ logger = logging.getLogger(__name__)
 
 
 _INITIAL_RPN_WINDOW = 0.05
+_RPN_NUMBERS = {101, 100, 6, 38}
+
+
+def _rpn_time(
+    rpn_at: float,
+    first_pb_time: float | None,
+    first_cc_time: float | None = None,
+    *,
+    lead: float = 1e-6,
+) -> float:
+    """Return an RPN timestamp slightly earlier than other controller events."""
+
+    candidates: list[float] = []
+    for val in (rpn_at, first_pb_time, first_cc_time):
+        if val is None:
+            continue
+        try:
+            candidates.append(float(val))
+        except (TypeError, ValueError):  # pragma: no cover - defensive
+            continue
+    base = min(candidates) if candidates else 0.0
+    t = base - float(lead)
+    return t if t >= 0.0 else 0.0
 
 
 def ensure_instrument_for_channel(pm: pretty_midi.PrettyMIDI, ch: int) -> pretty_midi.Instrument:
@@ -42,15 +65,15 @@ def ensure_instrument_for_channel(pm: pretty_midi.PrettyMIDI, ch: int) -> pretty
 def _sort_events(inst: pretty_midi.Instrument) -> None:
     """Sort control and bend events so that RPNs come first."""
 
-    events: list[tuple[float, int, str, object]] = []
+    events: list[tuple[float, int, int, int, str, object]] = []
     for cc in inst.control_changes:
-        pr = 0 if cc.number in {101, 100, 6, 38} else 1
-        events.append((cc.time, pr, "cc", cc))
+        pr = 0 if int(cc.number) in _RPN_NUMBERS else 1
+        events.append((float(cc.time), pr, int(cc.number), int(cc.value), "cc", cc))
     for pb in inst.pitch_bends:
-        events.append((pb.time, 2, "pb", pb))
-    events.sort(key=lambda e: (e[0], e[1]))
-    inst.control_changes = _dedup_rpn_blocks([e[3] for e in events if e[2] == "cc"])
-    inst.pitch_bends = [e[3] for e in events if e[2] == "pb"]
+        events.append((float(pb.time), 2, 0, int(getattr(pb, "pitch", 0)), "pb", pb))
+    events.sort(key=lambda e: (e[0], e[1], e[2], e[3]))
+    inst.control_changes = _dedup_rpn_blocks([e[5] for e in events if e[4] == "cc"])
+    inst.pitch_bends = [e[5] for e in events if e[4] == "pb"]
 
 
 def _dedup_rpn_blocks(
@@ -115,7 +138,7 @@ def write_bend_range_rpn(
     scale = 128.0 if mode == "midi128" else 100.0
     lsb_max = 127 if mode == "midi128" else 99
 
-    t = max(0.0, float(at_time))
+    t = float(at_time)
     value = max(0.0, float(range_semitones))
     msb = int(math.floor(value))
     frac = value - msb
@@ -130,6 +153,9 @@ def write_bend_range_rpn(
     if not isinstance(ccs, list):
         ccs = list(ccs)
         inst.control_changes = ccs
+    eps = 1e-12
+    times = [t + offset * eps for offset in range(4)]
+
     for i in range(len(ccs) - 2):
         a, b, c = ccs[i : i + 3]
         if (a.number, a.value) == (101, 0) and (b.number, b.value) == (100, 0) and c.number == 6:
@@ -146,29 +172,26 @@ def write_bend_range_rpn(
             c.value = msb
             if d is not None:
                 d.value = lsb
+            a.time = times[0]
+            b.time = times[1]
+            c.time = times[2]
+            if d is not None:
+                d.time = times[3]
             inst._rpn_range = msb + lsb / scale  # type: ignore[attr-defined]
             inst._rpn_precision = mode  # type: ignore[attr-defined]
             return
 
     ccs.extend(
         [
-            pretty_midi.ControlChange(number=101, value=0, time=t),
-            pretty_midi.ControlChange(number=100, value=0, time=t),
-            pretty_midi.ControlChange(number=6, value=msb, time=t),
-            pretty_midi.ControlChange(number=38, value=lsb, time=t),
+            pretty_midi.ControlChange(number=101, value=0, time=times[0]),
+            pretty_midi.ControlChange(number=100, value=0, time=times[1]),
+            pretty_midi.ControlChange(number=6, value=msb, time=times[2]),
+            pretty_midi.ControlChange(number=38, value=lsb, time=times[3]),
         ]
     )
     inst._rpn_written = True  # type: ignore[attr-defined]
     inst._rpn_range = msb + lsb / scale  # type: ignore[attr-defined]
     inst._rpn_precision = mode  # type: ignore[attr-defined]
-
-
-def _rpn_time(rpn_at: float, first_pb_time: float | None) -> float:
-    """Clamp RPN timestamps to non-negative and before the first pitch bend."""
-
-    if first_pb_time is None:
-        return max(0.0, float(rpn_at))
-    return max(0.0, min(float(rpn_at), float(first_pb_time) - 1e-9))
 
 
 _CC_MAP = {"cc11": 11, "cc64": 64}
@@ -303,33 +326,6 @@ def apply_controls(
                         and getattr(new_pb[-2], "pitch", None) != 0
                     ):
                         inst.pitch_bends.pop(-2)
-                if write_rpn:
-                    prev_written = getattr(inst, "_rpn_written", False)
-                    prev_range = getattr(inst, "_rpn_range", None)
-                    prev_precision = getattr(inst, "_rpn_precision", "midi128")
-                    target_precision = "midi128"
-                    need_rpn = not prev_written
-                    if not need_rpn and prev_precision != target_precision:
-                        need_rpn = True
-                    if not need_rpn and prev_range is not None:
-                        if abs(float(prev_range) - float(bend_range_semitones)) > 0.01:
-                            need_rpn = True
-                    if need_rpn:
-                        first_pb = min((pb.time for pb in inst.pitch_bends), default=None)
-                        t = _rpn_time(rpn_at, first_pb)
-                        write_bend_range_rpn(
-                            inst,
-                            bend_range_semitones,
-                            at_time=t,
-                            precision=target_precision,
-                        )
-                        inst._rpn_written = True  # type: ignore[attr-defined]
-                        inst._rpn_range = getattr(
-                            inst, "_rpn_range", float(bend_range_semitones)
-                        )  # type: ignore[attr-defined]
-                        inst._rpn_precision = getattr(
-                            inst, "_rpn_precision", target_precision
-                        )  # type: ignore[attr-defined]
                 continue
 
             if name in _CC_MAP:
@@ -372,6 +368,30 @@ def apply_controls(
                     end += curve.offset_sec
                     new_cc[0].time = start
                     new_cc[-1].time = end
+        if write_rpn and not getattr(inst, "_rpn_written", False) and inst.pitch_bends:
+            first_pb_time = min(float(pb.time) for pb in inst.pitch_bends)
+            non_rpn_cc_times = [
+                float(cc.time)
+                for cc in inst.control_changes
+                if int(cc.number) not in _RPN_NUMBERS
+            ]
+            first_cc_time = min(non_rpn_cc_times) if non_rpn_cc_times else None
+            rpn_timestamp = _rpn_time(rpn_at, first_pb_time, first_cc_time)
+            write_bend_range_rpn(
+                inst,
+                bend_range_semitones,
+                at_time=rpn_timestamp,
+                precision="midi128",
+            )
+        if write_rpn:
+            rpn_events = [cc for cc in inst.control_changes if int(cc.number) == 101]
+            if rpn_events:
+                rpn_time = float(rpn_events[0].time)
+                for cc in inst.control_changes:
+                    if int(cc.number) in _RPN_NUMBERS:
+                        continue
+                    if abs(float(cc.time) - rpn_time) <= time_eps:
+                        cc.time = rpn_time + 1e-9
         _sort_events(inst)
 
     if total_max_events:
@@ -406,11 +426,9 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             _sort_events(inst)
         return
 
-    # Do not drop initial bend‑range RPN, but count it toward the cap so the
-    # final total (notes + CC + bends + RPN) does not exceed ``cap``.
     rpn_count = 0
     for inst in pm.instruments:
-        rpn_count += sum(1 for cc in inst.control_changes if int(cc.number) in {100, 101, 6, 38})
+        rpn_count += sum(1 for cc in inst.control_changes if int(cc.number) in _RPN_NUMBERS)
 
     eff_cap = max(0, int(cap) - int(rpn_count))
 
@@ -423,13 +441,11 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             total += len(notes)
         cc_map: dict[int, list[pretty_midi.ControlChange]] = {}
         for cc in inst.control_changes:
-            if int(cc.number) in {100, 101, 6, 38}:
+            if int(cc.number) in _RPN_NUMBERS:
                 continue
             cc_map.setdefault(cc.number, []).append(cc)
         for number, changes in cc_map.items():
-            groups.append(
-                {"inst": inst, "kind": "cc", "key": number, "events": list(changes)}
-            )
+            groups.append({"inst": inst, "kind": "cc", "key": number, "events": list(changes)})
             total += len(changes)
         bends = list(inst.pitch_bends)
         if bends:
@@ -467,41 +483,47 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
         sum_targets += target
 
     if sum_targets > eff_cap:
-        reducible = [a for a in allocations if int(a["target"]) > int(a["min"])]
-        while sum_targets > eff_cap and reducible:
-            reducible.sort(
-                key=lambda a: (
-                    int(a["target"]) - int(a["min"]),
-                    float(a["ideal"]),
-                ),
-                reverse=True,
-            )
-            candidate = reducible[0]
-            candidate["target"] = int(candidate["target"]) - 1
-            sum_targets -= 1
-            if int(candidate["target"]) <= int(candidate["min"]):
-                reducible.pop(0)
-        if sum_targets > eff_cap:
-            reducible = [a for a in allocations if a["target"] > 0]
-            while sum_targets > eff_cap and reducible:
+        while sum_targets > eff_cap:
+            reducible = [alloc for alloc in allocations if int(alloc["target"]) > int(alloc["min"])]
+            if reducible:
                 reducible.sort(
                     key=lambda a: (
-                        int(a["target"]),
+                        int(a["target"]) - int(a["min"]),
                         float(a["ideal"]),
                     ),
                     reverse=True,
                 )
                 candidate = reducible[0]
-                candidate["target"] = int(candidate["target"]) - 1
-                sum_targets -= 1
-                if int(candidate["target"]) == 0:
-                    reducible.pop(0)
+                current = int(candidate["target"])
+                minimum = int(candidate["min"])
+                new_target = max(minimum, current - 1)
+                candidate["target"] = new_target
+                sum_targets -= current - new_target
+                continue
+
+            droppable = [alloc for alloc in allocations if int(alloc["target"]) > 0]
+            if not droppable:
+                break
+
+            droppable.sort(
+                key=lambda a: (
+                    float(a["ideal"]),
+                    int(a["target"]),
+                )
+            )
+            candidate = droppable[0]
+            current = int(candidate["target"])
+            if current == 0:
+                droppable.pop(0)
+                continue
+            candidate["target"] = current - 1
+            sum_targets -= 1
+
+        sum_targets = sum(int(a["target"]) for a in allocations)
 
     remainder = eff_cap - sum_targets
     if remainder > 0:
-        expandable = [
-            a for a in allocations if int(a["target"]) < len(a["events"])
-        ]
+        expandable = [a for a in allocations if int(a["target"]) < len(a["events"])]
         while remainder > 0 and expandable:
             expandable.sort(
                 key=lambda a: (
@@ -517,7 +539,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
                 continue
             candidate["target"] = current + 1
             remainder -= 1
-    
+
     new_notes: dict[pretty_midi.Instrument, list[pretty_midi.Note]] = {}
     new_cc: dict[pretty_midi.Instrument, dict[int, list[pretty_midi.ControlChange]]] = {}
     new_pb: dict[pretty_midi.Instrument, list[pretty_midi.PitchBend]] = {}
@@ -536,11 +558,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             new_cc.setdefault(inst, {})[key] = kept
 
     for inst in pm.instruments:
-        preserved_rpn = [
-            cc
-            for cc in inst.control_changes
-            if int(cc.number) in {100, 101, 6, 38}
-        ]
+        preserved_rpn = [cc for cc in inst.control_changes if int(cc.number) in {100, 101, 6, 38}]
         if inst in new_notes:
             inst.notes = sorted(
                 new_notes[inst],

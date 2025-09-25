@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/streamlit_app/gui.py
-# hypothesis_version: 6.136.0
-
-[0.0, 1.0, 1.5, 100, 120, 200, '.mid', '.pt', 'BPM', 'Backend', 'Bars', 'Generate', 'Interact', 'Load', 'MIDI In', 'MIDI Out', 'Mode', 'Model', 'Model name', 'Preset Name', 'Presets', 'Record', 'Refresh Presets', 'Save Preset', 'Start Interact', 'Stop', 'Temperature', 'Timing Humanization', '__main__', 'audio/midi', 'bars', 'gpt2-medium', 'inter_engine', 'inter_logs', 'inter_thread', 'midi', 'ngram', 'offset', 'pkl', 'preset_names', 'pt', 'recorder', 'rnn', 'temp', 'velocity', 'y']

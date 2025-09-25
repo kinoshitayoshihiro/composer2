@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/transformer/sax_tokenizer.py
-# hypothesis_version: 6.135.29
-
-[0.01, '<ALT_HIT>', '<BAR>', '<REST_d8>', '<SLIDE_DOWN>', '<SLIDE_UP>', '<TS_4_4>', '<UNK>', '<VELO_80>', 'P', 'SaxTokenizer', 'alt_hit', 'artic', 'bar', 'note', 'slide_down', 'slide_up', 'utf-8', 'w']

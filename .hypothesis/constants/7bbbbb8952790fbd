@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music_21/composer2-3/models/phrase_transformer.py
-# hypothesis_version: 6.136.0
-
-[10000.0, 128, 512, 'PhraseTransformer', 'duration', 'pe', 'pitch_class', 'position', 'velocity']

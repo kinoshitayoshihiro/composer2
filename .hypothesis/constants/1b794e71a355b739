@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/ujam/damping.py
-# hypothesis_version: 6.138.15
-
-[-1000000000.0, 0.0, 1e-09, 127, 'cc', 'channel', 'clip', 'deadband', 'downbeats', 'fixed', 'merge_events', 'min_beats', 'none', 'pitch', 'smooth', 'start', 'value', 'vocal', 'vocal_ratios']

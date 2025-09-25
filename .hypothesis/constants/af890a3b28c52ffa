@@ -1,4 +1,0 @@
-# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/tempo_from_mix.py
-# hypothesis_version: 6.138.15
-
-[-1.0, 0.0, 1e-12, 1e-09, 0.001, 0.03, 0.5, 1.0, 5.0, 20.0, 60.0, 120.0, 200.0, 44100, ',', '--max-bpm', '--meter', '--min-bpm', '--out', '--sr', '--stems', '--tighten-ms', '__main__', 'beats', 'downbeats', 'full', 'hann', 'hop_s', 'meter', 'mix', 'peak_heights', 'sr', 'tempo_bpm', 'tempo_map.json', 'w', 'カンマ区切りのステムwav（任意）', '統合ミックスのオーディオファイル']

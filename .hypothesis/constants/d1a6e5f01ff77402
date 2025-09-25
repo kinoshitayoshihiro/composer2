@@ -1,4 +1,0 @@
-# file: /Users/kinoshitayoshihiro/music21/composer2-3/utilities/groove_sampler.py
-# hypothesis_version: 6.135.29
-
-[0.0, 0.25, 1.0, 4.0, 60.0, 100.0, 120.0, '*.mid', '--n', '--resolution', '--smoothing', '--stats', 'Order of the model', 'Print model stats', '__main__', 'auto', 'coarse', 'duration', 'fine', 'freq', 'instrument', 'loop_dir', 'n', 'n must be >= 2', 'offset', 'prob', 'resolution', 'smoothing', 'store_true', 'velocity_factor']

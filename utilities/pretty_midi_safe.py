@@ -51,11 +51,17 @@ def pm_to_mido(pm: pretty_midi.PrettyMIDI):
             track0 = MidiTrack()
             midi.tracks.append(track0)
 
-        for msg in track0:
-            if getattr(msg, "type", "") == "set_tempo":
-                break
-        else:
+        # Ensure track0 has a tempo marker
+        if not any(getattr(msg, "type", "") == "set_tempo" for msg in track0):
             track0.insert(0, tempo_msg)
+
+        # Additionally, when a meta track (track1) exists, ensure it also starts
+        # with a tempo marker so downstream tools expecting track[1] metadata
+        # (name, time signature) see the tempo first.
+        if len(midi.tracks) > 1:
+            track1 = midi.tracks[1]
+            if not any(getattr(msg, "type", "") == "set_tempo" for msg in track1):
+                track1.insert(0, MetaMessage("set_tempo", tempo=bpm2tempo(initial_bpm), time=0))
         return midi
     finally:
         try:

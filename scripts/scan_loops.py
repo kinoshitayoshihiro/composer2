@@ -27,31 +27,38 @@ def _ensure_tempo(pm: pretty_midi.PrettyMIDI, bpm: float, tempo_source: str) -> 
     """
 
     midi = pm_to_mido(pm)
+    # Prefer the meta track (index 1) when present; otherwise track 0.
     target_idx = 1 if len(midi.tracks) > 1 else 0
-    # Only consider tempo present if it exists in the target (meta) track.
-    if any(getattr(msg, "type", "") == "set_tempo" for msg in midi.tracks[target_idx]):
+
+    def _track_has_explicit_tempo(track) -> bool:
+        return any(getattr(msg, "type", "") == "set_tempo" for msg in track)
+
+    # If the target track already has an explicit tempo, return original pm with flags.
+    if _track_has_explicit_tempo(midi.tracks[target_idx]):
         setattr(pm, "tempo_injected", False)
         setattr(pm, "tempo_source", tempo_source)
         return pm
 
+    # Insert set_tempo at the very beginning of the target track.
     track = midi.tracks[target_idx]
-    tempo_msg = mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(bpm), time=0)
-    track.insert(0, tempo_msg)
+    track.insert(0, mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(bpm), time=0))
 
-    tmp = NamedTemporaryFile(suffix=".mid", delete=False)
-    try:
+    tmp_path: str | None = None
+    # Reserve a temp file path using context manager (compatible with test Dummy)
+    with NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
         tmp_path = tmp.name
-        tmp.close()
+    try:
         midi.save(tmp_path)
         pm2 = pretty_midi.PrettyMIDI(tmp_path)
+        setattr(pm2, "tempo_injected", True)
+        setattr(pm2, "tempo_source", tempo_source)
+        return pm2
     finally:
-        try:
-            Path(tmp_path).unlink(missing_ok=True)  # type: ignore[arg-type]
-        except Exception:
-            pass
-    setattr(pm2, "tempo_injected", True)
-    setattr(pm2, "tempo_source", tempo_source)
-    return pm2
+        if tmp_path:
+            try:
+                Path(tmp_path).unlink(missing_ok=True)  # type: ignore[arg-type]
+            except Exception:
+                pass
 
 
 def _analyze(path: Path):

@@ -936,16 +936,29 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
             audio_failed = True
         return _LoadResult(None, "error", audio_failed, None, "error", "unknown", False, str(exc), None)
 
-    if cfg.inject_default_tempo > 0:
+    if cfg.inject_default_tempo > 0 and path.suffix.lower() in {".mid", ".midi"}:
+        # Inject tempo directly into the source file if no explicit set_tempo exists.
+        # Use mido to inspect raw meta messages; PrettyMIDI may fabricate a 120 BPM default.
         try:
-            pm = _ensure_tempo(pm, cfg.inject_default_tempo)
-            tempo_injected = bool(getattr(_ensure_tempo, "injected", False))
-            # Persist injected tempo back to source file so downstream loaders see it
-            if tempo_injected and path.suffix.lower() in {".mid", ".midi"}:
-                try:
-                    pm.write(str(path))
-                except Exception as _:
-                    pass
+            import mido as _mido  # type: ignore
+
+            mid = _mido.MidiFile(str(path))
+            has_explicit = any(
+                getattr(msg, "type", "") == "set_tempo" for tr in mid.tracks for msg in tr
+            )
+            if not has_explicit:
+                if not mid.tracks:
+                    mid.tracks.append(_mido.MidiTrack())
+                mid.tracks[0].insert(
+                    0,
+                    _mido.MetaMessage(
+                        "set_tempo", tempo=_mido.bpm2tempo(float(cfg.inject_default_tempo)), time=0
+                    ),
+                )
+                mid.save(str(path))
+                tempo_injected = True
+                # Reload PrettyMIDI from disk so downstream uses the injected tempo
+                pm = pretty_midi.PrettyMIDI(str(path))
         except Exception as exc:  # pragma: no cover - best effort logging upstream
             tempo_error = str(exc)
 

@@ -9,6 +9,7 @@ import logging
 import random
 import re
 import sys
+import unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Iterable, Iterator, Pattern
@@ -94,23 +95,29 @@ def bin_velocity(velocity: int, bins: int) -> int:
     return max(0, min(bins - 1, velocity * bins // 128))
 
 
+def _split_sort_key(path: Path) -> tuple[str, str]:
+    """Return a locale-stable key for splitting.
+
+    We normalise the filename (NFKD) and apply ``casefold`` so that paths such
+    as ``ラジオ.mid`` and ``ラジオ.mid`` compare identically.  The full path is
+    used as a tiebreaker to keep behaviour deterministic when duplicate names
+    are present.
+    """
+
+    name = unicodedata.normalize("NFKD", path.name).casefold()
+    return name, str(path)
+
+
 def deterministic_split(
     files: list[Path], valid_ratio: float, seed: int
 ) -> tuple[list[Path], list[Path]]:
-    """Split files into train/valid using a stable deterministic order.
+    """Split files deterministically without shuffling.
 
-    Historically the tool preserved alphabetical order for small corpora.
-    Tests and downstream tooling rely on that behaviour (e.g. expecting the
-    first file lexicographically to land in the training split).  We therefore
-    sort the input paths and avoid shuffling; callers wanting a randomised
-    split can opt into ``--hash-split`` instead.  The ``seed`` argument is kept
-    for backward compatibility and future extensions.
+    ``seed`` is accepted for backward compatibility but currently unused.
     """
 
-    unused_seed = seed  # retained for signature compatibility / future use
-    del unused_seed
-
-    ordered = sorted(files)
+    _ = seed  # placeholder for future seeded strategies
+    ordered = sorted(files, key=_split_sort_key)
     if not ordered:
         return [], []
     split = max(1, int(len(ordered) * (1 - valid_ratio)))

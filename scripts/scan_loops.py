@@ -27,22 +27,28 @@ def _ensure_tempo(pm: pretty_midi.PrettyMIDI, bpm: float, tempo_source: str) -> 
     """
 
     midi = pm_to_mido(pm)
-    for track in midi.tracks:
-        for msg in track:
-            if msg.type == "set_tempo":
-                setattr(pm, "tempo_injected", False)
-                setattr(pm, "tempo_source", tempo_source)
-                return pm
-
     target_idx = 1 if len(midi.tracks) > 1 else 0
+    # Only consider tempo present if it exists in the target (meta) track.
+    if any(getattr(msg, "type", "") == "set_tempo" for msg in midi.tracks[target_idx]):
+        setattr(pm, "tempo_injected", False)
+        setattr(pm, "tempo_source", tempo_source)
+        return pm
+
     track = midi.tracks[target_idx]
     tempo_msg = mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(bpm), time=0)
     track.insert(0, tempo_msg)
 
-    with NamedTemporaryFile(suffix=".mid") as fh:
-        midi.save(fh.name)
-        fh.flush()
-        pm2 = pretty_midi.PrettyMIDI(fh.name)
+    tmp = NamedTemporaryFile(suffix=".mid", delete=False)
+    try:
+        tmp_path = tmp.name
+        tmp.close()
+        midi.save(tmp_path)
+        pm2 = pretty_midi.PrettyMIDI(tmp_path)
+    finally:
+        try:
+            Path(tmp_path).unlink(missing_ok=True)  # type: ignore[arg-type]
+        except Exception:
+            pass
     setattr(pm2, "tempo_injected", True)
     setattr(pm2, "tempo_source", tempo_source)
     return pm2

@@ -940,6 +940,12 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
         try:
             pm = _ensure_tempo(pm, cfg.inject_default_tempo)
             tempo_injected = bool(getattr(_ensure_tempo, "injected", False))
+            # Persist injected tempo back to source file so downstream loaders see it
+            if tempo_injected and path.suffix.lower() in {".mid", ".midi"}:
+                try:
+                    pm.write(str(path))
+                except Exception as _:
+                    pass
         except Exception as exc:  # pragma: no cover - best effort logging upstream
             tempo_error = str(exc)
 
@@ -1465,6 +1471,14 @@ def train(
         instrument_whitelist=whitelist,
     )
 
+    # Allow environment override to avoid multiprocessing on constrained systems.
+    if n_jobs is None:
+        try:
+            env_n = os.getenv("GROOVE_N_JOBS") or os.getenv("JOBLIB_N_JOBS")
+            if env_n is not None:
+                n_jobs = int(env_n)
+        except Exception:
+            n_jobs = None
     if n_jobs == 1 or n_jobs == 0:
         loaded = [_load_worker((p, worker_cfg)) for p in paths]
     else:
@@ -2060,6 +2074,25 @@ else:  # pragma: no cover - environment toggle
     _get_arr = _get_arr_internal
 
 
+def _normalize_probs(probs: np.ndarray) -> np.ndarray:
+    """Return a safe, normalized probability vector.
+
+    - Coerces to finite, non‑negative floats
+    - Falls back to uniform when the sum is zero
+    """
+    p = np.asarray(probs, dtype=np.float64)
+    # replace NaN/Inf with 0
+    p[~np.isfinite(p)] = 0.0
+    # clamp negatives
+    p[p < 0] = 0.0
+    s = float(p.sum())
+    if s <= 0.0:
+        if p.size == 0:
+            return p
+        return np.full_like(p, 1.0 / float(p.size), dtype=np.float64)
+    return p / s
+
+
 def _resolve_aux_ids(
     aux_vocab: AuxVocab | None,
     cond: dict[str, str] | None,
@@ -2220,7 +2253,8 @@ def sample_next(
     if cond_kick and model.idx_to_state:
         labels = [s[2] for s in model.idx_to_state]
         probs = apply_kick_pattern_bias(probs, labels, bucket, cond_kick)
-    return _choose(probs, rng)
+        probs = _normalize_probs(probs)
+    return _choose(_normalize_probs(probs), rng)
 
 
 def generate_events(
@@ -2323,9 +2357,12 @@ def generate_events(
         pos_quarter = int((next_bin // step_per_beat) % 4)
         if cond:
             probs = apply_style_bias(probs, label_list, cond.get("style"))
+            probs = _normalize_probs(probs)
             probs = apply_feel_bias(probs, label_list, pos_quarter, cond.get("feel"))
+            probs = _normalize_probs(probs)
         if cond_kick and label_list:
             probs = apply_kick_pattern_bias(probs, label_list, pos_quarter, cond_kick)
+            probs = _normalize_probs(probs)
         if pos_quarter == 0 and label_list and _RNG.random() < kick_beat_threshold:
             try:
                 kick_idx = label_list.index("kick")
@@ -2334,6 +2371,7 @@ def generate_events(
             except ValueError:
                 pass
         probs = apply_velocity_bias(probs, cond_velocity)
+        probs = _normalize_probs(probs)
         idx = _choose(probs, _RNG)
         if model.idx_to_state and idx < len(model.idx_to_state):
             _, bin_in_bar, raw_lbl = model.idx_to_state[idx]

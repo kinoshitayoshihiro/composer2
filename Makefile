@@ -1,3 +1,7 @@
+# Prefer project venv; fall back to system Python/pytest
+PYTHON := $(shell [ -x .venv311/bin/python ] && echo .venv311/bin/python || command -v python3 || command -v python)
+PYTEST := $(PYTHON) -m pytest
+
 demo:
 	python tools/generate_demo_midis.py -m config/main_cfg.yml
 
@@ -5,10 +9,22 @@ demo-sax:
 	python tools/generate_demo_midis.py -m config/sax_demo.yml --sections "Sax Solo"
 
 test:
-	pytest tests
+	$(PYTEST) tests
+
+# 直近で失敗したテストのみ再実行
+lf:
+	$(PYTEST) --lf
+
+# クイック実行（静かな出力）
+t:
+	$(PYTEST) -q
+
+# パターン指定（例: make tk k=sparkle）
+tk:
+	$(PYTEST) -q -k '$(k)'
 
 test-controls:
-	pytest tests/test_controls_spline.py tests/test_apply_controls.py -q
+	$(PYTEST) tests/test_controls_spline.py tests/test_apply_controls.py -q
 
 format:
 	black .
@@ -40,7 +56,7 @@ phrase-predict-prod:
 	  --report-json checkpoints/guitar_lead/preds/gtr_songs_preds_final.report.json
 
 test-pb:
-	pytest -q tests/test_pb_math.py
+	$(PYTEST) -q tests/test_pb_math.py
 
 validate-demo-yaml:
 	python - <<'PY'

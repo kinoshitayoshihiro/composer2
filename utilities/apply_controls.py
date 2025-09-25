@@ -406,6 +406,14 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             _sort_events(inst)
         return
 
+    # Do not drop initial bend‑range RPN, but count it toward the cap so the
+    # final total (notes + CC + bends + RPN) does not exceed ``cap``.
+    rpn_count = 0
+    for inst in pm.instruments:
+        rpn_count += sum(1 for cc in inst.control_changes if int(cc.number) in {100, 101, 6, 38})
+
+    eff_cap = max(0, int(cap) - int(rpn_count))
+
     groups: list[dict[str, object]] = []
     total = 0
     for inst in pm.instruments:
@@ -428,7 +436,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             groups.append({"inst": inst, "kind": "bend", "key": None, "events": bends})
             total += len(bends)
 
-    if total <= cap:
+    if total <= eff_cap:
         return
 
     allocations: list[dict[str, object]] = []
@@ -442,7 +450,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             target = 0
         else:
             min_keep = 1 if n == 1 else min(2, n)
-            ideal = (n / total) * cap
+            ideal = (n / total) * eff_cap
             base = int(math.floor(ideal))
             target = min(n, max(min_keep, base))
         allocations.append(
@@ -458,9 +466,9 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
         )
         sum_targets += target
 
-    if sum_targets > cap:
+    if sum_targets > eff_cap:
         reducible = [a for a in allocations if int(a["target"]) > int(a["min"])]
-        while sum_targets > cap and reducible:
+        while sum_targets > eff_cap and reducible:
             reducible.sort(
                 key=lambda a: (
                     int(a["target"]) - int(a["min"]),
@@ -473,9 +481,9 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             sum_targets -= 1
             if int(candidate["target"]) <= int(candidate["min"]):
                 reducible.pop(0)
-        if sum_targets > cap:
+        if sum_targets > eff_cap:
             reducible = [a for a in allocations if a["target"] > 0]
-            while sum_targets > cap and reducible:
+            while sum_targets > eff_cap and reducible:
                 reducible.sort(
                     key=lambda a: (
                         int(a["target"]),
@@ -489,7 +497,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
                 if int(candidate["target"]) == 0:
                     reducible.pop(0)
 
-    remainder = cap - sum_targets
+    remainder = eff_cap - sum_targets
     if remainder > 0:
         expandable = [
             a for a in allocations if int(a["target"]) < len(a["events"])

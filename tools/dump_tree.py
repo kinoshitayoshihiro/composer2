@@ -34,6 +34,69 @@ class Node:
     mtime: float = 0.0
     children: list["Node"] | None = None
 
+
+def build_tree(root: Path) -> tuple[dict | None, dict[str, int]]:
+    if not root.exists():
+        return None, {"files": 0, "dirs": 0, "size": 0}
+
+    def _build(path: Path) -> tuple[dict, tuple[int, int, int]]:
+        is_dir = path.is_dir()
+        node: dict = {
+            "name": path.name or str(path),
+            "path": str(path),
+            "type": "dir" if is_dir else "file",
+        }
+        if is_dir:
+            children = []
+            files = 0
+            dirs = 1
+            size = 0
+            for child in sorted(path.iterdir(), key=lambda p: p.name.lower()):
+                child_node, (c_files, c_dirs, c_size) = _build(child)
+                children.append(child_node)
+                files += c_files
+                dirs += c_dirs
+                size += c_size
+            node["children"] = children
+            return node, (files, dirs, size)
+        else:
+            try:
+                stat = path.stat()
+                size = int(stat.st_size)
+            except OSError:
+                size = 0
+            node["size"] = size
+            return node, (1, 0, size)
+
+    tree, stats = _build(root)
+    files, dirs, size = stats
+    return tree, {"files": files, "dirs": dirs, "size": size}
+
+
+def render_markdown(node: dict) -> str:
+    def _fmt(n: dict) -> str:
+        label = n.get("name") or n.get("path", "")
+        if n.get("type") == "dir":
+            return f"{label}/"
+        return label
+
+    lines: list[str] = []
+
+    def _rec(n: dict, prefix: str = "", depth: int = 0, is_last: bool = True) -> None:
+        if depth == 0:
+            lines.append(_fmt(n))
+        else:
+            branch = "└── " if is_last else "├── "
+            lines.append(prefix + branch + _fmt(n))
+        children = n.get("children") or []
+        if children:
+            new_prefix = prefix + ("    " if is_last else "│   ")
+            for i, child in enumerate(children):
+                _rec(child, new_prefix, depth + 1, i == len(children) - 1)
+
+    _rec(node)
+    return "\n".join(lines)
+
 # -----------------------------
 # ignore / include / exclude
 # -----------------------------

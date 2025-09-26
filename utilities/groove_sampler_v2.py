@@ -1097,40 +1097,92 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                 except Exception as exc:
                     tempo_error = str(exc)
                 else:
+                    reloaded_mid = None
+                    if inject_tempo_val is not None:
+                        try:
+                            reloaded_mid = _mido.MidiFile(str(path))
+                        except Exception:
+                            reloaded_mid = None
                     reloaded_pm = None
                     try:
                         reloaded_pm = pretty_midi.PrettyMIDI(str(path))
                     except Exception:
                         reloaded_pm = None
-                    if reloaded_pm is not None and tempo_message_injected:
+                    need_fresh_tempo = False
+                    has_reloaded_mido_tempo = False
+                    if inject_tempo_val is not None:
+                        if reloaded_mid is not None:
+                            has_reloaded_mido_tempo = any(
+                                getattr(msg, "type", "") == "set_tempo"
+                                for track in getattr(reloaded_mid, "tracks", [])
+                                for msg in track
+                            )
+                            if not has_reloaded_mido_tempo:
+                                need_fresh_tempo = True
+                        if reloaded_pm is not None:
+                            try:
+                                _rtimes, rtempi = reloaded_pm.get_tempo_changes()
+                            except Exception:
+                                rtempi = []
+                            rtempi_size = getattr(rtempi, "size", None)
+                            if rtempi_size is None:
+                                try:
+                                    rtempi_size = len(rtempi)
+                                except TypeError:
+                                    rtempi_size = 0
+                            if not rtempi_size:
+                                need_fresh_tempo = True
+                    if need_fresh_tempo and inject_tempo_val is not None:
                         try:
-                            _rtimes, rtempi = reloaded_pm.get_tempo_changes()
+                            reload_mid = reloaded_mid
+                            if reload_mid is None:
+                                reload_mid = _mido.MidiFile(str(path))
                         except Exception:
-                            rtempi = []
-                        rtempi_size = getattr(rtempi, "size", None)
-                        if rtempi_size is None:
+                            reload_mid = None
+                        if reload_mid is not None:
                             try:
-                                rtempi_size = len(rtempi)
-                            except TypeError:
-                                rtempi_size = 0
-                        if rtempi_size == 0 and inject_tempo_val is not None:
-                            try:
-                                if not getattr(mid, "tracks", None):
-                                    track = _mido.MidiTrack()
-                                    mid.tracks.append(track)
-                                track0 = mid.tracks[0]
-                                for idx in range(len(track0) - 1, -1, -1):
-                                    if getattr(track0[idx], "type", "") == "set_tempo":
-                                        del track0[idx]
+                                for track in getattr(reload_mid, "tracks", []):
+                                    for idx in range(len(track) - 1, -1, -1):
+                                        if getattr(track[idx], "type", "") == "set_tempo":
+                                            del track[idx]
+                                if not getattr(reload_mid, "tracks", None):
+                                    reload_mid.tracks.append(_mido.MidiTrack())
+                                track0 = reload_mid.tracks[0]
                                 tempo_msg = _mido.MetaMessage(
                                     "set_tempo", tempo=inject_tempo_val, time=0
                                 )
                                 track0.insert(0, tempo_msg)
-                                mid.save(str(path))
-                                reloaded_pm = pretty_midi.PrettyMIDI(str(path))
+                                tempo_message_injected = True
+                                tempo_was_injected = True
+                                reload_mid.save(str(path))
+                                mid = reload_mid
+                                reloaded_mid = reload_mid
+                                has_reloaded_mido_tempo = True
+                                has_explicit = True
+                                reloaded_pm = None
+                                if pretty_midi is not None:
+                                    try:
+                                        reloaded_pm = pretty_midi.PrettyMIDI(str(path))
+                                    except Exception:
+                                        reloaded_pm = None
+                                if reloaded_pm is not None:
+                                    try:
+                                        _rtimes, rtempi = reloaded_pm.get_tempo_changes()
+                                    except Exception:
+                                        rtempi = []
+                                    rtempi_size = getattr(rtempi, "size", None)
+                                    if rtempi_size is None:
+                                        try:
+                                            rtempi_size = len(rtempi)
+                                        except TypeError:
+                                            rtempi_size = 0
+                                    if not rtempi_size:
+                                        reloaded_pm = None
+                                need_fresh_tempo = False
                             except Exception as exc:
                                 tempo_error = str(exc)
-                                reloaded_pm = None
+                        if reloaded_pm is not None:
+                            need_fresh_tempo = False
                     if reloaded_pm is not None:
                         pm = reloaded_pm
             raw_midi_obj = mid
@@ -1267,30 +1319,33 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                     for track in getattr(verify_mid, "tracks", [])
                     for msg in track
                 )
-                if not has_tempo_meta:
+                try:
+                    tempo_val = int(mido.bpm2tempo(float(cfg.inject_default_tempo)))
+                except Exception:
+                    tempo_val = None
+                if tempo_val is not None:
+                    if not getattr(verify_mid, "tracks", None):
+                        verify_mid.tracks.append(mido.MidiTrack())
+                    for track in getattr(verify_mid, "tracks", []):
+                        for idx in range(len(track) - 1, -1, -1):
+                            if getattr(track[idx], "type", "") == "set_tempo":
+                                del track[idx]
+                    track0 = verify_mid.tracks[0]
+                    tempo_msg = mido.MetaMessage("set_tempo", tempo=tempo_val, time=0)
+                    track0.insert(0, tempo_msg)
                     try:
-                        tempo_val = int(mido.bpm2tempo(float(cfg.inject_default_tempo)))
-                    except Exception:
-                        tempo_val = None
-                    if tempo_val is not None:
-                        if not getattr(verify_mid, "tracks", None):
-                            verify_mid.tracks.append(mido.MidiTrack())
-                        track0 = verify_mid.tracks[0]
-                        tempo_msg = mido.MetaMessage("set_tempo", tempo=tempo_val, time=0)
-                        track0.insert(0, tempo_msg)
-                        try:
-                            verify_mid.save(str(path))
-                        except Exception as exc:
-                            tempo_error = str(exc)
-                        else:
-                            tempo_injected = True
-                            raw_midi_obj = verify_mid
-                            raw_has_tempo = True
-                            if pretty_midi is not None:
-                                try:
-                                    pm = pretty_midi.PrettyMIDI(str(path))
-                                except Exception:
-                                    pass
+                        verify_mid.save(str(path))
+                    except Exception as exc:
+                        tempo_error = str(exc)
+                    else:
+                        tempo_injected = True
+                        raw_midi_obj = verify_mid
+                        raw_has_tempo = True
+                        if pretty_midi is not None:
+                            try:
+                                pm = pretty_midi.PrettyMIDI(str(path))
+                            except Exception:
+                                pass
 
     if (
         raw_has_tempo is None

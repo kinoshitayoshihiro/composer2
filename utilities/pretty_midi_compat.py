@@ -94,6 +94,16 @@ else:
             else:
                 times, bpms = first_arr, second_arr
 
+            midi_obj = getattr(self, "midi_data", None)
+            if midi_obj is not None:
+                has_tempo_meta = any(
+                    getattr(msg, "type", "") == "set_tempo"
+                    for track in getattr(midi_obj, "tracks", [])
+                    for msg in track
+                )
+            else:
+                has_tempo_meta = False
+
             marker_present = any(
                 getattr(evt, "text", "") == _NO_TEMPO_MARKER
                 for evt in getattr(self, "text_events", [])
@@ -102,19 +112,13 @@ else:
                 self.text_events = [
                     evt for evt in self.text_events if getattr(evt, "text", "") != _NO_TEMPO_MARKER
                 ]
-                empty = _np.asarray([], dtype=float)
-                return empty, empty
-
-            midi_obj = getattr(self, "midi_data", None)
-            if midi_obj is not None:
-                has_tempo_meta = any(
-                    getattr(msg, "type", "") == "set_tempo"
-                    for track in getattr(midi_obj, "tracks", [])
-                    for msg in track
-                )
                 if not has_tempo_meta:
                     empty = _np.asarray([], dtype=float)
                     return empty, empty
+
+            if not has_tempo_meta:
+                empty = _np.asarray([], dtype=float)
+                return empty, empty
             return times, bpms
 
         _safe_get_tempo_changes._composer2_patched = True  # type: ignore[attr-defined]

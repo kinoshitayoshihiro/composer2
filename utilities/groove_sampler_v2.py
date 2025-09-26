@@ -1192,6 +1192,55 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                             pass
                     except Exception as exc:  # pragma: no cover - rare fallback failures
                         tempo_error = str(exc)
+            if pretty_midi is not None:
+                verify_pm: pretty_midi.PrettyMIDI | None
+                try:
+                    verify_pm = pretty_midi.PrettyMIDI(str(path))
+                except Exception:
+                    verify_pm = None
+                if verify_pm is not None:
+                    try:
+                        _vtimes, vtempi_arr = verify_pm.get_tempo_changes()
+                    except Exception:
+                        vtempi_list: list[float] = []
+                    else:
+                        vtempi_list = list(vtempi_arr)
+                    if not vtempi_list:
+                        try:
+                            tempo_val = int(mido.bpm2tempo(float(cfg.inject_default_tempo)))
+                        except Exception:
+                            tempo_val = None
+                        if tempo_val is not None:
+                            try:
+                                reload_mid = mido.MidiFile(filename=str(path))
+                            except Exception:
+                                reload_mid = None
+                            if reload_mid is not None:
+                                try:
+                                    if not getattr(reload_mid, "tracks", None):
+                                        reload_mid.tracks.append(mido.MidiTrack())
+                                    track0 = reload_mid.tracks[0]
+                                    for idx in range(len(track0) - 1, -1, -1):
+                                        if getattr(track0[idx], "type", "") == "set_tempo":
+                                            del track0[idx]
+                                    tempo_msg = mido.MetaMessage(
+                                        "set_tempo", tempo=tempo_val, time=0
+                                    )
+                                    track0.insert(0, tempo_msg)
+                                    reload_mid.save(str(path))
+                                    tempo_injected = True
+                                    raw_midi_obj = reload_mid
+                                    raw_has_tempo = True
+                                    try:
+                                        verify_pm = pretty_midi.PrettyMIDI(str(path))
+                                    except Exception:
+                                        verify_pm = None
+                                except Exception as exc:
+                                    tempo_error = str(exc)
+                                if verify_pm is not None:
+                                    pm = verify_pm
+                    if verify_pm is not None:
+                        pm = verify_pm
 
     if (
         raw_has_tempo is None

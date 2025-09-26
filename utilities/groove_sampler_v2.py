@@ -1017,6 +1017,8 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
             mid = _mido.MidiFile(str(path))
             default_stub = False
             tempo_message_injected = False
+            tempo_changed = False
+            tempo_was_injected = False
             inject_tempo_val: int | None = None
             if cfg.inject_default_tempo > 0:
                 try:
@@ -1041,6 +1043,7 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                     if tempo_val is not None and int(tempo_val) in default_tempos:
                         if getattr(tempo_msg, "time", 0) == 0:
                             default_stub = True
+                            tempo_changed = True
                             del mid.tracks[track_idx][msg_idx]
             has_explicit = any(
                 getattr(msg, "type", "") == "set_tempo" for tr in mid.tracks for msg in tr
@@ -1050,9 +1053,27 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                     tempo_msg = _mido.MetaMessage("set_tempo", tempo=inject_tempo_val, time=0)
                     mid.tracks[0].insert(0, tempo_msg)
                     tempo_message_injected = True
+                    tempo_changed = True
+                    tempo_was_injected = True
+                    has_explicit = True
                 except Exception:
                     pass
-            if (default_stub or tempo_message_injected) and getattr(mid, "tracks", None):
+            if not has_explicit and inject_tempo_val is not None:
+                try:
+                    if not getattr(mid, "tracks", None):
+                        track = _mido.MidiTrack()
+                        mid.tracks.append(track)
+                        tempo_changed = True
+                    if getattr(mid, "tracks", None):
+                        tempo_msg = _mido.MetaMessage("set_tempo", tempo=inject_tempo_val, time=0)
+                        mid.tracks[0].insert(0, tempo_msg)
+                        tempo_message_injected = True
+                        tempo_changed = True
+                        tempo_was_injected = True
+                        has_explicit = True
+                except Exception:
+                    pass
+            if tempo_changed and getattr(mid, "tracks", None):
                 try:
                     marker_exists = any(
                         getattr(msg, "type", "") == "text"
@@ -1064,20 +1085,20 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                     marker_exists = True
             else:
                 marker_exists = True
-            if (default_stub or tempo_message_injected) and not marker_exists and getattr(mid, "tracks", None):
+            if tempo_changed and not marker_exists and getattr(mid, "tracks", None):
                 try:
                     marker_msg = _mido.MetaMessage("text", text=_NO_TEMPO_MARKER, time=0)
                     mid.tracks[0].insert(0, marker_msg)
                 except Exception:
                     pass
-            if (default_stub or tempo_message_injected) and not has_explicit:
+            if tempo_changed:
                 try:
                     mid.save(str(path))
                 except Exception as exc:
                     tempo_error = str(exc)
             raw_midi_obj = mid
             raw_has_tempo = has_explicit
-            if not has_explicit:
+            if tempo_was_injected:
                 tempo_injected = True
                 pm._composer2_injected_tempo = True  # type: ignore[attr-defined]
                 try:

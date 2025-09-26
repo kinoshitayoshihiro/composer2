@@ -1107,7 +1107,13 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                             _rtimes, rtempi = reloaded_pm.get_tempo_changes()
                         except Exception:
                             rtempi = []
-                        if not rtempi and inject_tempo_val is not None:
+                        rtempi_size = getattr(rtempi, "size", None)
+                        if rtempi_size is None:
+                            try:
+                                rtempi_size = len(rtempi)
+                            except TypeError:
+                                rtempi_size = 0
+                        if rtempi_size == 0 and inject_tempo_val is not None:
                             try:
                                 if not getattr(mid, "tracks", None):
                                     track = _mido.MidiTrack()

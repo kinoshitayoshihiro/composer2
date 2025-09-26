@@ -38,6 +38,59 @@ from typing import Any
 # Module-level logger for concise log control
 logger = logging.getLogger(__name__)
 
+
+def _iter_midi_files(root: Path | str) -> Iterable[Path]:
+    root = Path(root)
+    exts = {".mid", ".midi"}
+    if root.is_file() and root.suffix.lower() in exts:
+        yield root
+        return
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for fn in filenames:
+            p = Path(dirpath) / fn
+            if p.suffix.lower() in exts:
+                yield p
+
+
+def _has_explicit_tempo(pm: "pretty_midi.PrettyMIDI") -> bool:
+    try:
+        _times, tempi = pm.get_tempo_changes()
+    except Exception:
+        return False
+    size = getattr(tempi, "size", None)
+    if size is not None:
+        return int(size) > 0
+    return len(tempi) > 0
+
+
+def _inject_default_tempo_file(path: Path, bpm: float) -> bool:
+    """If ``path`` lacks tempo events, rewrite with ``bpm`` and return ``True``."""
+
+    if pretty_midi is None:  # pragma: no cover - defensive
+        return False
+    try:
+        pm_in = pretty_midi.PrettyMIDI(str(path))
+    except Exception as exc:  # corrupt/unreadable
+        logger.warning("skip tempo injection (load failed): %s (%s)", path, exc)
+        return False
+
+    if _has_explicit_tempo(pm_in):
+        return False
+
+    pm_out = pretty_midi.PrettyMIDI(initial_tempo=float(bpm))
+    pm_out.time_signature_changes = list(pm_in.time_signature_changes)
+    pm_out.key_signature_changes = list(pm_in.key_signature_changes)
+    if hasattr(pm_in, "downbeats"):
+        pm_out.downbeats = list(pm_in.downbeats)
+    pm_out.instruments = [inst for inst in pm_in.instruments]
+    try:
+        pm_out.write(str(path))
+        logger.info("Injected default tempo=%s into %s", bpm, path)
+        return True
+    except Exception as exc:
+        logger.error("failed to write tempo-injected MIDI: %s (%s)", path, exc)
+        return False
+
 _LEGACY_WARNED: set[str] = set()
 
 
@@ -1756,6 +1809,13 @@ def train(
         raise RuntimeError(
             "mido is required for groove sampler training; install via 'pip install mido'"
         )
+
+    if inject_default_tempo and inject_default_tempo > 0:
+        injected_cnt = 0
+        for midi_path in _iter_midi_files(loop_dir):
+            if _inject_default_tempo_file(midi_path, inject_default_tempo):
+                injected_cnt += 1
+        logger.debug("tempo injection done: %d file(s) updated", injected_cnt)
 
     requested_inject_tempo = inject_default_tempo
     forced_relax_tempo: float | None = None

@@ -1243,6 +1243,56 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                         pm = verify_pm
 
     if (
+        cfg.inject_default_tempo > 0
+        and path.suffix.lower() in {".mid", ".midi"}
+        and mido is not None
+    ):
+        need_inject = False
+        if pretty_midi is not None:
+            try:
+                _tmp_times, _tmp_tempi = pm.get_tempo_changes()
+            except Exception:
+                _tmp_tempi_list: list[float] = []
+            else:
+                _tmp_tempi_list = list(_tmp_tempi)
+            need_inject = not _tmp_tempi_list
+        if need_inject:
+            try:
+                verify_mid = mido.MidiFile(filename=str(path))
+            except Exception:
+                verify_mid = None
+            if verify_mid is not None:
+                has_tempo_meta = any(
+                    getattr(msg, "type", "") == "set_tempo"
+                    for track in getattr(verify_mid, "tracks", [])
+                    for msg in track
+                )
+                if not has_tempo_meta:
+                    try:
+                        tempo_val = int(mido.bpm2tempo(float(cfg.inject_default_tempo)))
+                    except Exception:
+                        tempo_val = None
+                    if tempo_val is not None:
+                        if not getattr(verify_mid, "tracks", None):
+                            verify_mid.tracks.append(mido.MidiTrack())
+                        track0 = verify_mid.tracks[0]
+                        tempo_msg = mido.MetaMessage("set_tempo", tempo=tempo_val, time=0)
+                        track0.insert(0, tempo_msg)
+                        try:
+                            verify_mid.save(str(path))
+                        except Exception as exc:
+                            tempo_error = str(exc)
+                        else:
+                            tempo_injected = True
+                            raw_midi_obj = verify_mid
+                            raw_has_tempo = True
+                            if pretty_midi is not None:
+                                try:
+                                    pm = pretty_midi.PrettyMIDI(str(path))
+                                except Exception:
+                                    pass
+
+    if (
         raw_has_tempo is None
         and mido is not None
         and path.suffix.lower() in {".mid", ".midi"}

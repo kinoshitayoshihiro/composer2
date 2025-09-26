@@ -1156,6 +1156,44 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
             tempo_error = str(exc)
 
     if (
+        cfg.inject_default_tempo > 0
+        and path.suffix.lower() in {".mid", ".midi"}
+        and mido is not None
+    ):
+        try:
+            verify_mid = mido.MidiFile(filename=str(path))
+        except Exception:
+            verify_mid = None
+        if verify_mid is not None:
+            has_tempo_meta = any(
+                getattr(msg, "type", "") == "set_tempo"
+                for track in getattr(verify_mid, "tracks", [])
+                for msg in track
+            )
+            if not has_tempo_meta:
+                try:
+                    tempo_val = int(mido.bpm2tempo(float(cfg.inject_default_tempo)))
+                except Exception:
+                    tempo_val = None
+                if tempo_val is not None:
+                    try:
+                        if not getattr(verify_mid, "tracks", None):
+                            verify_mid.tracks.append(mido.MidiTrack())
+                        track0 = verify_mid.tracks[0]
+                        tempo_msg = mido.MetaMessage("set_tempo", tempo=tempo_val, time=0)
+                        track0.insert(0, tempo_msg)
+                        verify_mid.save(str(path))
+                        tempo_injected = True
+                        raw_midi_obj = verify_mid
+                        raw_has_tempo = True
+                        try:
+                            pm = pretty_midi.PrettyMIDI(str(path))
+                        except Exception:
+                            pass
+                    except Exception as exc:  # pragma: no cover - rare fallback failures
+                        tempo_error = str(exc)
+
+    if (
         raw_has_tempo is None
         and mido is not None
         and path.suffix.lower() in {".mid", ".midi"}

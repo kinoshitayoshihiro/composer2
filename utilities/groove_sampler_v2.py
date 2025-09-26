@@ -1016,6 +1016,13 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
 
             mid = _mido.MidiFile(str(path))
             default_stub = False
+            tempo_message_injected = False
+            inject_tempo_val: int | None = None
+            if cfg.inject_default_tempo > 0:
+                try:
+                    inject_tempo_val = int(_mido.bpm2tempo(float(cfg.inject_default_tempo)))
+                except Exception:
+                    inject_tempo_val = None
             tempo_slots: list[tuple[int, int]] = []
             for track_idx, track in enumerate(mid.tracks):
                 for msg_idx, msg in enumerate(track):
@@ -1025,10 +1032,8 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                 default_tempos = {
                     int(_mido.bpm2tempo(120.0)),
                 }
-                try:
-                    default_tempos.add(int(_mido.bpm2tempo(float(cfg.inject_default_tempo))))
-                except Exception:
-                    pass
+                if inject_tempo_val is not None:
+                    default_tempos.add(inject_tempo_val)
                 if len(tempo_slots) == 1:
                     track_idx, msg_idx = tempo_slots[0]
                     tempo_msg = mid.tracks[track_idx][msg_idx]
@@ -1040,18 +1045,33 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
             has_explicit = any(
                 getattr(msg, "type", "") == "set_tempo" for tr in mid.tracks for msg in tr
             )
-            if default_stub and not has_explicit:
+            if not has_explicit and inject_tempo_val is not None and getattr(mid, "tracks", None):
                 try:
-                    if getattr(mid, "tracks", None):
-                        marker_exists = any(
-                            getattr(msg, "type", "") == "text"
-                            and getattr(msg, "text", "") == _NO_TEMPO_MARKER
-                            for track in mid.tracks
-                            for msg in track
-                        )
-                        if not marker_exists:
-                            marker_msg = _mido.MetaMessage("text", text=_NO_TEMPO_MARKER, time=0)
-                            mid.tracks[0].insert(0, marker_msg)
+                    tempo_msg = _mido.MetaMessage("set_tempo", tempo=inject_tempo_val, time=0)
+                    mid.tracks[0].insert(0, tempo_msg)
+                    tempo_message_injected = True
+                except Exception:
+                    pass
+            if (default_stub or tempo_message_injected) and getattr(mid, "tracks", None):
+                try:
+                    marker_exists = any(
+                        getattr(msg, "type", "") == "text"
+                        and getattr(msg, "text", "") == _NO_TEMPO_MARKER
+                        for track in mid.tracks
+                        for msg in track
+                    )
+                except Exception:
+                    marker_exists = True
+            else:
+                marker_exists = True
+            if (default_stub or tempo_message_injected) and not marker_exists and getattr(mid, "tracks", None):
+                try:
+                    marker_msg = _mido.MetaMessage("text", text=_NO_TEMPO_MARKER, time=0)
+                    mid.tracks[0].insert(0, marker_msg)
+                except Exception:
+                    pass
+            if (default_stub or tempo_message_injected) and not has_explicit:
+                try:
                     mid.save(str(path))
                 except Exception as exc:
                     tempo_error = str(exc)

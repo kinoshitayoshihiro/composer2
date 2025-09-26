@@ -350,10 +350,14 @@ def apply_controls(
                     new_pb[0].time = start
                     new_pb[-1].time = end
                     # Ensure non-negative strictly increasing times
-                    if new_pb and new_pb[0].time <= 0.0:
-                        tiny = 4e-12
-                        new_pb[-1].time = max(new_pb[-1].time, tiny)
-                        new_pb[0].time = tiny
+                    if new_pb and new_pb[0].time < 0.0:
+                        new_pb[0].time = 0.0
+                    if (
+                        len(new_pb) >= 2
+                        and new_pb[-1].time <= new_pb[0].time
+                    ):
+                        tiny = max(time_eps, 4e-12)
+                        new_pb[-1].time = new_pb[0].time + tiny
                     # Drop penultimate if it coincides with last at different pitch.
                     if (
                         len(new_pb) >= 2

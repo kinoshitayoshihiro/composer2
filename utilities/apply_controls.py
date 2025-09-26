@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 _INITIAL_RPN_WINDOW = 0.05
 _RPN_NUMBERS = {101, 100, 6, 38}
+_RPN_ORDER = {101: 0, 100: 1, 6: 2, 38: 3}
 
 
 def _rpn_time(
@@ -46,6 +47,13 @@ def _rpn_time(
     return t if t >= 0.0 else 0.0
 
 
+def _rpn_block_times(base: float, length: int, *, eps: float = 1e-12) -> list[float]:
+    """Return monotonically increasing timestamps ending at ``base``."""
+
+    offsets = range(-(length - 1), 1)
+    return [max(0.0, base + offset * eps) for offset in offsets]
+
+
 def ensure_instrument_for_channel(pm: pretty_midi.PrettyMIDI, ch: int) -> pretty_midi.Instrument:
     """Return an instrument routed to MIDI channel ``ch``.
 
@@ -67,8 +75,10 @@ def _sort_events(inst: pretty_midi.Instrument) -> None:
 
     events: list[tuple[float, int, int, int, str, object]] = []
     for cc in inst.control_changes:
-        pr = 0 if int(cc.number) in _RPN_NUMBERS else 1
-        events.append((float(cc.time), pr, int(cc.number), int(cc.value), "cc", cc))
+        num = int(cc.number)
+        pr = 0 if num in _RPN_NUMBERS else 1
+        order = _RPN_ORDER.get(num, num)
+        events.append((float(cc.time), pr, order, int(cc.value), "cc", cc))
     for pb in inst.pitch_bends:
         events.append((float(pb.time), 2, 0, int(getattr(pb, "pitch", 0)), "pb", pb))
     events.sort(key=lambda e: (e[0], e[1], e[2], e[3]))
@@ -153,8 +163,7 @@ def write_bend_range_rpn(
     if not isinstance(ccs, list):
         ccs = list(ccs)
         inst.control_changes = ccs
-    eps = 1e-12
-    times = [t + offset * eps for offset in range(4)]
+    block_times = _rpn_block_times(t, 4)
 
     for i in range(len(ccs) - 2):
         a, b, c = ccs[i : i + 3]
@@ -172,6 +181,7 @@ def write_bend_range_rpn(
             c.value = msb
             if d is not None:
                 d.value = lsb
+            times = _rpn_block_times(t, 4 if d is not None else 3)
             a.time = times[0]
             b.time = times[1]
             c.time = times[2]
@@ -183,10 +193,10 @@ def write_bend_range_rpn(
 
     ccs.extend(
         [
-            pretty_midi.ControlChange(number=101, value=0, time=times[0]),
-            pretty_midi.ControlChange(number=100, value=0, time=times[1]),
-            pretty_midi.ControlChange(number=6, value=msb, time=times[2]),
-            pretty_midi.ControlChange(number=38, value=lsb, time=times[3]),
+            pretty_midi.ControlChange(number=101, value=0, time=block_times[0]),
+            pretty_midi.ControlChange(number=100, value=0, time=block_times[1]),
+            pretty_midi.ControlChange(number=6, value=msb, time=block_times[2]),
+            pretty_midi.ControlChange(number=38, value=lsb, time=block_times[3]),
         ]
     )
     inst._rpn_written = True  # type: ignore[attr-defined]
@@ -291,8 +301,10 @@ def apply_controls(
 
     for ch, mapping in curves_by_channel.items():
         inst = ensure_instrument_for_channel(pm, ch)
+        bend_requested = False
         for name, curve in mapping.items():
             if name == "bend":
+                bend_requested = True
                 pre = len(inst.pitch_bends)
                 curve.to_pitch_bend(
                     inst,
@@ -317,6 +329,10 @@ def apply_controls(
                     if curve.domain == "beats":
                         start = rendered_start
                         end = rendered_end
+                    if abs(start) <= max(time_eps, 1e-12):
+                        start = 0.0
+                    else:
+                        start = max(0.0, start)
                     new_pb[0].time = start
                     new_pb[-1].time = end
                     if (
@@ -368,8 +384,12 @@ def apply_controls(
                     end += curve.offset_sec
                     new_cc[0].time = start
                     new_cc[-1].time = end
-        if write_rpn and not getattr(inst, "_rpn_written", False) and inst.pitch_bends:
-            first_pb_time = min(float(pb.time) for pb in inst.pitch_bends)
+        if write_rpn and bend_requested and not getattr(inst, "_rpn_written", False):
+            first_pb_time = (
+                min(float(pb.time) for pb in inst.pitch_bends)
+                if inst.pitch_bends
+                else None
+            )
             non_rpn_cc_times = [
                 float(cc.time)
                 for cc in inst.control_changes
@@ -387,11 +407,19 @@ def apply_controls(
             rpn_events = [cc for cc in inst.control_changes if int(cc.number) == 101]
             if rpn_events:
                 rpn_time = float(rpn_events[0].time)
+                first_pb = (
+                    min((float(pb.time) for pb in inst.pitch_bends), default=None)
+                    if inst.pitch_bends
+                    else None
+                )
                 for cc in inst.control_changes:
                     if int(cc.number) in _RPN_NUMBERS:
                         continue
                     if abs(float(cc.time) - rpn_time) <= time_eps:
-                        cc.time = rpn_time + 1e-9
+                        new_time = rpn_time + max(time_eps, 1e-9)
+                        if first_pb is not None and new_time > first_pb:
+                            new_time = rpn_time
+                        cc.time = new_time
         _sort_events(inst)
 
     if total_max_events:
@@ -426,11 +454,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             _sort_events(inst)
         return
 
-    rpn_count = 0
-    for inst in pm.instruments:
-        rpn_count += sum(1 for cc in inst.control_changes if int(cc.number) in _RPN_NUMBERS)
-
-    eff_cap = max(0, int(cap) - int(rpn_count))
+    eff_cap = max(0, int(cap))
 
     groups: list[dict[str, object]] = []
     total = 0

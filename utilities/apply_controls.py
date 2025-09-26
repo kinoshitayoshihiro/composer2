@@ -47,6 +47,13 @@ def _rpn_time(
     return t if t >= 0.0 else 0.0
 
 
+def _rpn_block_times(base: float, length: int, *, eps: float = 1e-12) -> list[float]:
+    """Return monotonically increasing timestamps ending at ``base``."""
+
+    offsets = range(-(length - 1), 1)
+    return [max(0.0, base + offset * eps) for offset in offsets]
+
+
 def ensure_instrument_for_channel(pm: pretty_midi.PrettyMIDI, ch: int) -> pretty_midi.Instrument:
     """Return an instrument routed to MIDI channel ``ch``.
 
@@ -68,12 +75,16 @@ def _sort_events(inst: pretty_midi.Instrument) -> None:
 
     events: list[tuple[float, int, int, int, str, object]] = []
     for cc in inst.control_changes:
-        pr = 0 if int(cc.number) in _RPN_NUMBERS else 1
-        events.append((float(cc.time), pr, int(cc.number), int(cc.value), "cc", cc))
+        num = int(cc.number)
+        pr = 0 if num in _RPN_NUMBERS else 1
+        order = _RPN_ORDER.get(num, num)
+        events.append((float(cc.time), pr, order, int(cc.value), "cc", cc))
     for pb in inst.pitch_bends:
         events.append((float(pb.time), 2, 0, int(getattr(pb, "pitch", 0)), "pb", pb))
+
     def _sort_key(e: tuple[float, int, int, int, str, object]) -> tuple[float, int, int, int]:
         time, pr, number, value, _kind, _obj = e
+        # Make RPN formals (101/100/6/38) win ties by a tiny epsilon lead.
         if pr == 0:
             time -= 1e-9
         order = _RPN_ORDER.get(number, number)
@@ -125,6 +136,8 @@ def _dedup_rpn_blocks(
         out.append(cc)
         i += 1
     return out
+
+
 def write_bend_range_rpn(
     inst: pretty_midi.Instrument,
     range_semitones: float,
@@ -159,9 +172,8 @@ def write_bend_range_rpn(
     if not isinstance(ccs, list):
         ccs = list(ccs)
         inst.control_changes = ccs
-    eps = 1e-12
-    times = [base_time + (idx + 1) * eps for idx in range(4)]
 
+    # Try to reuse an existing leading RPN block if present.
     for i in range(len(ccs) - 2):
         a, b, c = ccs[i : i + 3]
         if (a.number, a.value) == (101, 0) and (b.number, b.value) == (100, 0) and c.number == 6:
@@ -175,24 +187,28 @@ def write_bend_range_rpn(
                 inst._rpn_range = cur  # type: ignore[attr-defined]
                 inst._rpn_precision = mode  # type: ignore[attr-defined]
                 return
+            # Update in-place and align times as a tight block ending at base_time.
             c.value = msb
             if d is not None:
                 d.value = lsb
-            a.time = times[0]
-            b.time = times[1]
-            c.time = times[2]
+            block_times = _rpn_block_times(base_time, 4 if d is not None else 3)
+            a.time = block_times[0]
+            b.time = block_times[1]
+            c.time = block_times[2]
             if d is not None:
-                d.time = times[3]
+                d.time = block_times[3]
             inst._rpn_range = msb + lsb / scale  # type: ignore[attr-defined]
             inst._rpn_precision = mode  # type: ignore[attr-defined]
             return
 
+    # Otherwise append a fresh block at (or just before) base_time.
+    block_times = _rpn_block_times(base_time, 4)
     ccs.extend(
         [
-            pretty_midi.ControlChange(number=101, value=0, time=times[0]),
-            pretty_midi.ControlChange(number=100, value=0, time=times[1]),
-            pretty_midi.ControlChange(number=6, value=msb, time=times[2]),
-            pretty_midi.ControlChange(number=38, value=lsb, time=times[3]),
+            pretty_midi.ControlChange(number=101, value=0, time=block_times[0]),
+            pretty_midi.ControlChange(number=100, value=0, time=block_times[1]),
+            pretty_midi.ControlChange(number=6, value=msb, time=block_times[2]),
+            pretty_midi.ControlChange(number=38, value=lsb, time=block_times[3]),
         ]
     )
     inst._rpn_written = True  # type: ignore[attr-defined]
@@ -272,6 +288,7 @@ def apply_controls(
         events: list[pretty_midi.ControlChange],
         target: str,
     ) -> None:
+        # Only fix if (a) beats domain, (b) tempo_map provided, (c) initial constant time cluster.
         if not events or tempo_map is None or getattr(curve, "domain", None) != "beats":
             return
         first = float(events[0].time)
@@ -297,7 +314,6 @@ def apply_controls(
 
     for ch, mapping in curves_by_channel.items():
         inst = ensure_instrument_for_channel(pm, ch)
-        wrote_bend = False
         bend_requested = False
         for name, curve in mapping.items():
             if name == "bend":
@@ -315,7 +331,6 @@ def apply_controls(
                 )
                 new_pb = inst.pitch_bends[pre:]
                 if new_pb:
-                    wrote_bend = True
                     rendered_start = new_pb[0].time
                     rendered_end = new_pb[-1].time
                     start = float(curve.times[0]) if len(curve.times) else 0.0
@@ -324,15 +339,22 @@ def apply_controls(
                         start, end = curve._beats_to_times([start, end], tempo_map or 120.0)
                     start += curve.offset_sec
                     end += curve.offset_sec
+                    # In beats domain we trust the renderer's times.
                     if curve.domain == "beats":
                         start = rendered_start
                         end = rendered_end
+                    if abs(start) <= max(time_eps, 1e-12):
+                        start = 0.0
+                    else:
+                        start = max(0.0, start)
                     new_pb[0].time = start
                     new_pb[-1].time = end
+                    # Ensure non-negative strictly increasing times
                     if new_pb and new_pb[0].time <= 0.0:
                         tiny = 4e-12
                         new_pb[-1].time = max(new_pb[-1].time, tiny)
                         new_pb[0].time = tiny
+                    # Drop penultimate if it coincides with last at different pitch.
                     if (
                         len(new_pb) >= 2
                         and abs(new_pb[-1].time - new_pb[-2].time) <= time_eps
@@ -345,11 +367,7 @@ def apply_controls(
             if name in _CC_MAP:
                 cc_num = _CC_MAP[name]
                 sr = sr_map.get(name)
-                # ``max_events`` allows callers to specify a global cap for all
-                # CC curves via the "cc" key.  This fallback was previously
-                # missing, causing limits like {"cc": 6} to be ignored for
-                # specific controllers such as "cc11".  Respect the generic
-                # setting when a controller-specific entry is absent.
+                # Respect generic cap via "cc" when controller-specific is absent.
                 max_ev = max_map.get(name)
                 if max_ev is None:
                     max_ev = max_map.get("cc")
@@ -382,6 +400,8 @@ def apply_controls(
                     end += curve.offset_sec
                     new_cc[0].time = start
                     new_cc[-1].time = end
+
+        # Emit RPN once per channel if requested and bends (or bends requested) exist.
         if (
             write_rpn
             and (bend_requested or inst.pitch_bends)
@@ -405,6 +425,7 @@ def apply_controls(
                 at_time=rpn_timestamp,
                 precision="midi128",
             )
+
         _sort_events(inst)
 
     if total_max_events:
@@ -439,11 +460,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             _sort_events(inst)
         return
 
-    rpn_count = 0
-    for inst in pm.instruments:
-        rpn_count += sum(1 for cc in inst.control_changes if int(cc.number) in _RPN_NUMBERS)
-
-    eff_cap = max(0, int(cap) - int(rpn_count))
+    eff_cap = max(0, int(cap))
 
     groups: list[dict[str, object]] = []
     total = 0
@@ -523,7 +540,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
 
     remainder = eff_cap - sum_targets
     if remainder > 0:
-        expandable = [a for a in allocations if int(a["target"]) < len(a["events"])]
+        expandable = [a for a in allocations if int(a["target"]) < len(a["events"]) ]
         while remainder > 0 and expandable:
             expandable.sort(
                 key=lambda a: (

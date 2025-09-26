@@ -16,20 +16,45 @@ from types import ModuleType
 from typing import Any, cast
 
 import click
-import matplotlib.pyplot as plt
-import pretty_midi
-import yaml  # type: ignore
-from music21 import stream as m21stream
+try:
+    import matplotlib.pyplot as plt
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    plt = None  # type: ignore[assignment]
+try:
+    import pretty_midi
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    pretty_midi = None  # type: ignore[assignment]
+try:
+    import yaml  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    yaml = None  # type: ignore[assignment]
+try:
+    from music21 import stream as m21stream
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    m21stream = None  # type: ignore[assignment]
 
-import utilities.loop_ingest as loop_ingest
-from eval import metrics
-from utilities import (
-    groove_sampler_ngram,
-    groove_sampler_rnn,
-    live_player,
-    streaming_sampler,
-    synth,
-)
+try:
+    import utilities.loop_ingest as loop_ingest
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    loop_ingest = None  # type: ignore[assignment]
+try:
+    from eval import metrics
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    metrics = None  # type: ignore[assignment]
+try:
+    from utilities import (
+        groove_sampler_ngram,
+        groove_sampler_rnn,
+        live_player,
+        streaming_sampler,
+        synth,
+    )
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    groove_sampler_ngram = None  # type: ignore[assignment]
+    groove_sampler_rnn = None  # type: ignore[assignment]
+    live_player = None  # type: ignore[assignment]
+    streaming_sampler = None  # type: ignore[assignment]
+    synth = None  # type: ignore[assignment]
 from utilities.audio_env import has_fluidsynth
 from utilities.convolver import render_wav
 
@@ -38,11 +63,28 @@ try:
     groove_rnn_v2 = importlib.import_module("utilities.groove_rnn_v2")
 except Exception:
     groove_rnn_v2 = None
-from utilities.golden import compare_midi, update_golden  # noqa: E402
-from utilities.groove_sampler_ngram import Event, State  # noqa: E402
-from utilities.groove_sampler_v2 import generate_events, load  # noqa: E402; noqa: F401
-from utilities.peak_synchroniser import PeakSynchroniser  # noqa: E402
-from utilities.realtime_engine import RealtimeEngine  # noqa: E402
+try:
+    from utilities.golden import compare_midi, update_golden  # noqa: E402
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    compare_midi = None  # type: ignore[assignment]
+    update_golden = None  # type: ignore[assignment]
+try:
+    from utilities.groove_sampler_ngram import Event, State  # noqa: E402
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    Event = State = None  # type: ignore[assignment]
+try:
+    from utilities.groove_sampler_v2 import generate_events, load  # noqa: E402; noqa: F401
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    generate_events = None  # type: ignore[assignment]
+    load = None  # type: ignore[assignment]
+try:
+    from utilities.peak_synchroniser import PeakSynchroniser  # noqa: E402
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    PeakSynchroniser = None  # type: ignore[assignment]
+try:
+    from utilities.realtime_engine import RealtimeEngine  # noqa: E402
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    RealtimeEngine = None  # type: ignore[assignment]
 
 
 def _schema_to_swing(schema: str | None) -> float | None:
@@ -87,9 +129,10 @@ def groove() -> None:
     """Groove sampler commands."""
 
 
-groove.add_command(groove_sampler_ngram.train_cmd, name="train")
-groove.add_command(groove_sampler_ngram.sample_cmd, name="sample")
-groove.add_command(groove_sampler_ngram.info_cmd, name="info")
+if groove_sampler_ngram is not None:
+    groove.add_command(groove_sampler_ngram.train_cmd, name="train")
+    groove.add_command(groove_sampler_ngram.sample_cmd, name="sample")
+    groove.add_command(groove_sampler_ngram.info_cmd, name="info")
 
 
 @cli.group()
@@ -121,8 +164,9 @@ def loops() -> None:
     """Loop ingestion utilities."""
 
 
-loops.add_command(loop_ingest.scan)
-loops.add_command(loop_ingest.info)
+if loop_ingest is not None:
+    loops.add_command(loop_ingest.scan)
+    loops.add_command(loop_ingest.info)
 
 
 @cli.group()

@@ -11,7 +11,11 @@ _spec = util.spec_from_file_location(
 )
 if _spec and _spec.loader:
     _legacy = util.module_from_spec(_spec)
-    _spec.loader.exec_module(_legacy)
-    for name in dir(_legacy):
-        if not name.startswith("_"):
-            globals()[name] = getattr(_legacy, name)
+    try:
+        _spec.loader.exec_module(_legacy)
+    except ModuleNotFoundError:
+        _legacy = None
+    if _legacy is not None:
+        for name in dir(_legacy):
+            if not name.startswith("_"):
+                globals()[name] = getattr(_legacy, name)

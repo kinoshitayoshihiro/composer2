@@ -691,7 +691,15 @@ def apply_cc_curves(
             if 0 < gap < thresh:
                 on = float(a.end)
                 off = float(max(a.end, b.start - 0.001))
-                if off - on >= min_dwell:
+                if off - on < min_dwell:
+                    target = on + min_dwell
+                    release_cap = b.start - 0.001
+                    if release_cap <= on:
+                        release_cap = b.start
+                    adjusted = min(max(target, on + 1e-3), release_cap)
+                    if adjusted > off:
+                        off = float(adjusted)
+                if off - on > 1e-4:
                     events.append((on, 127))
                     events.append((off, 0))
         events.sort()

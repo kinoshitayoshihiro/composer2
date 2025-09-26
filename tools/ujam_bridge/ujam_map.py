@@ -39,7 +39,10 @@ __all__ = [
 
 PATTERN_PATH = pathlib.Path(__file__).with_name("patterns") / "strum_library.yaml"
 MAP_DIR = pathlib.Path(__file__).with_name("maps")
-KS_MIN, KS_MAX = 36, 88
+# UJAM プラグインは製品ごとにキー配置が異なり、最新世代では
+# 左手キーが 0 台まで下がるものも存在する。従来の 36..88 上限だと
+# 合法なマップも読み込めないため、MIDI のフルレンジを許可する。
+KS_MIN, KS_MAX = 0, 127
 
 
 def convert(args: SimpleNamespace) -> None:

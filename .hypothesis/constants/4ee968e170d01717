@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/scripts/audio_to_velocity_csv.py
+# hypothesis_version: 6.138.15
+
+[0.1, '*.wav', '--loops-dir', '--midi-dir', '--out', '__main__', 'data/loops', 'data/loops_converted', 'data/velocity.csv', 'note_on', 'time', 'velocity', 'w']

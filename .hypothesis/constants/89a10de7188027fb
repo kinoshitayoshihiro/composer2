@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/generator/bass_utils.py
+# hypothesis_version: 6.138.15
+
+[-999.0, 1.0, 100, '.fallback_sr_bass', 'C', 'above', 'below', 'chromatic_only', 'diatonic_only', 'pitch_str', 'root', 'root_fifth', 'root_only', 'simple_roots', 'subdom_dom', 'walking']

@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/groove_transformer.py
+# hypothesis_version: 6.138.15
+
+[0.0, 0.001, 256, 1024, 'GrooveTransformer', 'MultiPartDataset', 'collate_multi_part', 'input', 'target', 'torch not available']

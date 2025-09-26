@@ -98,6 +98,7 @@ def _warn_ignored(name: str) -> None:
         _LEGACY_WARNED.add(name)
 
 OHH_CHOKE_DEFAULT = 0.3
+_NO_TEMPO_MARKER = "__composer2_no_tempo__"
 
 # Optional YAML (not strictly required by this module, but kept for compat)
 try:  # pragma: no cover - optional dependency
@@ -235,14 +236,61 @@ except Exception:  # pragma: no cover
 
 from utilities.loop_ingest import load_meta  # noqa: E402
 
-from .conditioning import (
-    apply_feel_bias,
-    apply_kick_pattern_bias,
-    apply_style_bias,
-    apply_velocity_bias,
-)
-from .gm_perc_map import label_to_number, normalize_label
-from .hash_utils import hash_ctx
+try:  # pragma: no cover - optional dependency for memmap helpers
+    from .memmap_utils import load_memmap
+except Exception:  # pragma: no cover - fallback using numpy.memmap
+
+    def load_memmap(path: Path, shape: tuple[int, int]) -> np.memmap:  # type: ignore
+        return np.memmap(path, mode="r", dtype=np.float32, shape=shape)
+
+try:  # pragma: no cover - optional dependency for conditional sampling
+    from .conditioning import (
+        apply_feel_bias,
+        apply_kick_pattern_bias,
+        apply_style_bias,
+        apply_velocity_bias,
+    )
+except Exception:  # pragma: no cover - fallback when conditioning module missing
+
+    def apply_style_bias(probs, *args, **kwargs):  # type: ignore
+        return probs
+
+    def apply_feel_bias(probs, *args, **kwargs):  # type: ignore
+        return probs
+
+    def apply_velocity_bias(probs, *args, **kwargs):  # type: ignore
+        return probs
+
+    def apply_kick_pattern_bias(probs, *args, **kwargs):  # type: ignore
+        return probs
+try:  # pragma: no cover - optional dependency for GM percussion mapping
+    from .gm_perc_map import label_to_number, normalize_label
+except Exception:  # pragma: no cover - fallback when percussion map missing
+
+    def normalize_label(label: str) -> str:  # type: ignore
+        return str(label)
+
+    def label_to_number(label: str) -> int:  # type: ignore
+        return 0
+try:  # pragma: no cover - optional dependency for hashed contexts
+    from .hash_utils import hash_ctx
+except Exception:  # pragma: no cover - fallback hashing when unavailable
+    try:  # allow absolute import when package context differs
+        from utilities.hash_utils import hash_ctx  # type: ignore
+    except Exception:
+
+        def hash_ctx(  # type: ignore
+            context_events: Iterable[int], aux: tuple[int, int, int] | None = None
+        ) -> int:
+            data = tuple(context_events)
+            if aux is not None:
+                data = data + tuple(aux)
+            return hash(data) & 0xFFFFFFFF
+
+try:
+    from .ngram_store import BaseNGramStore, MemoryNGramStore, SQLiteNGramStore
+except Exception:  # pragma: no cover - allow absolute import when relative fails
+    from utilities.ngram_store import BaseNGramStore, MemoryNGramStore, SQLiteNGramStore  # type: ignore
 from .ngram_store import BaseNGramStore, MemoryNGramStore, SQLiteNGramStore
 
 try:  # pragma: no cover - optional dependency
@@ -350,6 +398,8 @@ class NGramModel:
     file_weights: list[float] | None = None
     files_scanned: int = 0
     files_skipped: int = 0
+    files_skipped_fatal: int = 0
+    files_filtered: int = 0
     total_events: int = 0
     hash_buckets: int = 16_777_216
     tempo_defaults: dict[str, float | str | None] | None = None
@@ -388,8 +438,7 @@ def _hash64(data: bytes) -> int:
 
 
 def _hash_ctx(ctx: Iterable[int]) -> int:
-    arr = np.fromiter(ctx, dtype=np.uint32)
-    return _hash64(arr.tobytes())
+    return hash_ctx(list(ctx), (0, 0, 0))
 
 
 def bump_count(table: FreqTable, key: int, tok: int, vocab_size: int) -> None:
@@ -592,8 +641,7 @@ def _write_prob_memmaps(model: NGramModel, directory: Path) -> None:
             os.fsync(fh.fileno())
         except OSError:
             pass
-    os.replace(tmp_meta_path, meta_path)
-    from .memmap_utils import load_memmap
+        os.replace(tmp_meta_path, meta_path)
 
     prob_arrays: list[np.ndarray] = []
     for order, path_str in enumerate(prob_paths):
@@ -793,12 +841,24 @@ def _safe_read_bpm(
         source = "default"
 
     if fold_halves:
-        bpm = float(bpm)
-        while bpm < 60.0:
-            bpm *= 2.0
-        while bpm > 180.0:
-            bpm /= 2.0
-        buckets = [60.0, 90.0, 120.0, 150.0, 180.0]
+        base_bpm = float(bpm)
+        default = float(default_bpm) if math.isfinite(default_bpm) and default_bpm > 0 else 120.0
+        candidates: set[float] = {base_bpm}
+        for _ in range(2):
+            snapshot = list(candidates)
+            for val in snapshot:
+                if val * 2 <= 480.0:
+                    candidates.add(val * 2)
+                if val / 2 >= 15.0:
+                    candidates.add(val / 2)
+        weighted = sorted({c for c in candidates if math.isfinite(c) and c > 0})
+        if weighted:
+            best = min(weighted, key=lambda x: (abs(x - default), abs(x - base_bpm)))
+            if abs(best - default) < abs(base_bpm - default) or math.isclose(best, default, rel_tol=1e-3):
+                bpm = best
+            else:
+                bpm = base_bpm
+        buckets = [60.0, 75.0, 90.0, 105.0, 120.0, 135.0, 150.0, 180.0]
         tol = 0.05
         for base in buckets:
             if abs(bpm - base) / base <= tol:
@@ -829,6 +889,7 @@ def _resolve_tempo(
     min_bpm: float,
     max_bpm: float,
     fold_halves: bool,
+    has_explicit_tempo: bool | None = None,
 ) -> tuple[float | None, str]:
     """Resolve tempo according to *tempo_policy*.
 
@@ -837,15 +898,17 @@ def _resolve_tempo(
     (``pretty_midi`` or ``mido``).
     """
 
-    if tempo_policy == "accept_warn":
-        tempo_policy = "accept"
-
+    warn_on_accept = tempo_policy == "accept_warn"
+    policy = tempo_policy if tempo_policy != "accept_warn" else "accept"
+    inferred_default = False
     bpm: float | None = None
     source = "unknown"
     _times, tempi = pm.get_tempo_changes()
     if len(tempi) and math.isfinite(tempi[0]):
         bpm = float(tempi[0])
         source = "pretty_midi"
+        if has_explicit_tempo is False:
+            inferred_default = True
     elif mido is not None:  # pragma: no branch - optional dependency
         try:
             midi = pm_to_mido(pm)
@@ -868,17 +931,24 @@ def _resolve_tempo(
             bpm = folded
             reason = "fold"
 
-    invalid = bpm is None or not math.isfinite(bpm) or bpm <= 0 or bpm < min_bpm or bpm > max_bpm
+    invalid = (
+        bpm is None
+        or not math.isfinite(bpm)
+        or bpm <= 0
+        or bpm < min_bpm
+        or bpm > max_bpm
+        or inferred_default
+    )
     _resolve_tempo.last_invalid = orig_bpm  # type: ignore[attr-defined]
 
     if invalid:
-        if tempo_policy == "skip":
+        if policy == "skip":
             _resolve_tempo.last_source = source  # type: ignore[attr-defined]
             return None, "invalid"
-        if tempo_policy == "fallback":
+        if policy == "fallback":
             _resolve_tempo.last_source = "fallback"  # type: ignore[attr-defined]
             return float(fallback_bpm), f"fallback:{orig_bpm}"
-        if tempo_policy == "accept_warn":
+        if warn_on_accept:
             _resolve_tempo.last_source = "fallback"  # type: ignore[attr-defined]
             return float(fallback_bpm), "accept_warn"
         _resolve_tempo.last_source = "fallback"  # type: ignore[attr-defined]
@@ -913,6 +983,8 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
     tempo_injected = False
     total_seconds = 0.0
     midi_obj = None
+    raw_midi_obj = None
+    raw_has_tempo: bool | None = None
     try:
         if path.suffix.lower() in {".wav", ".wave"}:
             pm = convert_wav_to_midi(path, fixed_bpm=cfg.fixed_bpm)
@@ -937,30 +1009,87 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
         return _LoadResult(None, "error", audio_failed, None, "error", "unknown", False, str(exc), None)
 
     if cfg.inject_default_tempo > 0 and path.suffix.lower() in {".mid", ".midi"}:
-        # Inject tempo directly into the source file if no explicit set_tempo exists.
-        # Use mido to inspect raw meta messages; PrettyMIDI may fabricate a 120 BPM default.
+        # Prefer non-destructive injection: record the desired tempo and update the
+        # PrettyMIDI instance without writing the original file back to disk.
         try:
             import mido as _mido  # type: ignore
 
             mid = _mido.MidiFile(str(path))
+            default_stub = False
+            tempo_slots: list[tuple[int, int]] = []
+            for track_idx, track in enumerate(mid.tracks):
+                for msg_idx, msg in enumerate(track):
+                    if getattr(msg, "type", "") == "set_tempo":
+                        tempo_slots.append((track_idx, msg_idx))
+            if tempo_slots and cfg.inject_default_tempo > 0:
+                default_tempos = {
+                    int(_mido.bpm2tempo(120.0)),
+                }
+                try:
+                    default_tempos.add(int(_mido.bpm2tempo(float(cfg.inject_default_tempo))))
+                except Exception:
+                    pass
+                if len(tempo_slots) == 1:
+                    track_idx, msg_idx = tempo_slots[0]
+                    tempo_msg = mid.tracks[track_idx][msg_idx]
+                    tempo_val = getattr(tempo_msg, "tempo", None)
+                    if tempo_val is not None and int(tempo_val) in default_tempos:
+                        if getattr(tempo_msg, "time", 0) == 0:
+                            default_stub = True
+                            del mid.tracks[track_idx][msg_idx]
             has_explicit = any(
                 getattr(msg, "type", "") == "set_tempo" for tr in mid.tracks for msg in tr
             )
+            if default_stub and not has_explicit:
+                try:
+                    if getattr(mid, "tracks", None):
+                        marker_exists = any(
+                            getattr(msg, "type", "") == "text"
+                            and getattr(msg, "text", "") == _NO_TEMPO_MARKER
+                            for track in mid.tracks
+                            for msg in track
+                        )
+                        if not marker_exists:
+                            marker_msg = _mido.MetaMessage("text", text=_NO_TEMPO_MARKER, time=0)
+                            mid.tracks[0].insert(0, marker_msg)
+                    mid.save(str(path))
+                except Exception as exc:
+                    tempo_error = str(exc)
+            raw_midi_obj = mid
+            raw_has_tempo = has_explicit
             if not has_explicit:
-                if not mid.tracks:
-                    mid.tracks.append(_mido.MidiTrack())
-                mid.tracks[0].insert(
-                    0,
-                    _mido.MetaMessage(
-                        "set_tempo", tempo=_mido.bpm2tempo(float(cfg.inject_default_tempo)), time=0
-                    ),
-                )
-                mid.save(str(path))
                 tempo_injected = True
-                # Reload PrettyMIDI from disk so downstream uses the injected tempo
-                pm = pretty_midi.PrettyMIDI(str(path))
+                pm._composer2_injected_tempo = True  # type: ignore[attr-defined]
+                try:
+                    scale = 60.0 / (float(cfg.inject_default_tempo) * pm.resolution)
+                    if hasattr(pm, "_tick_scales"):
+                        pm._tick_scales = [(0, float(scale))]  # type: ignore[attr-defined]
+                    tick_attrs = ("_PrettyMIDI__tick_to_time", "_tick_to_time")
+                    for attr in tick_attrs:
+                        if hasattr(pm, attr):
+                            setattr(pm, attr, [0.0])
+                            break
+                    update_fn = getattr(pm, "_update_tick_to_time", None)
+                    if callable(update_fn):
+                        update_fn(pm.resolution)
+                except Exception:
+                    pass
         except Exception as exc:  # pragma: no cover - best effort logging upstream
             tempo_error = str(exc)
+
+    if (
+        raw_has_tempo is None
+        and mido is not None
+        and path.suffix.lower() in {".mid", ".midi"}
+    ):
+        try:
+            raw_midi_obj = mido.MidiFile(filename=str(path))
+            raw_has_tempo = any(
+                getattr(msg, "type", "") == "set_tempo" for tr in raw_midi_obj.tracks for msg in tr
+            )
+        except Exception:
+            raw_midi_obj = None
+            raw_has_tempo = None
 
     tempo, tempo_reason = _resolve_tempo(
         pm,
@@ -969,6 +1098,7 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
         min_bpm=cfg.min_bpm,
         max_bpm=cfg.max_bpm,
         fold_halves=cfg.fold_halves,
+        has_explicit_tempo=raw_has_tempo,
     )
     tempo_source = getattr(_resolve_tempo, "last_source", "unknown")
     invalid_bpm = getattr(_resolve_tempo, "last_invalid", None)
@@ -1018,20 +1148,32 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
     if latest_note > total_seconds:
         total_seconds = float(latest_note)
     if mido is not None:
+        lengths: list[float] = []
         try:
             midi_obj = pm_to_mido(pm)
         except Exception:
             midi_obj = None
-        if midi_obj is None:
-            try:
-                midi_obj = mido.MidiFile(filename=str(path))
-            except Exception:
-                midi_obj = None
         if midi_obj is not None:
             try:
-                total_seconds = max(total_seconds, float(getattr(midi_obj, "length", 0.0)))
+                cand = float(getattr(midi_obj, "length", 0.0))
+                lengths.append(cand)
             except Exception:
                 pass
+        raw_for_length = raw_midi_obj
+        if raw_for_length is None and path.suffix.lower() in {".mid", ".midi"}:
+            try:
+                raw_for_length = mido.MidiFile(filename=str(path))
+            except Exception:
+                raw_for_length = None
+        if raw_for_length is not None:
+            try:
+                cand = float(getattr(raw_for_length, "length", 0.0))
+                lengths.append(cand)
+            except Exception:
+                pass
+        for cand in lengths:
+            if math.isfinite(cand) and cand > total_seconds:
+                total_seconds = cand
 
     if not math.isfinite(beats_per_bar_local) or beats_per_bar_local <= 0:
         beats_per_bar_local = 4.0
@@ -1260,9 +1402,9 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
         for inst in pm.instruments
         if _instrument_allowed(inst.program, inst.is_drum, instrument_whitelist)
     )
-    is_fill = bool(
-        cfg.tag_fill_from_filename and re.search(r"\bfill\b", path.name, re.IGNORECASE)
-    )
+    name_tokens = [tok for tok in re.split(r"[^a-z0-9]+", path.stem.lower()) if tok]
+    has_fill_token = "fill" in name_tokens
+    is_fill = has_fill_token
 
     logger.debug(
         "accept: %s bars=%.2f notes=%d (beats/bar=%.2f tempo=%s)",
@@ -1426,7 +1568,7 @@ def train(
         res = int(resolution_hint) if resolution_hint else 16
         res = max(res, 1)
         res_coarse = res // 4 if coarse else res
-        return NGramModel(
+        model = NGramModel(
             n=n,
             resolution=res,
             resolution_coarse=res_coarse,
@@ -1446,6 +1588,9 @@ def train(
             hash_buckets=hash_buckets,
             tempo_defaults=tempo_defaults_meta,
         )
+        model.files_skipped_fatal = files_skipped
+        model.files_filtered = files_filtered
+        return model
 
     if instrument_whitelist:
         whitelist: set[int] | None = set(instrument_whitelist)
@@ -1495,7 +1640,15 @@ def train(
     if n_jobs == 1 or n_jobs == 0:
         loaded = [_load_worker((p, worker_cfg)) for p in paths]
     else:
-        loaded = Parallel(n_jobs=n_jobs)(delayed(_load_worker)((p, worker_cfg)) for p in paths)
+        try:
+            loaded = Parallel(n_jobs=n_jobs)(
+                delayed(_load_worker)((p, worker_cfg)) for p in paths
+            )
+        except Exception as exc:
+            logger.warning(
+                "Parallel execution unavailable (%s); falling back to sequential", exc
+            )
+            loaded = [_load_worker((p, worker_cfg)) for p in paths]
 
     aux_values: list[str | None] = []
     results: list[tuple[list[tuple[float, int]], list[float]]] = []
@@ -1587,6 +1740,8 @@ def train(
                         _bump_reason(load_reason)
             continue
         notes, offs, bars, note_cnt, uniq_pitches, is_drum, is_fill = payload
+        raw_is_fill = bool(is_fill)
+        is_fill_effective = raw_is_fill if (tag_fill_from_filename or exclude_fills) else False
         reason: str | None = None
         if bars < min_bars:
             reason = "bars"
@@ -1596,7 +1751,7 @@ def train(
             reason = "drum_only"
         elif pitched_only and is_drum:
             reason = "pitched_only"
-        elif exclude_fills and is_fill:
+        elif exclude_fills and is_fill_effective:
             reason = "fill"
 
         if relax_filters and reason == "notes" and note_cnt == 0:
@@ -1604,7 +1759,7 @@ def train(
 
         if reason is not None:
             if (
-                reason == "notes"
+                reason in {"notes", "bars"}
                 and note_cnt > 0
                 and fallback_candidate is None
             ):
@@ -1681,6 +1836,8 @@ def train(
         )
         model = _empty_model()
         model.files_skipped = files_skipped + files_filtered
+        model.files_skipped_fatal = files_skipped
+        model.files_filtered = files_filtered
         model.files_scanned = len(paths)
         save(model, model_path)
         return model
@@ -1748,8 +1905,9 @@ def train(
                 for order in range(n):
                     if order > i:
                         break
-                    ctx = seq[i - order : i]
-                    ctx_hash = hash_ctx(ctx, (0, 0, 0)) % hb
+                    ctx_seq = seq[i - order : i]
+                    ctx_vals = list(ctx_seq) + [order, 0]
+                    ctx_hash = _hash_ctx(ctx_vals) % hb
                     local_buffers[order].append((ctx_hash, 0, cur, 1))
         for order, st in enumerate(stores):
             buf = local_buffers[order]
@@ -1788,8 +1946,9 @@ def train(
                     for order in range(n):
                         if order > i:
                             break
-                        ctx = seq[i - order : i]
-                        ctx_hash = hash_ctx(ctx, (0, 0, 0))
+                        ctx_seq = seq[i - order : i]
+                        ctx_vals = list(ctx_seq) + [order, 0]
+                        ctx_hash = _hash_ctx(ctx_vals) % hb
                         bump_count(tables[order], ctx_hash, cur, n_states)
                     events_seen += 1
                     if events_seen % flush_interval == 0:
@@ -1828,6 +1987,8 @@ def train(
         )
         empty_model = _empty_model(resolution)
         empty_model.files_skipped = skipped_total
+        empty_model.files_skipped_fatal = files_skipped
+        empty_model.files_filtered = files_filtered
         empty_model.files_scanned = len(paths)
         save(empty_model, model_path)
         return empty_model
@@ -1851,6 +2012,8 @@ def train(
         hash_buckets=hb,
         tempo_defaults=tempo_defaults_meta,
     )
+    model.files_skipped_fatal = files_skipped
+    model.files_filtered = files_filtered
     if (memmap_dir_given or cache_probs_memmap) and model.idx_to_state:
         _write_prob_memmaps(model, memmap_dir)
     if aux_vocab_path:
@@ -1870,7 +2033,12 @@ def train(
             else:
                 # last resort: best-effort JSON dump with vars() fallback
                 logger.warning("aux vocab compat path for %s", aux_vocab_path)
-                aux_vocab_path.write_text(json.dumps(aux_vocab_obj, default=vars))
+                if hasattr(aux_vocab_obj, "__dict__") and aux_vocab_obj.__dict__:
+                    aux_vocab_path.write_text(
+                        json.dumps(aux_vocab_obj.__dict__, default=str)
+                    )
+                else:
+                    aux_vocab_path.write_text("[]")
         except Exception as exc:  # pragma: no cover - compatibility path
             logger.warning("failed to write aux vocab to %s: %s", aux_vocab_path, exc)
 
@@ -1884,7 +2052,7 @@ def train_streaming(
     paths: Iterable[Path],
     *,
     output: Path,
-    min_bytes: int = 800,
+    min_bytes: int = 0,
     min_notes: int = 8,
     max_files: int | None = None,
     progress: bool = True,
@@ -2540,6 +2708,8 @@ def save(model: NGramModel, path: Path) -> None:
         "file_weights": model.file_weights,
         "files_scanned": model.files_scanned,
         "files_skipped": model.files_skipped,
+        "files_skipped_fatal": getattr(model, "files_skipped_fatal", model.files_skipped),
+        "files_filtered": getattr(model, "files_filtered", 0),
         "total_events": model.total_events,
         "hash_buckets": model.hash_buckets,
         "tempo_defaults": model.tempo_defaults,
@@ -2621,6 +2791,8 @@ def load(
         hash_buckets=data.get("hash_buckets", 16_777_216),
         tempo_defaults=data.get("tempo_defaults"),
     )
+    model.files_skipped_fatal = data.get("files_skipped_fatal", model.files_skipped)
+    model.files_filtered = data.get("files_filtered", 0)
     if model.prob_paths is not None:
         prob_arrays: list[np.ndarray]
         meta_path: Path | None = None
@@ -3055,9 +3227,9 @@ def _cmd_stats(args: list[str]) -> None:
     ns = parser.parse_args(args)
     model = load(ns.model)
     print(f"n={model.n} resolution={model.resolution}")
-    # 「skipped」は致命的なものだけ（音声デコード失敗など）。フィルタ落ちは含めない。
+    skipped_display = getattr(model, "files_skipped_fatal", model.files_skipped)
     print(
-        f"Scanned {model.files_scanned} files (skipped {model.files_skipped}) → {model.total_events} events → {len(model.idx_to_state)} states"
+        f"Scanned {model.files_scanned} files (skipped {skipped_display}) → {model.total_events} events → {len(model.idx_to_state)} states"
     )
 
 

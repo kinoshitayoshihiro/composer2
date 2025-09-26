@@ -15,6 +15,8 @@ from __future__ import annotations
 import os as _os
 import numpy as _np
 
+_NO_TEMPO_MARKER = "__composer2_no_tempo__"
+
 try:  # pragma: no cover - exercised in pretty_midi environments
     import pretty_midi as _pm
 except ImportError:  # pragma: no cover - allows import without pretty_midi
@@ -91,6 +93,28 @@ else:
                 times, bpms = second_arr, first_arr
             else:
                 times, bpms = first_arr, second_arr
+
+            marker_present = any(
+                getattr(evt, "text", "") == _NO_TEMPO_MARKER
+                for evt in getattr(self, "text_events", [])
+            )
+            if marker_present:
+                self.text_events = [
+                    evt for evt in self.text_events if getattr(evt, "text", "") != _NO_TEMPO_MARKER
+                ]
+                empty = _np.asarray([], dtype=float)
+                return empty, empty
+
+            midi_obj = getattr(self, "midi_data", None)
+            if midi_obj is not None:
+                has_tempo_meta = any(
+                    getattr(msg, "type", "") == "set_tempo"
+                    for track in getattr(midi_obj, "tracks", [])
+                    for msg in track
+                )
+                if not has_tempo_meta:
+                    empty = _np.asarray([], dtype=float)
+                    return empty, empty
             return times, bpms
 
         _safe_get_tempo_changes._composer2_patched = True  # type: ignore[attr-defined]

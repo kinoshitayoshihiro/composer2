@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/drum_map_registry.py
+# hypothesis_version: 6.138.15
+
+['BEATMAKER_V3_MAP', 'DRUM_MAP', 'DRUM_MAPS', 'GM_DRUM_MAP', 'UJAM_LEGEND_MAP', 'acoustic_bass_drum', 'acoustic_snare', 'beatmaker_v3', 'brush_kick', 'brush_snare', 'chh', 'chimes', 'clap', 'closed_hi_hat', 'closed_hi_hat_edge', 'cowbell', 'crash', 'crash_choke', 'crash_cymbal_1', 'electric_snare', 'get_drum_map', 'ghost', 'ghost_snare', 'gm', 'hand_clap', 'hat_closed', 'hh', 'hh_edge', 'hh_pedal', 'high_tom', 'kick', 'low_tom', 'mid_tom', 'ohh', 'open_hi_hat', 'pedal_hi_hat', 'perc', 'phh', 'ride', 'ride_bell', 'ride_cymbal_1', 'ride_cymbal_bell', 'ride_cymbal_swell', 'shaker', 'shaker_soft', 'snare', 'snare_brush', 'snare_ruff', 'splash', 'splash_cymbal', 'tom1', 'tom2', 'tom3', 'tom_hi', 'tom_low', 'tom_mid', 'triangle', 'ujam_legend']

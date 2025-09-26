@@ -184,9 +184,13 @@ def _legacy_pulses_per_bar(num: int, den: int, stats: Optional[Dict[str, Any]]) 
         return None
     if den <= 0:
         raise ValueError("time signature denominator must be positive")
-    # Legacy grid fires pulses at eighth-note resolution, so each bar gets
-    # ``num * (8 / den)`` pulses (e.g. 5/4→10, 6/8→6, 12/8→12).
-    pulses = int(round(num * (8.0 / den)))
+    # 旧バージョンは 16 分音符分解能（および 12/8 などの複合拍子では
+    # さらに細かい 24 分割）でグリッドを生成していた。
+    pulses = int(round(num * (16.0 / den)))
+    if den == 8 and num % 3 == 0:
+        # 12/8, 9/8 などでは 8 分音符ベースに倍解像度の 24/18 パルスを出力する。
+        legacy_triplet = int(round(num * (8.0 / den))) * 2
+        pulses = max(pulses, legacy_triplet)
     return max(1, pulses)
 
 
@@ -1001,6 +1005,8 @@ def resolve_downbeats(
     beat_times: List[float],
     beat_to_time: Callable[[float], float],
     time_to_beat: Callable[[float], float],
+    *,
+    allow_meter_mismatch: bool = False,
 ) -> List[float]:
     """Return sorted downbeat times including the final track end.
 
@@ -1015,9 +1021,9 @@ def resolve_downbeats(
     end_t = pm.get_end_time()
     downbeats = list(pm.get_downbeats())
     rebuild = len(downbeats) < 2
-    if len(meter_map) > 1 and not rebuild:
+    if len(meter_map) > 1 and not rebuild and not allow_meter_mismatch:
         rebuild = True
-    if not rebuild:
+    if not rebuild and not allow_meter_mismatch:
         # If PrettyMIDI already places downbeats exactly at meter-change boundaries,
         # prefer trusting it even when coarse spacing differs from theoretical
         # bar length (e.g., PM may emit only a single 6/8 bar before a TS change).
@@ -1036,7 +1042,7 @@ def resolve_downbeats(
             ):
                 rebuild = True
 
-    if not rebuild:
+    if not rebuild and not allow_meter_mismatch:
         meter_times = [mt for mt, _, _ in meter_map]
         for idx in range(len(downbeats) - 1):
             start = downbeats[idx]
@@ -1356,7 +1362,11 @@ def _emit_phrases_for_span(span: "ChordSpan", c_idx: int, ctx: RuntimeContext) -
             if ctx.swing_shape == "offbeat":
                 interval *= (1 + ctx.swing) if idx % 2 == 0 else (1 - ctx.swing)
             elif ctx.swing_shape == "even":
-                interval *= (1 - ctx.swing) if idx % 2 == 0 else (1 + ctx.swing)
+                half = ctx.swing * 0.5
+                if idx % 2 == 0:
+                    interval *= max(0.0, 1 - half)
+                else:
+                    interval *= 1 + half
             else:
                 mod = idx % 3
                 if mod == 0:
@@ -2850,10 +2860,39 @@ def insert_style_fill(
                     end_bars.append(idx)
                 elif labels[idx] != labels[idx + 1]:
                     end_bars.append(idx)
-            fill_pitch = int(mapping.get("style_fill", 34))
-            velocity = int(mapping.get("phrase_velocity", 96))
-            dur_beats = float(mapping.get("phrase_length_beats", 0.5))
-            seconds_per_beat = 60.0 / float(bpm)
+            candidate_pitches = [mapping.get("style_fill"), 34, base_pitch]
+            fill_pitch: Optional[int] = None
+            for candidate in candidate_pitches:
+                resolved = _resolve_pitch(candidate)
+                if resolved is None:
+                    continue
+                value = int(round(resolved))
+                value = max(pitch_min, min(pitch_max, value))
+                if value in avoid_set:
+                    continue
+                fill_pitch = value
+                break
+            if fill_pitch is None:
+                fallback_seq = _fallback_candidates(base_pitch, pitch_min, pitch_max)
+                fill_pitch = next((cand for cand in fallback_seq if cand not in avoid_set), None)
+            if fill_pitch is None:
+                logging.warning(
+                    "insert_style_fill: unable to find non-avoided pitch for %r",
+                    mapping.get("style_fill"),
+                )
+                return count
+            velocity = _coerce_int(mapping.get("phrase_velocity"), 96)
+            try:
+                dur_beats = float(mapping.get("phrase_length_beats", 0.5))
+            except Exception:
+                dur_beats = 0.5
+            try:
+                seed_bpm_local = float(bpm)
+            except Exception:
+                seed_bpm_local = 120.0
+            if not math.isfinite(seed_bpm_local) or seed_bpm_local <= 0.0:
+                seed_bpm_local = 120.0
+            seconds_per_beat = 60.0 / seed_bpm_local
             duration = max(1e-4, dur_beats * seconds_per_beat)
             inst_obj = _get_phrase_inst(pm_out)
             for bar_idx in end_bars:
@@ -5963,6 +6002,7 @@ def build_sparkle_midi(
         beat_times,
         beat_to_time,
         time_to_beat,
+        allow_meter_mismatch=estimated_4_4,
     )
     downbeats = _trim_downbeat_grid(downbeats, song_end_hint)
     meter_times = [mt for mt, _, _ in meter_map]
@@ -6283,48 +6323,139 @@ def build_sparkle_midi(
             sb = time_to_beat(start)
             eb = time_to_beat(next_start)
             bar_len_beats = _beats_per_bar(num, den) if den else 0.0
-            legacy_total = _legacy_pulses_per_bar(num, den, stats)
-            step_beats = pulse_subdiv_beats if pulse_subdiv_beats > 0.0 else (bar_len_beats or 1.0)
-            total = int(round(bar_len_beats / step_beats)) if step_beats > 0.0 else 1
-            total = max(1, total)
+            wants_legacy = bool(stats and stats.get("_legacy_bar_pulses_grid"))
+            legacy_total = _legacy_pulses_per_bar(num, den, stats) if wants_legacy else None
+            legacy_override = bool(estimated_4_4 and legacy_total and den == 4)
+            if legacy_override:
+                beats_est = float(eb - sb)
+                inferred = int(round(beats_est * 4.0)) if math.isfinite(beats_est) else 0
+                total = max(1, inferred if inferred > 0 else int(legacy_total))
+            else:
+                step_beats = pulse_subdiv_beats if pulse_subdiv_beats > 0.0 else (bar_len_beats or 1.0)
+                total = int(round(bar_len_beats / step_beats)) if step_beats > 0.0 else 1
+                total = max(1, total)
             if bar_len_beats <= 0.0 or total <= 0 or eb <= sb:
                 pulse = (0.0, float(start))
                 grid_list = [pulse]
                 bar_grid[i] = grid_list
                 bar_pulses_dict[i] = list(grid_list)
                 continue
-            offsets = [k * step_beats for k in range(total)]
+            if legacy_override:
+                duration = max(EPS, float(next_start - start))
+                rel_step = bar_len_beats / total if bar_len_beats > 0.0 else 0.0
+                grid_list: List[Tuple[float, float]] = []
+                if rel_step <= 0.0:
+                    grid_list = [(0.0, float(start))]
+                else:
+                    for k in range(total):
+                        rel_beat = k * rel_step
+                        frac = rel_beat / bar_len_beats if bar_len_beats else 0.0
+                        # 等分を優先し、最終インパルスは常にバー終端に配置する
+                        if k == total - 1:
+                            rel_beat = bar_len_beats
+                            time_val = float(next_start)
+                        else:
+                            time_val = float(start + frac * duration)
+                        grid_list.append((float(rel_beat), time_val))
+                seen_rel: set[float] = set()
+                deduped: List[Tuple[float, float]] = []
+                for rel, t_val in grid_list:
+                    rel_key = round(rel, 9)
+                    if rel_key in seen_rel:
+                        continue
+                    seen_rel.add(rel_key)
+                    deduped.append((rel, t_val))
+                while len(deduped) < total:
+                    rel = deduped[-1][0] + rel_step
+                    deduped.append((rel, float(start + (rel / bar_len_beats) * duration)))
+                grid_list = deduped[:total]
+                if (
+                    swing > 0.0
+                    and swing_shape in {"offbeat", "even"}
+                    and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS)
+                ):
+                    half = swing * pulse_subdiv_beats * 0.5
+                    adjusted: List[Tuple[float, float]] = []
+                    for idx, (rel, time_val) in enumerate(grid_list):
+                        beat_val = rel
+                        if swing_shape == "offbeat":
+                            if idx % 2 == 1:
+                                beat_val = min(rel + swing * pulse_subdiv_beats, bar_len_beats - EPS)
+                        else:  # even
+                            if idx % 2 == 1:
+                                beat_val = min(rel + half, bar_len_beats - EPS)
+                            elif idx > 0:
+                                beat_val = max(rel - half, 0.0)
+                                if adjusted and beat_to_time(sb + beat_val) <= adjusted[-1][1] + EPS:
+                                    beat_val = max(
+                                        0.0,
+                                        time_to_beat(adjusted[-1][1] + EPS) - sb,
+                                    )
+                        beat_val_abs = clip_to_bar(sb + beat_val, sb, sb + bar_len_beats)
+                        beat_val = beat_val_abs - sb
+                        adjusted.append((beat_val, beat_to_time(beat_val_abs)))
+                    grid_list = adjusted
+                bar_grid[i] = list(grid_list)
+                bar_pulses_dict[i] = list(grid_list)
+                continue
+
             grid: List[Tuple[float, float]] = []
-            for k, off in enumerate(offsets):
-                beat_pos = sb + off
-                if beat_pos > eb + EPS:
+            beat_val = sb
+            for k in range(total):
+                if k > 0:
+                    interval = step_beats
+                    if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
+                        if swing_shape == "offbeat":
+                            interval *= (1 + swing) if k % 2 == 0 else (1 - swing)
+                        elif swing_shape == "even":
+                            interval *= (1 - swing) if k % 2 == 0 else (1 + swing)
+                        else:
+                            mod = k % 3
+                            if mod == 0:
+                                interval *= 1 + swing
+                            elif mod == 1:
+                                interval *= 1 - swing
+                    interval = max(interval, EPS)
+                    beat_val += interval
+                if beat_val > eb + EPS:
                     break
-                t_pos = beat_to_time(beat_pos)
-                if t_pos >= next_start - EPS:
-                    break
-                swing_off = 0.0
-                if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
-                    swing_step = swing * pulse_subdiv_beats
-                    if swing_shape == "offbeat":
-                        if k % 2 == 1:
-                            swing_off = swing_step
-                    elif swing_shape == "even":
-                        if k % 2 == 1:
-                            swing_off = -swing_step
-                    else:
-                        if k % 3 == 1:
-                            swing_off = swing_step
-                beat_val = sb + off + swing_off
-                beat_val = clip_to_bar(beat_val, sb, sb + bar_len_beats)
+                if beat_val >= sb + bar_len_beats - EPS:
+                    beat_val = sb + bar_len_beats - EPS
                 time_val = beat_to_time(beat_val)
+                if time_val >= next_start - EPS:
+                    break
                 rel_beat = float(beat_val - sb)
                 grid.append((rel_beat, float(time_val)))
             if not grid:
                 grid = [(0.0, float(start))]
             grid.sort(key=lambda item: item[1])
             grid_list = list(grid)
-            extras_sorted: List[Tuple[float, float]] = []
-            if legacy_total and legacy_total > len(grid_list):
+            if (
+                swing > 0.0
+                and swing_shape == "even"
+                and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS)
+                and len(grid_list) >= 2
+            ):
+                half = swing * pulse_subdiv_beats * 0.5
+                adjusted: List[Tuple[float, float]] = []
+                for idx, (rel, time_val) in enumerate(grid_list):
+                    if idx % 2 == 1:
+                        time_val = beat_to_time(sb + rel + half)
+                    elif idx > 0:
+                        time_val = beat_to_time(max(sb, rel - half))
+                        if adjusted and time_val <= adjusted[-1][1] + EPS:
+                            time_val = adjusted[-1][1] + EPS
+                    adjusted.append((rel, float(time_val)))
+                grid_list = adjusted
+            if (
+                not legacy_override
+                and legacy_total
+                and estimated_4_4
+                and legacy_total > len(grid_list)
+            ):
+                # legacy mode disabled but caller asked for compatibility; fall back to
+                # the previous interpolation logic to avoid dropping pulses.
+                extras_sorted: List[Tuple[float, float]] = []
                 base = list(grid_list)
                 extras_needed = legacy_total - len(base)
                 extras: List[Tuple[float, float]] = []
@@ -6376,7 +6507,12 @@ def build_sparkle_midi(
                     if len(extras_sorted) >= legacy_total - len(base):
                         break
                 grid_list = base + extras_sorted
-            if __debug__ and len(extras_sorted) == 0 and len(grid_list) > 1:
+                if __debug__ and len(extras_sorted) == 0 and len(grid_list) > 1:
+                    assert all(
+                        grid_list[idx][1] <= grid_list[idx + 1][1]
+                        for idx in range(len(grid_list) - 1)
+                    ), "bar pulse times must be monotonic"
+            elif __debug__ and len(grid_list) > 1:
                 assert all(
                     grid_list[idx][1] <= grid_list[idx + 1][1]
                     for idx in range(len(grid_list) - 1)
@@ -7616,6 +7752,7 @@ def main():
         return idx + (t - beat_times_chord[idx]) / span
 
     meter_map_chord: List[Tuple[float, int, int]] = []
+    no_ts_chord = bool(not pm.time_signature_changes)
     if pm.time_signature_changes:
         for ts in pm.time_signature_changes:
             meter_map_chord.append((float(ts.time), int(ts.numerator), int(ts.denominator)))
@@ -7630,6 +7767,7 @@ def main():
         beat_times_chord,
         beat_to_time_chord,
         time_to_beat_chord,
+        allow_meter_mismatch=no_ts_chord,
     )
 
     mapping = load_mapping(Path(args.mapping) if args.mapping else None)

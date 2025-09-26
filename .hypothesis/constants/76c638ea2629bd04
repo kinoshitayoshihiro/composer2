@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/fastapi_compat.py
+# hypothesis_version: 6.138.15
+
+[200, 422, 'FastAPI', 'HTTPException', 'JSONResponse', 'Request', 'WebSocket', 'WebSocketDisconnect', 'status']

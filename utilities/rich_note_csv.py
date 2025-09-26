@@ -34,28 +34,41 @@ class NoteRow:
     cc11_at_onset: Optional[int] = None
     cc11_mean: Optional[float] = None
     bend: Optional[int] = None
-    bend_range: Optional[int] = None
+    bend_range: Optional[float] = None
     bend_max_semi: Optional[float] = None
     bend_rms_semi: Optional[float] = None
     vib_rate_hz: Optional[float] = None
 
 
-def _last_value(times: List[float], values: List[int], t: float) -> int:
+def _last_value(times: List[float], values: List[float], t: float) -> float:
     """Return the last value at or before ``t`` using binary search."""
     idx = bisect_right(times, t) - 1
     return values[idx] if idx >= 0 else 0
 
 
+def _format_bend_range(val: Optional[float]) -> str:
+    if val is None:
+        return ""
+    rounded = round(val)
+    if abs(val - rounded) < 1e-6:
+        return str(int(rounded))
+    return f"{val:.6g}"
+
+
 def _collect_bend_ranges(
     control_changes: List["pretty_midi.ControlChange"],
-) -> Tuple[List[float], List[int]]:
+) -> Tuple[List[float], List[float]]:
     """Return times and values for pitch-bend range changes via RPN messages."""
     times: List[float] = [0.0]
-    values: List[int] = [2]
+    values: List[float] = [2.0]
     rpn_msb: Optional[int] = None
     rpn_lsb: Optional[int] = None
     pending_msb: Optional[int] = None
-    for cc in sorted(control_changes, key=lambda c: c.time):
+    def _sort_key(cc: "pretty_midi.ControlChange") -> tuple[float, int, int]:
+        order = {101: 0, 100: 1, 6: 2, 38: 3}.get(cc.number, cc.number)
+        return (float(cc.time), order, int(cc.number))
+
+    for cc in sorted(control_changes, key=_sort_key):
         num = cc.number
         val = cc.value
         t = float(cc.time)
@@ -70,13 +83,18 @@ def _collect_bend_ranges(
         elif num == 6:  # Data Entry MSB
             if rpn_msb == 0 and rpn_lsb == 0:
                 times.append(t)
-                values.append(val)
+                values.append(float(val))
                 pending_msb = val
         elif num == 38:  # Data Entry LSB
             if rpn_msb == 0 and rpn_lsb == 0 and pending_msb is not None:
-                # combine MSB and LSB; keep integer semitone by rounding
-                values[-1] = pending_msb + (1 if val >= 64 else 0)
+                combined = float(pending_msb) + float(val) / 128.0
+                values[-1] = combined
                 pending_msb = None
+    if pending_msb is not None and values:
+        values[-1] = float(pending_msb)
+    if len(values) > 1:
+        first_real = next((v for v in values[1:] if abs(v - values[0]) > 1e-6), values[1])
+        values[0] = first_real
     return times, values
 
 
@@ -265,7 +283,7 @@ def scan_midi_files(
                     bar = sixteenth // subdiv
                     position = sixteenth % subdiv
                     cc64 = (
-                        _last_value(cc_times, cc_vals, start)
+                        int(round(_last_value(cc_times, [float(v) for v in cc_vals], start)))
                         if (include_cc and cc_times)
                         else None
                     )
@@ -275,7 +293,7 @@ def scan_midi_files(
                         else None
                     )
                     cc11_on = (
-                        _last_value(cc11_times, cc11_vals, start)
+                        int(round(_last_value(cc11_times, [float(v) for v in cc11_vals], start)))
                         if (include_cc11 and cc11_times)
                         else None
                     )
@@ -286,7 +304,7 @@ def scan_midi_files(
                     )
                     if include_bend:
                         bend = (
-                            _last_value(bend_times, bend_vals, start)
+                            int(round(_last_value(bend_times, [float(v) for v in bend_vals], start)))
                             if bend_times
                             else None
                         )
@@ -427,6 +445,8 @@ def build_note_csv(
                 data.pop("bend_max_semi")
                 data.pop("bend_rms_semi")
                 data.pop("vib_rate_hz")
+            else:
+                data["bend_range"] = _format_bend_range(data["bend_range"])
             writer.writerow(data)
 
 

@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/core_music_utils.py
+# hypothesis_version: 6.138.15
+
+[0.0, 0.0625, 60.0, '(', '([A-G])b', '([A-G][-#bxs]*)(\\S*)', ')', '+', '-', '-7', '/', '7', 'Am/C', 'Am/G', 'A♭M7', 'BM7', 'C', 'C#m7', 'C(add9)', 'C/Bb', 'C/G', 'C7sus4', 'CM', 'Caug', 'Caug/G#', 'Cdim', 'Cdim/A', 'Cm', 'Cm/Bb', 'Cmaj7', 'Cmaj7/Bb', 'Cmaj7/G', 'Cmin7', 'Dbmaj7', 'Dm7/G', 'Ebm', 'G/F', 'G/F#', 'G7sus/C', 'M7', 'MA7', 'Ma7', 'Maj7', 'N.C.', 'NC', 'NO CHORD', 'NOCHORD', 'R', 'REST', 'Rest', 'SILENCE', '[△Δ]', '__main__', 'aug', 'b', 'c', 'c/b-', 'c/bb', 'c/g', 'dim', 'dim7', 'm', 'm7', 'm7b5', 'maj', 'maj7', 'maj7only', 'majmaj', 'majmaj7', 'major', 'min7', 'nonsense', 'normalized_figure', 'root_name_normalized', 'root_name_original', 'sus', '°7', 'Ø', 'ø', 'Φ', 'Ａ△７', 'Ｂ♭7(b9,#11)', 'Ｆ♯dim7', 'Ｇø']

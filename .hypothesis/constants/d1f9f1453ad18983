@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/articulation_mapper.py
+# hypothesis_version: 6.138.15
+
+[-2.0, 0.0, 0.5, 127, 'add_key_switches', 'add_portamento', 'cc', 'duration', 'extra_cc', 'finger', 'mute', 'offset', 'slap', 'time', 'val']

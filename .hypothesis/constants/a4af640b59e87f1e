@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/scale_registry.py
+# hypothesis_version: 6.138.15
+
+['C', 'Scale', '_', 'aeolian', 'blues', 'blues_scale', 'chromatic', 'deriveAll', 'dorian', 'harmonic_minor', 'harmonicminor', 'ionian', 'locrian', 'lydian', 'major', 'major_pentatonic', 'majorpentatonic', 'melodic_minor', 'melodicminor', 'minor', 'minor_pentatonic', 'minorpentatonic', 'mixolydian', 'natural_minor', 'phrygian', 'whole_tone', 'wholetone']

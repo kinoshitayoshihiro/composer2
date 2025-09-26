@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/accent_mapper.py
+# hypothesis_version: 6.138.15
+
+[0.0, 0.3, 0.6, 0.8, 1.2, 100, 110, 127, '1', 'accent_threshold', 'ghost_density_range', 'high', 'low', 'mid', 'middle', 'random_walk_step', 'walk_after_ema']

@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/tools/midi_feature_extractor.py
+# hypothesis_version: 6.138.15
+
+[0.0, 1.0, '--output', '-o', '__main__', 'mean_velocity', 'midi_file', 'note_density_per_sec', 'tempo_bpm', 'total_notes']

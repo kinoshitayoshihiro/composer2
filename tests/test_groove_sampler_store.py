@@ -5,6 +5,10 @@ from utilities.hash_utils import murmur32
 from utilities.ngram_store import SQLiteNGramStore
 
 
+def _murmur_worker(q: Queue) -> None:
+    q.put(murmur32(b"abc"))
+
+
 def test_sqlite_store_basic(tmp_path: Path) -> None:
     db = tmp_path / "ngrams.db"
     store = SQLiteNGramStore(db, commit_every=1000)
@@ -25,10 +29,7 @@ def test_sqlite_store_basic(tmp_path: Path) -> None:
 def test_murmur32_stable_across_process() -> None:
     q = Queue()
 
-    def worker(q):
-        q.put(murmur32(b"abc"))
-
-    p = Process(target=worker, args=(q,))
+    p = Process(target=_murmur_worker, args=(q,))
     p.start()
     p.join()
     assert q.get() == murmur32(b"abc")

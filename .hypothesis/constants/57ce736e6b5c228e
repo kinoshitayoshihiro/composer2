@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/transformer/sax_tokenizer.py
+# hypothesis_version: 6.138.15
+
+[128, '<ALT_HIT>', '<SLIDE_DOWN>', '<SLIDE_UP>', '<pad>', 'SaxTokenizer', 'alt_hit', 'artic', 'note', 'slide_down', 'slide_up']

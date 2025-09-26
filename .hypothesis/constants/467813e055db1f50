@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/fill_dsl.py
+# hypothesis_version: 6.138.15
+
+[0.001, 0.25, 1.0, '(', ')', '+', '.', '>', '@', 'CRASH', 'K', 'Offset out of range', 'RUNDOWN', 'RUNUP', 'RUN↑', 'RUN↓', 'S', 'SN', 'T1', 'T2', 'T3', 'X', 'crash', 'down', 'duration', 'instrument', 'kick', 'offset', 'snare', 'tom1', 'tom2', 'tom3', 'up', 'velocity_factor', 'x']

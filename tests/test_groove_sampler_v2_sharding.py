@@ -3,6 +3,8 @@ import types
 
 import pytest
 
+from utilities import ngram_store
+
 pretty_midi = pytest.importorskip("pretty_midi")
 np = pytest.importorskip("numpy")
 
@@ -16,6 +18,7 @@ def groove_sampler_v2_module(stub_utilities):
         "groove_sampler": types.SimpleNamespace(
             _PITCH_TO_LABEL={}, infer_resolution=lambda *a, **k: 480
         ),
+        "ngram_store": ngram_store,
     }
     with stub_utilities(
         "utilities.groove_sampler_v2",

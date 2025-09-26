@@ -81,9 +81,6 @@ def _validate_keyswitch_range(data: Dict[str, Any]) -> List[str]:
             return
         if note < 0 or note > 127:
             _emit(f"keyswitch '{label}' out of range 0..127 (got {note})")
-            return
-        if note < low or note > high:
-            _emit(f"keyswitch '{label}' out of range {low}..{high} (got {note})")
 
     ks = _as_mapping(data.get("keyswitch"))
     if isinstance(ks, dict):
@@ -140,9 +137,7 @@ def validate(path: pathlib.Path) -> List[str]:
                 note = int(value)  # type: ignore[arg-type]
             except Exception:
                 return
-            if note < low or note > high:
-                _emit(f"keyswitch '{name}' out of range {low}..{high} (got {note})")
-            elif play_defined:
+            if play_defined and low <= note <= high:
                 _emit(f"keyswitch '{name}' overlaps play range {low}..{high} (got {note})")
 
         ks_dict = _as_mapping(data.get("keyswitch"))
@@ -168,33 +163,6 @@ def validate(path: pathlib.Path) -> List[str]:
                 name = item.get("name")
                 if isinstance(name, str):
                     _check_range(name, item.get("note"))
-
-        rng_low, rng_high = KS_MIN, KS_MAX
-        play_range_map = play_range if play_range else _as_mapping(play_range_raw)
-        if isinstance(play_range_map, dict):
-            try:
-                rng_low = int(play_range_map.get("low", KS_MIN))
-            except Exception:
-                rng_low = KS_MIN
-            try:
-                rng_high = int(play_range_map.get("high", KS_MAX))
-            except Exception:
-                rng_high = KS_MAX
-        if rng_low > rng_high:
-            rng_low, rng_high = rng_high, rng_low
-        ks_map = _as_mapping(data.get("keyswitch"))
-        if isinstance(ks_map, dict):
-            for name, value in ks_map.items():
-                if not isinstance(name, str):
-                    continue
-                try:
-                    pitch = int(value)
-                except Exception:
-                    continue
-                if pitch < rng_low or pitch > rng_high:
-                    msg = f"keyswitch '{name}' out of range {rng_low}..{rng_high} (got {pitch})"
-                    if msg not in issues:
-                        issues.append(msg)
 
     return issues
 

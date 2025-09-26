@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/ai_sampler.py
+# hypothesis_version: 6.138.15
+
+[1024, 'bars', 'events', 'generated_text', 'gpt2-medium', 'text-generation']

@@ -70,7 +70,7 @@ def generate_sax(req: SaxRequest) -> List[dict[str, Any]]:
         first = notes[0]
         if "error" in first:
             message = str(first.get("message") or first["error"])
-            raise HTTPException(status_code=400, detail=message)
+            raise HTTPException(status_code=500, detail=message)
 
     if not isinstance(notes, list):
         raise HTTPException(status_code=500, detail="invalid plugin response")

@@ -34,6 +34,8 @@ def test_filter_and_reweight(tmp_path: Path, monkeypatch) -> None:
 
     captured: dict[str, Path | str] = {}
 
+    original_train_model = tp.train_model
+
     def fake_train_model(train_csv, val_csv, *a, **kw):
         captured["train_csv"] = train_csv
         captured["reweight"] = kw.get("reweight")
@@ -61,6 +63,9 @@ def test_filter_and_reweight(tmp_path: Path, monkeypatch) -> None:
         rows_csv = list(csv.DictReader(f))
     assert rows_csv and all(r["section"] == "A" for r in rows_csv)
     assert captured["reweight"] == "tag=section,scheme=inv_freq"
+
+    # CLI 用のスタブはここまで。以降は本物の train_model を使用する。
+    monkeypatch.setattr(tp, "train_model", original_train_model)
 
     # weighted sampling on explicit CSV
     full_train = tmp_path / "train_full.csv"

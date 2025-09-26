@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/transformer/__init__.py
+# hypothesis_version: 6.138.15
+
+['PianoTransformer', 'SaxTokenizer', 'SaxTransformer']

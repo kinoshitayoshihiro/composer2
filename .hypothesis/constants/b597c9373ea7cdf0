@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/phrase_filter.py
+# hypothesis_version: 6.138.15
+
+[0.75, 1.0, 'cluster_phrases', 'precomputed', 'word']

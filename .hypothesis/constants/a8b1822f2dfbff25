@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/ujam/io.py
+# hypothesis_version: 6.138.15
+
+[127, '-', ': ', ':(?=\\S)', 'ChordSpan', 'accent_arc', 'apply_section_preset', 'bars', 'build_sparkle_midi', 'density', 'density_curve', 'end', 'end_bar', 'fall', 'fill_cadence', 'flat', 'high', 'invalid note token', 'low', 'main', 'maj', 'med', 'none', 'note out of range', 'parse_midi_note', 'parse_note_token', 'phrase_pool', 'pool_weights', 'quality', 'rest', 'rise', 'root', 's-curve', 'schedule_phrase_keys', 'sections', 'silence', 'start', 'start_bar', 'tag']

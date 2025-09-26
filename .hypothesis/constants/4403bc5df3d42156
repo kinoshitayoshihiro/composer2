@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/articulation_csv.py
+# hypothesis_version: 6.138.15
+
+[127.0, '*.mid', '--csv', 'ArticRow', 'No MIDI files found.', 'Output CSV path', '__main__', 'articulation_label', 'bucket', 'csv_out', 'duration', 'extract_from_midi', 'main', 'midi_dir', 'onset', 'pedal_state', 'pitch', 'right', 'track_id', 'velocity']

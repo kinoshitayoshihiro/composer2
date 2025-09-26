@@ -49,40 +49,6 @@ def _get_weighted_sampler(torch_mod):
     return None
 
 
-def _weights_to_tensor(weights: object, target_len: int) -> "torch.Tensor | None":
-    """Return a 1-D tensor of length ``target_len`` built from *weights*.
-
-    The helper trims or pads the sequence so the sampler is always invoked,
-    guaranteeing that monkeypatched wrappers observe the final weight vector.
-    """
-
-    if torch is None:  # pragma: no cover - optional dependency
-        return None
-
-    if torch.is_tensor(weights):
-        tensor = weights.flatten()
-    else:
-        try:
-            seq = list(weights)  # type: ignore[arg-type]
-        except TypeError:
-            seq = []
-        tensor = torch.tensor(seq, dtype=torch.float64)
-
-    if tensor.dtype not in (torch.float32, torch.float64):
-        tensor = tensor.to(dtype=torch.float64)
-
-    numel = int(tensor.numel())
-    if numel == target_len:
-        return tensor.reshape(-1)
-
-    if numel > target_len:
-        tensor = tensor.reshape(-1)[:target_len]
-    else:
-        pad_value = float(tensor.flatten()[-1]) if numel > 0 else 1.0
-        pad = torch.full((target_len - numel,), pad_value, dtype=tensor.dtype, device=tensor.device)
-        tensor = torch.cat((tensor.reshape(-1), pad))
-    return tensor.reshape(-1)
-
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable, Iterable
@@ -101,6 +67,7 @@ except Exception:  # pragma: no cover - tqdm missing
 
 # matplotlib imported lazily when --viz is enabled
 plt = None  # type: ignore
+
 
 def _import_phrase_transformer() -> type:
     """Import :class:`PhraseTransformer` with maximum test-harness tolerance.
@@ -125,19 +92,26 @@ def _import_phrase_transformer() -> type:
             module = types.ModuleType(module_name)
         setattr(module, "PhraseTransformer", PhraseTransformer)
         sys.modules[module_name] = module
-        logging.warning(
-            "Using stub PhraseTransformer (fallback); tests may monkeypatch __init__."
-        )
+        logging.warning("Using stub PhraseTransformer (fallback); tests may monkeypatch __init__.")
         return PhraseTransformer
 
     def _promote(pt: object | None, module: types.ModuleType | None = None) -> type | None:
         if pt is object:
+
             class PTProxy(object):
                 def __init__(self, *args, **kwargs):
                     # Allow instantiation with arbitrary args so train_model can
                     # forward configuration parameters during tests that
                     # monkeypatch PhraseTransformer.
                     pass
+
+                def to(self, *args, **kwargs):
+                    """Mirror torch.nn.Module.to but act as a no-op for stubs."""
+                    return self
+
+                def parameters(self, *args, **kwargs):  # pragma: no cover - torch shim
+                    """Return an empty iterable to satisfy optimizer hookup."""
+                    return []
 
             logging.warning("Promoting bare 'object' to PTProxy to allow monkeypatching.")
             if module is not None:
@@ -189,6 +163,7 @@ def _register_tmp(path: Path, *, cleanup: Callable[[], None] | None = None) -> P
     _TMP_DIRS.append(path)
 
     if cleanup is None:
+
         def _cleanup(p: Path) -> None:
             shutil.rmtree(p, ignore_errors=True)
 
@@ -216,6 +191,7 @@ def _make_tempdir(prefix: str) -> Path:
     if name is None and hasattr(td, "__enter__"):
         name = td.__enter__()
     if cleanup is None and hasattr(td, "__exit__"):
+
         def _cleanup(tmp=td) -> None:
             tmp.__exit__(None, None, None)
 
@@ -447,6 +423,8 @@ def compute_inv_freq_weights(
     )
     weight_tensor = torch.tensor(weights, dtype=torch.float32)
     return weight_tensor, weight_stats
+
+
 def train_model(
     train_csv: Path,
     val_csv: Path,
@@ -535,6 +513,7 @@ def train_model(
     if viz and plt is None:
         try:  # pragma: no cover - optional
             import matplotlib
+
             matplotlib.use("Agg")
             import matplotlib.pyplot as _plt  # type: ignore
 
@@ -544,6 +523,7 @@ def train_model(
 
     from torch import nn
     from torch.utils.data import DataLoader, Dataset
+
     try:  # optional
         from torch.utils.tensorboard import SummaryWriter
     except Exception:  # pragma: no cover
@@ -645,7 +625,7 @@ def train_model(
                 self.harm_root_emb = nn.Embedding(12, 8)
                 self.harm_func_emb = nn.Embedding(3, 4)
                 self.harm_degree_emb = nn.Embedding(8, 4)
-                extra_dim += (8 + 4 + 4)
+                extra_dim += 8 + 4 + 4
             else:
                 self.harm_root_emb = None
                 self.harm_func_emb = None
@@ -674,12 +654,8 @@ def train_model(
             else:
                 self.head_boundary = nn.Linear(d_model, 1)
                 self.head_boundary2 = None
-            self.head_vel_reg = (
-                nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
-            )
-            self.head_dur_reg = (
-                nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
-            )
+            self.head_vel_reg = nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
+            self.head_dur_reg = nn.Linear(d_model, 1) if duv_mode in {"reg", "both"} else None
             self.head_vel_cls = (
                 nn.Linear(d_model, vel_bins) if duv_mode in {"cls", "both"} else None
             )
@@ -704,14 +680,25 @@ def train_model(
                 parts.append(self.vel_bucket_emb(feats["vel_bucket"]))
             if self.dur_bucket_emb is not None and "dur_bucket" in feats:
                 parts.append(self.dur_bucket_emb(feats["dur_bucket"]))
-            if self.use_harmony and self.harm_root_emb is not None and self.harm_func_emb is not None and self.harm_degree_emb is not None:
+            if (
+                self.use_harmony
+                and self.harm_root_emb is not None
+                and self.harm_func_emb is not None
+                and self.harm_degree_emb is not None
+            ):
                 if "harm_root" in feats and "harm_func" in feats and "harm_degree" in feats:
                     parts.append(self.harm_root_emb(feats["harm_root"]))
                     parts.append(self.harm_func_emb(feats["harm_func"]))
                     parts.append(self.harm_degree_emb(feats["harm_degree"]))
             if self.use_local_stats and self.local_proj is not None and "local_stats" in feats:
                 parts.append(self.local_proj(feats["local_stats"]))
-            if self.use_bar_beat and "bar_phase" in feats and "beat_phase" in feats and self.barpos_proj is not None and self.beatpos_proj is not None:
+            if (
+                self.use_bar_beat
+                and "bar_phase" in feats
+                and "beat_phase" in feats
+                and self.barpos_proj is not None
+                and self.beatpos_proj is not None
+            ):
                 bp = self.barpos_proj(feats["bar_phase"].unsqueeze(-1))
                 bt = self.beatpos_proj(feats["beat_phase"].unsqueeze(-1))
                 parts.extend([bp, bt])
@@ -823,9 +810,7 @@ def train_model(
         def __len__(self) -> int:  # pragma: no cover - trivial
             return len(self.groups)
 
-        def __getitem__(
-            self, idx: int
-        ) -> tuple[
+        def __getitem__(self, idx: int) -> tuple[
             dict[str, torch.Tensor],
             dict[str, torch.Tensor],
             torch.Tensor,
@@ -840,12 +825,8 @@ def train_model(
             pitches = [int(r["pitch"]) for r in g]
             pitch_cls = [p % 12 for p in pitches]
             pc = torch.tensor(pitch_cls + [0] * pad, dtype=torch.long)
-            vel = torch.tensor(
-                [float(r["velocity"]) for r in g] + [0] * pad, dtype=torch.float32
-            )
-            dur = torch.tensor(
-                [float(r["duration"]) for r in g] + [0] * pad, dtype=torch.float32
-            )
+            vel = torch.tensor([float(r["velocity"]) for r in g] + [0] * pad, dtype=torch.float32)
+            dur = torch.tensor([float(r["duration"]) for r in g] + [0] * pad, dtype=torch.float32)
             # Normalize position to [0, max_len-1] to avoid large tick-based indices clamping
             pos_vals = [(int(r["pos"]) % self.max_len) for r in g]
             pos = torch.tensor(pos_vals + [0] * pad, dtype=torch.long)
@@ -872,24 +853,16 @@ def train_model(
                 feats["bar_phase"] = torch.tensor(bar_phase, dtype=torch.float32)
                 feats["beat_phase"] = torch.tensor(beat_phase, dtype=torch.float32)
             if self.section_vocab:
-                sec = [
-                    self.section_vocab.get(r.get("section", ""), 0) for r in g
-                ] + [0] * pad
+                sec = [self.section_vocab.get(r.get("section", ""), 0) for r in g] + [0] * pad
                 feats["section"] = torch.tensor(sec, dtype=torch.long)
             if self.mood_vocab:
-                md = [self.mood_vocab.get(r.get("mood", ""), 0) for r in g] + [
-                    0
-                ] * pad
+                md = [self.mood_vocab.get(r.get("mood", ""), 0) for r in g] + [0] * pad
                 feats["mood"] = torch.tensor(md, dtype=torch.long)
             if self.use_vel_bucket_feat:
-                vb = [
-                    _bucket_value(r, "velocity_bucket", "vel_bucket") for r in g
-                ] + [0] * pad
+                vb = [_bucket_value(r, "velocity_bucket", "vel_bucket") for r in g] + [0] * pad
                 feats["vel_bucket"] = torch.tensor(vb, dtype=torch.long)
             if self.use_dur_bucket_feat:
-                db = [
-                    _bucket_value(r, "duration_bucket", "dur_bucket") for r in g
-                ] + [0] * pad
+                db = [_bucket_value(r, "duration_bucket", "dur_bucket") for r in g] + [0] * pad
                 feats["dur_bucket"] = torch.tensor(db, dtype=torch.long)
             if self.use_local_stats:
                 # ローカル統計: 直近K=8 の IOI/interval/velocity の平均/分散（簡易）
@@ -914,13 +887,15 @@ def train_model(
                     m_vel = sum(vel_w) / len(vel_w)
                     var_ioi = sum((x - m_ioi) ** 2 for x in ioi_w) / len(ioi_w)
                     mean_ioi.append(m_ioi)
-                    std_ioi.append(var_ioi ** 0.5)
+                    std_ioi.append(var_ioi**0.5)
                     mean_interval.append(m_int)
                     mean_vel.append(m_vel)
+
                 # 正規化（簡易、ゼロ除去）
                 def norm(vs: list[float]) -> list[float]:
                     mx = max(1e-6, max(vs))
                     return [x / mx for x in vs]
+
                 ls = list(zip(norm(mean_ioi), norm(std_ioi), norm(mean_interval), norm(mean_vel)))
                 ls += [(0.0, 0.0, 0.0, 0.0)] * pad
                 feats["local_stats"] = torch.tensor(ls, dtype=torch.float32)
@@ -935,35 +910,28 @@ def train_model(
                 "pitch": torch.tensor(pitches + [-100] * pad, dtype=torch.long),
             }
             if self.has_vel_bucket:
-                vb = [
-                    _bucket_value(r, "velocity_bucket", "vel_bucket") for r in g
-                ] + [0] * pad
+                vb = [_bucket_value(r, "velocity_bucket", "vel_bucket") for r in g] + [0] * pad
                 targets["vel_cls"] = torch.tensor(vb, dtype=torch.long)
             if self.has_dur_bucket:
-                db = [
-                    _bucket_value(r, "duration_bucket", "dur_bucket") for r in g
-                ] + [0] * pad
+                db = [_bucket_value(r, "duration_bucket", "dur_bucket") for r in g] + [0] * pad
                 targets["dur_cls"] = torch.tensor(db, dtype=torch.long)
             tags = {
                 "instrument": [
-                    self.instrument_vocab.get(r.get("instrument", ""), 0)
-                    if self.instrument_vocab
-                    else 0
+                    (
+                        self.instrument_vocab.get(r.get("instrument", ""), 0)
+                        if self.instrument_vocab
+                        else 0
+                    )
                     for r in g
                 ]
                 + [0] * pad,
                 "section": [
-                    self.section_vocab.get(r.get("section", ""), 0)
-                    if self.section_vocab
-                    else 0
+                    self.section_vocab.get(r.get("section", ""), 0) if self.section_vocab else 0
                     for r in g
                 ]
                 + [0] * pad,
                 "mood": [
-                    self.mood_vocab.get(r.get("mood", ""), 0)
-                    if self.mood_vocab
-                    else 0
-                    for r in g
+                    self.mood_vocab.get(r.get("mood", ""), 0) if self.mood_vocab else 0 for r in g
                 ]
                 + [0] * pad,
             }
@@ -1024,11 +992,13 @@ def train_model(
     )
     if not train_rows:
         raise ValueError(
-            f"training CSV produced no usable rows (kept {len(train_rows)} removed {tr_removed})" + hint
+            f"training CSV produced no usable rows (kept {len(train_rows)} removed {tr_removed})"
+            + hint
         )
     if not val_rows:
         raise ValueError(
-            f"validation CSV produced no usable rows (kept {len(val_rows)} removed {val_removed})" + hint
+            f"validation CSV produced no usable rows (kept {len(val_rows)} removed {val_removed})"
+            + hint
         )
     section_vals = {r["section"] for r in train_rows + val_rows if r.get("section")}
     mood_vals = {r["mood"] for r in train_rows + val_rows if r.get("mood")}
@@ -1055,12 +1025,8 @@ def train_model(
         p = max(1e-6, min(1 - 1e-6, positive_count / max(1, total_count)))
         pos_weight = (1 - p) / p
         logging.info("auto pos_weight=%s", pos_weight)
-    section_vocab = (
-        {s: i + 1 for i, s in enumerate(sorted(section_vals))} if section_vals else None
-    )
-    mood_vocab = (
-        {s: i + 1 for i, s in enumerate(sorted(mood_vals))} if mood_vals else None
-    )
+    section_vocab = {s: i + 1 for i, s in enumerate(sorted(section_vals))} if section_vals else None
+    mood_vocab = {s: i + 1 for i, s in enumerate(sorted(mood_vals))} if mood_vals else None
     instrument_vocab = (
         {s: i + 1 for i, s in enumerate(sorted(instrument_vals))} if instrument_vals else None
     )
@@ -1074,8 +1040,7 @@ def train_model(
     for t, c in tag_counts.items():
         logging.info("tag %s counts %s", t, c)
     tag_coverage = {
-        t: sum(c.values()) / len(train_rows) if train_rows else 0.0
-        for t, c in tag_counts.items()
+        t: sum(c.values()) / len(train_rows) if train_rows else 0.0 for t, c in tag_counts.items()
     }
     corpus_name = train_csv.parent.name
     ds_train = PhraseDataset(
@@ -1118,10 +1083,11 @@ def train_model(
         random.seed(seed + worker_id)
         try:  # optional numpy seeding
             import numpy as _np  # type: ignore
+
             _np.random.seed(seed + worker_id)
         except Exception:  # pragma: no cover - numpy missing
             pass
-    
+
     sampler = None
     weight_stats: dict[str, float] | None = None
     shuffle_train = True
@@ -1152,43 +1118,58 @@ def train_model(
             if weight_stats:
                 logging.info("top tag weights (tag=%s) %s", tag_name, weight_stats)
             if torch is not None:
-                weight_tensor = _weights_to_tensor(weights_tensor, len(ds_train))
                 sampler_fn = _get_weighted_sampler(torch)
-                if callable(sampler_fn) and weight_tensor is not None:
+                sampler_mod = getattr(torch.utils.data, "sampler", None)
+                base_cls = (
+                    getattr(sampler_mod, "WeightedRandomSampler", None)
+                    if sampler_mod is not None
+                    else None
+                )
+                num_samples = int(weights_tensor.numel())
+
+                def _call_sampler(fn, allow_keyword: bool = True):
+                    if allow_keyword:
+                        return fn(weights_tensor, num_samples, replacement=True)
+                    return fn(weights_tensor, num_samples, True)
+
+                if callable(sampler_fn):
                     try:
-                        sampler = sampler_fn(
-                            weight_tensor,
-                            len(ds_train),
-                            replacement=True,
-                        )
+                        sampler = _call_sampler(sampler_fn, True)
                     except TypeError:
-                        sampler = sampler_fn(
-                            weight_tensor,
-                            len(ds_train),
-                            True,
-                        )
-                    except RecursionError:
-                        sampler_mod = getattr(torch.utils.data, "sampler", None)
-                        base_cls = (
-                            getattr(sampler_mod, "WeightedRandomSampler", None)
-                            if sampler_mod is not None
-                            else None
-                        )
-                        if callable(base_cls):
-                            try:
-                                sampler = base_cls(
-                                    weight_tensor,
-                                    len(ds_train),
-                                    replacement=True,
-                                )
-                            except TypeError:
-                                sampler = base_cls(
-                                    weight_tensor,
-                                    len(ds_train),
-                                    True,
-                                )
-                        else:
+                        try:
+                            sampler = _call_sampler(sampler_fn, False)
+                        except RecursionError:
                             sampler = None
+                    except RecursionError:
+                        sampler = None
+
+                    if sampler is None and callable(base_cls):
+                        original_attr = getattr(torch.utils.data, "WeightedRandomSampler", None)
+                        alias_installed = False
+                        if original_attr is not base_cls:
+                            try:
+                                setattr(torch.utils.data, "WeightedRandomSampler", base_cls)
+                                alias_installed = True
+                            except Exception:
+                                pass
+                        try:
+                            if sampler is None:
+                                try:
+                                    sampler = _call_sampler(sampler_fn, False)
+                                except RecursionError:
+                                    sampler = None
+                            if sampler is None:
+                                try:
+                                    sampler = _call_sampler(base_cls, True)
+                                except TypeError:
+                                    sampler = _call_sampler(base_cls, False)
+                        finally:
+                            if alias_installed:
+                                try:
+                                    setattr(torch.utils.data, "WeightedRandomSampler", original_attr)
+                                except Exception:
+                                    pass
+
                 if sampler is not None:
                     shuffle_train = False
         if sampler is None:
@@ -1271,9 +1252,7 @@ def train_model(
                     skipped_empty,
                 )
                 if skipped_empty:
-                    logging.info(
-                    "reweight=%r skipped %d empty values", reweight, skipped_empty
-                )
+                    logging.info("reweight=%r skipped %d empty values", reweight, skipped_empty)
             logging.debug(
                 "reweight=%r collected %d values (raw=%d)",
                 reweight,
@@ -1317,9 +1296,7 @@ def train_model(
                     skipped_empty,
                 )
                 if skipped_empty:
-                    logging.info(
-                        "reweight=%r skipped %d empty values", reweight, skipped_empty
-                    )
+                    logging.info("reweight=%r skipped %d empty values", reweight, skipped_empty)
                 logging.debug(
                     "reweight=%r collected %d values (raw=%d)",
                     reweight,
@@ -1370,18 +1347,14 @@ def train_model(
                             if len(values) > len(ds_train):
                                 values = values[: len(ds_train)]
                             else:
-                                pad_source = next(
-                                    (v for v in reversed(values) if v), "UNK"
-                                )
+                                pad_source = next((v for v in reversed(values) if v), "UNK")
                                 if not pad_source:
                                     pad_source = "UNK"
                                 values = values + [pad_source] * (len(ds_train) - len(values))
                     freq = Counter(values)
                     weights = [1.0 / max(1, freq[v]) for v in values]
                     weight_map = {v: 1.0 / max(1, freq[v]) for v in freq}
-                    weight_stats = dict(
-                        sorted(weight_map.items(), key=lambda x: -x[1])[:10]
-                    )
+                    weight_stats = dict(sorted(weight_map.items(), key=lambda x: -x[1])[:10])
                     logging.info("top tag weights (tag=%s) %s", tag, weight_stats)
                     logging.debug(
                         "inv_freq weights head (tag=%s) %s",
@@ -1389,9 +1362,7 @@ def train_model(
                         [round(w, 6) for w in weights[:3]],
                     )
                 if torch is None:
-                    logging.info(
-                        "reweight=%r skipped %d empty values", reweight, skipped_empty
-                    )
+                    logging.info("reweight=%r skipped %d empty values", reweight, skipped_empty)
                 logging.debug(
                     "reweight=%r collected %d values (raw=%d)",
                     reweight,
@@ -1462,47 +1433,59 @@ def train_model(
                             "torch import failed",
                         )
                     else:
-                        weight_tensor = _weights_to_tensor(weights, len(ds_train))
-                        sampler_fn = _get_weighted_sampler(torch)
-                        if callable(sampler_fn) and weight_tensor is not None:
+                        if len(weights) == len(ds_train):
                             try:
-                                sampler = sampler_fn(
-                                    weight_tensor,
-                                    len(ds_train),
-                                    replacement=True,
-                                )
-                            except TypeError:
-                                sampler = sampler_fn(
-                                    weight_tensor,
-                                    len(ds_train),
-                                    True,
-                                )
-                            except RecursionError:
-                                base_mod = getattr(torch.utils.data, "sampler", None)
-                                base_cls = (
-                                    getattr(base_mod, "WeightedRandomSampler", None)
-                                    if base_mod is not None
-                                    else None
-                                )
-                                if callable(base_cls):
-                                    sampler = base_cls(
+                                weight_tensor = torch.as_tensor(weights, dtype=torch.float64)
+                            except Exception:
+                                weight_tensor = torch.tensor(weights, dtype=torch.float32)
+                            sampler_fn = _get_weighted_sampler(torch)
+                            if callable(sampler_fn):
+                                try:
+                                    sampler = sampler_fn(
                                         weight_tensor,
                                         len(ds_train),
                                         replacement=True,
                                     )
-                                else:
-                                    logging.info(
-                                        "reweight=%r sampler recursion detected; continuing without sampler",
-                                        reweight,
+                                except TypeError:
+                                    sampler = sampler_fn(
+                                        weight_tensor,
+                                        len(ds_train),
+                                        True,
                                     )
-                                    sampler = None
-                        if sampler is not None:
-                            shuffle_train = False
+                                except RecursionError:
+                                    base_mod = getattr(torch.utils.data, "sampler", None)
+                                    base_cls = (
+                                        getattr(base_mod, "WeightedRandomSampler", None)
+                                        if base_mod is not None
+                                        else None
+                                    )
+                                    if callable(base_cls):
+                                        sampler = base_cls(
+                                            weight_tensor,
+                                            len(ds_train),
+                                            replacement=True,
+                                        )
+                                    else:
+                                        logging.info(
+                                            "reweight=%r sampler recursion detected; continuing without sampler",
+                                            reweight,
+                                        )
+                                        sampler = None
+                            if sampler is not None:
+                                shuffle_train = False
 
-    if sampler is None and weights is not None and torch is not None:
-        weight_tensor = _weights_to_tensor(weights, len(ds_train))
+    if (
+        sampler is None
+        and weights is not None
+        and torch is not None
+        and len(weights) == len(ds_train)
+    ):
         sampler_fn = _get_weighted_sampler(torch)
-        if callable(sampler_fn) and weight_tensor is not None:
+        if callable(sampler_fn):
+            try:
+                weight_tensor = torch.as_tensor(weights, dtype=torch.float64)
+            except Exception:
+                weight_tensor = torch.tensor(weights, dtype=torch.float32)
             try:
                 sampler = sampler_fn(weight_tensor, len(ds_train), replacement=True)
             except TypeError:
@@ -1521,8 +1504,41 @@ def train_model(
                         sampler = base_cls(weight_tensor, len(ds_train), True)
                 else:
                     sampler = None
-        if sampler is not None:
-            shuffle_train = False
+            if sampler is not None:
+                shuffle_train = False
+
+    if (
+        sampler is None
+        and weights is not None
+        and torch is not None
+        and len(weights) == len(ds_train)
+    ):
+        sampler_fn = _get_weighted_sampler(torch)
+        if callable(sampler_fn):
+            try:
+                weight_tensor = torch.as_tensor(weights, dtype=torch.float64)
+            except Exception:
+                weight_tensor = torch.tensor(weights, dtype=torch.float32)
+            try:
+                sampler = sampler_fn(weight_tensor, len(ds_train), replacement=True)
+            except TypeError:
+                sampler = sampler_fn(weight_tensor, len(ds_train), True)
+            except RecursionError:
+                base_mod = getattr(torch.utils.data, "sampler", None)
+                base_cls = (
+                    getattr(base_mod, "WeightedRandomSampler", None)
+                    if base_mod is not None
+                    else None
+                )
+                if callable(base_cls):
+                    try:
+                        sampler = base_cls(weight_tensor, len(ds_train), replacement=True)
+                    except TypeError:
+                        sampler = base_cls(weight_tensor, len(ds_train), True)
+                else:
+                    sampler = None
+            if sampler is not None:
+                shuffle_train = False
 
     dl_train = DataLoader(
         ds_train,
@@ -1617,9 +1633,15 @@ def train_model(
         pos_prior = max(1e-6, min(1 - 1e-6, positive_count / total_count))
         prior_logit = float(torch.log(torch.tensor(pos_prior / (1 - pos_prior))))
         with torch.no_grad():
-            if hasattr(model, "head_boundary") and hasattr(model.head_boundary, "bias") and model.head_boundary.bias is not None:
+            if (
+                hasattr(model, "head_boundary")
+                and hasattr(model.head_boundary, "bias")
+                and model.head_boundary.bias is not None
+            ):
                 model.head_boundary.bias.fill_(prior_logit)
-                logging.info("init head_boundary.bias to prior logit %.3f (p=%.3f)", prior_logit, pos_prior)
+                logging.info(
+                    "init head_boundary.bias to prior logit %.3f (p=%.3f)", prior_logit, pos_prior
+                )
     except Exception:
         pass
     if compile:
@@ -1638,32 +1660,41 @@ def train_model(
     else:
         sched = None
     pw = torch.tensor([pos_weight], device=device) if pos_weight else None
+
     # Optional focal loss
     class FocalLoss(nn.Module):
         def __init__(self, gamma: float = 2.0, pos_weight: torch.Tensor | None = None) -> None:
             super().__init__()
             self.gamma = gamma
-            self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='none')
+            self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="none")
+
         def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
             bce = self.bce(logits, targets)
             p = torch.sigmoid(logits)
             pt = p * targets + (1 - p) * (1 - targets)
             loss = ((1 - pt) ** self.gamma) * bce
             return loss.mean()
-    crit_boundary = FocalLoss(gamma=focal_gamma, pos_weight=pw) if loss == 'focal' else nn.BCEWithLogitsLoss(pos_weight=pw)
+
+    crit_boundary = (
+        FocalLoss(gamma=focal_gamma, pos_weight=pw)
+        if loss == "focal"
+        else nn.BCEWithLogitsLoss(pos_weight=pw)
+    )
     crit_vel_reg = nn.SmoothL1Loss()
     crit_dur_reg = nn.SmoothL1Loss()
     crit_vel_cls = nn.CrossEntropyLoss()
     crit_dur_cls = nn.CrossEntropyLoss()
-    crit_pitch = nn.CrossEntropyLoss(
-        ignore_index=-100, label_smoothing=pitch_smoothing
-    )
+    crit_pitch = nn.CrossEntropyLoss(ignore_index=-100, label_smoothing=pitch_smoothing)
+
     # Lightweight 2-state CRF for sequence consistency（必要時のみ有効化）
     class CRF2(nn.Module):
         def __init__(self) -> None:
             super().__init__()
             self.trans = nn.Parameter(torch.zeros(2, 2))
-        def nll(self, emissions: torch.Tensor, tags: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+
+        def nll(
+            self, emissions: torch.Tensor, tags: torch.Tensor, mask: torch.Tensor
+        ) -> torch.Tensor:
             # emissions: (B,L,2), tags: (B,L) int 0/1, mask: (B,L) bool
             B, L, C = emissions.shape
             # 前向き計算で対数分配関数を求める
@@ -1683,7 +1714,8 @@ def train_model(
                 score = torch.where(mask[:, t], score + step, score)
             nll = (logZ - score).mean()
             return nll
-    crf = CRF2().to(device) if head == 'crf' else None
+
+    crf = CRF2().to(device) if head == "crf" else None
     try:
         scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     except AttributeError:  # pragma: no cover - PyTorch < 2.0 fallback
@@ -1778,8 +1810,9 @@ def train_model(
                     logits2 = boundary2[m].detach().cpu()
                     logits_all.extend((logits2[:, 1] - logits2[:, 0]).tolist())
                     import torch as _t
+
                     probs.extend(_t.softmax(logits2, dim=-1)[:, 1].tolist())
-                    if head == 'crf' and crf is not None:
+                    if head == "crf" and crf is not None:
                         lb = crf.nll(boundary2, targets["boundary"].long(), m)
                     else:
                         lb = crit_boundary(
@@ -1807,8 +1840,7 @@ def train_model(
                 if "dur_reg" in outputs:
                     dur_err += (
                         torch.abs(
-                            torch.expm1(outputs["dur_reg"][m])
-                            - torch.expm1(targets["dur_reg"][m])
+                            torch.expm1(outputs["dur_reg"][m]) - torch.expm1(targets["dur_reg"][m])
                         )
                         .sum()
                         .item()
@@ -1861,7 +1893,7 @@ def train_model(
         }
         val_loss_avg = val_loss_sum / max(1, val_batches)
         return best_f1, val_loss_avg, best_th, probs, trues, tag_buf, metrics, logits_all
-    
+
     ts = int(time.time())
     best_state = None
     best_threshold = 0.5
@@ -1930,7 +1962,7 @@ def train_model(
                 lp = torch.zeros((), device=device)
                 if "boundary2" in outputs:
                     # 2-class logits available (CRF head or softmax head); use BCE on class-1 logit if not CRF
-                    if head == 'crf':
+                    if head == "crf":
                         # CRF NLL
                         # build emissions and tags
                         emissions = outputs["boundary2"]  # (B,L,2)
@@ -1938,7 +1970,10 @@ def train_model(
                         lb = crf.nll(emissions, tags, m)
                         loss = loss + w_boundary * lb
                     else:
-                        lb = crit_boundary(outputs["boundary2"][m][:, 1] - outputs["boundary2"][m][:, 0], targets["boundary"][m])
+                        lb = crit_boundary(
+                            outputs["boundary2"][m][:, 1] - outputs["boundary2"][m][:, 0],
+                            targets["boundary"][m],
+                        )
                         loss = loss + w_boundary * lb
                 elif "boundary" in outputs:
                     lb = crit_boundary(outputs["boundary"][m], targets["boundary"][m])
@@ -2085,7 +2120,7 @@ def train_model(
             writer.add_scalar("val/dur_mae", metrics["dur_mae"], ep)
             writer.add_scalar("val/vel_acc", metrics["vel_acc"], ep)
             writer.add_scalar("val/dur_acc", metrics["dur_acc"], ep)
-    
+
         metric_val = f1
         if best_metric.startswith("inst_f1:") and instrument_vocab:
             target = best_metric.split(":", 1)[1]
@@ -2118,7 +2153,7 @@ def train_model(
                     if g in inv_map
                 ]
                 metric_val = sum(vals) / len(vals) if vals else 0.0
-    
+
         if metric_val > best_metric_val:
             best_metric_val = metric_val
             best_f1 = f1
@@ -2143,14 +2178,14 @@ def train_model(
                         "d_model": d_model,
                         "n_layers": layers,
                         "n_heads": nhead,
-                    "max_len": max_len,
-                    "duv_mode": duv_mode,
-                    "vel_bins": vel_bins,
-                    "dur_bins": dur_bins,
-                    "vocab_pitch": 128,
-                    "vocab": {},
-                    "corpus_name": corpus_name,
-                    "tag_coverage": tag_coverage,
+                        "max_len": max_len,
+                        "duv_mode": duv_mode,
+                        "vel_bins": vel_bins,
+                        "dur_bins": dur_bins,
+                        "vocab_pitch": 128,
+                        "vocab": {},
+                        "corpus_name": corpus_name,
+                        "tag_coverage": tag_coverage,
                     },
                 },
                 out.with_suffix(f".epoch{ep + 1}.ckpt"),
@@ -2252,7 +2287,7 @@ def train_model(
     inv_mood = {i: s for s, i in mood_vocab.items()} if mood_vocab else {}
     inv_inst = {i: s for s, i in instrument_vocab.items()} if instrument_vocab else {}
     metrics_by_tag: dict[str, dict[str, float]] = {}
-    
+
     def group_f1(ids: list[int], inv_map: dict[int, str]) -> dict[str, float]:
         groups: dict[int, list[tuple[int, int]]] = {}
         for t, p, gid in zip(trues, probs, ids):
@@ -2260,8 +2295,10 @@ def train_model(
                 continue
             pred = 1 if p > best_threshold else 0
             groups.setdefault(gid, []).append((t, pred))
-        return {inv_map[k]: f1_score([t for t, _ in v], [p for _, p in v]) for k, v in groups.items()}
-    
+        return {
+            inv_map[k]: f1_score([t for t, _ in v], [p for _, p in v]) for k, v in groups.items()
+        }
+
     if instrument_vocab:
         metrics_by_tag["instrument"] = group_f1(tag_buf["instrument"], inv_inst)
     if section_vocab:
@@ -2356,8 +2393,8 @@ def train_model(
     # tests/test_train_phrase_transformer_hparams.py::test_transformer_hparams,
     # tests/test_train_phrase_duv_embed_toggle.py::test_duv_embed_toggle.
     return final_best_f1, device.type, stats
-    
-    
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -2374,7 +2411,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--out", type=Path, default=Path("phrase.ckpt"))
-    parser.add_argument("--arch", choices=["transformer", "lstm", "bilstm_tcn"], default="transformer")
+    parser.add_argument(
+        "--arch", choices=["transformer", "lstm", "bilstm_tcn"], default="transformer"
+    )
     parser.add_argument("--head", choices=["linear", "crf"], default="linear")
     parser.add_argument("--loss", choices=["bce", "focal"], default="bce")
     parser.add_argument("--focal-gamma", type=float, default=2.0)
@@ -2386,7 +2425,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nhead", type=int, default=8)
     parser.add_argument("--layers", type=int, default=4)
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--sin-posenc", action="store_true", help="use sinusoidal positional encoding in transformer")
+    parser.add_argument(
+        "--sin-posenc",
+        action="store_true",
+        help="use sinusoidal positional encoding in transformer",
+    )
     parser.add_argument("--compile", action="store_true")
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--pin-memory", action="store_true")
@@ -2427,11 +2470,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--use-duv-embed", action="store_true")
     # bar/beat 位相特徴の有効化（重複定義だったため単一に統一）
     parser.add_argument("--use-bar-beat", action="store_true", help="add bar/beat phase features")
-    parser.add_argument("--use-harmony", action="store_true", help="use harmony features if present (harm_root/func/degree)")
-    parser.add_argument("--use-local-stats", action="store_true", help="use local rolling stats (IOI/interval/velocity)")
     parser.add_argument(
-        "--duv-mode", choices=["none", "reg", "cls", "both"], default="reg"
+        "--use-harmony",
+        action="store_true",
+        help="use harmony features if present (harm_root/func/degree)",
     )
+    parser.add_argument(
+        "--use-local-stats",
+        action="store_true",
+        help="use local rolling stats (IOI/interval/velocity)",
+    )
+    parser.add_argument("--duv-mode", choices=["none", "reg", "cls", "both"], default="reg")
     parser.add_argument("--vel-bins", type=int, default=0)
     parser.add_argument("--dur-bins", type=int, default=0)
     parser.add_argument("--w-boundary", type=float, default=1.0)
@@ -2453,15 +2502,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--sample", type=int, default=0)
     parser.add_argument("--viz", action="store_true", help="save PR/CM plots")
-    parser.add_argument("--strict-tags", action="store_true", help="drop rows missing requested tags")
+    parser.add_argument(
+        "--strict-tags", action="store_true", help="drop rows missing requested tags"
+    )
     parser.add_argument("--progress", action="store_true", help="show training progress bar")
-    parser.add_argument("--calibrate-temp", action="store_true", help="calibrate temperature on validation logits and save to checkpoint meta")
+    parser.add_argument(
+        "--calibrate-temp",
+        action="store_true",
+        help="calibrate temperature on validation logits and save to checkpoint meta",
+    )
     # fast iteration helpers
-    parser.add_argument("--limit-train-batches", type=int, default=0, help="max train batches per epoch for quick runs")
-    parser.add_argument("--limit-val-batches", type=int, default=0, help="max validation batches per eval for quick runs")
-    parser.add_argument("--limit-train-groups", type=int, default=0, help="limit number of training groups (bars)")
-    parser.add_argument("--limit-val-groups", type=int, default=0, help="limit number of validation groups (bars)")
-    parser.add_argument("--fast-dev-run", action="store_true", help="run a very small loop to sanity-check")
+    parser.add_argument(
+        "--limit-train-batches",
+        type=int,
+        default=0,
+        help="max train batches per epoch for quick runs",
+    )
+    parser.add_argument(
+        "--limit-val-batches",
+        type=int,
+        default=0,
+        help="max validation batches per eval for quick runs",
+    )
+    parser.add_argument(
+        "--limit-train-groups", type=int, default=0, help="limit number of training groups (bars)"
+    )
+    parser.add_argument(
+        "--limit-val-groups", type=int, default=0, help="limit number of validation groups (bars)"
+    )
+    parser.add_argument(
+        "--fast-dev-run", action="store_true", help="run a very small loop to sanity-check"
+    )
     parser.add_argument(
         "--best-metric",
         default="macro_f1",
@@ -2600,6 +2671,7 @@ def main(argv: list[str] | None = None) -> int:
     run_cfg["git_dirty"] = dirty
     try:
         import torch
+
         torch_ver = torch.__version__
     except Exception:  # pragma: no cover
         torch_ver = None
@@ -2719,9 +2791,7 @@ def main(argv: list[str] | None = None) -> int:
 
     hparams = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
     hparams["device"] = device_type
-    (args.out.parent / "hparams.json").write_text(
-        json.dumps(hparams, ensure_ascii=False, indent=2)
-    )
+    (args.out.parent / "hparams.json").write_text(json.dumps(hparams, ensure_ascii=False, indent=2))
     # temperature calibration is handled inside train_model when enabled
     return 0 if args.min_f1 < 0 or f1 >= args.min_f1 else 1
 

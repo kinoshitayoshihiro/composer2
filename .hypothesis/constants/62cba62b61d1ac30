@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/loudness_normalizer.py
+# hypothesis_version: 6.138.15
+
+[-16.0, -14.0, -12.0, 1e-09, 127.0, 127, 'chorus', 'normalize_velocities', 'normalize_wav', 'verse', 'wav']

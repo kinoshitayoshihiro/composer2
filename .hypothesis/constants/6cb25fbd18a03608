@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/pedal_frames.py
+# hypothesis_version: 6.138.15
+
+[0.0, 100, 512, 22050, '*.mid', '*.midi', '--cc-num', '--cc-th', '--csv', '--fail-log', '--file-list', '--hop', '--limit-files', '--max-seconds', '--shard-index', '--shards', '--skip-files', '--sr', '--success-log', '.', '__main__', 'a', 'csv_out', 'file', 'frame_id', 'midi_dir', 'no MIDI files found', 'pedal_state', 'pm', 'rel_release', 'right', 'time_sec', 'track_id', 'w']

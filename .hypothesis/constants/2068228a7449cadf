@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/data_augmentation.py
+# hypothesis_version: 6.138.15
+
+[1.0, 16000, '*.wav', 'add_gaussian_noise', 'augment', 'augment_wav_dir', 'pitch_shift', 'time_stretch']

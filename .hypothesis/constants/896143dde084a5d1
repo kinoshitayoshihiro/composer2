@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/config_loader.py
+# hypothesis_version: 6.138.15
+
+['BassGenerator', 'GuitarGenerator', 'MelodyGenerator', 'StringsGenerator', 'bass', 'chordmap_path', 'counter', 'get_section_cfg', 'global_settings', 'groove_profile_path', 'humanize_profiles', 'key_mode', 'key_tonic', 'melody', 'output_dir', 'pad', 'part_defaults', 'paths', 'rhythm', 'rhythm_library_path', 'riff', 'role', 'role_dispatch', 'sax', 'section_overrides', 'tempo_bpm', 'tempo_map_path', 'time_signature', 'unison', 'use_aftertouch', 'use_expr_cc11', 'utf-8']

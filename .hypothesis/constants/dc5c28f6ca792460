@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/generator/piano_ml_generator.py
+# hypothesis_version: 6.138.15
+
+[0.9, 512, 'PianoMLGenerator', 'bar']

@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/ml_models/tagger_module.py
+# hypothesis_version: 6.138.15
+
+[0.001, 'epoch', 'frequency', 'interval', 'lr_scheduler', 'monitor', 'optimizer', 'scheduler', 'train_loss', 'val_loss']

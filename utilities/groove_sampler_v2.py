@@ -1096,6 +1096,37 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                     mid.save(str(path))
                 except Exception as exc:
                     tempo_error = str(exc)
+                else:
+                    reloaded_pm = None
+                    try:
+                        reloaded_pm = pretty_midi.PrettyMIDI(str(path))
+                    except Exception:
+                        reloaded_pm = None
+                    if reloaded_pm is not None and tempo_message_injected:
+                        try:
+                            _rtimes, rtempi = reloaded_pm.get_tempo_changes()
+                        except Exception:
+                            rtempi = []
+                        if not rtempi and inject_tempo_val is not None:
+                            try:
+                                if not getattr(mid, "tracks", None):
+                                    track = _mido.MidiTrack()
+                                    mid.tracks.append(track)
+                                track0 = mid.tracks[0]
+                                for idx in range(len(track0) - 1, -1, -1):
+                                    if getattr(track0[idx], "type", "") == "set_tempo":
+                                        del track0[idx]
+                                tempo_msg = _mido.MetaMessage(
+                                    "set_tempo", tempo=inject_tempo_val, time=0
+                                )
+                                track0.insert(0, tempo_msg)
+                                mid.save(str(path))
+                                reloaded_pm = pretty_midi.PrettyMIDI(str(path))
+                            except Exception as exc:
+                                tempo_error = str(exc)
+                                reloaded_pm = None
+                    if reloaded_pm is not None:
+                        pm = reloaded_pm
             raw_midi_obj = mid
             raw_has_tempo = has_explicit
             if tempo_was_injected:

@@ -1,0 +1,12 @@
+INFO:root:device mps amp=False precision=medium
+INFO:root:train rows kept 23611 removed 0 | val kept 1174 removed 0
+INFO:root:duv embed v=8 d=16
+INFO:root:class balance {'pos': 2723, 'neg': 20888}
+INFO:root:tag instrument counts {'bass': 9072, 'slap bass 2': 418, 'electric bass (finger)': 3134, 'fretless bass': 6010, 'bass gtr': 627, 'acou bass': 3938, 'bass 1': 220, 'basso': 192}
+INFO:root:device mps amp=False precision=medium
+INFO:root:train rows kept 23611 removed 0 | val kept 1174 removed 0
+INFO:root:duv embed v=8 d=16
+INFO:root:class balance {'pos': 2723, 'neg': 20888}
+INFO:root:tag instrument counts {'bass': 9072, 'slap bass 2': 418, 'electric bass (finger)': 3134, 'fretless bass': 6010, 'bass gtr': 627, 'acou bass': 3938, 'bass 1': 220, 'basso': 192}
+INFO:root:epoch 1 train_loss 0.6931 val_f1 0.167 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 1.00e-03 th 0.20 pos_rate 1.000 mean_p 0.500 time 9.9s
+INFO:root:epoch=1 train_loss=0.693146 val_loss=0.693147 | train_loss 0.693146 val_loss 0.693147

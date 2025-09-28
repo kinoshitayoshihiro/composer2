@@ -285,9 +285,19 @@ def compute_vocal_sync_summary(
     tempo_bpm: float,
     track_index: int,
     grid_beats: float,
+    min_rest: float | None = None,
+    onset_limit: int | None = None,
+    rest_limit: int | None = None,
 ) -> dict[str, Any] | None:
     if grid_beats <= 0:
         grid_beats = DUV_GRID_DEFAULT
+    min_rest_value = float(min_rest) if min_rest is not None else grid_beats
+    if min_rest_value <= 0:
+        min_rest_value = grid_beats
+    onset_cap = int(onset_limit) if onset_limit is not None else VOCAL_ONSET_LIMIT
+    rest_cap = int(rest_limit) if rest_limit is not None else VOCAL_REST_LIMIT
+    onset_cap = max(1, onset_cap)
+    rest_cap = max(1, rest_cap)
     sync_module = cast(Any, vocal_sync)
     try:
         onsets = cast(
@@ -311,7 +321,7 @@ def compute_vocal_sync_summary(
 
     quantized = sync_module.quantize_times(onsets, grid=grid_beats, dedup=True)
     quantized = [_safe_round(val, 4) for val in quantized]
-    rests_raw = sync_module.extract_long_rests(onsets, min_rest=grid_beats)
+    rests_raw = sync_module.extract_long_rests(onsets, min_rest=min_rest_value)
     rest_entries: list[dict[str, float]] = []
     for start, duration in rests_raw:
         q_start = sync_module.quantize_times([start], grid=grid_beats)[0]
@@ -326,10 +336,13 @@ def compute_vocal_sync_summary(
         "track_index": int(track_index),
         "tempo_bpm": _safe_round(tempo_bpm, 3),
         "grid_beats": _safe_round(grid_beats, 4),
+        "min_rest_beats": _safe_round(min_rest_value, 4),
+        "onset_cap": int(onset_cap),
+        "rest_cap": int(rest_cap),
         "onset_count": int(len(onsets)),
         "raw_preview": [_safe_round(val, 4) for val in onsets[:16]],
-        "quantized_onsets": quantized[:VOCAL_ONSET_LIMIT],
-        "rests": rest_entries[:VOCAL_REST_LIMIT],
+        "quantized_onsets": quantized[: min(onset_cap, len(quantized))],
+        "rests": rest_entries[: min(rest_cap, len(rest_entries))],
     }
 
 
@@ -343,6 +356,288 @@ class MidiFeatures:
     avg_velocity: float
     total_notes: int
     duration_seconds: float
+
+
+@dataclass(slots=True)
+class VocalConfigEntry:
+    track: int | None = None
+    grid: float | None = None
+    min_rest: float | None = None
+    onset_limit: int | None = None
+    rest_limit: int | None = None
+    enabled: bool | None = None
+
+
+@dataclass(slots=True)
+class VocalConfig:
+    defaults: VocalConfigEntry
+    overrides: dict[str, VocalConfigEntry]
+
+
+@dataclass(slots=True)
+class VocalRuntimeOptions:
+    track: int | None
+    track_supplied: bool
+    grid: float
+    grid_supplied: bool
+    config: VocalConfig | None
+
+
+@dataclass(slots=True)
+class VocalSettings:
+    track_index: int | None
+    grid: float
+    min_rest: float
+    onset_limit: int
+    rest_limit: int
+    track_source: str
+    grid_source: str
+
+
+def _parse_optional_int(
+    value: Any,
+    *,
+    context: str,
+    name: str,
+    min_value: int | None = None,
+) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{context}.{name}: expected integer, got boolean")
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{context}.{name}: expected integer") from exc
+    if min_value is not None and result < min_value:
+        raise ValueError(
+            f"{context}.{name}: value must be >= {min_value}, got {result}",
+        )
+    return result
+
+
+def _parse_optional_grid_like(
+    value: Any,
+    *,
+    context: str,
+    name: str,
+) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = _parse_grid_arg(value)
+    except ValueError as exc:
+        raise ValueError(f"{context}.{name}: {exc}") from exc
+    return parsed
+
+
+def _parse_vocal_config_entry(
+    data: Any,
+    *,
+    context: str,
+) -> VocalConfigEntry:
+    if data is None:
+        return VocalConfigEntry()
+    if not isinstance(data, Mapping):
+        actual = type(data).__name__
+        raise ValueError(f"{context}: expected mapping, got {actual}")
+
+    mapping = cast(Mapping[str, Any], data)
+
+    track = _parse_optional_int(
+        mapping.get("track"),
+        context=context,
+        name="track",
+        min_value=0,
+    )
+    grid = _parse_optional_grid_like(
+        mapping.get("grid"),
+        context=context,
+        name="grid",
+    )
+    min_rest = _parse_optional_grid_like(
+        mapping.get("min_rest"),
+        context=context,
+        name="min_rest",
+    )
+    onset_limit = _parse_optional_int(
+        mapping.get("onset_limit"),
+        context=context,
+        name="onset_limit",
+        min_value=1,
+    )
+    rest_limit = _parse_optional_int(
+        mapping.get("rest_limit"),
+        context=context,
+        name="rest_limit",
+        min_value=1,
+    )
+    enabled_raw = mapping.get("enabled")
+    if enabled_raw is not None and not isinstance(enabled_raw, bool):
+        actual = type(enabled_raw).__name__
+        raise ValueError(f"{context}.enabled: expected boolean, got {actual}")
+
+    return VocalConfigEntry(
+        track=track,
+        grid=grid,
+        min_rest=min_rest,
+        onset_limit=onset_limit,
+        rest_limit=rest_limit,
+        enabled=enabled_raw,
+    )
+
+
+def load_vocal_config(path: Path) -> VocalConfig:
+    if not path.exists():
+        raise FileNotFoundError(f"vocal config not found: {path}")
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:  # pragma: no cover - pass through
+        raise OSError(f"failed to read vocal config: {path}") from exc
+
+    try:
+        if path.suffix.lower() in {".yaml", ".yml"}:
+            parsed = yaml.safe_load(text)
+        else:
+            parsed = json.loads(text)
+    except Exception as exc:  # pragma: no cover - defensive parse guard
+        raise ValueError(
+            f"failed to parse vocal config {path}: {exc}",
+        ) from exc
+
+    if parsed is None:
+        raw_map: dict[str, Any] = {}
+    elif isinstance(parsed, Mapping):
+        raw_map = dict(cast(Mapping[str, Any], parsed))
+    else:
+        actual = type(parsed).__name__
+        raise ValueError(
+            f"vocal config must be a mapping at top level, got {actual}",
+        )
+
+    defaults = _parse_vocal_config_entry(
+        raw_map.get("defaults"),
+        context="defaults",
+    )
+
+    overrides_source: Any = (
+        raw_map.get("files") or raw_map.get("entries") or raw_map.get("overrides") or {}
+    )
+    if not isinstance(overrides_source, Mapping):
+        actual_overrides = type(overrides_source).__name__
+        raise ValueError(
+            "vocal config overrides must be a mapping, " f"got {actual_overrides}",
+        )
+    overrides_raw = dict(cast(Mapping[str, Any], overrides_source))
+
+    overrides: dict[str, VocalConfigEntry] = {}
+    for key, value in overrides_raw.items():
+        overrides[str(key)] = _parse_vocal_config_entry(
+            cast(Mapping[str, Any] | None, value),
+            context=f"files[{key}]",
+        )
+
+    return VocalConfig(defaults=defaults, overrides=overrides)
+
+
+def _lookup_vocal_override(
+    config: VocalConfig,
+    key: str,
+    feat_path: Path,
+) -> VocalConfigEntry | None:
+    candidates = [key]
+    name = feat_path.name
+    if name not in candidates:
+        candidates.append(name)
+    as_posix = feat_path.as_posix()
+    if as_posix not in candidates:
+        candidates.append(as_posix)
+    absolute = str(feat_path.resolve())
+    if absolute not in candidates:
+        candidates.append(absolute)
+
+    for candidate in candidates:
+        entry = config.overrides.get(candidate)
+        if entry is not None:
+            return entry
+    return None
+
+
+def _resolve_vocal_settings(
+    *,
+    options: VocalRuntimeOptions,
+    key: str,
+    feat_path: Path,
+) -> VocalSettings:
+    defaults = options.config.defaults if options.config else VocalConfigEntry()
+    override = _lookup_vocal_override(options.config, key, feat_path) if options.config else None
+
+    track = defaults.track
+    track_source = "config:defaults" if track is not None else "unspecified"
+
+    if options.track_supplied:
+        track = options.track
+        track_source = "cli"
+
+    if override and override.track is not None:
+        track = override.track
+        track_source = "config:override"
+
+    if override and override.enabled is False:
+        track = None
+        track_source = "config:override-disabled"
+    elif override and override.enabled is True and track is None:
+        track = (
+            override.track
+            if override.track is not None
+            else options.track if options.track_supplied else defaults.track
+        )
+        track_source = "config:override"
+
+    grid = options.grid
+    grid_source = "cli"
+    if defaults.grid is not None and not options.grid_supplied:
+        grid = defaults.grid
+        grid_source = "config:defaults"
+    if override and override.grid is not None:
+        grid = override.grid
+        grid_source = "config:override"
+
+    if grid <= 0:
+        grid = DUV_GRID_DEFAULT
+
+    min_rest = (
+        override.min_rest if override and override.min_rest is not None else defaults.min_rest
+    )
+    if min_rest is None or min_rest <= 0:
+        min_rest = grid
+
+    onset_limit = (
+        override.onset_limit
+        if override and override.onset_limit is not None
+        else defaults.onset_limit
+    )
+    if onset_limit is None or onset_limit <= 0:
+        onset_limit = VOCAL_ONSET_LIMIT
+
+    rest_limit = (
+        override.rest_limit if override and override.rest_limit is not None else defaults.rest_limit
+    )
+    if rest_limit is None or rest_limit <= 0:
+        rest_limit = VOCAL_REST_LIMIT
+
+    track_idx = int(track) if track is not None else None
+
+    return VocalSettings(
+        track_index=track_idx,
+        grid=float(grid),
+        min_rest=float(min_rest),
+        onset_limit=int(onset_limit),
+        rest_limit=int(rest_limit),
+        track_source=track_source,
+        grid_source=grid_source,
+    )
 
 
 class FamilyStats(TypedDict):
@@ -567,7 +862,9 @@ def cluster_intensity(
 
     if KMeans is None or all_features.shape[0] < n_clusters:
         LOGGER.warning(
-            "KMeans unavailable or feature count < clusters; " "falling back to velocity quantiles",
+            "KMeans unavailable or feature count < clusters; "
+            "falling back to velocity "
+            "quantiles",
         )
         velocities = all_features[:, 1].astype(np.float32, copy=False)
         if velocities.size == 0:
@@ -685,8 +982,7 @@ def analyse_dataset(
     base_path: Path | None,
     duv_grid: float,
     duv_preview: int,
-    vocal_track: int | None,
-    vocal_grid: float,
+    vocal_options: VocalRuntimeOptions,
 ) -> dict[str, dict[str, object]]:
     """Combine file features into metadata for export."""
 
@@ -804,14 +1100,41 @@ def analyse_dataset(
         )
         metadata["duv_summary"] = duv_summary
 
-        if vocal_track is not None:
+        settings = _resolve_vocal_settings(
+            options=vocal_options,
+            key=key,
+            feat_path=feat.path,
+        )
+        metadata["vocal_sync_settings"] = {
+            "track": settings.track_index,
+            "grid_beats": _safe_round(settings.grid, 4),
+            "min_rest_beats": _safe_round(settings.min_rest, 4),
+            "onset_cap": settings.onset_limit,
+            "rest_cap": settings.rest_limit,
+            "sources": {
+                "track": settings.track_source,
+                "grid": settings.grid_source,
+            },
+        }
+
+        if settings.track_index is not None:
             vocal_data = compute_vocal_sync_summary(
                 feat.pm,
                 tempo_bpm=bpm,
-                track_index=vocal_track,
-                grid_beats=vocal_grid,
+                track_index=settings.track_index,
+                grid_beats=settings.grid,
+                min_rest=settings.min_rest,
+                onset_limit=settings.onset_limit,
+                rest_limit=settings.rest_limit,
             )
             if vocal_data:
+                vocal_data.setdefault(
+                    "config_source",
+                    {
+                        "track": settings.track_source,
+                        "grid": settings.grid_source,
+                    },
+                )
                 metadata["vocal_sync"] = vocal_data
 
         results[key] = metadata
@@ -913,8 +1236,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--duv-grid",
-        default="1/16",
-        help="Quantisation grid (beats or fraction) for DUV summaries",
+        default=None,
+        help=("Quantisation grid (beats or fraction) for DUV summaries " "(default: 1/16)"),
     )
     parser.add_argument(
         "--duv-preview",
@@ -932,8 +1255,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--vocal-grid",
-        default="1/16",
-        help="Quantisation grid for vocal timing summaries",
+        default=None,
+        help=("Quantisation grid for vocal timing summaries " "(default: 1/16)"),
+    )
+    parser.add_argument(
+        "--vocal-config",
+        type=Path,
+        help=("YAML/JSON file providing VocalSynchro defaults and " "per-file overrides"),
     )
     parser.add_argument(
         "--log-level",
@@ -960,13 +1288,31 @@ def main(argv: Sequence[str] | None = None) -> None:
         duv_grid = _parse_grid_arg(args.duv_grid)
     except ValueError as exc:
         raise SystemExit(f"--duv-grid: {exc}") from exc
+    vocal_grid_raw = args.vocal_grid
     try:
-        vocal_grid = _parse_grid_arg(args.vocal_grid)
+        vocal_grid = _parse_grid_arg(vocal_grid_raw)
     except ValueError as exc:
         raise SystemExit(f"--vocal-grid: {exc}") from exc
 
     duv_preview = max(0, int(args.duv_preview))
     vocal_track = args.vocal_track
+    vocal_track_supplied = args.vocal_track is not None
+    vocal_grid_supplied = vocal_grid_raw is not None
+
+    vocal_config: VocalConfig | None = None
+    if args.vocal_config is not None:
+        try:
+            vocal_config = load_vocal_config(args.vocal_config)
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            raise SystemExit(f"--vocal-config: {exc}") from exc
+
+    vocal_options = VocalRuntimeOptions(
+        track=vocal_track,
+        track_supplied=vocal_track_supplied,
+        grid=vocal_grid,
+        grid_supplied=vocal_grid_supplied,
+        config=vocal_config,
+    )
 
     features = load_features(files)
     metadata = analyse_dataset(
@@ -975,8 +1321,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         base_path=args.relative_to,
         duv_grid=duv_grid,
         duv_preview=duv_preview,
-        vocal_track=vocal_track,
-        vocal_grid=vocal_grid,
+        vocal_options=vocal_options,
     )
     if not metadata:
         raise SystemExit("No analyzable MIDI files found")

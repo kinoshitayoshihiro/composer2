@@ -16,7 +16,19 @@
    source .venv311/bin/activate
    ```
 
-2. スクリプトを実行:
+2. 安定した回線がない場合は、まず `--download-to` でアーカイブをローカルに段階的に保存します。途中で中断してもファイルが残るため、再実行すれば自動で続きを取得します。
+
+  ```bash
+  python scripts/download_slakh_midi.py \
+    --download-to downloads/slakh2100_flac_redux.tar.gz \
+    --keep-metadata --quiet
+  ```
+
+  `downloads/` 配下に 105 GB のアーカイブが完成したら、同じコマンドをもう一度実行し（即時に復帰します）、続けて抽出処理が走ります。
+
+  > 既存のダウンロードマネージャーを使う場合は、`aria2c --continue=true --split=16 --max-connection-per-server=16 URL` のように再開可能なモードで `.tar.gz` を取得し、完成後に `--archive` を指定してください。
+
+3. スクリプトを実行:
 
    ```bash
    python scripts/download_slakh_midi.py --keep-metadata
@@ -26,13 +38,13 @@
    - 出力先: `data/slakh2100_midi`
    - `--keep-metadata` を付けると、各トラックの `metadata.yaml` も保存します。
 
-3. 途中で中断した場合は `--resume` を付けて再実行すると、既存ファイルを飛ばしながら再開できます。
+4. 途中で中断した場合は `--resume` を付けて再実行すると、既存ファイルを飛ばしながら再開できます。
 
    ```bash
    python scripts/download_slakh_midi.py --keep-metadata --resume
    ```
 
-4. 既存のローカルアーカイブを使いたい場合は `--archive` でパスを渡せます:
+5. 既存のローカルアーカイブを使いたい場合は `--archive` でパスを渡せます:
 
    ```bash
    python scripts/download_slakh_midi.py \

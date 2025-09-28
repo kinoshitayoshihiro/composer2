@@ -1,0 +1,7 @@
+INFO:root:device mps amp=False precision=medium
+INFO:root:train rows kept 35067 removed 0 | val kept 2086 removed 0
+INFO:root:duv embed v=8 d=16
+INFO:root:class balance {'pos': 4222, 'neg': 30845}
+INFO:root:tag instrument counts {'acoustic grand piano': 10183, 'piano': 1264, 'piano elec.': 492, 'el.piano': 7659, 'bright acoustic piano': 6944, 'electric grand piano': 751, 'electric piano 2': 2154, 'e.piano 2': 565, 'keyboard 1': 704, 'ac.piano': 111, 'acousgrpiano': 694, 'electric piano 1': 523, 'honky-tonk piano': 1305, 'e.piano': 386, 'a.piano 2': 1312, 'keyboard 2': 20}
+INFO:root:epoch 1 train_loss 0.6931 val_f1 0.212 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 1.00e-03 th 0.20 pos_rate 1.000 mean_p 0.500 time 8.8s
+INFO:root:epoch=1 train_loss=0.693146 val_loss=0.693147 | train_loss 0.693146 val_loss 0.693147

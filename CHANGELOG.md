@@ -31,6 +31,7 @@
 - Section presets and vocal-aware guidance for Sparkle converter
 - Debug markdown output for per-bar tracing
 - Harmony-aware phrase weighting, section pool weight overrides, smart style fills with gaps, and vocal ducking control
+- Resumable Slakh2100 downloader staging via `--download-to`, download retry options, and refreshed MIDI extraction docs
 ### Fixed
 - Harmonize DUV bucket column names and apply transformer nhead/layer/dropout
   flags while avoiding invalid LSTM kwargs

@@ -83,6 +83,8 @@ DUV_OPTIONAL_REPORT = {
     "onset",
     "q_onset",
     "q_duration",
+    "section",
+    "mood",
 }
 DUV_OPTIONAL_UNIVERSE = OPTIONAL_COLUMNS | OPTIONAL_FLOAT32_COLUMNS | OPTIONAL_INT32_COLUMNS
 
@@ -140,7 +142,13 @@ def _bucket_duration(duration_beats: float, grid_beats: float) -> int:
     return max(0, min(63, steps))
 
 
-def _collect_note_records(pm: Any, grid_beats: float) -> list[dict[str, Any]]:
+def _collect_note_records(
+    pm: Any,
+    grid_beats: float,
+    *,
+    section_map: Mapping[int, str] | None = None,
+    mood_label: str | None = None,
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for track_idx, inst in enumerate(pm.instruments):
         if not inst.notes:
@@ -176,6 +184,12 @@ def _collect_note_records(pm: Any, grid_beats: float) -> list[dict[str, Any]]:
                 "vel_bucket": int(vel_bucket),
                 "dur_bucket": int(dur_bucket),
             }
+            if section_map is not None:
+                section_name = section_map.get(bar_idx)
+                if section_name is not None:
+                    record["section"] = str(section_name)
+            if mood_label is not None:
+                record["mood"] = str(mood_label)
             records.append(record)
     return records
 
@@ -185,8 +199,15 @@ def compute_duv_summary(
     *,
     grid_beats: float = DUV_GRID_DEFAULT,
     preview_limit: int = 12,
+    section_map: Mapping[int, str] | None = None,
+    mood_label: str | None = None,
 ) -> dict[str, Any]:
-    note_records = _collect_note_records(pm, grid_beats)
+    note_records = _collect_note_records(
+        pm,
+        grid_beats,
+        section_map=section_map,
+        mood_label=mood_label,
+    )
     summary: dict[str, Any] = {
         "duv_ready": bool(note_records),
         "grid_beats": _safe_round(grid_beats, 4),
@@ -215,19 +236,22 @@ def compute_duv_summary(
         dur_buckets.update([int(rec["dur_bucket"])])
 
     unique_bars = sorted(set(bars))
+    velocity_mean = _safe_round(float(np.mean(velocities)), 3)
+    velocity_median = _safe_round(float(np.median(velocities)), 3)
+    velocity_std = _safe_round(float(np.std(velocities)), 3)
+    duration_mean = _safe_round(float(np.mean(durations)), 3)
+    duration_median = _safe_round(float(np.median(durations)), 3)
+    duration_std = _safe_round(float(np.std(durations)), 3)
     summary.update(
         {
             "bars_covered": int(len(unique_bars)),
             "max_bar_index": int(unique_bars[-1]) if unique_bars else -1,
-            "velocity_mean": _safe_round(float(np.mean(velocities)), 3),
-            "velocity_median": _safe_round(float(np.median(velocities)), 3),
-            "velocity_std": _safe_round(float(np.std(velocities)), 3),
-            "duration_mean_beats": _safe_round(float(np.mean(durations)), 3),
-            "duration_median_beats": _safe_round(
-                float(np.median(durations)),
-                3,
-            ),
-            "duration_std_beats": _safe_round(float(np.std(durations)), 3),
+            "velocity_mean": velocity_mean,
+            "velocity_median": velocity_median,
+            "velocity_std": velocity_std,
+            "duration_mean_beats": duration_mean,
+            "duration_median_beats": duration_median,
+            "duration_std_beats": duration_std,
             "pitch_class_counts": {int(k): int(v) for k, v in pitch_classes.items()},
             "velocity_bucket_counts": {int(k): int(v) for k, v in vel_buckets.items()},
             "duration_bucket_counts": {int(k): int(v) for k, v in dur_buckets.items()},
@@ -274,7 +298,7 @@ def compute_vocal_sync_summary(
                 track_idx=track_index,
             ),
         )
-    except Exception as exc:  # pragma: no cover - defensive
+    except (RuntimeError, ValueError, AttributeError) as exc:
         LOGGER.debug(
             "Vocal timing extraction failed for track %d: %s",
             track_index,
@@ -549,9 +573,10 @@ def cluster_intensity(
         if velocities.size == 0:
             return np.zeros(0, dtype=np.int32), {}
         if velocities.size > 2:
-            q_low, q_mid = np.quantile(velocities, [0.33, 0.66]).astype(np.float32)
-            q_low = float(q_low)
-            q_mid = float(q_mid)
+            quantiles = np.quantile(velocities, [0.33, 0.66])
+            quantiles = quantiles.astype(np.float32, copy=False)
+            q_low = float(quantiles[0])
+            q_mid = float(quantiles[1])
         else:
             median = float(np.median(velocities))
             q_low = median
@@ -768,10 +793,14 @@ def analyse_dataset(
             "instrumentation": instr_summary,
         }
 
+        section_map = dict(enumerate(section_seq))
+
         duv_summary = compute_duv_summary(
             feat.pm,
             grid_beats=duv_grid,
             preview_limit=duv_preview,
+            section_map=section_map,
+            mood_label=mood,
         )
         metadata["duv_summary"] = duv_summary
 

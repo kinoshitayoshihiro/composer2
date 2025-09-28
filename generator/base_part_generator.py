@@ -78,9 +78,7 @@ def apply_controls(inst, cfg: ControlConfig) -> None:
         end = float(inst.notes[-1].end)
         if cfg.cc11_profile == "flat":
             inst.control_changes.append(
-                pretty_midi.ControlChange(
-                    number=11, value=cfg.cc11_sustain_level, time=start
-                )
+                pretty_midi.ControlChange(number=11, value=cfg.cc11_sustain_level, time=start)
             )
         else:  # "auto" or "adsr"
             atk = start + cfg.cc11_attack_ms / 1000.0
@@ -88,33 +86,23 @@ def apply_controls(inst, cfg: ControlConfig) -> None:
             inst.control_changes.extend(
                 [
                     pretty_midi.ControlChange(number=11, value=0, time=start),
-                    pretty_midi.ControlChange(
-                        number=11, value=cfg.cc11_sustain_level, time=atk
-                    ),
+                    pretty_midi.ControlChange(number=11, value=cfg.cc11_sustain_level, time=atk),
                     pretty_midi.ControlChange(number=11, value=0, time=rel),
                 ]
             )
         if not any(
-            cc.number == 11 and cc.value == 0 and cc.time >= end
-            for cc in inst.control_changes
+            cc.number == 11 and cc.value == 0 and cc.time >= end for cc in inst.control_changes
         ):
-            inst.control_changes.append(
-                pretty_midi.ControlChange(number=11, value=0, time=end)
-            )
+            inst.control_changes.append(pretty_midi.ControlChange(number=11, value=0, time=end))
     if cfg.enable_cc64 and inst.notes:
         start = float(inst.notes[0].start)
         end = float(inst.notes[-1].end)
         if not any(cc.number == 64 and cc.value >= 64 for cc in inst.control_changes):
-            inst.control_changes.append(
-                pretty_midi.ControlChange(number=64, value=127, time=start)
-            )
+            inst.control_changes.append(pretty_midi.ControlChange(number=64, value=127, time=start))
         if not any(
-            cc.number == 64 and cc.value == 0 and cc.time >= end
-            for cc in inst.control_changes
+            cc.number == 64 and cc.value == 0 and cc.time >= end for cc in inst.control_changes
         ):
-            inst.control_changes.append(
-                pretty_midi.ControlChange(number=64, value=0, time=end)
-            )
+            inst.control_changes.append(pretty_midi.ControlChange(number=64, value=0, time=end))
     if cfg.enable_bend and cfg.vibrato_rate_hz and inst.notes:
         base = float(inst.notes[0].start)
         end = float(inst.notes[-1].end)
@@ -207,9 +195,7 @@ class BasePartGenerator(ABC):
             else:
                 parts = str(key).replace("_", " ").replace("-", " ").split()
                 tonic = parts[0] if parts else global_key_signature_tonic
-                mode = (
-                    parts[1] if len(parts) > 1 else global_key_signature_mode or "major"
-                )
+                mode = parts[1] if len(parts) > 1 else global_key_signature_mode or "major"
             self.global_key_signature_tonic = tonic
             self.global_key_signature_mode = mode
         else:
@@ -274,21 +260,15 @@ class BasePartGenerator(ABC):
 
         avg_vel = statistics.mean(n.volume.velocity or 64 for n in notes)
         shaper = ToneShaper()
-        preset = shaper.choose_preset(
-            amp_hint=None, intensity=intensity, avg_velocity=avg_vel
-        )
-        tone_events = shaper.to_cc_events(
-            amp_name=preset, intensity=intensity, as_dict=False
-        )
+        preset = shaper.choose_preset(amp_hint=None, intensity=intensity, avg_velocity=avg_vel)
+        tone_events = shaper.to_cc_events(amp_name=preset, intensity=intensity, as_dict=False)
         existing = [
             (e["time"], e["cc"], e["val"]) if isinstance(e, dict) else e
             for e in getattr(part, "extra_cc", [])
         ]
         part.extra_cc = merge_cc_events(set(existing), set(tone_events))
 
-    def _apply_effect_envelope(
-        self, part: stream.Part, envelope_map: dict | None
-    ) -> None:
+    def _apply_effect_envelope(self, part: stream.Part, envelope_map: dict | None) -> None:
         """Helper to apply effect automation envelopes."""
         if not envelope_map:
             return
@@ -380,9 +360,7 @@ class BasePartGenerator(ABC):
         """
         model = getattr(self, "duration_model", None)
         if model is None:
-            self.logger.debug(
-                "No duration model supplied; skipping duration adjustment"
-            )
+            self.logger.debug("No duration model supplied; skipping duration adjustment")
             return
         try:
             import numpy as np
@@ -454,12 +432,21 @@ class BasePartGenerator(ABC):
             a_end = float(a.offset + a.quarterLength)
             b_start = float(b.offset)
             gap = b_start - a_end
-            if 0 < gap < thresh:
-                on = a_end
-                off = max(a_end, b_start - 1e-3)
-                if off - on >= min_dwell:
-                    events.append((on, 64, 127))
-                    events.append((off, 64, 0))
+            if gap >= thresh:
+                continue
+
+            on = a_end
+            # Encourage a short sustained bridge even for legato overlaps.
+            dwell_target = max(min_dwell, min(thresh, max(gap, 0.0)))
+            off = on + dwell_target
+
+            # Avoid excessive overlap with the upcoming note while keeping a minimum dwell.
+            off = min(off, b_start + min_dwell)
+            if off <= on:
+                off = on + min_dwell
+
+            events.append((on, 64, 127))
+            events.append((off, 64, 0))
         out: list[tuple[float, int, int]] = []
         last_val: int | None = None
         for t, cc, v in sorted(events):
@@ -503,9 +490,7 @@ class BasePartGenerator(ABC):
 
         section_label = section_data.get("section_name", "UnknownSection")
         if overrides_root:
-            self.overrides = get_part_override(
-                overrides_root, section_label, self.part_name
-            )
+            self.overrides = get_part_override(overrides_root, section_label, self.part_name)
         else:
             self.overrides = None
 
@@ -536,16 +521,12 @@ class BasePartGenerator(ABC):
             f"Rendering part for section: '{section_label}' with overrides: {overrides_dump}"
         )
         try:
-            parts = self._render_part(
-                section_data, next_section_data, vocal_metrics=vocal_metrics
-            )
+            parts = self._render_part(section_data, next_section_data, vocal_metrics=vocal_metrics)
         except TypeError:
             parts = self._render_part(section_data, next_section_data)
 
         if not isinstance(parts, stream.Part | dict):
-            self.logger.error(
-                f"_render_part for {self.part_name} did not return a valid part."
-            )
+            self.logger.error(f"_render_part for {self.part_name} did not return a valid part.")
             return stream.Part(id=self.part_name)
 
         def process_one(p: stream.Part) -> stream.Part:
@@ -567,9 +548,7 @@ class BasePartGenerator(ABC):
                 try:
                     template = humanize_params.get("template_name", "default_subtle")
                     custom = humanize_params.get("custom_params", {})
-                    p = apply_humanization_to_part(
-                        p, template_name=template, custom_params=custom
-                    )
+                    p = apply_humanization_to_part(p, template_name=template, custom_params=custom)
                     self.logger.info(
                         "Applied final touch humanization (template: %s) to %s",
                         template,
@@ -583,9 +562,7 @@ class BasePartGenerator(ABC):
             return p
 
         intensity = section_data.get("musical_intent", {}).get("intensity", "medium")
-        scale = {"low": 0.9, "medium": 1.0, "high": 1.1, "very_high": 1.2}.get(
-            intensity, 1.0
-        )
+        scale = {"low": 0.9, "medium": 1.0, "high": 1.1, "very_high": 1.2}.get(intensity, 1.0)
 
         def final_process(
             p: stream.Part,
@@ -604,9 +581,7 @@ class BasePartGenerator(ABC):
                 apply_offset_profile(part, profile)
             if ratio is not None:  # Swing が指定されていれば適用
                 apply_swing(part, ratio, subdiv=self.swing_subdiv)
-            env_map = section_data.get("fx_envelope") or section_data.get(
-                "effect_envelope"
-            )
+            env_map = section_data.get("fx_envelope") or section_data.get("effect_envelope")
             self._apply_effect_envelope(part, env_map)
             post = getattr(self, "_post_process_generated_part", None)
             if callable(post):
@@ -653,11 +628,7 @@ class BasePartGenerator(ABC):
                     (
                         swing_rh
                         if "rh" in k.lower() and swing_rh is not None
-                        else (
-                            swing_lh
-                            if "lh" in k.lower() and swing_lh is not None
-                            else swing
-                        )
+                        else (swing_lh if "lh" in k.lower() and swing_lh is not None else swing)
                     ),
                     (
                         offset_profile_rh

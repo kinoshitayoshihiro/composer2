@@ -1,5 +1,6 @@
 import math
 import subprocess
+import sys
 
 import pytest
 
@@ -198,7 +199,7 @@ def test_bend_integer_range_sets_lsb_zero():
 
 def test_cli_help_flags():
     result = subprocess.run(
-        ["python", "-m", "utilities.audio_to_midi_batch", "-h"],
+        [sys.executable, "-m", "utilities.audio_to_midi_batch", "-h"],
         capture_output=True,
         text=True,
         check=True,
@@ -241,9 +242,7 @@ def test_tempo_lock_log_summary(monkeypatch, tmp_path, caplog):
         tempo_lock="anchor",
         tempo_anchor_pattern="drums",
     )
-    summary = [r.message for r in caplog.records if r.message.startswith("Tempo-lock")][
-        -1
-    ]
+    summary = [r.message for r in caplog.records if r.message.startswith("Tempo-lock")][-1]
     assert "candidates=2" in summary and "fold" not in summary
 
     caplog.clear()
@@ -256,7 +255,5 @@ def test_tempo_lock_log_summary(monkeypatch, tmp_path, caplog):
         tempo_anchor_pattern="drums",
         tempo_fold_halves=True,
     )
-    summary = [r.message for r in caplog.records if r.message.startswith("Tempo-lock")][
-        -1
-    ]
+    summary = [r.message for r in caplog.records if r.message.startswith("Tempo-lock")][-1]
     assert "candidates=2" in summary and "fold" in summary

@@ -1,6 +1,8 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -12,7 +14,7 @@ def test_empty_corpus_exits(tmp_path: Path) -> None:
     valid = tmp_path / "valid"
     train.mkdir()
     valid.mkdir()
-    sample = {
+    sample: dict[str, Any] = {
         "pitch": 40,
         "velocity": 80,
         "duration": 1,
@@ -28,7 +30,7 @@ def test_empty_corpus_exits(tmp_path: Path) -> None:
     out_valid = tmp_path / "valid.csv"
     proc = subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "tools.corpus_to_phrase_csv",
             "--from-corpus",

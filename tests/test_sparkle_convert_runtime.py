@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import yaml
 from pathlib import Path
+from typing import Any, Dict, Optional, Tuple, no_type_check
 
 try:  # pragma: no cover - use stub if pretty_midi missing
     import pretty_midi  # type: ignore
@@ -9,9 +12,20 @@ except Exception:  # pragma: no cover
 from ujam import sparkle_convert as sc
 
 
-def _pm(length: float = 4.0, bar_dur: float = 2.0):
+@no_type_check
+def _pm(
+    length: float = 4.0,
+    bar_dur: float = 2.0,
+    meter: Optional[Tuple[int, int]] = None,
+):
+    @no_type_check
     class Dummy:
-        def __init__(self, length: float, bar_dur: float) -> None:
+        def __init__(
+            self,
+            length: float,
+            bar_dur: float,
+            meter: Optional[Tuple[int, int]],
+        ) -> None:
             self._length = length
             self._bar = bar_dur
             inst = pretty_midi.Instrument(0)
@@ -19,6 +33,12 @@ def _pm(length: float = 4.0, bar_dur: float = 2.0):
             inst.is_drum = False
             self.instruments = [inst]
             self.time_signature_changes = []
+            if meter and hasattr(pretty_midi, "TimeSignature"):
+                num, den = meter
+                try:
+                    self.time_signature_changes.append(pretty_midi.TimeSignature(num, den, 0.0))
+                except Exception:
+                    pass
 
         def get_beats(self):
             step = 0.5
@@ -38,20 +58,21 @@ def _pm(length: float = 4.0, bar_dur: float = 2.0):
         def write(self, path: str) -> None:  # pragma: no cover
             Path(path).write_bytes(b"")
 
-    return Dummy(length, bar_dur)
+    return Dummy(length, bar_dur, meter)
 
 
+@no_type_check
 def _phrase_inst(pm: pretty_midi.PrettyMIDI) -> pretty_midi.Instrument:
     return next(i for i in pm.instruments if i.name == sc.PHRASE_INST_NAME)
 
 
 def test_12_8_swing_pulses_monotonic() -> None:
-    pm = _pm(6.0, 3.0)
+    pm = _pm(6.0, 3.0, meter=(12, 8))
     chords = [sc.ChordSpan(0, 3, 0, "maj"), sc.ChordSpan(3, 6, 0, "maj")]
     mapping = yaml.safe_load(sc.generate_mapping_template(False))
     mapping["cycle_phrase_notes"] = [36]
     for sw in (0.0, 1 / 12, 2 / 12, 4 / 12):
-        stats: dict = {"_legacy_bar_pulses_grid": True}
+        stats: Dict[str, Any] = {"_legacy_bar_pulses_grid": True}
         out = sc.build_sparkle_midi(
             pm,
             chords,
@@ -121,4 +142,3 @@ def test_cross_bar_merge() -> None:
         0.5,
     )
     assert _phrase_inst(out).notes
-

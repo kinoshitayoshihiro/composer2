@@ -1,5 +1,6 @@
 import csv
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,9 +15,7 @@ def make_midi(path: Path, pitches: list[int], starts: list[float] | None = None)
     t = 0.0
     for i, p in enumerate(pitches):
         start = starts[i] if starts else t
-        inst.notes.append(
-            pretty_midi.Note(velocity=100, pitch=p, start=start, end=start + 0.25)
-        )
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=p, start=start, end=start + 0.25))
         t = start + 0.25
     pm.instruments.append(inst)
     pm.write(str(path))
@@ -33,7 +32,7 @@ def test_corpus_to_csv(tmp_path: Path) -> None:
     (tmp_path / "tags.yaml").write_text(yaml.safe_dump(tags))
     subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "tools.corpus_to_phrase_csv",
             "--in",
@@ -91,7 +90,7 @@ def test_from_corpus(tmp_path: Path) -> None:
     out_valid = tmp_path / "valid.csv"
     subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "tools.corpus_to_phrase_csv",
             "--from-corpus",
@@ -134,7 +133,7 @@ def test_unknown_instrument_fallback(tmp_path: Path) -> None:
     out_valid = tmp_path / "valid.csv"
     subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "tools.corpus_to_phrase_csv",
             "--from-corpus",
@@ -177,7 +176,7 @@ def test_dry_run(tmp_path: Path) -> None:
     out_train = tmp_path / "train.csv"
     subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "tools.corpus_to_phrase_csv",
             "--from-corpus",
@@ -217,7 +216,7 @@ def test_or_and_filters(tmp_path: Path) -> None:
     out_valid = tmp_path / "valid.csv"
     subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "tools.corpus_to_phrase_csv",
             "--from-corpus",
@@ -237,7 +236,7 @@ def test_or_and_filters(tmp_path: Path) -> None:
     assert out_train.read_text().strip().splitlines()[1]
     res = subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "tools.corpus_to_phrase_csv",
             "--from-corpus",
@@ -280,7 +279,7 @@ def test_min_notes_threshold(tmp_path: Path) -> None:
     (valid_dir / "samples.jsonl").write_text(js)
     res = subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "tools.corpus_to_phrase_csv",
             "--from-corpus",
@@ -319,7 +318,7 @@ def test_dry_run_stats_json(tmp_path: Path) -> None:
     stats_path = tmp_path / "stats.json"
     res = subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "tools.corpus_to_phrase_csv",
             "--from-corpus",

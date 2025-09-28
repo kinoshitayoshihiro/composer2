@@ -50,8 +50,22 @@ def _rpn_time(
 def _rpn_block_times(base: float, length: int, *, eps: float = 1e-12) -> list[float]:
     """Return monotonically increasing timestamps ending at ``base``."""
 
-    offsets = range(-(length - 1), 1)
-    return [max(0.0, base + offset * eps) for offset in offsets]
+    base = float(max(0.0, base))
+    if length <= 1:
+        return [base]
+
+    local_eps = float(eps)
+    if base <= eps * (length - 1):
+        local_eps = min(eps, max(base / (length + 1e-6), eps * 1e-3))
+
+    times = [base - local_eps * (length - 1 - idx) for idx in range(length)]
+    for i in range(1, len(times)):
+        if times[i] <= times[i - 1]:
+            times[i] = times[i - 1] + local_eps
+    for i in range(len(times)):
+        if times[i] > base:
+            times[i] = base
+    return times
 
 
 def ensure_instrument_for_channel(pm: pretty_midi.PrettyMIDI, ch: int) -> pretty_midi.Instrument:
@@ -121,8 +135,7 @@ def _dedup_rpn_blocks(
                 block_len = 4
             block_time = float(cc.time)
             same_time_cluster = all(
-                abs(float(ccs[i + offset].time) - block_time) <= 1e-6
-                for offset in range(block_len)
+                abs(float(ccs[i + offset].time) - block_time) <= 1e-6 for offset in range(block_len)
             )
             if block_time <= _INITIAL_RPN_WINDOW and same_time_cluster:
                 key = round(block_time, 6)
@@ -352,10 +365,7 @@ def apply_controls(
                     # Ensure non-negative strictly increasing times
                     if new_pb and new_pb[0].time < 0.0:
                         new_pb[0].time = 0.0
-                    if (
-                        len(new_pb) >= 2
-                        and new_pb[-1].time <= new_pb[0].time
-                    ):
+                    if len(new_pb) >= 2 and new_pb[-1].time <= new_pb[0].time:
                         tiny = max(time_eps, 4e-12)
                         new_pb[-1].time = new_pb[0].time + tiny
                     # Drop penultimate if it coincides with last at different pitch.
@@ -412,14 +422,10 @@ def apply_controls(
             and not getattr(inst, "_rpn_written", False)
         ):
             first_pb_time = (
-                min(float(pb.time) for pb in inst.pitch_bends)
-                if inst.pitch_bends
-                else None
+                min(float(pb.time) for pb in inst.pitch_bends) if inst.pitch_bends else None
             )
             non_rpn_cc_times = [
-                float(cc.time)
-                for cc in inst.control_changes
-                if int(cc.number) not in _RPN_NUMBERS
+                float(cc.time) for cc in inst.control_changes if int(cc.number) not in _RPN_NUMBERS
             ]
             first_cc_time = min(non_rpn_cc_times) if non_rpn_cc_times else None
             rpn_timestamp = _rpn_time(rpn_at, first_pb_time, first_cc_time)
@@ -467,12 +473,17 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
     eff_cap = max(0, int(cap))
 
     groups: list[dict[str, object]] = []
-    total = 0
+    total_non_rpn = 0
+    total_rpn = 0
+    preserved_rpn: dict[pretty_midi.Instrument, list[pretty_midi.ControlChange]] = {}
     for inst in pm.instruments:
+        rpn_ccs = [cc for cc in inst.control_changes if int(cc.number) in _RPN_NUMBERS]
+        preserved_rpn[inst] = rpn_ccs
+        total_rpn += len(rpn_ccs)
         notes = list(inst.notes)
         if notes:
             groups.append({"inst": inst, "kind": "note", "key": None, "events": notes})
-            total += len(notes)
+            total_non_rpn += len(notes)
         cc_map: dict[int, list[pretty_midi.ControlChange]] = {}
         for cc in inst.control_changes:
             if int(cc.number) in _RPN_NUMBERS:
@@ -480,14 +491,29 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             cc_map.setdefault(cc.number, []).append(cc)
         for number, changes in cc_map.items():
             groups.append({"inst": inst, "kind": "cc", "key": number, "events": list(changes)})
-            total += len(changes)
+            total_non_rpn += len(changes)
         bends = list(inst.pitch_bends)
         if bends:
             groups.append({"inst": inst, "kind": "bend", "key": None, "events": bends})
-            total += len(bends)
+            total_non_rpn += len(bends)
 
-    if total <= eff_cap:
+    budget = eff_cap - total_rpn
+    if budget < 0 and total_non_rpn > 0:
+        total_rpn = 0
+        budget = eff_cap
+        for inst in preserved_rpn:
+            preserved_rpn[inst] = []
+
+    if total_non_rpn + total_rpn <= eff_cap and not any(preserved_rpn.values()):
+        if total_non_rpn <= eff_cap:
+            return
+
+    budget = max(0, budget)
+
+    if total_non_rpn <= budget and budget >= 0 and not any(preserved_rpn.values()):
         return
+
+    total = total_non_rpn
 
     allocations: list[dict[str, object]] = []
     sum_targets = 0
@@ -500,7 +526,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             target = 0
         else:
             min_keep = 1 if n == 1 else min(2, n)
-            ideal = (n / total) * eff_cap
+            ideal = (n / total) * budget if total > 0 else 0.0
             base = int(math.floor(ideal))
             target = min(n, max(min_keep, base))
         allocations.append(
@@ -516,13 +542,9 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
         )
         sum_targets += target
 
-    if sum_targets > eff_cap:
-        while sum_targets > eff_cap:
-            reducible = [
-                alloc
-                for alloc in allocations
-                if int(alloc["target"]) > int(alloc["min"])
-            ]
+    if sum_targets > budget:
+        while sum_targets > budget:
+            reducible = [alloc for alloc in allocations if int(alloc["target"]) > int(alloc["min"])]
             if reducible:
                 reducible.sort(
                     key=lambda a: (
@@ -542,9 +564,9 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
 
         sum_targets = sum(int(a["target"]) for a in allocations)
 
-    remainder = eff_cap - sum_targets
+    remainder = budget - sum_targets
     if remainder > 0:
-        expandable = [a for a in allocations if int(a["target"]) < len(a["events"]) ]
+        expandable = [a for a in allocations if int(a["target"]) < len(a["events"])]
         while remainder > 0 and expandable:
             expandable.sort(
                 key=lambda a: (
@@ -579,7 +601,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             new_cc.setdefault(inst, {})[key] = kept
 
     for inst in pm.instruments:
-        preserved_rpn = [cc for cc in inst.control_changes if int(cc.number) in {100, 101, 6, 38}]
+        preserved = list(preserved_rpn.get(inst, []))
         if inst in new_notes:
             inst.notes = sorted(
                 new_notes[inst],
@@ -595,7 +617,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
                 new_pb[inst], key=lambda pb: (float(pb.time), int(getattr(pb, "pitch", 0)))
             )
         if inst in new_cc:
-            merged: list[pretty_midi.ControlChange] = list(preserved_rpn)
+            merged: list[pretty_midi.ControlChange] = list(preserved)
             for number, events in new_cc[inst].items():
                 deduped: list[pretty_midi.ControlChange] = []
                 seen: set[tuple[int, float, int]] = set()
@@ -609,7 +631,7 @@ def _enforce_total_cap(pm: pretty_midi.PrettyMIDI, cap: int) -> None:
             merged.sort(key=lambda c: (float(c.time), int(c.number), int(c.value)))
             inst.control_changes = merged
         else:
-            inst.control_changes = preserved_rpn
+            inst.control_changes = preserved
         _sort_events(inst)
 
 

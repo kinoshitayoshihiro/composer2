@@ -152,12 +152,15 @@ MAX_ITERS = 1024
 MIN_QPM = 60_000_000.0 / 0xFFFFFF + 1e-6
 MAX_QPM = 1000.0
 
+DEFAULT_STYLE_FILL_PITCH = 34
+
 # Set SPARKLE_DETERMINISTIC=1 to force deterministic RNG defaults for tests.
 # Opt-in keeps normal randomness intact while letting tests pin results.
 _SPARKLE_DETERMINISTIC = os.getenv("SPARKLE_DETERMINISTIC") == "1"
 
 
 # Helper utilities ---------------------------------------------------------
+
 
 def _beats_per_bar(num: int, den: int) -> float:
     """Return the theoretical bar length in beats for ``num/den``."""
@@ -367,7 +370,9 @@ def _resolve_pitch_token(tok: Any, mapping: Optional[Dict[str, Any]] = None) -> 
     return None
 
 
-def resolve_phrase_alias(name_or_int: Any, mapping: Optional[Dict[str, Any]] = None) -> Optional[int]:
+def resolve_phrase_alias(
+    name_or_int: Any, mapping: Optional[Dict[str, Any]] = None
+) -> Optional[int]:
     """Resolve phrase tokens from mapping pools or aliases to concrete MIDI pitches."""
 
     resolved = _resolve_pitch_token(name_or_int, mapping)
@@ -684,9 +689,11 @@ def _ensure_tempo_and_ticks(
                     ts_time = float(getattr(ts, "time", 0.0))
                 except Exception:
                     ts_time = 0.0
-                if abs(ts_time) <= EPS and getattr(ts, "numerator", num) == num and getattr(
-                    ts, "denominator", den
-                ) == den:
+                if (
+                    abs(ts_time) <= EPS
+                    and getattr(ts, "numerator", num) == num
+                    and getattr(ts, "denominator", den) == den
+                ):
                     exists_at_zero = True
                     break
             if not exists_at_zero:
@@ -1037,9 +1044,7 @@ def resolve_downbeats(
             start_b = time_to_beat(downbeats[0])
             next_b = time_to_beat(downbeats[1])
             actual_beats = next_b - start_b
-            if not math.isclose(
-                actual_beats, bar_beats, rel_tol=1e-6, abs_tol=1e-9
-            ):
+            if not math.isclose(actual_beats, bar_beats, rel_tol=1e-6, abs_tol=1e-9):
                 rebuild = True
 
     if not rebuild and not allow_meter_mismatch:
@@ -1050,10 +1055,7 @@ def resolve_downbeats(
             # Ignore spans that contain an intermediate meter change; the
             # subsequent iteration anchored at the boundary will validate that
             # region instead.
-            if any(
-                mt > start + EPS and mt < end - EPS
-                for mt in meter_times[1:]
-            ):
+            if any(mt > start + EPS and mt < end - EPS for mt in meter_times[1:]):
                 continue
             num, den = get_meter_at(meter_map, start, times=meter_times)
             expected_beats = num * (4.0 / den) if den else 0.0
@@ -1422,22 +1424,20 @@ def _emit_phrases_for_span(span: "ChordSpan", c_idx: int, ctx: RuntimeContext) -
                 ctx.stats,
             )
             if ctx.stats is not None:
-                ctx.stats.setdefault("bar_triggers", {}).setdefault(bar_idx, []).append((b, start_t))
+                ctx.stats.setdefault("bar_triggers", {}).setdefault(bar_idx, []).append(
+                    (b, start_t)
+                )
             if ctx.stats is not None and bar_idx not in ctx.stats["bar_phrase_notes"]:
                 ctx.stats["bar_phrase_notes"][bar_idx] = pn
             if ctx.stats is not None:
                 ctx.stats.setdefault("bar_velocities", {}).setdefault(bar_idx, []).append(base_vel)
         if beat_inc <= ctx.EPS:
-            logging.warning(
-                "emit_phrases_for_span: non-positive beat increment; aborting span"
-            )
+            logging.warning("emit_phrases_for_span: non-positive beat increment; aborting span")
             break
         b += beat_inc
         iter_guard -= 1
         if iter_guard <= 0:
-            logging.warning(
-                "emit_phrases_for_span: max iterations reached; aborting span"
-            )
+            logging.warning("emit_phrases_for_span: max iterations reached; aborting span")
             break
 
 
@@ -1631,6 +1631,7 @@ def parse_accent_arg(s: str) -> Optional[List[float]]:
         raise SystemExit("--accent must be JSON list of numbers")
     return validate_accent(data)
 
+
 # --- RESOLVED MERGE: keep both damp-arg parser and guide summarization utilities ---
 
 
@@ -1820,9 +1821,7 @@ def parse_json_arg(name: str, raw: str, schema: Dict[str, Any]) -> Any:
                 if optional:
                     continue
                 desc = description or "see documentation"
-                raise SystemExit(
-                    f"{label} missing required key '{field_path}' (expects {desc})"
-                )
+                raise SystemExit(f"{label} missing required key '{field_path}' (expects {desc})")
             value = obj[key]
             if "type" in rule and rule["type"] is not None:
                 _ensure_type(value, rule["type"], field_path)
@@ -1831,21 +1830,13 @@ def parse_json_arg(name: str, raw: str, schema: Dict[str, Any]) -> Any:
                     f"{label} field '{field_path}' must be one of {sorted(rule['choices'])}"
                 )
             if "min" in rule and value < rule["min"]:
-                raise SystemExit(
-                    f"{label} field '{field_path}' must be >= {rule['min']}"
-                )
+                raise SystemExit(f"{label} field '{field_path}' must be >= {rule['min']}")
             if "min_exclusive" in rule and value <= rule["min_exclusive"]:
-                raise SystemExit(
-                    f"{label} field '{field_path}' must be > {rule['min_exclusive']}"
-                )
+                raise SystemExit(f"{label} field '{field_path}' must be > {rule['min_exclusive']}")
             if "max" in rule and value > rule["max"]:
-                raise SystemExit(
-                    f"{label} field '{field_path}' must be <= {rule['max']}"
-                )
+                raise SystemExit(f"{label} field '{field_path}' must be <= {rule['max']}")
             if "max_exclusive" in rule and value >= rule["max_exclusive"]:
-                raise SystemExit(
-                    f"{label} field '{field_path}' must be < {rule['max_exclusive']}"
-                )
+                raise SystemExit(f"{label} field '{field_path}' must be < {rule['max_exclusive']}")
             if "schema" in rule and isinstance(value, (dict, list)):
                 _validate(value, rule["schema"], field_path)
 
@@ -1866,10 +1857,7 @@ def parse_inline_chords(raw: str) -> Optional[List[InlineChordEvent]]:
         return None
     normalized = unicodedata.normalize("NFKC", raw)
     normalized = (
-        normalized.replace("♯", "#")
-        .replace("＃", "#")
-        .replace("♭", "b")
-        .replace("ｂ", "b")
+        normalized.replace("♯", "#").replace("＃", "#").replace("♭", "b").replace("ｂ", "b")
     )
     trimmed = normalized.strip()
     if not trimmed:
@@ -2576,6 +2564,7 @@ def insert_style_fill(
     section_default: str = "section",
 ) -> int:
     """Insert style fills based on mode."""
+
     def _get_phrase_inst(pm_obj: pretty_midi.PrettyMIDI) -> pretty_midi.Instrument:
         """Return the phrase instrument, creating it so fills can be scheduled."""
         for inst in pm_obj.instruments:
@@ -2638,26 +2627,40 @@ def insert_style_fill(
         down = list(range(base - 1, max(base - 13, lo - 1), -1))
         return up + down
 
-    pitch_value: Optional[int] = None
-    pitch_source = "style"
-    candidate_sources: List[Tuple[Any, str]] = [
-        (style_fill_raw, "style"),
-        (mapping.get("style_fill"), "style"),
-        (34, "default"),
-    ]
-    candidate_sources.extend(
-        (candidate, "fallback") for candidate in _fallback_candidates(base_pitch, pitch_min, pitch_max)
-    )
+    def _choose_pitch(options: Iterable[Tuple[Any, str]]) -> Tuple[Optional[int], str]:
+        seen: Set[int] = set()
+        for candidate, source in options:
+            if candidate is None:
+                continue
+            resolved = _resolve_pitch(candidate)
+            if resolved is None:
+                continue
+            value = int(round(resolved))
+            value = max(pitch_min, min(pitch_max, value))
+            if value in seen:
+                continue
+            seen.add(value)
+            if source != "style" and value in avoid_set:
+                continue
+            return value, source
+        return None, ""
 
-    for candidate, source in candidate_sources:
-        resolved = _resolve_pitch(candidate)
-        if resolved is None:
-            continue
-        if source != "style" and resolved in avoid_set:
-            continue
-        pitch_value = resolved
-        pitch_source = source
-        break
+    candidate_sources: List[Tuple[Any, str]] = []
+    if style_fill_raw is not None:
+        candidate_sources.append((style_fill_raw, "style"))
+        candidate_sources.extend(
+            (candidate, "fallback")
+            for candidate in _fallback_candidates(base_pitch, pitch_min, pitch_max)
+        )
+        candidate_sources.append((DEFAULT_STYLE_FILL_PITCH, "default"))
+    else:
+        candidate_sources.append((DEFAULT_STYLE_FILL_PITCH, "default"))
+        candidate_sources.extend(
+            (candidate, "fallback")
+            for candidate in _fallback_candidates(base_pitch, pitch_min, pitch_max)
+        )
+
+    pitch_value, pitch_source = _choose_pitch(candidate_sources)
 
     if pitch_value is None:
         logging.warning(
@@ -2784,6 +2787,7 @@ def insert_style_fill(
                 seen.add(key)
                 collected.append(entry)
         return collected
+
     section_unit_count = bar_count if bar_count is not None else len(units)
     section_layout: List[Dict[str, Any]] = []
     if sections:
@@ -2832,9 +2836,7 @@ def insert_style_fill(
         return [label or "A" for label in labels]
 
     section_tags: Set[str] = set(
-        str(sec.get("tag", section_default))
-        for sec in section_layout
-        if isinstance(sec, dict)
+        str(sec.get("tag", section_default)) for sec in section_layout if isinstance(sec, dict)
     )
 
     if (
@@ -2860,18 +2862,23 @@ def insert_style_fill(
                     end_bars.append(idx)
                 elif labels[idx] != labels[idx + 1]:
                     end_bars.append(idx)
-            candidate_pitches = [mapping.get("style_fill"), 34, base_pitch]
-            fill_pitch: Optional[int] = None
-            for candidate in candidate_pitches:
-                resolved = _resolve_pitch(candidate)
-                if resolved is None:
-                    continue
-                value = int(round(resolved))
-                value = max(pitch_min, min(pitch_max, value))
-                if value in avoid_set:
-                    continue
-                fill_pitch = value
-                break
+            section_candidates: List[Tuple[Any, str]] = []
+            if style_fill_raw is not None:
+                section_candidates.append((style_fill_raw, "style"))
+                section_candidates.append((pitch, "primary"))
+                section_candidates.extend(
+                    (cand, "fallback")
+                    for cand in _fallback_candidates(base_pitch, pitch_min, pitch_max)
+                )
+                section_candidates.append((DEFAULT_STYLE_FILL_PITCH, "default"))
+            else:
+                section_candidates.append((DEFAULT_STYLE_FILL_PITCH, "default"))
+                section_candidates.append((pitch, "primary"))
+                section_candidates.extend(
+                    (cand, "fallback")
+                    for cand in _fallback_candidates(base_pitch, pitch_min, pitch_max)
+                )
+            fill_pitch, _fill_source = _choose_pitch(section_candidates)
             if fill_pitch is None:
                 fallback_seq = _fallback_candidates(base_pitch, pitch_min, pitch_max)
                 fill_pitch = next((cand for cand in fallback_seq if cand not in avoid_set), None)
@@ -3359,9 +3366,7 @@ def finalize_phrase_track(
 
     # --- (B) セクション入力の正規化・マージ（main側のロジックを続けて適用） ---
     downbeat_ref = (
-        downbeats
-        if downbeats is not None
-        else (stats.get("downbeats") if stats_enabled else None)
+        downbeats if downbeats is not None else (stats.get("downbeats") if stats_enabled else None)
     )
     num_bars = len(downbeat_ref) - 1 if downbeat_ref else None
 
@@ -3476,12 +3481,7 @@ def finalize_phrase_track(
     auto_fill_mode = getattr(args, "auto_fill", "off") if args else "off"
     section_fill_added = 0
     if auto_fill_mode == "section_end":
-        if (
-            normalized_sections
-            and phrase_inst is not None
-            and downbeats
-            and len(downbeats) >= 2
-        ):
+        if normalized_sections and phrase_inst is not None and downbeats and len(downbeats) >= 2:
             fill_beats = 0.25
             if args is not None and getattr(args, "fill_length_beats", None) is not None:
                 try:
@@ -3540,9 +3540,7 @@ def finalize_phrase_track(
                 if inserted:
                     section_fill_added += 1
                     if stats_enabled:
-                        fills.append(
-                            {"start": float(onset), "end": float(t1), "bar": int(bar_idx)}
-                        )
+                        fills.append({"start": float(onset), "end": float(t1), "bar": int(bar_idx)})
                         if filled_bars_stat is not None and bar_idx not in filled_bars_stat:
                             filled_bars_stat.append(bar_idx)
                             seen_bars.add(bar_idx)
@@ -3568,7 +3566,7 @@ def finalize_phrase_track(
             auto_fill_mode,
             guide_units_time,
             mapping,
-            sections=normalized_sections,          # ← ここだけを使う
+            sections=normalized_sections,  # ← ここだけを使う
             rest_ratio_list=rest_ratios,
             rest_th=getattr(args, "guide_rest_silence_th", None) or 0.75,
             fill_length_beats=getattr(args, "fill_length_beats", 0.25),
@@ -3665,7 +3663,11 @@ def finalize_phrase_track(
                         rest_ratios[i],
                         pn if pn is not None else "",
                         cc_map.get(i, ""),
-                        sect[i] if i < len(sect) else getattr(args, "section_default", section_default),
+                        (
+                            sect[i]
+                            if i < len(sect)
+                            else getattr(args, "section_default", section_default)
+                        ),
                     ]
                 )
 
@@ -3703,7 +3705,11 @@ def finalize_phrase_track(
                 writer.writerow(
                     [
                         i,
-                        sect[i] if i < len(sect) else getattr(args, "section_default", section_default),
+                        (
+                            sect[i]
+                            if i < len(sect)
+                            else getattr(args, "section_default", section_default)
+                        ),
                         pn if pn is not None else "",
                         pulses,
                         onset_counts[i],
@@ -3798,9 +3804,7 @@ def validate_style_inject_cfg(cfg: Dict, mapping: Optional[Dict[str, Any]] = Non
             if resolved_note is None:
                 parsed = parse_note_token(n, mapping=mapping, warn_unknown=True)
                 if parsed is None:
-                    raise SystemExit(
-                        "style_inject.avoid_pitches entries must be MIDI note tokens"
-                    )
+                    raise SystemExit("style_inject.avoid_pitches entries must be MIDI note tokens")
                 resolved_note = parsed
             resolved.append(validate_midi_note(int(resolved_note)))
         cfg["avoid_pitches"] = resolved
@@ -3978,9 +3982,7 @@ def _apply_quantize_safe(
 
     qs_list = quantize_strength if isinstance(quantize_strength, list) else None
     qs_val = float(quantize_strength) if not isinstance(quantize_strength, list) else 0.0
-    do_quant = (qs_list and any(x > 0 for x in qs_list)) or (
-        qs_list is None and qs_val > 0.0
-    )
+    do_quant = (qs_list and any(x > 0 for x in qs_list)) or (qs_list is None and qs_val > 0.0)
     if do_quant:
         for idx, note in enumerate(phrase_inst.notes):
             sb = time_to_beat(note.start)
@@ -4148,11 +4150,7 @@ def parse_chord_symbol(symbol: str) -> Tuple[int, str]:
         raise ValueError(f"Chord symbol '{symbol}' must be in Root:Quality format")
     raw_root, raw_quality = parts
     root = (
-        raw_root.strip()
-        .replace("＃", "#")
-        .replace("♯", "#")
-        .replace("♭", "b")
-        .replace("ｂ", "b")
+        raw_root.strip().replace("＃", "#").replace("♯", "#").replace("♭", "b").replace("ｂ", "b")
     )
     quality_raw = raw_quality.strip()
     if not root:
@@ -4165,7 +4163,9 @@ def parse_chord_symbol(symbol: str) -> Tuple[int, str]:
         leading = root[0].upper()
         trailing = root[1:]
         if trailing:
-            trailing = trailing.replace("＃", "#").replace("♯", "#").replace("♭", "b").replace("ｂ", "b")
+            trailing = (
+                trailing.replace("＃", "#").replace("♯", "#").replace("♭", "b").replace("ｂ", "b")
+            )
             trailing = trailing.lower()
         root = leading + trailing
 
@@ -4224,9 +4224,7 @@ def parse_chords_ts_arg(spec: Optional[str]) -> List[Tuple[int, int, int]]:
         meter_txt = meter_txt.strip()
         bar_txt = bar_txt.strip()
         if not meter_txt or "/" not in meter_txt:
-            logging.warning(
-                "--chords-ts entry %d ('%s') must be NUM/DEN@bar; skipping", idx, token
-            )
+            logging.warning("--chords-ts entry %d ('%s') must be NUM/DEN@bar; skipping", idx, token)
             continue
         num_txt, den_txt = meter_txt.split("/", 1)
         try:
@@ -4323,9 +4321,7 @@ def place_in_range(
         change_guard = MAX_ITERS
         while changed:
             if change_guard == 0:
-                logging.warning(
-                    "place_in_range: max iterations while normalizing closed voicing"
-                )
+                logging.warning("place_in_range: max iterations while normalizing closed voicing")
                 break
             change_guard -= 1
             changed = False
@@ -4358,9 +4354,7 @@ def place_in_range(
         guard = MAX_ITERS
         while p < lo:
             if guard == 0:
-                logging.warning(
-                    "place_in_range: max iterations while raising stacked voicing note"
-                )
+                logging.warning("place_in_range: max iterations while raising stacked voicing note")
                 break
             guard -= 1
             p += 12
@@ -4614,6 +4608,7 @@ def generate_mapping_template(full: bool) -> str:
             + "\n"
         )
 
+
 class ChordCsvError(SystemExit, ValueError):
     """Raised when a chord CSV cannot be parsed."""
 
@@ -4733,11 +4728,7 @@ def _normalize_compact_chord(token: str) -> str:
     if not token:
         raise ChordCsvError("empty chord token")
     normalized = (
-        token.strip()
-        .replace("＃", "#")
-        .replace("♯", "#")
-        .replace("♭", "b")
-        .replace("ｂ", "b")
+        token.strip().replace("＃", "#").replace("♯", "#").replace("♭", "b").replace("ｂ", "b")
     )
     if not normalized:
         raise ChordCsvError("empty chord token")
@@ -4871,9 +4862,7 @@ def _parse_bar_chord_rows(
                 f"{path} line {line_no}: bar '{bar_token}' must be an integer"
             ) from exc
         if bar_idx < 0:
-            raise ChordCsvError(
-                f"{path} line {line_no}: bar must be >= 0 (got {bar_idx})"
-            )
+            raise ChordCsvError(f"{path} line {line_no}: bar must be >= 0 (got {bar_idx})")
 
         beat_token = row_map.get("beat")
         start_beat = Fraction(0)
@@ -4890,9 +4879,7 @@ def _parse_bar_chord_rows(
                     f"{path} line {line_no}: bar_end '{end_token}' must be an integer"
                 ) from exc
             if end_bar < 0:
-                raise ChordCsvError(
-                    f"{path} line {line_no}: bar_end must be >= 0 (got {end_bar})"
-                )
+                raise ChordCsvError(f"{path} line {line_no}: bar_end must be >= 0 (got {end_bar})")
             if end_bar <= bar_idx:
                 raise ChordCsvError(
                     f"{path} line {line_no}: bar_end {end_bar} must be greater than bar {bar_idx}"
@@ -4901,9 +4888,7 @@ def _parse_bar_chord_rows(
         pos = (bar_idx, start_beat)
         if last_pos is not None:
             if pos == last_pos:
-                raise ChordCsvError(
-                    f"{path} line {line_no}: duplicate bar/beat position {bar_idx}"
-                )
+                raise ChordCsvError(f"{path} line {line_no}: duplicate bar/beat position {bar_idx}")
             if pos < last_pos:
                 raise ChordCsvError(
                     f"{path} line {line_no}: bars must be ascending (previous {last_pos[0]})"
@@ -4914,9 +4899,7 @@ def _parse_bar_chord_rows(
         length_beats: Optional[Fraction] = None
         if beats_len_token:
             try:
-                length_beats = _parse_fraction_token(
-                    beats_len_token, path=path, line_no=line_no
-                )
+                length_beats = _parse_fraction_token(beats_len_token, path=path, line_no=line_no)
             except ChordCsvError as exc:
                 logging.warning(str(exc))
                 continue
@@ -5084,9 +5067,7 @@ class _BarTimeline:
             num, den = self._meter_for(bar_index, start_time)
             bar_seconds = self._bar_duration(bar_index, start_time, num, den)
             if bar_seconds <= 0.0:
-                raise ChordCsvError(
-                    f"{self._path}: non-positive bar duration at bar {bar_index}"
-                )
+                raise ChordCsvError(f"{self._path}: non-positive bar duration at bar {bar_index}")
             self._boundaries.append(start_time + bar_seconds)
 
     def start_time(self, bar_index: int) -> float:
@@ -5106,6 +5087,7 @@ class _BarTimeline:
 
     def uses_explicit_bar_times(self) -> bool:
         return self._explicit_boundaries
+
 
 def read_chords_csv(
     path: Path,
@@ -5142,9 +5124,7 @@ def read_chords_csv(
     raw_text = raw_text.replace("，", ",")
     raw_text = raw_text.lstrip("\ufeff")
 
-    def _guard(
-        func: Callable[..., List["ChordSpan"]], *args, **kwargs
-    ) -> List["ChordSpan"]:
+    def _guard(func: Callable[..., List["ChordSpan"]], *args, **kwargs) -> List["ChordSpan"]:
         try:
             return func(*args, **kwargs)
         except ChordCsvError:
@@ -5181,9 +5161,7 @@ def read_chords_csv(
         else:
             if song_end_bar_int is not None and song_end_bar_int >= 0:
                 section_cap = (
-                    song_end_bar_int
-                    if section_cap is None
-                    else max(section_cap, song_end_bar_int)
+                    song_end_bar_int if section_cap is None else max(section_cap, song_end_bar_int)
                 )
 
     reader = csv.reader(io.StringIO(raw_text))
@@ -5232,9 +5210,7 @@ def read_chords_csv(
         try:
             value = float(token)
         except Exception as exc:
-            raise ChordCsvError(
-                f"{path} line {line}: {field} '{token}' must be a number"
-            ) from exc
+            raise ChordCsvError(f"{path} line {line}: {field} '{token}' must be a number") from exc
         if not math.isfinite(value):
             raise ChordCsvError(f"{path} line {line}: {field} '{token}' is not finite")
         return value
@@ -5259,7 +5235,9 @@ def read_chords_csv(
         chord_idx = header_map.get("chord")
         root_idx = header_map.get("root")
         qual_idx = header_map.get("quality")
-        max_idx = max(idx for idx in (start_idx, end_idx, chord_idx or 0, root_idx or 0, qual_idx or 0))
+        max_idx = max(
+            idx for idx in (start_idx, end_idx, chord_idx or 0, root_idx or 0, qual_idx or 0)
+        )
         spans: List[ChordSpan] = []
         prev_end: Optional[float] = None
         for line_no, raw_row in data_rows:
@@ -5273,9 +5251,7 @@ def read_chords_csv(
             start_val = _safe_float(start_txt, line=line_no, field="start")
             end_val = _safe_float(end_txt, line=line_no, field="end")
             if end_val <= start_val + EPS:
-                raise ChordCsvError(
-                    f"{path} line {line_no}: chord duration must be positive"
-                )
+                raise ChordCsvError(f"{path} line {line_no}: chord duration must be positive")
             if strict and prev_end is not None and start_val < prev_end - EPS:
                 raise ChordCsvError(
                     f"{path} line {line_no}: start {start_val} must be >= previous end {prev_end}"
@@ -5293,9 +5269,7 @@ def read_chords_csv(
                 root_txt = cells[root_idx]
                 qual_txt = cells[qual_idx]
                 if not root_txt or not qual_txt:
-                    raise ChordCsvError(
-                        f"{path} line {line_no}: root/quality cannot be empty"
-                    )
+                    raise ChordCsvError(f"{path} line {line_no}: root/quality cannot be empty")
                 raw_symbol = f"{root_txt}:{qual_txt}"
 
             symbol_attr = raw_symbol.strip()
@@ -5314,7 +5288,9 @@ def read_chords_csv(
 
             span = ChordSpan(start_val, end_val, root_pc, quality)
             setattr(span, "symbol", symbol_attr)
-            setattr(span, "root_name", _guess_root_display(symbol_attr, symbol_attr.split(":", 1)[0]))
+            setattr(
+                span, "root_name", _guess_root_display(symbol_attr, symbol_attr.split(":", 1)[0])
+            )
             spans.append(span)
         return spans
 
@@ -5362,7 +5338,9 @@ def read_chords_csv(
                     raise SystemExit(f"{path} line {line_no}: {exc}") from exc
             span = ChordSpan(start_val, end_val, root_pc, quality)
             setattr(span, "symbol", symbol_attr)
-            setattr(span, "root_name", _guess_root_display(symbol_attr, symbol_attr.split(":", 1)[0]))
+            setattr(
+                span, "root_name", _guess_root_display(symbol_attr, symbol_attr.split(":", 1)[0])
+            )
             spans.append(span)
         return spans
 
@@ -5397,9 +5375,7 @@ def read_chords_csv(
                         f"{path} line {row.line_no}: beat {beat_val} must be < meter numerator {num}"
                     )
                 if bar_duration <= 0.0:
-                    raise ChordCsvError(
-                        f"{path} line {row.line_no}: bar duration is non-positive"
-                    )
+                    raise ChordCsvError(f"{path} line {row.line_no}: bar duration is non-positive")
                 start_time += (beat_val / float(num)) * bar_duration
             starts.append(start_time)
 
@@ -5444,22 +5420,20 @@ def read_chords_csv(
                     end_time = min(end_time, candidate_end)
                 else:
                     logging.warning(
-                        "%s line %d: beats duration produced non-positive span; skipping", path, row.line_no
+                        "%s line %d: beats duration produced non-positive span; skipping",
+                        path,
+                        row.line_no,
                     )
                     continue
             if end_time <= start_time + EPS:
-                raise ChordCsvError(
-                    f"{path} line {row.line_no}: chord duration must be positive"
-                )
+                raise ChordCsvError(f"{path} line {row.line_no}: chord duration must be positive")
             if cap_time is not None and end_time > cap_time + EPS:
                 if start_time >= cap_time - EPS:
                     logging.warning(
                         "%s line %d: chord start beyond section end; skipping", path, row.line_no
                     )
                     continue
-                logging.warning(
-                    "%s line %d: chord truncated at section end", path, row.line_no
-                )
+                logging.warning("%s line %d: chord truncated at section end", path, row.line_no)
                 end_time = cap_time
             try:
                 root_pc, quality = parse_chord_symbol(row.symbol)
@@ -5479,7 +5453,10 @@ def read_chords_csv(
         data_rows = rows_with_line[data_index:]
         if "start" in header_map and "end" in header_map:
             return _parse_explicit(header_map, data_rows)
-        if "start" in header_map and ("chord" in header_map or {"root", "quality"} <= header_map.keys()):
+        if "start" in header_map and (
+            "chord" in header_map or {"root", "quality"} <= header_map.keys()
+        ):
+
             def _symbol_from_row(cells: List[str]) -> str:
                 if "chord" in header_map:
                     return cells[header_map["chord"]]
@@ -5500,9 +5477,7 @@ def read_chords_csv(
                 header=header_cells,
             )
             return _guard(_compact_to_spans, compact_rows, section_cap)
-        raise ChordCsvError(
-            f"{path}: unsupported chord CSV header {header_cells}"
-        )
+        raise ChordCsvError(f"{path}: unsupported chord CSV header {header_cells}")
 
     first_line_no, first_row = rows_with_line[data_index]
     first_cells = [cell.strip() for cell in first_row]
@@ -5662,9 +5637,7 @@ def build_sparkle_midi(
     if rng is None:
         rng = random.Random(0) if _SPARKLE_DETERMINISTIC else random.Random()
 
-    def _merge_end_hint(
-        current: Optional[float], candidate: Optional[float]
-    ) -> Optional[float]:
+    def _merge_end_hint(current: Optional[float], candidate: Optional[float]) -> Optional[float]:
         if candidate is None:
             return current
         if current is None:
@@ -5903,11 +5876,7 @@ def build_sparkle_midi(
             if (song_end_hint is not None and math.isfinite(song_end_hint))
             else pm_input_end
         )
-        if (
-            target_end is None
-            or not math.isfinite(target_end)
-            or target_end <= 0.0
-        ):
+        if target_end is None or not math.isfinite(target_end) or target_end <= 0.0:
             # default to 4 bars of 4/4 to stay conservative
             target_end = 16 * (60.0 / seed_bpm)
         step = 60.0 / seed_bpm
@@ -5956,17 +5925,10 @@ def build_sparkle_midi(
 
     def maybe_merge_gap(inst, pitch, start_t, *, bar_start=None, chord_start=None):
         """Return merge gap or -1.0 to force new note at reset boundary."""
-        mg = (
-            phrase_merge_gap
-            if phrase_hold != "off" or merge_reset_at != "none"
-            else -1.0
-        )
+        mg = phrase_merge_gap if phrase_hold != "off" or merge_reset_at != "none" else -1.0
         if mg >= 0 and inst.notes and inst.notes[-1].pitch == pitch:
             gap = start_t - inst.notes[-1].end
-            if (
-                merge_reset_at != "none"
-                and gap <= phrase_merge_gap + EPS
-            ):
+            if merge_reset_at != "none" and gap <= phrase_merge_gap + EPS:
                 if (
                     merge_reset_at == "bar"
                     and bar_start is not None
@@ -6154,9 +6116,9 @@ def build_sparkle_midi(
     if sections:
         section_labels = section_labels_override or [section_default] * len(downbeats)
         if section_labels:
-            section_labels = section_labels[: len(downbeats)] + [
-                section_default
-            ] * max(0, len(downbeats) - len(section_labels))
+            section_labels = section_labels[: len(downbeats)] + [section_default] * max(
+                0, len(downbeats) - len(section_labels)
+            )
         else:
             section_labels = [section_default] * len(downbeats)
     elif stats is not None:
@@ -6263,7 +6225,9 @@ def build_sparkle_midi(
         if sec_list or mapping.get("style_fill") is not None or mapping.get("markov") is not None:
             if any(p is not None for p in phrase_plan):
                 plan_active = True
-        bar_sources: Optional[List[str]] = ["cycle"] * len(phrase_plan) if stats is not None else None
+        bar_sources: Optional[List[str]] = (
+            ["cycle"] * len(phrase_plan) if stats is not None else None
+        )
         if stats is not None:
             stats["bar_phrase_notes_list"] = list(phrase_plan)
             stats["fill_bars"] = list(fill_map.keys())
@@ -6298,7 +6262,11 @@ def build_sparkle_midi(
             for i, pn in enumerate(phrase_plan):
                 src = bar_sources[i]
                 if labels_for_reason:
-                    tag = labels_for_reason[i] if i < len(labels_for_reason) else labels_for_reason[-1]
+                    tag = (
+                        labels_for_reason[i]
+                        if i < len(labels_for_reason)
+                        else labels_for_reason[-1]
+                    )
                     if tag:
                         prefix = f"section:{tag}"
                         src = f"{prefix}|{src}" if src else prefix
@@ -6326,14 +6294,18 @@ def build_sparkle_midi(
             wants_legacy = bool(stats and stats.get("_legacy_bar_pulses_grid"))
             legacy_total = _legacy_pulses_per_bar(num, den, stats) if wants_legacy else None
             legacy_override = bool(estimated_4_4 and legacy_total and den == 4)
-            if legacy_override:
+            step_beats = pulse_subdiv_beats if pulse_subdiv_beats > 0.0 else (bar_len_beats or 1.0)
+            if step_beats > 0.0 and bar_len_beats > 0.0:
+                total = max(1, int(round(bar_len_beats / step_beats)))
+            else:
                 beats_est = float(eb - sb)
                 inferred = int(round(beats_est * 4.0)) if math.isfinite(beats_est) else 0
-                total = max(1, inferred if inferred > 0 else int(legacy_total))
-            else:
-                step_beats = pulse_subdiv_beats if pulse_subdiv_beats > 0.0 else (bar_len_beats or 1.0)
-                total = int(round(bar_len_beats / step_beats)) if step_beats > 0.0 else 1
-                total = max(1, total)
+                fallback_total = int(legacy_total) if legacy_total else 1
+                total = max(1, inferred if inferred > 0 else fallback_total)
+            if legacy_total:
+                total = max(1, int(legacy_total))
+                if bar_len_beats > 0.0:
+                    step_beats = bar_len_beats / total
             if bar_len_beats <= 0.0 or total <= 0 or eb <= sb:
                 pulse = (0.0, float(start))
                 grid_list = [pulse]
@@ -6380,13 +6352,18 @@ def build_sparkle_midi(
                         beat_val = rel
                         if swing_shape == "offbeat":
                             if idx % 2 == 1:
-                                beat_val = min(rel + swing * pulse_subdiv_beats, bar_len_beats - EPS)
+                                beat_val = min(
+                                    rel + swing * pulse_subdiv_beats, bar_len_beats - EPS
+                                )
                         else:  # even
                             if idx % 2 == 1:
                                 beat_val = min(rel + half, bar_len_beats - EPS)
                             elif idx > 0:
                                 beat_val = max(rel - half, 0.0)
-                                if adjusted and beat_to_time(sb + beat_val) <= adjusted[-1][1] + EPS:
+                                if (
+                                    adjusted
+                                    and beat_to_time(sb + beat_val) <= adjusted[-1][1] + EPS
+                                ):
                                     beat_val = max(
                                         0.0,
                                         time_to_beat(adjusted[-1][1] + EPS) - sb,
@@ -6404,7 +6381,9 @@ def build_sparkle_midi(
             for k in range(total):
                 if k > 0:
                     interval = step_beats
-                    if swing > 0.0 and math.isclose(pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS):
+                    if swing > 0.0 and math.isclose(
+                        pulse_subdiv_beats, swing_unit_beats, abs_tol=EPS
+                    ):
                         if swing_shape == "offbeat":
                             interval *= (1 + swing) if k % 2 == 0 else (1 - swing)
                         elif swing_shape == "even":
@@ -6447,17 +6426,12 @@ def build_sparkle_midi(
                             time_val = adjusted[-1][1] + EPS
                     adjusted.append((rel, float(time_val)))
                 grid_list = adjusted
-            if (
-                not legacy_override
-                and legacy_total
-                and estimated_4_4
-                and legacy_total > len(grid_list)
-            ):
+            if not legacy_override and total > len(grid_list):
                 # legacy mode disabled but caller asked for compatibility; fall back to
                 # the previous interpolation logic to avoid dropping pulses.
                 extras_sorted: List[Tuple[float, float]] = []
                 base = list(grid_list)
-                extras_needed = legacy_total - len(base)
+                extras_needed = total - len(base)
                 extras: List[Tuple[float, float]] = []
                 if len(base) == 1:
                     span_rel = max(0.0, time_to_beat(next_start) - sb)
@@ -6504,7 +6478,7 @@ def build_sparkle_midi(
                         continue
                     extras_sorted.append(item)
                     seen.add(key)
-                    if len(extras_sorted) >= legacy_total - len(base):
+                    if len(extras_sorted) >= total - len(base):
                         break
                 grid_list = base + extras_sorted
                 if __debug__ and len(extras_sorted) == 0 and len(grid_list) > 1:
@@ -6514,8 +6488,7 @@ def build_sparkle_midi(
                     ), "bar pulse times must be monotonic"
             elif __debug__ and len(grid_list) > 1:
                 assert all(
-                    grid_list[idx][1] <= grid_list[idx + 1][1]
-                    for idx in range(len(grid_list) - 1)
+                    grid_list[idx][1] <= grid_list[idx + 1][1] for idx in range(len(grid_list) - 1)
                 ), "bar pulse times must be monotonic"
             bar_grid[i] = grid_list
             bar_pulses_dict[i] = list(grid_list)
@@ -6593,16 +6566,12 @@ def build_sparkle_midi(
                     elif mod == 1:
                         interval *= 1 - swing
             if interval <= EPS:
-                logging.warning(
-                    "pulses_in_range: non-positive interval; aborting pulse walk"
-                )
+                logging.warning("pulses_in_range: non-positive interval; aborting pulse walk")
                 break
             b += interval
             iter_guard -= 1
             if iter_guard <= 0:
-                logging.warning(
-                    "pulses_in_range: max iterations reached; aborting pulse walk"
-                )
+                logging.warning("pulses_in_range: max iterations reached; aborting pulse walk")
                 break
         return indices
 
@@ -6638,9 +6607,9 @@ def build_sparkle_midi(
     if sections:
         section_labels = section_labels_override or [section_default] * len(downbeats)
         if section_labels:
-            section_labels = section_labels[: len(downbeats)] + [
-                section_default
-            ] * max(0, len(downbeats) - len(section_labels))
+            section_labels = section_labels[: len(downbeats)] + [section_default] * max(
+                0, len(downbeats) - len(section_labels)
+            )
         else:
             section_labels = [section_default] * len(downbeats)
     elif stats is not None:
@@ -6795,12 +6764,7 @@ def build_sparkle_midi(
                 else:
                     pn = pool_picker.pick()
 
-        if (
-            pn is None
-            and plan_active
-            and phrase_plan is not None
-            and (phrase_plan or cycle_notes)
-        ):
+        if pn is None and plan_active and phrase_plan is not None and (phrase_plan or cycle_notes):
             plan_tried = True
             if bar_idx < len(phrase_plan):
                 pn = phrase_plan[bar_idx]
@@ -6830,7 +6794,9 @@ def build_sparkle_midi(
 
     def _bar_preset_for(index: int) -> Dict[str, float]:
         base = (
-            DENSITY_PRESETS.get(stats.get("bar_density", {}).get(index, "med"), DENSITY_PRESETS["med"])
+            DENSITY_PRESETS.get(
+                stats.get("bar_density", {}).get(index, "med"), DENSITY_PRESETS["med"]
+            )
             if stats
             else DENSITY_PRESETS["med"]
         )
@@ -6898,7 +6864,9 @@ def build_sparkle_midi(
                     triad, chord_range["lo"], chord_range["hi"], voicing_mode=mode
                 )
                 if voicing_mode == "smooth":
-                    triad = smooth_triad(prev_triad_voicing, triad, chord_range["lo"], chord_range["hi"])
+                    triad = smooth_triad(
+                        prev_triad_voicing, triad, chord_range["lo"], chord_range["hi"]
+                    )
                     prev_triad_voicing = triad
             if top_note_max is not None:
                 while max(triad) > top_note_max and all(n - 12 >= 0 for n in triad):
@@ -7371,7 +7339,7 @@ def main():
         type=str,
         default=None,
         help=(
-            "JSON list: labels [\"A\",\"B\",...] or dicts [{\"start_bar\":0,\"end_bar\":8,\"tag\":\"A\"}]. "
+            'JSON list: labels ["A","B",...] or dicts [{"start_bar":0,"end_bar":8,"tag":"A"}]. '
             "Values are normalized into contiguous bar ranges before fill planning (priority: CLI > mapping > guide)."
         ),
     )
@@ -8124,9 +8092,7 @@ def main():
             inline_chord_events = parsed_inline
             chords = []
         else:
-            raise SystemExit(
-                f"--chords path not found or unsupported inline spec: {args.chords}"
-            )
+            raise SystemExit(f"--chords path not found or unsupported inline spec: {args.chords}")
     else:
         chords = infer_chords_by_bar(pm, ts_num, ts_den)
 
@@ -8186,9 +8152,7 @@ def main():
                     try:
                         start_time = inline_timeline.start_time(bar_idx)
                     except ChordCsvError as exc:
-                        raise SystemExit(
-                            f"--chords inline element {idx}: {exc}"
-                        ) from exc
+                        raise SystemExit(f"--chords inline element {idx}: {exc}") from exc
                     start_beats = time_to_beat_local(start_time)
                 else:
                     raise SystemExit(
@@ -8572,6 +8536,8 @@ def main():
     out_pm.write(args.out)
     logging.info("Wrote %s", args.out)
     globals()["build_sparkle_midi"] = _BUILD_SPARKLE_MIDI_IMPL
+
+
 def _parse_chords_ts_hint(s: Optional[str]) -> Optional[List[Tuple[float, int, int]]]:
     if not s:
         return None

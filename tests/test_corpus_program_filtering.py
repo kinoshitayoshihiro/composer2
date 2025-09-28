@@ -1,6 +1,7 @@
 import csv
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -23,7 +24,7 @@ def test_empty_extraction_returns_nonzero(tmp_path: Path) -> None:
     stats_path = tmp_path / "stats.json"
     proc = subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "tools.corpus_to_phrase_csv",
             "--from-corpus",
@@ -78,7 +79,7 @@ def test_program_filtering(tmp_path: Path) -> None:
     out_valid = tmp_path / "valid.csv"
     subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "tools.corpus_to_phrase_csv",
             "--from-corpus",
@@ -96,4 +97,3 @@ def test_program_filtering(tmp_path: Path) -> None:
         rows = list(csv.DictReader(f))
     assert len(rows) == 1
     assert rows[0]["instrument"] == "bass"
-

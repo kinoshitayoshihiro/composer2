@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/utilities/apply_controls.py
+# hypothesis_version: 6.140.2
+
+[0.0, 1e-12, 4e-12, 1e-09, 1e-06, 0.001, 0.01, 0.05, 0.5, 1.0, 2.0, 30.0, 60.0, 100.0, 120.0, 128.0, 100, 101, 127, ',', '--dry-run', '--max-bend', '--max-cc11', '--max-cc64', '--out', '--rpn-at', '--sample-rate-hz', '--tempo-map', '--time-eps', '--value-eps', '--write-rpn', '=', '__main__', '_rpn_written', 'apply_controls', 'beats', 'bend', 'cc', 'cc11', 'cc64', 'cent', 'domain', 'events', 'ideal', 'in_mid', 'inst', 'key', 'kind', 'knots', 'midi128', 'min', 'note', 'offset_sec', 'pb', 'pitch', 'rdp', 'resolution_hz', 'routing_json', 'sample_rate_hz', 'sec_at', 'store_true', 'target', 'time', 'velocity', 'write_bend_range_rpn']

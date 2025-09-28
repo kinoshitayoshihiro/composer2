@@ -1,21 +1,18 @@
-import importlib.util
 import importlib.machinery
+import importlib.util
 import sys
+from collections.abc import Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from pytest import MonkeyPatch
 
 pytestmark = pytest.mark.asyncio
 
 
 class DummyWS:
-    async def __aenter__(self):  # pragma: no cover - stub
-        return self
-
-    async def __aexit__(self, *exc):  # pragma: no cover - stub
-        pass
-
     async def send(self, data: bytes) -> None:  # pragma: no cover - stub
         pass
 
@@ -23,30 +20,61 @@ class DummyWS:
         return b"[]"
 
 
-def _load() -> ModuleType:
+class DummyServeHandle:
+    async def wait_closed(self) -> None:  # pragma: no cover - stub
+        return None
+
+
+def _load(patch: MonkeyPatch) -> ModuleType:
     ws_mod = ModuleType("websockets")
-    ws_mod.connect = lambda *a, **k: DummyWS()
     ws_mod.__spec__ = importlib.machinery.ModuleSpec("websockets", loader=None)
-    sys.modules["websockets"] = ws_mod
+
+    @asynccontextmanager
+    async def _connect(*_args: object, **_kwargs: object):
+        yield DummyWS()
+
+    async def _serve(*_args: object, **_kwargs: object) -> DummyServeHandle:
+        return DummyServeHandle()
+
+    setattr(ws_mod, "connect", _connect)
+    setattr(ws_mod, "serve", _serve)
+
+    ws_asyncio = ModuleType("websockets.asyncio")
+    ws_asyncio.__spec__ = importlib.machinery.ModuleSpec("websockets.asyncio", loader=None)
+    setattr(ws_asyncio, "connect", _connect)
+    setattr(ws_asyncio, "serve", _serve)
+
+    patch.setitem(sys.modules, "websockets", ws_mod)
+    patch.setitem(sys.modules, "websockets.asyncio", ws_asyncio)
 
     fastapi = ModuleType("fastapi")
     fastapi.__spec__ = importlib.machinery.ModuleSpec("fastapi", loader=None)
 
     class DummyApp:
-        def post(self, *_a, **_k):
-            return lambda fn: fn
+        def post(self, *_a: object, **_k: object) -> Callable[[object], object]:
+            def decorator(fn: object) -> object:
+                return fn
 
-        def get(self, *_a, **_k):
-            return lambda fn: fn
+            return decorator
 
-        websocket = post
+        def get(self, *_a: object, **_k: object) -> Callable[[object], object]:
+            def decorator(fn: object) -> object:
+                return fn
 
-        async def __call__(self, scope, receive, send):  # pragma: no cover - stub
-            pass
+            return decorator
 
-    fastapi.FastAPI = lambda: DummyApp()
-    fastapi.WebSocket = object
-    sys.modules["fastapi"] = fastapi
+        def websocket(self, *_a: object, **_k: object) -> Callable[[object], object]:
+            def decorator(fn: object) -> object:
+                return fn
+
+            return decorator
+
+        async def __call__(self, scope: object, receive: object, send: object) -> None:
+            return None  # pragma: no cover - stub
+
+    setattr(fastapi, "FastAPI", lambda: DummyApp())
+    setattr(fastapi, "WebSocket", object)
+    patch.setitem(sys.modules, "fastapi", fastapi)
 
     uvicorn = ModuleType("uvicorn")
     uvicorn.__spec__ = importlib.machinery.ModuleSpec("uvicorn", loader=None)
@@ -54,29 +82,37 @@ def _load() -> ModuleType:
     class Server:
         def __init__(self, config: object) -> None:  # pragma: no cover - stub
             self.should_exit = False
+            self.config = config
 
         async def serve(self) -> None:  # pragma: no cover - stub
-            pass
+            return None
 
-    uvicorn.Config = lambda *a, **k: object()
-    uvicorn.Server = Server
-    sys.modules["uvicorn"] = uvicorn
+    def _config(*_args: object, **_kwargs: object) -> object:
+        return object()
+
+    setattr(uvicorn, "Config", _config)
+    setattr(uvicorn, "Server", Server)
+    patch.setitem(sys.modules, "uvicorn", uvicorn)
 
     ymod = ModuleType("yaml")
     ymod.__spec__ = importlib.util.spec_from_loader("yaml", loader=None)
-    sys.modules.setdefault("yaml", ymod)
+    patch.setitem(sys.modules, "yaml", ymod)
 
     spec = importlib.util.spec_from_file_location(
-        "bench_ws", Path(__file__).resolve().parents[1] / "scripts" / "bench_ws.py"
+        "scripts.bench_ws",
+        Path(__file__).resolve().parents[1] / "scripts" / "bench_ws.py",
     )
     assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    module = importlib.util.module_from_spec(spec)
+    patch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.mark.asyncio
-async def test_bench_ws() -> None:
-    mod = _load()
-    latency = await mod.bench(n=2)
+async def test_bench_ws(monkeypatch: MonkeyPatch) -> None:
+    with monkeypatch.context() as patch:
+        mod = _load(patch)
+        latency = await mod.bench(n=2)
+
     assert latency < 50.0

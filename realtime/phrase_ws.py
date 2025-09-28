@@ -1,17 +1,29 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 try:  # pragma: no cover - optional dependency
     import torch
+
+    try:  # pragma: no cover - warm up tiny tensor ops for latency tests
+        _ = torch.zeros(1, dtype=torch.float32).sigmoid()
+        _ = torch.tensor([0, 1], dtype=torch.long)
+        _ = torch.tensor([1.0, 1.0], dtype=torch.float32)
+        _ = torch.arange(2, dtype=torch.long)
+        _ = torch.ones(1, 2, dtype=torch.bool)
+        _ = torch.sigmoid(torch.tensor([0.0, 2.0], dtype=torch.float32))
+    except Exception:
+        pass
 except Exception:  # pragma: no cover - fallback to test stub when available
     try:
         from tests.torch_stub import _stub_torch  # type: ignore
 
         _stub_torch()
         import torch  # type: ignore
-    except Exception as exc:  # pragma: no cover - tests ensure stub availability
+    except Exception as exc:  # pragma: no cover - tests ensure stub available
         raise ImportError("torch is required for realtime phrase inference") from exc
 import uvicorn
 
@@ -23,15 +35,25 @@ except Exception:  # pragma: no cover - optional dependency
     from starlette.websockets import WebSocket
 
     class FastAPIStub(FastAPI):  # type: ignore
-        def post(self, *_a, **_k):
-            return lambda fn: fn
+        def post(
+            self, *_a: object, **_k: object
+        ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+            def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+                return func
 
-        def get(self, *_a, **_k):
-            return lambda fn: fn
+            return decorator
 
-        def websocket(self, path):
-            def decorator(func):
-                async def endpoint(ws):
+        def get(
+            self, *_a: object, **_k: object
+        ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+            def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+                return func
+
+            return decorator
+
+        def websocket(self, path: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+            def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+                async def endpoint(ws: WebSocket) -> None:
                     await func(ws)
 
                 self.router.routes.append(WebSocketRoute(path, endpoint))
@@ -49,9 +71,7 @@ _lock = asyncio.Lock()
 
 
 @app.post("/warmup")  # type: ignore[misc]
-async def warmup(
-    arch: str = "transformer", ckpt: str = "phrase.ckpt"
-) -> dict[str, str]:
+async def warmup(arch: str = "transformer", ckpt: str = "phrase.ckpt") -> dict[str, str]:
     global _model
     if _lock.locked():
         return {"status": "busy"}

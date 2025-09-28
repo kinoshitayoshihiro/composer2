@@ -13,21 +13,22 @@ reversed the order.
 from __future__ import annotations
 
 import os as _os
+from typing import Any, cast
+
 import numpy as _np
 
 _NO_TEMPO_MARKER = "__composer2_no_tempo__"
 
 try:  # pragma: no cover - exercised in pretty_midi environments
-    import pretty_midi as _pm
+    import pretty_midi as _pm  # type: ignore[import-not-found]
 except ImportError:  # pragma: no cover - allows import without pretty_midi
     _pm = None
 else:
-    def _ensure_array(seq):
-        if hasattr(seq, "dtype"):
-            return seq
+
+    def _ensure_array(seq: Any) -> Any:
         return _np.asarray(seq, dtype=float)
 
-    def _times_score(arr):
+    def _times_score(arr: Any) -> int:
         score = 0
         if getattr(arr, "ndim", 1) == 1:
             score += 1
@@ -50,20 +51,17 @@ else:
             score += 1
         return score
 
-    def _bpms_score(arr):
+    def _bpms_score(arr: Any) -> int:
         score = 0
         if getattr(arr, "ndim", 1) == 1:
             score += 1
         size = getattr(arr, "size", len(arr))
         if size == 0:
             return score
-        if hasattr(arr, "dtype") and arr.dtype.kind in "fiu" and _np.isfinite(arr).all():
-            arr_view = arr
-        else:
-            try:
-                arr_view = _np.asarray(arr, dtype=float)
-            except (TypeError, ValueError):
-                return score
+        try:
+            arr_view = _np.asarray(arr, dtype=float)
+        except (TypeError, ValueError):
+            return score
         if not _np.isfinite(arr_view).all():
             return score
         if _np.all(arr_view > 0):
@@ -76,11 +74,76 @@ else:
         return score
 
     # If someone else already patched it, don't stack.
-    if not getattr(_pm.PrettyMIDI.get_tempo_changes, "_composer2_patched", False):
-        _orig_get_tempo_changes = _pm.PrettyMIDI.get_tempo_changes
-        _orig_write = _pm.PrettyMIDI.write
+    if not getattr(
+        _pm.PrettyMIDI.get_tempo_changes,
+        "_composer2_patched",
+        False,
+    ):
+        _orig_get_tempo_changes: Any = getattr(
+            _pm.PrettyMIDI,
+            "get_tempo_changes",
+        )
+        _orig_write: Any = getattr(_pm.PrettyMIDI, "write")
 
-        def _safe_get_tempo_changes(self):
+        def _tick_scales_to_arrays(
+            self: Any,
+        ) -> Any:
+            tick_scales = getattr(self, "_tick_scales", None)
+            if not tick_scales:
+                return None
+
+            try:
+                resolution = float(getattr(self, "resolution"))
+            except (AttributeError, TypeError, ValueError):
+                return None
+
+            times: list[float] = []
+            bpms: list[float] = []
+            last_tick = None
+            prev_scale = None
+            current_time = 0.0
+
+            for idx, pair in enumerate(tick_scales):
+                try:
+                    tick, scale = pair
+                except (TypeError, ValueError):
+                    return None
+
+                try:
+                    tick = int(tick)
+                    scale = float(scale)
+                except (TypeError, ValueError):
+                    return None
+
+                if idx == 0:
+                    current_time = max(0.0, tick * scale)
+                    times.append(0.0 if tick == 0 else current_time)
+                else:
+                    if last_tick is None or prev_scale is None:
+                        return None
+                    delta = tick - last_tick
+                    if delta < 0:
+                        return None
+                    current_time += delta * prev_scale
+                    times.append(current_time)
+
+                if scale <= 0 or resolution <= 0:
+                    return None
+                bpm = 60.0 / (scale * resolution)
+                if not _np.isfinite(bpm) or bpm <= 0:
+                    return None
+                bpms.append(bpm)
+
+                last_tick = tick
+                prev_scale = scale
+
+            if not times:
+                return None
+            return _ensure_array(times), _ensure_array(bpms)
+
+        def _safe_get_tempo_changes(
+            self: Any,
+        ) -> Any:
             first, second = _orig_get_tempo_changes(self)
             first_arr = _ensure_array(first)
             second_arr = _ensure_array(second)
@@ -112,23 +175,23 @@ else:
                 self.text_events = [
                     evt for evt in self.text_events if getattr(evt, "text", "") != _NO_TEMPO_MARKER
                 ]
-                if not has_tempo_meta:
-                    empty = _np.asarray([], dtype=float)
-                    return empty, empty
 
             if not has_tempo_meta:
+                arrays = _tick_scales_to_arrays(self)
+                if arrays is not None:
+                    return arrays
                 empty = _np.asarray([], dtype=float)
                 return empty, empty
             return times, bpms
 
-        _safe_get_tempo_changes._composer2_patched = True  # type: ignore[attr-defined]
-        _pm.PrettyMIDI.get_tempo_changes = _safe_get_tempo_changes  # type: ignore[assignment]
+        setattr(_safe_get_tempo_changes, "_composer2_patched", True)
+        setattr(_pm.PrettyMIDI, "get_tempo_changes", _safe_get_tempo_changes)
 
         # PathLike を常に文字列へ（古い mido が Path を file-like と誤解）
-        def _safe_write(self, filename):
+        def _safe_write(self: Any, filename: Any):
             try:
-                filename = _os.fspath(filename)
-            except Exception:
+                filename = cast(str | bytes, _os.fspath(filename))
+            except TypeError:
                 # If it isn't PathLike or fspath fails, pass through as-is.
                 pass
             return _orig_write(self, filename)

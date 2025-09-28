@@ -1,0 +1,2 @@
+[console_scripts]
+crepe = crepe.cli:main

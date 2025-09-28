@@ -56,7 +56,6 @@ def test_fold_halves():
     assert bpm == pytest.approx(120.0)
 
 
-
 def test_train_inject_default_tempo(tmp_path: Path):
     pm, _ = make_pm(bpm=None)
     midi_path = tmp_path / "no_tempo.mid"
@@ -66,5 +65,5 @@ def test_train_inject_default_tempo(tmp_path: Path):
     assert model.total_events > 0
     pm2 = pretty_midi.PrettyMIDI(str(midi_path))
     _times, tempi = pm2.get_tempo_changes()
-    assert len(tempi) == 0
-
+    assert len(tempi) >= 1
+    assert pytest.approx(tempi[0]) == 120.0

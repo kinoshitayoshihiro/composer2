@@ -1166,7 +1166,9 @@ def train_model(
                         finally:
                             if alias_installed:
                                 try:
-                                    setattr(torch.utils.data, "WeightedRandomSampler", original_attr)
+                                    setattr(
+                                        torch.utils.data, "WeightedRandomSampler", original_attr
+                                    )
                                 except Exception:
                                     pass
 
@@ -1649,6 +1651,96 @@ def train_model(
             model = torch.compile(model)
         except Exception:  # pragma: no cover
             logging.warning("torch.compile failed; continuing without")
+
+    def _finalize_zero_epoch() -> tuple[float, str, dict[str, object]]:
+        logging.info("epochs=%s requested; skipping optimizer and training loop", epochs)
+        stats: dict[str, object] = {
+            "class_counts": class_counts,
+            "tag_counts": tag_counts,
+            "tag_coverage": tag_coverage,
+            "viz_paths": [],
+        }
+        if weight_stats:
+            stats["tag_weights_top10"] = weight_stats
+        out_path = Path(out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            model_state = (
+                {k: v.cpu() for k, v in model.state_dict().items()}
+                if hasattr(model, "state_dict")
+                else {}
+            )
+        except Exception:  # pragma: no cover - stubs without state_dict
+            model_state = {}
+        placeholder_meta = {
+            "arch": arch,
+            "d_model": d_model,
+            "n_layers": layers,
+            "n_heads": nhead,
+            "max_len": max_len,
+            "duv_mode": duv_mode,
+            "skipped_epochs": epochs,
+            "tag_coverage": tag_coverage,
+        }
+        placeholder_state = {
+            "model": model_state,
+            "optimizer": {},
+            "scheduler": None,
+            "epoch": 0,
+            "global_step": 0,
+            "best_f1": 0.0,
+            "meta": placeholder_meta,
+        }
+        try:
+            if torch is not None:
+                torch.save(placeholder_state, out_path)
+            else:  # pragma: no cover - optional torch
+                out_path.write_bytes(b"")
+        except Exception as exc:  # pragma: no cover - filesystem/serialization issues
+            logging.warning("failed to write placeholder checkpoint: %s", exc)
+            try:
+                out_path.write_bytes(b"")
+            except Exception:
+                logging.warning("unable to create placeholder checkpoint file at %s", out_path)
+        if save_best:
+            best_path = out_path.with_suffix(".best.ckpt")
+            try:
+                shutil.copy2(out_path, best_path)
+            except OSError as exc:
+                logging.warning("failed to create best checkpoint copy: %s", exc)
+        if save_last:
+            last_path = out_path.with_name("last.ckpt")
+            try:
+                if last_path.exists() or last_path.is_symlink():
+                    last_path.unlink()
+                last_path.symlink_to(out_path.name)
+            except OSError:
+                try:
+                    shutil.copy2(out_path, last_path)
+                except OSError as exc:
+                    logging.warning("failed to copy placeholder to last.ckpt: %s", exc)
+        metrics_skeleton = {
+            "f1": 0.0,
+            "best_threshold": 0.5,
+            "skipped": True,
+        }
+        try:
+            (out_path.parent / "metrics.json").write_text(
+                json.dumps(metrics_skeleton, ensure_ascii=False)
+            )
+        except Exception:
+            logging.debug("metrics.json placeholder write skipped")
+        preview_placeholder = out_path.parent / "preds_preview.json"
+        if not preview_placeholder.exists():
+            try:
+                preview_placeholder.write_text("[]")
+            except Exception:
+                logging.debug("preds_preview.json placeholder write skipped")
+        return 0.0, device.type, stats
+
+    if epochs <= 0:
+        return _finalize_zero_epoch()
+
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     total_steps = epochs * max(1, len(dl_train))
     if scheduler == "cosine":
@@ -2688,6 +2780,9 @@ def main(argv: list[str] | None = None) -> int:
     }
     run_cfg["seed"] = args.seed
 
+    result: object | None = None
+    error_info: dict[str, object] | None = None
+    exit_code = 0
     try:
         result = train_model(
             args.train_csv,
@@ -2758,26 +2853,34 @@ def main(argv: list[str] | None = None) -> int:
         )
     except ValueError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
-        return 2
+        error_info = {"type": "ValueError", "message": str(exc)}
+        exit_code = 2
+    except Exception as exc:  # pragma: no cover - unexpected runtime failures
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        error_info = {"type": type(exc).__name__, "message": str(exc)}
+        exit_code = 2
 
-    if isinstance(result, tuple):
-        if len(result) == 3:
-            f1, device_type, stats = result
-        elif len(result) == 2:
-            f1, device_type = result
-            stats = {}
+    if error_info is None:
+        if isinstance(result, tuple):
+            if len(result) == 3:
+                f1, device_type, stats = result
+            elif len(result) == 2:
+                f1, device_type = result
+                stats = {}
+            else:
+                f1 = result[0] if len(result) > 0 else 0.0
+                device_type = result[1] if len(result) > 1 else "cpu"
+                stats = result[2] if len(result) > 2 else {}
+        elif result is None:
+            f1, device_type, stats = 0.0, "cpu", {}
         else:
-            f1 = result[0] if len(result) > 0 else 0.0
-            device_type = result[1] if len(result) > 1 else "cpu"
-            stats = result[2] if len(result) > 2 else {}
-    elif result is None:
-        f1, device_type, stats = 0.0, "cpu", {}
+            try:
+                f1 = float(result)
+            except (TypeError, ValueError):
+                f1 = 0.0
+            device_type, stats = "cpu", {}
     else:
-        try:
-            f1 = float(result)
-        except (TypeError, ValueError):
-            f1 = 0.0
-        device_type, stats = "cpu", {}
+        f1, device_type, stats = 0.0, "cpu", {}
 
     if not isinstance(stats, dict):
         stats = {"extra": stats}
@@ -2787,12 +2890,17 @@ def main(argv: list[str] | None = None) -> int:
     run_cfg["sampler_weights_summary"] = stats
     run_cfg["tag_coverage"] = stats.get("tag_coverage", {})
     run_cfg["viz_paths"] = stats.get("viz_paths", [])
+    run_cfg["status"] = "error" if error_info else "ok"
+    if error_info:
+        run_cfg["error"] = error_info
     run_path.write_text(json.dumps(run_cfg, ensure_ascii=False, indent=2))
 
     hparams = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
     hparams["device"] = device_type
     (args.out.parent / "hparams.json").write_text(json.dumps(hparams, ensure_ascii=False, indent=2))
     # temperature calibration is handled inside train_model when enabled
+    if exit_code:
+        return exit_code
     return 0 if args.min_f1 < 0 or f1 >= args.min_f1 else 1
 
 

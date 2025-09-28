@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from unittest import mock
 
@@ -17,13 +18,28 @@ def _make_loop(path: Path) -> None:
     for i in range(4):
         start = i * 0.25
         inst.notes.append(
-            pretty_midi.Note(velocity=100, pitch=36, start=start, end=start + 0.05)
+            pretty_midi.Note(
+                velocity=100,
+                pitch=36,
+                start=start,
+                end=start + 0.05,
+            )
         )
         inst.notes.append(
-            pretty_midi.Note(velocity=100, pitch=38, start=start, end=start + 0.05)
+            pretty_midi.Note(
+                velocity=100,
+                pitch=38,
+                start=start,
+                end=start + 0.05,
+            )
         )
         inst.notes.append(
-            pretty_midi.Note(velocity=100, pitch=42, start=start, end=start + 0.05)
+            pretty_midi.Note(
+                velocity=100,
+                pitch=42,
+                start=start,
+                end=start + 0.05,
+            )
         )
     pm.instruments.append(inst)
     pm.write(str(path))
@@ -40,7 +56,36 @@ def test_parallel_invocation(tmp_path: Path) -> None:
     ):
         par.return_value.side_effect = lambda funcs: [f() for f in funcs]
         groove_sampler_v2.train(tmp_path, n_jobs=2)
-        par.assert_called_with(n_jobs=2)
+    par.assert_called_once()
+    assert par.call_args.kwargs == {
+        "n_jobs": 2,
+        "prefer": "threads",
+        "batch_size": 1,
+        "verbose": 0,
+    }
+
+
+def test_parallel_invocation_error(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    _make_loop(tmp_path / "err.mid")
+    with (
+        mock.patch("utilities.groove_sampler_v2.Parallel") as par,
+        mock.patch(
+            "utilities.groove_sampler_v2.delayed",
+            side_effect=lambda f: (lambda p: lambda: f(p)),
+        ),
+        caplog.at_level(logging.WARNING),
+    ):
+        par.side_effect = RuntimeError("parallel boom")
+        with pytest.raises(RuntimeError):
+            groove_sampler_v2.train(tmp_path, n_jobs=2)
+    par.assert_called_once()
+    assert par.call_args.kwargs == {
+        "n_jobs": 2,
+        "prefer": "threads",
+        "batch_size": 1,
+        "verbose": 0,
+    }
+    assert "Parallel groove loading failed" in caplog.text
 
 
 def test_memmap_creation(tmp_path: Path) -> None:
@@ -48,9 +93,7 @@ def test_memmap_creation(tmp_path: Path) -> None:
     model = groove_sampler_v2.train(tmp_path, memmap_dir=tmp_path)
     path = tmp_path / "prob_order0.mmap"
     assert path.exists()
-    mm = memmap_utils.load_memmap(
-        path, shape=(len(model.ctx_maps[0]), len(model.idx_to_state))
-    )
+    mm = memmap_utils.load_memmap(path, shape=(len(model.ctx_maps[0]), len(model.idx_to_state)))
     assert mm.dtype == np.float32
     assert mm.shape == (len(model.ctx_maps[0]), len(model.idx_to_state))
 
@@ -85,9 +128,7 @@ def _make_wav(path: Path) -> None:
     "cli_args,scanned,skipped",
     [([], 2, 1), (["--no-audio"], 1, 0)],
 )
-def test_stats_audio_skip(
-    tmp_path: Path, cli_args: list[str], scanned: int, skipped: int
-) -> None:
+def test_stats_audio_skip(tmp_path: Path, cli_args: list[str], scanned: int, skipped: int) -> None:
     loops = tmp_path / "loops"
     loops.mkdir()
     _make_loop(loops / "a.mid")

@@ -1,0 +1,4 @@
+# file: /Volumes/SSD-SCTU3A/ラジオ用/music_21/composer2-3/tools/dump_tree.py
+# hypothesis_version: 6.140.2
+
+[0.0, 1024.0, 1024, '#', '*', '**ディレクトリ別サマリ**\n', '**拡張子サマリ**\n', '--exclude', '--follow-symlinks', '--format', '--ignore-file', '--include', '--limit-per-dir', '--max-depth', '--max-files', '--mtime', '--out', '--sizes', '--split-root', '--summary', '--top-n-large', '.', '?', 'GB', 'KB', 'MB', 'Node', 'PB', 'TB', '[%Y-%m-%d %H:%M]', '__main__', 'append', 'children', 'csv', 'dir', 'dirs', 'ext', 'file', 'files', 'fmt', 'ignore', 'json', 'md', 'mtime', 'name', 'output file path', 'path', 'root', 'seconds', 'show modified time', 'size', 'store_true', 'txt', 'type', 'utf-8', 'w', '│   ', '└── ', '├── ']

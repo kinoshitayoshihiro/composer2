@@ -27,13 +27,13 @@ import random
 import re
 import sys
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from math import isfinite
 from pathlib import Path
 from random import Random
-from typing import Any
+from typing import Any, Callable
 
 # Module-level logger for concise log control
 logger = logging.getLogger(__name__)
@@ -91,6 +91,7 @@ def _inject_default_tempo_file(path: Path, bpm: float) -> bool:
         logger.error("failed to write tempo-injected MIDI: %s (%s)", path, exc)
         return False
 
+
 _LEGACY_WARNED: set[str] = set()
 
 
@@ -142,13 +143,13 @@ class _LoadResult:
     invalid_bpm: float | None
 
 
-
 def _warn_ignored(name: str) -> None:
     """Emit a one-time warning when an ignored legacy argument is seen."""
 
     if name not in _LEGACY_WARNED:
         logger.warning("ignored legacy arg: %s", name)
         _LEGACY_WARNED.add(name)
+
 
 OHH_CHOKE_DEFAULT = 0.3
 _NO_TEMPO_MARKER = "__composer2_no_tempo__"
@@ -217,6 +218,19 @@ except Exception:  # pragma: no cover
             return lambda: fn(*args, **kwargs)
 
         return _wrap
+
+
+_PARALLEL_FALLBACK = Parallel
+_DELAYED_FALLBACK = delayed
+
+LoadMetaFn = Callable[[Path], Mapping[str, Any]]
+
+
+def _resolve_module_attr(name: str, default):
+    module = sys.modules.get(__name__)
+    if module is not None and hasattr(module, name):
+        return getattr(module, name)
+    return default
 
 
 try:  # pragma: no cover - optional during lightweight testing
@@ -289,12 +303,22 @@ except Exception:  # pragma: no cover
 
 from utilities.loop_ingest import load_meta  # noqa: E402
 
+_LOAD_META_FALLBACK: LoadMetaFn = load_meta
+_LOAD_META_OVERRIDE: LoadMetaFn | None = None
+
+
+def set_load_meta_override(fn: LoadMetaFn | None) -> None:
+    global _LOAD_META_OVERRIDE
+    _LOAD_META_OVERRIDE = fn
+
+
 try:  # pragma: no cover - optional dependency for memmap helpers
     from .memmap_utils import load_memmap
 except Exception:  # pragma: no cover - fallback using numpy.memmap
 
     def load_memmap(path: Path, shape: tuple[int, int]) -> np.memmap:  # type: ignore
         return np.memmap(path, mode="r", dtype=np.float32, shape=shape)
+
 
 try:  # pragma: no cover - optional dependency for conditional sampling
     from .conditioning import (
@@ -316,6 +340,8 @@ except Exception:  # pragma: no cover - fallback when conditioning module missin
 
     def apply_kick_pattern_bias(probs, *args, **kwargs):  # type: ignore
         return probs
+
+
 try:  # pragma: no cover - optional dependency for GM percussion mapping
     from .gm_perc_map import label_to_number, normalize_label
 except Exception:  # pragma: no cover - fallback when percussion map missing
@@ -325,6 +351,8 @@ except Exception:  # pragma: no cover - fallback when percussion map missing
 
     def label_to_number(label: str) -> int:  # type: ignore
         return 0
+
+
 try:  # pragma: no cover - optional dependency for hashed contexts
     from .hash_utils import hash_ctx
 except Exception:  # pragma: no cover - fallback hashing when unavailable
@@ -339,6 +367,7 @@ except Exception:  # pragma: no cover - fallback hashing when unavailable
             if aux is not None:
                 data = data + tuple(aux)
             return hash(data) & 0xFFFFFFFF
+
 
 try:
     from .ngram_store import BaseNGramStore, MemoryNGramStore, SQLiteNGramStore
@@ -471,17 +500,72 @@ def _extract_aux(
 ) -> dict[str, str] | None:
     """Extract auxiliary conditions for *path*.
 
-    Priority is ``aux_map`` > ``aux_key`` > filename pattern.
+    Priority order: ``aux_map`` > metadata via :func:`load_meta` > filename pattern.
     """
 
-    if aux_map is not None and path.name in aux_map:
-        return {k: str(v) for k, v in aux_map[path.name].items()}
-    if aux_key is not None:
-        meta = load_meta(path)
-        if aux_key in meta:
-            return {aux_key: str(meta[aux_key])}
-    matches = dict(re.findall(filename_pattern, path.stem))
-    return matches or None
+    load_meta_override = _LOAD_META_OVERRIDE
+    load_meta_fn: LoadMetaFn
+    if load_meta_override is not None:
+        load_meta_fn = load_meta_override
+    else:
+        load_meta_fn = _resolve_module_attr("load_meta", _LOAD_META_FALLBACK)
+
+    def _normalise_value(raw: Any) -> str | None:
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        return text if text else None
+
+    def _normalise_mapping(mapping: Mapping[str, Any]) -> dict[str, str]:
+        return {
+            str(k): norm for k, v in mapping.items() if (norm := _normalise_value(v)) is not None
+        }
+
+    def _filter_payload(payload: Any, *, restrict: bool) -> dict[str, str]:
+        if payload is None:
+            return {}
+        if isinstance(payload, Mapping):
+            entries = _normalise_mapping(payload)
+        else:  # pragma: no cover - legacy attribute objects
+            if aux_key is None:
+                entries = _normalise_mapping(getattr(payload, "__dict__", {}))
+            else:
+                value = _normalise_value(getattr(payload, aux_key, None))
+                return {aux_key: value} if value is not None else {}
+
+        if not entries:
+            return {}
+        if restrict and aux_key:
+            if aux_key in entries:
+                return {aux_key: entries[aux_key]}
+            return {}
+        return entries
+
+    restrict_to_key = aux_key is not None
+
+    if aux_map is not None:
+        mapped = _filter_payload(aux_map.get(path.name), restrict=restrict_to_key)
+        if mapped:
+            return mapped
+
+    try:
+        meta: Any = load_meta_fn(path)
+    except Exception:  # pragma: no cover - defensive against bad metadata loaders
+        meta = None
+
+    meta_entries = _filter_payload(meta, restrict=restrict_to_key)
+    if restrict_to_key and meta_entries:
+        return meta_entries
+
+    matches = {
+        key: norm
+        for key, raw in re.findall(filename_pattern, path.stem)
+        if (norm := _normalise_value(raw)) is not None
+    }
+    if matches:
+        return matches
+
+    return meta_entries or None
 
 
 def _hash64(data: bytes) -> int:
@@ -702,9 +786,7 @@ def _write_prob_memmaps(model: NGramModel, directory: Path) -> None:
         if rows == 0 or vocab_size == 0:
             prob_arrays.append(np.zeros((rows, vocab_size), dtype=np.float32))
             continue
-        prob_arrays.append(
-            load_memmap(Path(path_str), shape=(rows, vocab_size))
-        )
+        prob_arrays.append(load_memmap(Path(path_str), shape=(rows, vocab_size)))
     model.prob = prob_arrays
 
 
@@ -861,7 +943,6 @@ def _safe_read_bpm(
     bpm: float | None = None
     source = "default"
 
-
     times, bpms = pm.get_tempo_changes()
     times_seq = times.tolist() if hasattr(times, "tolist") else list(times)
     if len(bpms) and math.isfinite(bpms[0]) and bpms[0] > 0:
@@ -907,7 +988,9 @@ def _safe_read_bpm(
         weighted = sorted({c for c in candidates if math.isfinite(c) and c > 0})
         if weighted:
             best = min(weighted, key=lambda x: (abs(x - default), abs(x - base_bpm)))
-            if abs(best - default) < abs(base_bpm - default) or math.isclose(best, default, rel_tol=1e-3):
+            if abs(best - default) < abs(base_bpm - default) or math.isclose(
+                best, default, rel_tol=1e-3
+            ):
                 bpm = best
             else:
                 bpm = base_bpm
@@ -1059,7 +1142,9 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
     except Exception as exc:
         if path.suffix.lower() in {".wav", ".wave"}:
             audio_failed = True
-        return _LoadResult(None, "error", audio_failed, None, "error", "unknown", False, str(exc), None)
+        return _LoadResult(
+            None, "error", audio_failed, None, "error", "unknown", False, str(exc), None
+        )
 
     if cfg.inject_default_tempo > 0 and path.suffix.lower() in {".mid", ".midi"}:
         # Prefer non-destructive injection: record the desired tempo and update the
@@ -1400,11 +1485,7 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
                             except Exception:
                                 pass
 
-    if (
-        raw_has_tempo is None
-        and mido is not None
-        and path.suffix.lower() in {".mid", ".midi"}
-    ):
+    if raw_has_tempo is None and mido is not None and path.suffix.lower() in {".mid", ".midi"}:
         try:
             raw_midi_obj = mido.MidiFile(filename=str(path))
             raw_has_tempo = any(
@@ -1657,7 +1738,7 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
     )
 
     fallback_data = None
-    need_fallback = (not notes or raw_note_count == 0)
+    need_fallback = not notes or raw_note_count == 0
     if not need_fallback and mido is not None and min_bars > 0 and bars < min_bars:
         need_fallback = True
     if need_fallback and mido is not None:
@@ -1755,6 +1836,7 @@ def _load_worker(args: tuple[Path, _LoadWorkerConfig]) -> _LoadResult:
 # 上限（大規模ディレクトリ時の探索打切り）。環境変数で調整可。
 _DEFAULT_FILE_BUDGET = int(os.getenv("GROOVE_SAMPLER_FILE_BUDGET", "64"))
 
+
 def train(
     loop_dir: Path,
     *,
@@ -1809,6 +1891,8 @@ def train(
         raise RuntimeError(
             "mido is required for groove sampler training; install via 'pip install mido'"
         )
+
+    load_meta_fn = _resolve_module_attr("load_meta", _LOAD_META_FALLBACK)
 
     if inject_default_tempo and inject_default_tempo > 0:
         injected_cnt = 0
@@ -1889,8 +1973,8 @@ def train(
     else:
         aux_vocab_obj = AuxVocab()
     total_events = 0
-    files_skipped = 0           # fatal skips only (e.g., audio decode failure)
-    files_filtered = 0          # filtered out by min_notes, etc.
+    files_skipped = 0  # fatal skips only (e.g., audio decode failure)
+    files_filtered = 0  # filtered out by min_notes, etc.
     tempo_stats = {"accept": 0, "accept_warn": 0, "fold": 0, "fallback": 0, "skip": 0}
     skipped_paths: list[Path] = []
 
@@ -1928,9 +2012,7 @@ def train(
         whitelist = None
 
     if drum_only and pitched_only:
-        logger.warning(
-            "Both --drums-only and --pitched-only were set; treating as 'allow both'."
-        )
+        logger.warning("Both --drums-only and --pitched-only were set; treating as 'allow both'.")
         allow_drums_flag: bool | None = True
         allow_pitched_flag: bool | None = True
     elif drum_only:
@@ -1960,25 +2042,61 @@ def train(
     )
 
     # Allow environment override to avoid multiprocessing on constrained systems.
+    effective_n_jobs: int | str | None = n_jobs
+    env_override: str | None = None
     if n_jobs is None:
+        env_override = os.getenv("GROOVE_N_JOBS") or os.getenv("JOBLIB_N_JOBS")
+        if env_override:
+            effective_n_jobs = env_override
+
+    def _coerce_jobs(value: int | str | None) -> int | None:
+        if value is None:
+            return None
         try:
-            env_n = os.getenv("GROOVE_N_JOBS") or os.getenv("JOBLIB_N_JOBS")
-            if env_n is not None:
-                n_jobs = int(env_n)
-        except Exception:
-            n_jobs = None
-    if n_jobs == 1 or n_jobs == 0:
-        loaded = [_load_worker((p, worker_cfg)) for p in paths]
-    else:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            logger.warning("Invalid n_jobs value %r; defaulting to 1", value)
+            return 1
+        if parsed <= 0:
+            logger.warning("Non-positive n_jobs=%s; defaulting to 1", parsed)
+            return 1
+        return parsed
+
+    effective_n_jobs = _coerce_jobs(effective_n_jobs)
+
+    jobs: list[tuple[Path, _LoadWorkerConfig]] = [(p, worker_cfg) for p in paths]
+
+    def _load_sequential() -> list[_LoadResult]:
+        return [_load_worker(job) for job in jobs]
+
+    force_parallel = n_jobs is not None and n_jobs > 1
+
+    resolved_jobs = effective_n_jobs if effective_n_jobs not in (None, 1) else None
+    if resolved_jobs is None and force_parallel:
+        resolved_jobs = n_jobs
+
+    parallel_jobs = _coerce_jobs(resolved_jobs)
+    if parallel_jobs is None:
+        parallel_jobs = 1
+
+    should_parallel = force_parallel or parallel_jobs > 1
+
+    if should_parallel:
+        delayed_fn = _resolve_module_attr("delayed", _DELAYED_FALLBACK)
+        parallel_executor = _resolve_module_attr("Parallel", _PARALLEL_FALLBACK)
+        tasks = [delayed_fn(_load_worker)(job) for job in jobs]
         try:
-            loaded = Parallel(n_jobs=n_jobs)(
-                delayed(_load_worker)((p, worker_cfg)) for p in paths
-            )
+            loaded = parallel_executor(
+                n_jobs=parallel_jobs,
+                prefer="threads",
+                batch_size=1,
+                verbose=0,
+            )(tasks)
         except Exception as exc:
-            logger.warning(
-                "Parallel execution unavailable (%s); falling back to sequential", exc
-            )
-            loaded = [_load_worker((p, worker_cfg)) for p in paths]
+            logger.error("Parallel groove loading failed: %s", exc, exc_info=True)
+            raise
+    else:
+        loaded = _load_sequential()
 
     aux_values: list[str | None] = []
     results: list[tuple[list[tuple[float, int]], list[float]]] = []
@@ -2088,12 +2206,8 @@ def train(
             reason = None
 
         if reason is not None:
-            if (
-                reason in {"notes", "bars"}
-                and note_cnt > 0
-                and fallback_candidate is None
-            ):
-                meta = load_meta(p)
+            if reason in {"notes", "bars"} and note_cnt > 0 and fallback_candidate is None:
+                meta = load_meta_fn(p)
                 fallback_candidate = (notes, offs)
                 fallback_bars = bars
                 fallback_aux = meta.get(aux_key) if aux_key else None
@@ -2111,7 +2225,7 @@ def train(
 
         results.append((notes, offs))
         bars_list.append(bars)
-        meta = load_meta(p)
+        meta = load_meta_fn(p)
         aux_values.append(meta.get(aux_key) if aux_key else None)
 
     if tempo_verbose:
@@ -2155,9 +2269,7 @@ def train(
 
     if not results:
         if relax_filters:
-            logger.info(
-                "relaxed filters active; returning empty model with zero events"
-            )
+            logger.info("relaxed filters active; returning empty model with zero events")
         logger.warning(
             "No events collected — returning empty model (files=%d skipped=%d filtered=%d)",
             len(paths),
@@ -2290,6 +2402,9 @@ def train(
             mem_store.write_meta()
             for order, table in enumerate(freq_orders):
                 logger.info("shard order %d rows=%d", order, len(table))
+        except Exception as exc:
+            logger.error("Parallel training failed: %s", exc, exc_info=True)
+            raise
         finally:
             for order_maps in mem_store.maps:
                 for mm in order_maps:
@@ -2364,9 +2479,7 @@ def train(
                 # last resort: best-effort JSON dump with vars() fallback
                 logger.warning("aux vocab compat path for %s", aux_vocab_path)
                 if hasattr(aux_vocab_obj, "__dict__") and aux_vocab_obj.__dict__:
-                    aux_vocab_path.write_text(
-                        json.dumps(aux_vocab_obj.__dict__, default=str)
-                    )
+                    aux_vocab_path.write_text(json.dumps(aux_vocab_obj.__dict__, default=str))
                 else:
                     aux_vocab_path.write_text("[]")
         except Exception as exc:  # pragma: no cover - compatibility path
@@ -2399,7 +2512,7 @@ def train_streaming(
     This helper is intentionally lightweight and only tracks per-pitch note
     counts alongside basic bookkeeping statistics.  It is sufficient for large
     corpora sharding tests while keeping backward compatibility with the
-    original n-gram training routine.
+    original n-gram trainingroutine.
     """
 
     pitch_counts: dict[int, int] = {}
@@ -2685,7 +2798,9 @@ def next_prob_dist(
             if np.isfinite(arr).all():
                 total = float(arr.sum())
                 if total > 0:
-                    logger.debug("aux='%s' order=%d ctx=%s -> hashed-bucket hit", aux_name, order, ctx)
+                    logger.debug(
+                        "aux='%s' order=%d ctx=%s -> hashed-bucket hit", aux_name, order, ctx
+                    )
                     return arr
 
         return None
@@ -3083,10 +3198,7 @@ def load(
     if aux_vocab_path is not None:
         try:
             vocab_list = json.loads(Path(aux_vocab_path).read_text())
-            if not (
-                isinstance(vocab_list, list)
-                and all(isinstance(s, str) for s in vocab_list)
-            ):
+            if not (isinstance(vocab_list, list) and all(isinstance(s, str) for s in vocab_list)):
                 raise ValueError("aux vocab must be a JSON list of strings")
             aux_vocab = AuxVocab({s: i for i, s in enumerate(vocab_list)}, vocab_list)
             logger.info(
@@ -3134,9 +3246,7 @@ def load(
                 meta_text = meta_path.read_text(encoding="utf-8")
                 meta_data = json.loads(meta_text)
             except Exception as exc:
-                logger.warning(
-                    "failed to read probability metadata from %s: %s", meta_path, exc
-                )
+                logger.warning("failed to read probability metadata from %s: %s", meta_path, exc)
         expected_vocab = len(model.idx_to_state)
         if meta_data and isinstance(meta_data.get("rows_per_order"), list):
             try:
@@ -3183,9 +3293,7 @@ def load(
                     meta_path,
                 )
             else:
-                logger.warning(
-                    "probability memmap metadata unavailable; reconstructing in memory"
-                )
+                logger.warning("probability memmap metadata unavailable; reconstructing in memory")
             model.prob_paths = None
             prob_arrays = _rebuild_prob_in_memory(model)
         model.prob = prob_arrays
@@ -3442,9 +3550,7 @@ def _cmd_sample(args: list[str]) -> None:
         help="feel conditioning policy",
     )
     parser.add_argument("--temperature-end", type=float)
-    parser.add_argument(
-        "--aux-vocab", type=Path, help="JSON list to override embedded aux vocab"
-    )
+    parser.add_argument("--aux-vocab", type=Path, help="JSON list to override embedded aux vocab")
     parser.add_argument("--out-midi", type=Path, help="write MIDI to this path")
     parser.add_argument(
         "--print-json",
@@ -3503,9 +3609,7 @@ def _cmd_sample(args: list[str]) -> None:
             try:
                 num = label_to_number(lbl)
             except ValueError:
-                logger.warning(
-                    "skipping unknown instrument %s", ev.get("instrument")
-                )
+                logger.warning("skipping unknown instrument %s", ev.get("instrument"))
                 continue
             midi_events.append({**ev, "instrument": num})
         try:  # pragma: no cover - optional dependency

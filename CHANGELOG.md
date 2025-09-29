@@ -40,6 +40,8 @@
 ### Changed
 - ⚠️ Breaking change note removed – parameters are now optional
 - Unified to **numba>=0.60.0** across requirements
+- `scripts/train_duv_improved.py` gains optional AMP defaults, cosine warmup,
+  EMA, and length-aware bucketing with expanded CLI flags
 
 ## [0.6.1] - 2025-07-25
 ### Fixed

@@ -18,9 +18,10 @@ except Exception:  # torch 未導入環境でも import 可能に
 if torch is not None:
 
     class _IdentityEncoder(nn.Module):
-        def forward(self, x: "torch.Tensor", *, src_key_padding_mask: "torch.Tensor | None" = None) -> "torch.Tensor":
+        def forward(
+            self, x: "torch.Tensor", *, src_key_padding_mask: "torch.Tensor | None" = None
+        ) -> "torch.Tensor":
             return x
-
 
     class _PositionalEncoding(nn.Module):
         def __init__(self, d_model: int, max_len: int) -> None:
@@ -36,7 +37,6 @@ if torch is not None:
                 return x
             return x + self.pe[:, : x.shape[1]].to(dtype=x.dtype, device=x.device)
 
-
     def _build_sinusoidal_table(d_model: int, max_len: int) -> "torch.Tensor":
         import math as _math
 
@@ -51,7 +51,14 @@ if torch is not None:
 
 
 class PhraseTransformer(nn.Module if torch is not None else object):
-    def __init__(self, d_model: int = 16, max_len: int = 128, *args: Any, **kwargs: Any):
+    def __init__(
+        self,
+        d_model: int = 16,
+        max_len: int = 128,
+        ff_dim: int | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ):
         # 追加 kwargs が来ても落ちないように吸収
         if torch is None:
             self.d_model = int(d_model)
@@ -69,6 +76,11 @@ class PhraseTransformer(nn.Module if torch is not None else object):
         super().__init__()
         self.d_model = int(d_model)
         self.max_len = int(max_len)
+        # ff_dimが指定されていない場合は従来通りの計算
+        if ff_dim is not None:
+            self.ff_dim = int(ff_dim)
+        else:
+            self.ff_dim = max(self.d_model * 2, 64)
         nhead = int(kwargs.get("nhead", 2) or 2)
         num_layers = int(kwargs.get("num_layers", kwargs.get("layers", 1)) or 1)
 
@@ -86,7 +98,7 @@ class PhraseTransformer(nn.Module if torch is not None else object):
             encoder_layer = nn.TransformerEncoderLayer(
                 d_model=self.d_model,
                 nhead=nhead,
-                dim_feedforward=max(self.d_model * 2, 64),
+                dim_feedforward=self.ff_dim,
                 dropout=float(kwargs.get("dropout", 0.1) or 0.0),
                 batch_first=True,
             )
@@ -97,14 +109,26 @@ class PhraseTransformer(nn.Module if torch is not None else object):
         self.posenc = _PositionalEncoding(self.d_model, self.max_len)
         self.boundary_head = nn.Linear(self.d_model, 1)
 
-        feature_dim = kwargs.get("feature_dim")
-        self._feature_dim = int(feature_dim) if feature_dim else self.d_model
-        self._proj = nn.Linear(self._feature_dim, self.d_model)
+        # Feature processing layers (matching train_phrase.py structure)
+        self.pitch_emb = nn.Embedding(12, 64)  # pitch_class -> 64 dim
+        self.pos_emb = nn.Embedding(self.max_len, 64)  # position -> 64 dim
+        self.dur_proj = nn.Linear(1, 64)  # duration -> 64 dim
+        self.vel_proj = nn.Linear(1, 64)  # velocity -> 64 dim
+        self.vel_bucket_emb = nn.Embedding(7, 8)  # vel_bucket -> 8 dim
+        self.dur_bucket_emb = nn.Embedding(16, 8)  # dur_bucket -> 8 dim
 
-        # sample_phrase 側が存在チェックする属性をダミーで用意
-        self.head_dur_reg = None  # type: ignore[attr-defined]
-        self.head_vel_reg = None  # type: ignore[attr-defined]
-        self.head_pos_reg = None  # type: ignore[attr-defined]
+        # Final feature projection: 272 -> 256 (64*4 + 8*2 = 272)
+        self.feat_proj = nn.Linear(272, self.d_model)
+
+        # Legacy compatibility
+        feature_dim = kwargs.get("feature_dim")
+        self._feature_dim = 272  # Fixed to match checkpoint
+        self._proj = self.feat_proj  # Alias for compatibility
+
+        # DUV regression heads - actual nn.Linear modules for compatibility
+        self.head_dur_reg = nn.Linear(self.d_model, 1)
+        self.head_vel_reg = nn.Linear(self.d_model, 1)
+        self.head_pos_reg = nn.Linear(self.d_model, 1)  # for compatibility
 
     def forward(
         self,
@@ -128,7 +152,11 @@ class PhraseTransformer(nn.Module if torch is not None else object):
                     return None
             return None
 
+        # DEBUG: Check torch state
+        print(f"DEBUG: torch is None: {torch is None}")
+
         if torch is None:
+            print("DEBUG: Entering torch is None branch")
             try:
                 import torch as _torch_fallback
             except Exception:  # pragma: no cover - torch truly unavailable
@@ -197,18 +225,94 @@ class PhraseTransformer(nn.Module if torch is not None else object):
             mask_tensor = mask_tensor.view(1, -1)
         seqlen = max(1, min(seqlen, self.max_len))
 
-        def _zeros(dtype: _torch.dtype = _torch.float32, dev: "torch.device | None" = device) -> "torch.Tensor":
+        def _zeros(
+            dtype: _torch.dtype = _torch.float32, dev: "torch.device | None" = device
+        ) -> "torch.Tensor":
             kwargs: dict[str, object] = {"dtype": dtype}
             if dev is not None:
                 kwargs["device"] = dev
             return _torch.zeros(bsz, seqlen, **kwargs)
 
         try:
+            # Feature embedding
             x = self._embed(feats, bsz, seqlen, device)
+
+            # Debug logging for intermediate activations
+            debug_mode = getattr(self, "debug", False) or hasattr(self, "_debug")
+            if debug_mode:
+                print(
+                    f"After feat_proj: mean={x.mean().item():.6f}, "
+                    f"std={x.std().item():.6f}, max={x.abs().max().item():.6f}"
+                )
+
+            # Positional encoding
             x = self.posenc(x)
-            x = self.encoder(x)
-            out = self.boundary_head(x).squeeze(-1)
-        except Exception:
+
+            # Proper masking for transformer encoder
+            src_key_padding_mask = None
+            if mask_tensor is not None:
+                # mask_tensor: True=valid, False=pad
+                # TransformerEncoder expects: True=pad, False=valid
+                src_key_padding_mask = ~mask_tensor.bool()
+
+            # Transformer encoder with proper masking
+            x = self.encoder(x, src_key_padding_mask=src_key_padding_mask)
+
+            if debug_mode:
+                print(
+                    f"After encoder: mean={x.mean().item():.6f}, "
+                    f"std={x.std().item():.6f}, max={x.abs().max().item():.6f}"
+                )
+
+            # Check if DUV heads exist
+            has_vel = hasattr(self, "head_vel_reg") and self.head_vel_reg is not None
+            has_dur = hasattr(self, "head_dur_reg") and self.head_dur_reg is not None
+
+            if has_vel or has_dur:
+                # DUV mode: return dictionary
+                outputs = {}
+
+                # Apply regression heads (NO ReLU before regression)
+                if hasattr(self, "boundary_head"):
+                    boundary_out = self.boundary_head(x)
+                    # Masked aggregation for boundary
+                    if mask_tensor is not None:
+                        boundary_out = boundary_out * mask_tensor.unsqueeze(-1)
+                    outputs["boundary"] = boundary_out.squeeze(-1)
+
+                if has_vel:
+                    vel_raw = self.head_vel_reg(x)
+                    if debug_mode:
+                        print(f"Before vel head: mean={x.mean().item():.6f}")
+                        print(
+                            f"vel_raw: mean={vel_raw.mean().item():.6f}, "
+                            f"std={vel_raw.std().item():.6f}, "
+                            f"min={vel_raw.min().item():.6f}, "
+                            f"max={vel_raw.max().item():.6f}"
+                        )
+
+                    # Masked aggregation for velocity
+                    if mask_tensor is not None:
+                        vel_raw = vel_raw * mask_tensor.unsqueeze(-1)
+                    outputs["vel_reg"] = vel_raw.squeeze(-1)
+
+                if has_dur:
+                    dur_raw = self.head_dur_reg(x)
+                    # Masked aggregation for duration
+                    if mask_tensor is not None:
+                        dur_raw = dur_raw * mask_tensor.unsqueeze(-1)
+                    outputs["dur_reg"] = dur_raw.squeeze(-1)
+
+                return outputs
+            else:
+                # Boundary-only mode: original behavior
+                out = self.boundary_head(x)
+                if mask_tensor is not None:
+                    out = out * mask_tensor.unsqueeze(-1)
+                out = out.squeeze(-1)
+        except Exception as e:
+            if hasattr(self, "debug") or hasattr(self, "_debug"):
+                print(f"Exception in forward: {e}")
             return _zeros()
 
         if not isinstance(out, _torch.Tensor):
@@ -257,38 +361,62 @@ class PhraseTransformer(nn.Module if torch is not None else object):
     ) -> "torch.Tensor":
         import torch as _torch
 
-        components: list[_torch.Tensor] = []
-        for tensor in feats.values():
-            if not isinstance(tensor, _torch.Tensor):
-                continue
-            if tensor.dim() == 0:
-                continue
-            t = tensor.to(dtype=_torch.float32)
-            if t.dim() == 1:
-                t = t.view(1, t.shape[0], 1)
-            elif t.dim() == 2:
-                t = t.unsqueeze(-1)
-            elif t.dim() > 3:
-                t = t.view(t.shape[0], t.shape[1], -1)
-            components.append(t)
-        if components:
-            aligned: list[_torch.Tensor] = []
-            for c in components:
-                if c.shape[0] == 1 and batch > 1:
-                    c = c.expand(batch, c.shape[1], c.shape[2])
-                if c.shape[0] != batch:
-                    c = c[:batch]
-                if c.shape[1] > length:
-                    c = c[:, :length]
-                if c.shape[1] < length:
-                    pad_len = length - c.shape[1]
-                    c = _torch.nn.functional.pad(c, (0, 0, 0, pad_len))
-                aligned.append(c)
-            base = _torch.cat(aligned, dim=-1)
+        # This should match the training-time feature processing logic
+        # from scripts/train_phrase.py
+
+        # Get required features
+        if (
+            "position" not in feats
+            or "duration" not in feats
+            or "velocity" not in feats
+            or "pitch_class" not in feats
+        ):
+            # Fallback to old logic if required features missing
+            return self._embed_fallback(feats, batch, length, device)
+
+        # Position embedding (clamp to max_len-1)
+        pos_ids = feats["position"].clamp(max=self.max_len - 1)
+
+        # Process features using the correct layers
+        dur = self.dur_proj(feats["duration"].unsqueeze(-1).to(dtype=_torch.float32))
+        vel = self.vel_proj(feats["velocity"].unsqueeze(-1).to(dtype=_torch.float32))
+        pc = self.pitch_emb((feats["pitch_class"] % 12).long())
+        pos = self.pos_emb(pos_ids.long())
+
+        parts = [dur, vel, pc, pos]
+
+        # Add optional features with zero-fill if missing
+        if "vel_bucket" in feats:
+            vb = self.vel_bucket_emb(feats["vel_bucket"].long())
         else:
-            base = _torch.zeros(batch, length, self._feature_dim, dtype=_torch.float32)
+            vb = _torch.zeros(batch, length, 8, device=device, dtype=_torch.float32)
+        parts.append(vb)
+
+        if "dur_bucket" in feats:
+            db = self.dur_bucket_emb(feats["dur_bucket"].long())
+        else:
+            db = _torch.zeros(batch, length, 8, device=device, dtype=_torch.float32)
+        parts.append(db)
+
+        # Concatenate all parts: 64+64+64+64+8+8 = 272 dim
+        concat = _torch.cat(parts, dim=-1)
+
+        # Final linear projection: 272 -> 256
+        output = self.feat_proj(concat)
+
+        return output
+
+    def _embed_fallback(
+        self,
+        feats: Dict[str, "torch.Tensor"],
+        batch: int,
+        length: int,
+        device: "torch.device | None",
+    ) -> "torch.Tensor":
+        import torch as _torch
+
+        # Original fallback logic
+        base = _torch.zeros(batch, length, self.d_model, dtype=_torch.float32)
         if device is not None:
             base = base.to(device=device)
-        if base.shape[-1] != self.d_model:
-            base = self._proj(base)
         return base

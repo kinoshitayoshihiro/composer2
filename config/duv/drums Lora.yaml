@@ -1,0 +1,69 @@
+# Drums DUV — LoRA fine-tune config
+# 目的: 汎用DUV(Transformer)をドラム用に軽量適応
+
+# Note: No pre-trained drums DUV checkpoint exists
+# Will train from scratch or use universal checkpoint when available
+base_checkpoint: null
+base_frozen: false
+
+lora:
+  enable: true
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules:
+    ["attn.q_proj", "attn.v_proj", "attn.out_proj", "ff.in", "ff.out"]
+
+# Data
+manifest: manifests/loops_drums.enriched.jsonl
+train_split: 0.9
+valid_split: 0.1
+shuffle: true
+
+filters:
+  min_notes: 64
+  max_duration_sec: 480
+  min_duration_sec: 2
+
+features:
+  inputs: [
+      "beat_pos",
+      "beat_frac",
+      "pitch",
+      "dur_beats",
+      "prev_ioi",
+      "next_ioi",
+      "is_downbeat",
+      # ドラム特有ヒント（存在しなければ無視）
+      "is_kick",
+      "is_snare",
+      "is_hat",
+      "accent_hint",
+      "fill_hint",
+    ]
+  targets: ["velocity", "dur_beats"]
+  normalize: true
+  scaler_out: checkpoints/scalers/drums_duv.json
+
+targets_mode: absolute
+
+trainer:
+  epochs: 6
+  batch_size: 128 # ループは短いのでやや大きめでも可
+  lr: 2.0e-4
+  weight_decay: 0.01
+  warmup_steps: 1000
+  early_stop_patience: 2
+  grad_clip_norm: 1.0
+  precision: bf16
+  seed: 42
+
+output_dir: checkpoints/duv_drums_lora
+save_every: 1
+eval_every: 1000
+
+inference:
+  intensity: 0.85
+  include_regex: "(?i)drum|kit|perc|drs"
+  exclude_regex: "(?i)$^"
+  mode: absolute

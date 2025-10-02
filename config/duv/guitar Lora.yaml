@@ -1,0 +1,79 @@
+# Guitar DUV — LoRA fine-tune config
+# 目的: 既存の汎用DUV(Transformer)をギター用に軽量適応
+
+# === Base model ===
+base_checkpoint: checkpoints/guitar_duv_v2.best.ckpt # 既存のguitar DUV
+base_frozen: true # 本体は凍結し、LoRAのみ学習
+
+# === LoRA settings ===
+lora:
+  enable: true
+  r: 8 # 低ランク次元 (4–16)
+  alpha: 16 # スケーリング
+  dropout: 0.05
+  # 実装に合わせて：Self-Attn(Q/V/Out), FFN(In/Out) 等
+  target_modules:
+    ["attn.q_proj", "attn.v_proj", "attn.out_proj", "ff.in", "ff.out"]
+
+# === Data ===
+# Use existing CSV data (already prepared for DUV training)
+train_csv: data/phrase_csv/guitar_train.csv
+valid_csv: data/phrase_csv/guitar_valid.csv
+
+# Alternative: JSONL manifest (requires note-level enrichment)
+# manifest: manifests/lamd_guitar_enriched.jsonl
+train_split: 0.9
+valid_split: 0.1
+shuffle: true
+
+# サンプルの健全性フィルタ（学習前に弾く閾値）
+filters:
+  min_notes: 8 # Relaxed from 64
+  max_duration_sec: 600
+  min_duration_sec: 0.5 # Relaxed from 3
+
+# === Feature spec (DUVと整合) ===
+features:
+  # Available in CSV: pitch, velocity, duration, pos, boundary, bar,
+  # instrument, program, song_id, velocity_bucket, duration_bucket
+  inputs: [
+      "pos", # Position in bar
+      "pitch", # MIDI pitch
+      "duration", # Note duration
+      "boundary", # Phrase boundary indicator
+      "bar", # Bar number
+      "program", # MIDI program
+      "velocity_bucket", # Velocity quantization
+      "duration_bucket", # Duration quantization
+    ]
+  targets: ["velocity", "duration"] # DUV targets
+  normalize: true
+  scaler_out: checkpoints/scalers/guitar_duv.json
+
+# 統一タスク設定
+targets_mode: absolute # or delta (モデルに合わせる)
+
+# === Training ===
+trainer:
+  epochs: 6
+  batch_size: 64
+  max_len: 128 # Match base model
+  lr: 2.0e-4
+  weight_decay: 0.01
+  warmup_steps: 1000
+  early_stop_patience: null # Disabled (validation may be limited)
+  grad_clip_norm: 1.0
+  precision: bf16 # GPUがbf16非対応なら "fp16" or "32"
+  seed: 42
+
+# ロギング/保存
+output_dir: checkpoints/duv_guitar_lora
+save_every: 1
+eval_every: 1000
+
+# === Inference defaults (duv_infer.py を呼ぶ側の推奨値) ===
+inference:
+  intensity: 0.9
+  include_regex: "(?i)guitar|gtr"
+  exclude_regex: "(?i)drum|perc"
+  mode: absolute

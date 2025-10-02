@@ -152,11 +152,11 @@ class PhraseTransformer(nn.Module if torch is not None else object):
                     return None
             return None
 
-        # DEBUG: Check torch state
-        print(f"DEBUG: torch is None: {torch is None}")
+        # DEBUG: Check torch state (commented out to reduce log noise)
+        # print(f"DEBUG: torch is None: {torch is None}")
 
         if torch is None:
-            print("DEBUG: Entering torch is None branch")
+            # print("DEBUG: Entering torch is None branch")
             try:
                 import torch as _torch_fallback
             except Exception:  # pragma: no cover - torch truly unavailable

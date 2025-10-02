@@ -1,0 +1,16 @@
+INFO:root:device mps amp=False precision=medium
+INFO:root:train rows kept 23611 removed 0 | val kept 1174 removed 0
+INFO:root:class balance {'pos': 2723, 'neg': 20888}
+INFO:root:tag instrument counts {'bass': 9072, 'slap bass 2': 418, 'electric bass (finger)': 3134, 'fretless bass': 6010, 'bass gtr': 627, 'acou bass': 3938, 'bass 1': 220, 'basso': 192}
+INFO:root:epoch 1 train_loss 0.8109 val_f1 0.167 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 1.43e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 63.1s
+INFO:root:epoch=1 train_loss=0.810851 val_loss=0.693147 | train_loss 0.810851 val_loss 0.693147
+INFO:root:epoch 2 train_loss 0.0469 val_f1 0.167 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.87e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 52.2s
+INFO:root:epoch=2 train_loss=0.046901 val_loss=0.693147 | train_loss 0.046901 val_loss 0.693147
+INFO:root:epoch 3 train_loss 0.0148 val_f1 0.167 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.98e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 57.0s
+INFO:root:epoch=3 train_loss=0.014826 val_loss=0.693147 | train_loss 0.014826 val_loss 0.693147
+INFO:root:epoch 4 train_loss 0.0070 val_f1 0.167 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.93e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 58.7s
+INFO:root:epoch=4 train_loss=0.006966 val_loss=0.693147 | train_loss 0.006966 val_loss 0.693147
+INFO:root:epoch 5 train_loss 0.0034 val_f1 0.167 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.85e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 54.9s
+INFO:root:epoch=5 train_loss=0.003402 val_loss=0.693147 | train_loss 0.003402 val_loss 0.693147
+INFO:root:epoch 6 train_loss 0.0021 val_f1 0.167 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.73e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 51.7s
+INFO:root:epoch=6 train_loss=0.002144 val_loss=0.693147 | train_loss 0.002144 val_loss 0.693147

@@ -1,0 +1,16 @@
+INFO:root:device mps amp=False precision=medium
+INFO:root:train rows kept 35067 removed 0 | val kept 2086 removed 0
+INFO:root:class balance {'pos': 4222, 'neg': 30845}
+INFO:root:tag instrument counts {'acoustic grand piano': 10183, 'piano': 1264, 'piano elec.': 492, 'el.piano': 7659, 'bright acoustic piano': 6944, 'electric grand piano': 751, 'electric piano 2': 2154, 'e.piano 2': 565, 'keyboard 1': 704, 'ac.piano': 111, 'acousgrpiano': 694, 'electric piano 1': 523, 'honky-tonk piano': 1305, 'e.piano': 386, 'a.piano 2': 1312, 'keyboard 2': 20}
+INFO:root:epoch 1 train_loss 0.7479 val_f1 0.212 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 1.63e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 69.9s
+INFO:root:epoch=1 train_loss=0.747927 val_loss=0.693147 | train_loss 0.747927 val_loss 0.693147
+INFO:root:epoch 2 train_loss 0.0327 val_f1 0.212 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 3.00e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 77.6s
+INFO:root:epoch=2 train_loss=0.032655 val_loss=0.693147 | train_loss 0.032655 val_loss 0.693147
+INFO:root:epoch 3 train_loss 0.0081 val_f1 0.212 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.98e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 59.5s
+INFO:root:epoch=3 train_loss=0.008072 val_loss=0.693147 | train_loss 0.008072 val_loss 0.693147
+INFO:root:epoch 4 train_loss 0.0043 val_f1 0.212 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.91e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 88.5s
+INFO:root:epoch=4 train_loss=0.004333 val_loss=0.693147 | train_loss 0.004333 val_loss 0.693147
+INFO:root:epoch 5 train_loss 0.0022 val_f1 0.212 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.82e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 70.6s
+INFO:root:epoch=5 train_loss=0.002166 val_loss=0.693147 | train_loss 0.002166 val_loss 0.693147
+INFO:root:epoch 6 train_loss 0.0022 val_f1 0.212 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.69e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 84.6s
+INFO:root:epoch=6 train_loss=0.002201 val_loss=0.693147 | train_loss 0.002201 val_loss 0.693147

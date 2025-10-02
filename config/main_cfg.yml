@@ -203,6 +203,15 @@ reserved:
   audio_rendering: {}
   lyrics_handling: {}
   future_parts: {}
+controls:
+  enable: true  # Controls ON（デフォルト）
+
+duv:
+  enable: false  # DUV OFF（まだモデル未訓練）
+  # model_path: checkpoints/duv_universal.ckpt
+  # scaler_path: checkpoints/scalers/universal_duv.json
+  # mode: absolute
+  # intensity: 0.9
 # ---------------- Notes ------------------------------
 # * section_overrides は processed_chordmap
 #   とラベル一致させることで自動で適用されます。

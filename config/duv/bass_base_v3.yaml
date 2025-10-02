@@ -1,0 +1,54 @@
+# Base DUV Model Training Config - Bass v3
+# Using Los-Angeles-MIDI enriched data (1,679 songs)
+
+# Data source
+data: "manifests/lamd_bass_enriched.jsonl"
+instrument: "bass"
+
+# Output
+out: "checkpoints/bass_duv_v3.best.ckpt"
+logdir: "logs/bass_duv_v3"
+
+# Model architecture
+arch: "transformer"
+d_model: 512
+nhead: 8
+layers: 4
+max_len: 128
+dropout: 0.1
+
+# Training hyperparameters
+epochs: 20
+batch_size: 16
+lr: 0.0003
+weight_decay: 0.01
+grad_clip: 1.0
+scheduler: "cosine"
+warmup_steps: 500
+
+# DUV-specific settings
+duv_mode: "both" # velocity + duration regression + classification
+vel_bins: 16
+dur_bins: 16
+use_bar_beat: true
+use_harmony: false
+
+# Loss weights
+w_boundary: 1.0
+w_vel_reg: 1.0
+w_dur_reg: 1.0
+w_vel_cls: 0.5
+w_dur_cls: 0.5
+
+# Early stopping & checkpointing
+early_stopping: 5
+save_every: 1
+min_f1: 0.0
+
+# Device
+device: "auto" # auto-detect GPU/MPS/CPU
+num_workers: 4
+pin_memory: true
+
+# Progress
+progress: true

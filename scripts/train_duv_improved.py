@@ -15,6 +15,7 @@ import random
 import warnings
 from typing import Any, Dict, Iterator, List, Optional, Sequence
 
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
@@ -27,7 +28,11 @@ from torch.optim.lr_scheduler import (
 )
 from torch.utils.data import DataLoader, Dataset, Sampler
 import lightning as L
-from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+from lightning.pytorch.callbacks import (
+    EarlyStopping,
+    LearningRateMonitor,
+    ModelCheckpoint,
+)
 
 EmaCallbackClass: Optional[Any] = None
 try:
@@ -50,109 +55,290 @@ class DUVDataset(Dataset):
         stats: Dict[str, Any],
         max_len: int = 256,
         use_program_emb: bool = False,
+        *,
+        augment: bool = False,
+        augment_prob: float = 0.5,
+        tempo_aug_factors: Optional[Sequence[float]] = None,
+        velocity_noise_std: float = 0.0,
+        position_jitter_steps: int = 0,
     ):
-        self.phrase_df = phrase_df
+        self.phrase_df = phrase_df.reset_index(drop=True)
         self.stats = stats
-        self.max_len = max_len
+        self.max_len = int(max_len)
         self.use_program_emb = use_program_emb
-        self.lengths: List[int] = self._compute_lengths()
+        self.augment = augment
+        self.augment_prob = float(max(0.0, min(augment_prob, 1.0)))
+        self.velocity_noise_std = float(max(0.0, velocity_noise_std))
+        self.position_jitter_steps = int(max(0, position_jitter_steps))
+        factors = [float(f) for f in (tempo_aug_factors or []) if f and f > 0.0]
+        if factors and not any(math.isclose(f, 1.0) for f in factors):
+            factors.append(1.0)
+        self.tempo_aug_factors: List[float] = factors
 
-    def _compute_lengths(self) -> List[int]:
-        lengths: List[int] = []
+        # モード検出：phrase_json 方式 or フラットCSV方式
+        self.uses_phrase_json = "phrase_json" in self.phrase_df.columns
+        if self.uses_phrase_json:
+            self.lengths: List[int] = self._compute_lengths_from_json()
+            self.indices: List[int] = list(range(len(self.lengths)))
+        else:
+            # フラットCSV: グループ化して各フレーズ長を算出
+            self.group_cols = self._choose_group_cols(self.phrase_df)
+            self.groups: List[np.ndarray] = []
+            self.lengths = []
+            for _, g in self.phrase_df.groupby(self.group_cols, sort=False):
+                idx = g.index.to_numpy()
+                L = int(min(len(idx), self.max_len))
+                if L <= 0:
+                    continue
+                self.groups.append(idx[:L])
+                self.lengths.append(L)
+            self.indices = list(range(len(self.groups)))
+
+    def _compute_lengths_from_json(self) -> List[int]:
+        lens: List[int] = []
         for phrase_json in self.phrase_df["phrase_json"].tolist():
-            try:
-                phrase_data = json.loads(phrase_json)
-                length = len(phrase_data)
-            except (json.JSONDecodeError, TypeError):
-                length = 0
+            seq = json.loads(phrase_json)
+            lens.append(min(len(seq), self.max_len))
+        return lens
 
-            length = max(1, min(length, self.max_len))
-            lengths.append(length)
-
-        return lengths
+    @staticmethod
+    def _choose_group_cols(df: pd.DataFrame) -> List[str]:
+        # 代表的な候補から存在するものを採用。最後は必ず bar でフレーズ境界。
+        candidates = ["track_id", "song", "file", "program"]
+        cols = [c for c in candidates if c in df.columns]
+        if "bar" not in df.columns:
+            raise KeyError("flat CSV mode requires 'bar' column to segment phrases")
+        cols.append("bar")
+        return cols
 
     def __len__(self) -> int:
-        return len(self.phrase_df)
+        return len(self.lengths)
 
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
-        row = self.phrase_df.iloc[idx]
+    def _pad_to_max_len(
+        self,
+        tensor: torch.Tensor,
+        length: int,
+        *,
+        dtype: Optional[torch.dtype] = None,
+    ) -> torch.Tensor:
+        """Pad a 1-D tensor to ``max_len`` with zeros."""
 
-        # Load phrase notes
-        phrase_data = json.loads(row["phrase_json"])
-        phrase_df = pd.DataFrame(phrase_data)
+        target_dtype = dtype or tensor.dtype
+        padded = torch.zeros(self.max_len, dtype=target_dtype)
+        if length > 0:
+            padded[:length] = tensor[:length].to(target_dtype)
+        return padded
 
-        if len(phrase_df) == 0:
-            # Empty phrase - create dummy data
-            length = 1
-            phrase_df = pd.DataFrame(
-                {
-                    "pitch": [60],
-                    "position": [0],
-                    "pitch_class": [0],
-                    "duration": [0.5],
-                    "velocity": [64],
-                }
-            )
+    def _format_sample(
+        self,
+        raw: Dict[str, torch.Tensor],
+        length: int,
+    ) -> Dict[str, Any]:
+        """Build feature/target dicts with padding and masks."""
+
+        length = max(0, min(length, self.max_len))
+
+        # Required features
+        features: Dict[str, torch.Tensor] = {}
+        features["position"] = self._pad_to_max_len(
+            raw["position"].long(),
+            length,
+            dtype=torch.long,
+        )
+
+        if "pitch_class" in raw:
+            pitch_class = raw["pitch_class"].long()
+        elif "pitch" in raw:
+            pitch_class = torch.remainder(raw["pitch"].long(), 12)
         else:
-            length = self.lengths[idx]
-            phrase_df = phrase_df.iloc[:length]
+            pitch_class = torch.zeros(length, dtype=torch.long)
+        features["pitch_class"] = self._pad_to_max_len(
+            pitch_class,
+            length,
+            dtype=torch.long,
+        )
 
-        # Feature extraction
-        feats = {}
-        feats["pitch"] = torch.tensor(phrase_df["pitch"].values[:length] % 12, dtype=torch.long)
+        features["duration"] = self._pad_to_max_len(
+            raw["duration"].float(),
+            length,
+            dtype=torch.float32,
+        )
+        velocity_raw = raw["velocity"].float()
+        velocity_norm = velocity_raw / 127.0
+        features["velocity"] = self._pad_to_max_len(
+            velocity_norm,
+            length,
+            dtype=torch.float32,
+        )
 
-        if "position" in phrase_df.columns:
-            feats["position"] = torch.tensor(
-                phrase_df["position"].values[:length], dtype=torch.long
+        vel_bucket = raw.get("vel_bucket")
+        if vel_bucket is None:
+            vel_bucket = torch.zeros(length, dtype=torch.long)
+        features["vel_bucket"] = self._pad_to_max_len(
+            vel_bucket.long(),
+            length,
+            dtype=torch.long,
+        )
+
+        dur_bucket = raw.get("dur_bucket")
+        if dur_bucket is None:
+            dur_bucket = torch.zeros(length, dtype=torch.long)
+        features["dur_bucket"] = self._pad_to_max_len(
+            dur_bucket.long(),
+            length,
+            dtype=torch.long,
+        )
+
+        if self.use_program_emb:
+            program = raw.get("program")
+            if program is None:
+                program = torch.zeros(length, dtype=torch.long)
+            features["program"] = self._pad_to_max_len(
+                program.long(),
+                length,
+                dtype=torch.long,
             )
-        else:
-            feats["position"] = torch.arange(length, dtype=torch.long)
 
-        if "pitch_class" in phrase_df.columns:
-            feats["pitch_class"] = torch.tensor(
-                phrase_df["pitch_class"].values[:length], dtype=torch.long
-            )
-        else:
-            feats["pitch_class"] = torch.zeros(length, dtype=torch.long)
-
-        feats["duration"] = torch.tensor(phrase_df["duration"].values[:length], dtype=torch.float32)
-        feats["velocity"] = torch.tensor(phrase_df["velocity"].values[:length], dtype=torch.float32)
-
-        # Optional features (zero-fill if missing)
-        if "vel_bucket" in phrase_df.columns:
-            feats["vel_bucket"] = torch.tensor(
-                phrase_df["vel_bucket"].values[:length], dtype=torch.long
-            )
-        else:
-            feats["vel_bucket"] = torch.zeros(length, dtype=torch.long)
-
-        if "dur_bucket" in phrase_df.columns:
-            feats["dur_bucket"] = torch.tensor(
-                phrase_df["dur_bucket"].values[:length], dtype=torch.long
-            )
-        else:
-            feats["dur_bucket"] = torch.zeros(length, dtype=torch.long)
-
-        if self.use_program_emb and "program" in phrase_df.columns:
-            feats["program"] = torch.tensor(phrase_df["program"].values[:length], dtype=torch.long)
-
-        # Pad to max_len
         mask = torch.zeros(self.max_len, dtype=torch.bool)
-        mask[:length] = True
+        if length > 0:
+            mask[:length] = True
 
-        for key in feats:
-            padded = torch.zeros(self.max_len, dtype=feats[key].dtype)
-            padded[:length] = feats[key]
-            feats[key] = padded
-
-        # Target values (for loss calculation)
         targets = {
-            "velocity": feats["velocity"].clone(),
-            "duration": feats["duration"].clone(),
+            "velocity": features["velocity"].clone(),
+            "velocity_raw": self._pad_to_max_len(
+                velocity_raw,
+                length,
+                dtype=torch.float32,
+            ),
+            "duration": features["duration"].clone(),
             "mask": mask,
         }
 
-        return {"features": feats, "targets": targets}
+        return {"features": features, "targets": targets, "length": length}
+
+    def __getitem__(self, i: int) -> Dict[str, Any]:
+        if self.uses_phrase_json:
+            rec = self.phrase_df.iloc[i]
+            seq = json.loads(rec["phrase_json"])
+            L = min(len(seq), self.max_len)
+
+            raw: Dict[str, torch.Tensor] = {
+                "pitch": torch.tensor(
+                    [s.get("pitch", 0) for s in seq[:L]],
+                    dtype=torch.long,
+                ),
+                "position": torch.tensor(
+                    [s.get("position", 0) for s in seq[:L]],
+                    dtype=torch.long,
+                ),
+                "duration": torch.tensor(
+                    [float(s.get("duration", 0.0)) for s in seq[:L]],
+                    dtype=torch.float32,
+                ),
+                "velocity": torch.tensor(
+                    [float(s.get("velocity", 0.0)) for s in seq[:L]],
+                    dtype=torch.float32,
+                ),
+                "vel_bucket": torch.tensor(
+                    [int(s.get("vel_bucket", 0)) for s in seq[:L]],
+                    dtype=torch.long,
+                ),
+                "dur_bucket": torch.tensor(
+                    [int(s.get("dur_bucket", 0)) for s in seq[:L]],
+                    dtype=torch.long,
+                ),
+            }
+
+            if self.use_program_emb:
+                raw["program"] = torch.tensor(
+                    [int(s.get("program", 0)) for s in seq[:L]],
+                    dtype=torch.long,
+                )
+
+            self._apply_augmentation(raw, L)
+            return self._format_sample(raw, L)
+
+        # フラットCSV: 事前に構築した groups[i] から行インデックスを取り出してテンソル化
+        idx = self.groups[i]
+        g = self.phrase_df.loc[idx]
+        length = min(len(g), self.max_len)
+
+        raw = {
+            "pitch": torch.tensor(
+                g["pitch"].to_numpy(dtype=np.int64, copy=False),
+                dtype=torch.long,
+            ),
+            "position": torch.tensor(
+                g["position"].to_numpy(dtype=np.int64, copy=False),
+                dtype=torch.long,
+            ),
+            "duration": torch.tensor(
+                g["duration"].to_numpy(dtype=np.float32, copy=False),
+                dtype=torch.float32,
+            ),
+            "velocity": torch.tensor(
+                g["velocity"].to_numpy(dtype=np.float32, copy=False),
+                dtype=torch.float32,
+            ),
+        }
+
+        if "vel_bucket" in g.columns:
+            raw["vel_bucket"] = torch.tensor(
+                g["vel_bucket"].to_numpy(dtype=np.int64, copy=False),
+                dtype=torch.long,
+            )
+        if "dur_bucket" in g.columns:
+            raw["dur_bucket"] = torch.tensor(
+                g["dur_bucket"].to_numpy(dtype=np.int64, copy=False),
+                dtype=torch.long,
+            )
+        if self.use_program_emb and "program" in g.columns:
+            raw["program"] = torch.tensor(
+                g["program"].to_numpy(dtype=np.int64, copy=False),
+                dtype=torch.long,
+            )
+
+        self._apply_augmentation(raw, length)
+        return self._format_sample(raw, length)
+
+    def _apply_augmentation(
+        self,
+        raw: Dict[str, torch.Tensor],
+        length: int,
+    ) -> None:
+        if not self.augment or length <= 0:
+            return
+        if random.random() > self.augment_prob:
+            return
+
+        if self.tempo_aug_factors:
+            factor = random.choice(self.tempo_aug_factors)
+            if not math.isclose(factor, 1.0):
+                if "duration" in raw:
+                    raw["duration"] = raw["duration"].clone()
+                    raw["duration"][:length] = raw["duration"][:length] * factor
+
+        if self.velocity_noise_std > 0 and "velocity" in raw:
+            raw["velocity"] = raw["velocity"].clone()
+            noise = torch.randn(length, device=raw["velocity"].device)
+            noise = noise * self.velocity_noise_std
+            raw["velocity"][:length] = torch.clamp(
+                raw["velocity"][:length] + noise,
+                min=0.0,
+                max=127.0,
+            )
+
+        if self.position_jitter_steps > 0 and "position" in raw:
+            shift = random.randint(
+                -self.position_jitter_steps,
+                self.position_jitter_steps,
+            )
+            if shift != 0:
+                raw["position"] = raw["position"].clone()
+                raw["position"][:length] = torch.clamp(
+                    raw["position"][:length] + shift,
+                    min=0,
+                )
 
 
 class LengthBucketBatchSampler(Sampler[List[int]]):
@@ -306,6 +492,10 @@ class ImprovedDUVModel(L.LightningModule):
     ) -> Dict[str, torch.Tensor]:
         return self.model(features)
 
+    @staticmethod
+    def _velocity_activation(tensor: torch.Tensor) -> torch.Tensor:
+        return torch.sigmoid(tensor)
+
     def _compute_loss(
         self,
         outputs: Dict[str, torch.Tensor],
@@ -317,7 +507,8 @@ class ImprovedDUVModel(L.LightningModule):
 
         # Velocity loss (L1/MAE)
         if "vel_reg" in outputs:
-            vel_pred = outputs["vel_reg"]
+            vel_pred = self._velocity_activation(outputs["vel_reg"])
+            outputs["vel_reg"] = vel_pred
             vel_target = targets["velocity"]
             vel_loss = F.l1_loss(
                 vel_pred * mask,
@@ -365,6 +556,31 @@ class ImprovedDUVModel(L.LightningModule):
         if "dur_loss" in losses:
             self.log("train_dur_loss", losses["dur_loss"], prog_bar=False)
 
+        if "vel_reg" in outputs and batch_idx == 0:
+            mask = batch["targets"]["mask"].bool()
+            if mask.any():
+                vel_pred_norm = outputs["vel_reg"].detach()[mask]
+                vel_target_norm = batch["targets"]["velocity"].detach()[mask]
+                vel_pred_raw = vel_pred_norm * 127.0
+                vel_target_raw = batch["targets"]["velocity_raw"].detach()
+                vel_target_raw = vel_target_raw[mask]
+                self.log_dict(
+                    {
+                        "dbg/vel_pred_norm_min": vel_pred_norm.min(),
+                        "dbg/vel_pred_norm_max": vel_pred_norm.max(),
+                        "dbg/vel_tgt_norm_min": vel_target_norm.min(),
+                        "dbg/vel_tgt_norm_max": vel_target_norm.max(),
+                        "dbg/vel_pred_raw_min": vel_pred_raw.min(),
+                        "dbg/vel_pred_raw_max": vel_pred_raw.max(),
+                        "dbg/vel_tgt_raw_min": vel_target_raw.min(),
+                        "dbg/vel_tgt_raw_max": vel_target_raw.max(),
+                    },
+                    prog_bar=False,
+                    logger=True,
+                    on_step=True,
+                    on_epoch=False,
+                )
+
         # Log learning rate
         scheduler = self.lr_schedulers()
         if scheduler is not None:
@@ -397,12 +613,14 @@ class ImprovedDUVModel(L.LightningModule):
         # Compute MAE metrics
         mask = batch["targets"]["mask"]
         if "vel_reg" in outputs:
-            vel_mae = F.l1_loss(
+            vel_mae_norm = F.l1_loss(
                 outputs["vel_reg"] * mask,
                 batch["targets"]["velocity"] * mask,
                 reduction="sum",
             ) / mask.sum().clamp(min=1)
-            self.log("val_vel_mae", vel_mae, prog_bar=True)
+            vel_mae_raw = vel_mae_norm * 127.0
+            self.log("val_vel_mae", vel_mae_raw, prog_bar=True)
+            self.log("val_vel_mae_norm", vel_mae_norm, prog_bar=False)
 
         if "dur_reg" in outputs:
             dur_mae = F.l1_loss(
@@ -509,6 +727,12 @@ class DUVDataModule(L.LightningDataModule):
         bucket_shuffle: bool = True,
         drop_last: bool = True,
         seed: int = 42,
+        filter_programs: Optional[Sequence[int]] = None,
+        enable_augmentation: bool = False,
+        augment_prob: float = 0.5,
+        tempo_aug_factors: Optional[Sequence[float]] = None,
+        velocity_noise_std: float = 0.0,
+        position_jitter_steps: int = 0,
     ):
         super().__init__()
         self.csv_train = csv_train
@@ -528,6 +752,14 @@ class DUVDataModule(L.LightningDataModule):
         self.seed = seed
         self.train_dataset: Optional[DUVDataset] = None
         self.val_dataset: Optional[DUVDataset] = None
+        self.filter_programs = [int(p) for p in filter_programs] if filter_programs else None
+        self.enable_augmentation = enable_augmentation
+        self.augment_prob = float(max(0.0, min(augment_prob, 1.0)))
+        self.tempo_aug_factors = (
+            [float(f) for f in tempo_aug_factors] if tempo_aug_factors else None
+        )
+        self.velocity_noise_std = float(max(0.0, velocity_noise_std))
+        self.position_jitter_steps = int(max(0, position_jitter_steps))
 
     def setup(self, stage: Optional[str] = None):
         # Load stats
@@ -539,11 +771,20 @@ class DUVDataModule(L.LightningDataModule):
             train_df = pd.read_csv(self.csv_train)
             valid_df = pd.read_csv(self.csv_valid)
 
+            if self.filter_programs:
+                train_df = self._filter_by_program(train_df, "train")
+                valid_df = self._filter_by_program(valid_df, "valid")
+
             self.train_dataset = DUVDataset(
                 train_df,
                 self.stats,
                 self.max_len,
                 self.use_program_emb,
+                augment=self.enable_augmentation,
+                augment_prob=self.augment_prob,
+                tempo_aug_factors=self.tempo_aug_factors,
+                velocity_noise_std=self.velocity_noise_std,
+                position_jitter_steps=self.position_jitter_steps,
             )
             self.val_dataset = DUVDataset(
                 valid_df,
@@ -551,6 +792,45 @@ class DUVDataModule(L.LightningDataModule):
                 self.max_len,
                 self.use_program_emb,
             )
+
+    def _filter_by_program(self, df: pd.DataFrame, split: str) -> pd.DataFrame:
+        if not self.filter_programs:
+            return df
+
+        program_set = set(self.filter_programs)
+
+        if "program" in df.columns:
+            filtered = df[df["program"].isin(program_set)]
+        elif "phrase_json" in df.columns:
+            filtered = df[df["phrase_json"].apply(self._phrase_contains_program)]
+        else:
+            warnings.warn(
+                "filter_program was requested but no program information was found"
+                f" in the {split} DataFrame.",
+            )
+            return df
+
+        if filtered.empty():
+            raise ValueError(
+                "No records left after applying program filter to " f"the {split} split."
+            )
+
+        return filtered.reset_index(drop=True)
+
+    def _phrase_contains_program(self, phrase_json: str) -> bool:
+        if not self.filter_programs:
+            return False
+
+        try:
+            sequence = json.loads(phrase_json)
+        except json.JSONDecodeError:
+            return False
+
+        for event in sequence:
+            program = event.get("program")
+            if program is not None and int(program) in self.filter_programs:
+                return True
+        return False
 
     def train_dataloader(self):
         if self.train_dataset is None:
@@ -633,6 +913,13 @@ def main():
         action=BooleanOptionalAction,
         default=False,
         help="Use program embeddings when available.",
+    )
+    data_group.add_argument(
+        "--filter-program",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Keep only phrases whose program id is in this list.",
     )
 
     model_group = parser.add_argument_group("model")
@@ -812,6 +1099,39 @@ def main():
         help="Drop incomplete batches during training.",
     )
 
+    augment_group = parser.add_argument_group("augmentation")
+    augment_group.add_argument(
+        "--enable-augmentation",
+        action=BooleanOptionalAction,
+        default=False,
+        help="Enable stochastic data augmentation for training.",
+    )
+    augment_group.add_argument(
+        "--augment-prob",
+        type=float,
+        default=0.5,
+        help="Probability of applying augmentation to a training sample.",
+    )
+    augment_group.add_argument(
+        "--tempo-aug-factors",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Tempo scaling factors (e.g., 0.9 1.1) applied to durations.",
+    )
+    augment_group.add_argument(
+        "--velocity-noise-std",
+        type=float,
+        default=0.0,
+        help="Gaussian noise std to add to raw velocities (scale 0-127).",
+    )
+    augment_group.add_argument(
+        "--position-jitter-steps",
+        type=int,
+        default=0,
+        help="Global position shift range in steps (+/-).",
+    )
+
     runtime_group = parser.add_argument_group("runtime")
     runtime_group.add_argument(
         "--precision",
@@ -905,6 +1225,16 @@ def main():
         default="duv_piano_plus_improved",
         help="Model name prefix for checkpoints.",
     )
+    checkpoint_group.add_argument(
+        "--resume-from-checkpoint",
+        default=None,
+        help="Resume training from an existing Lightning checkpoint.",
+    )
+    checkpoint_group.add_argument(
+        "--init-checkpoint",
+        default=None,
+        help="Load model weights from checkpoint before training.",
+    )
 
     args = parser.parse_args()
 
@@ -943,6 +1273,12 @@ def main():
         bucket_shuffle=args.bucket_shuffle,
         drop_last=args.drop_last,
         seed=args.seed,
+        filter_programs=args.filter_program,
+        enable_augmentation=args.enable_augmentation,
+        augment_prob=args.augment_prob,
+        tempo_aug_factors=args.tempo_aug_factors,
+        velocity_noise_std=args.velocity_noise_std,
+        position_jitter_steps=args.position_jitter_steps,
     )
 
     model = ImprovedDUVModel(
@@ -965,6 +1301,49 @@ def main():
         warmup_epochs=args.warmup_epochs,
         warmup_start_factor=args.warmup_start_factor,
     )
+
+    if args.init_checkpoint and args.resume_from_checkpoint:
+        warnings.warn(
+            "Both init-checkpoint and resume-from-checkpoint were provided. "
+            "The resume checkpoint will take precedence.",
+            RuntimeWarning,
+        )
+
+    if args.init_checkpoint and not args.resume_from_checkpoint:
+        init_path = os.path.expanduser(args.init_checkpoint)
+        if not os.path.isfile(init_path):
+            raise FileNotFoundError(f"init_checkpoint not found: {init_path}")
+        checkpoint = torch.load(init_path, map_location="cpu")
+        state_dict = checkpoint.get("state_dict", checkpoint)
+        current_state = model.state_dict()
+        compatible_state = {}
+        skipped_keys: List[str] = []
+        for key, tensor in state_dict.items():
+            if key not in current_state:
+                continue
+            if current_state[key].shape != tensor.shape:
+                skipped_keys.append(key)
+                continue
+            compatible_state[key] = tensor
+
+        missing, unexpected = model.load_state_dict(compatible_state, strict=False)
+        if skipped_keys:
+            warnings.warn(
+                "Skipped incompatible keys when loading init checkpoint: "
+                + ", ".join(sorted(skipped_keys)),
+                RuntimeWarning,
+            )
+        if missing:
+            warnings.warn(
+                "Missing keys when loading init checkpoint: " + ", ".join(missing),
+                RuntimeWarning,
+            )
+        if unexpected:
+            warnings.warn(
+                "Unexpected keys when loading init checkpoint: " + ", ".join(unexpected),
+                RuntimeWarning,
+            )
+        print(f"Loaded weights from {init_path} for initialization.")
 
     callbacks = [
         ModelCheckpoint(
@@ -1019,6 +1398,13 @@ def main():
 
     trainer = L.Trainer(**trainer_kwargs)
 
+    resume_path: Optional[str] = None
+    if args.resume_from_checkpoint:
+        resume_path = os.path.expanduser(args.resume_from_checkpoint)
+        if not os.path.isfile(resume_path):
+            raise FileNotFoundError(f"resume checkpoint not found: {resume_path}")
+        print(f"Resuming training from {resume_path}")
+
     print(f"Training {args.model_name} for {args.epochs} epochs...")
     print(f"Scheduler: {args.scheduler}")
     print(f"Precision: {args.precision}")
@@ -1028,7 +1414,11 @@ def main():
             bucket_boundaries if bucket_boundaries else "auto",
         )
 
-    trainer.fit(model=model, datamodule=data_module)
+    trainer.fit(
+        model=model,
+        datamodule=data_module,
+        ckpt_path=resume_path,
+    )
 
     checkpoint_path = os.path.join(
         args.checkpoint_dir,

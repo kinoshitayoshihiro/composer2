@@ -33,7 +33,7 @@
 
 # 依存関係インストール
 !pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-!pip install -q pretty_midi pandas numpy scikit-learn tqdm PyYAML
+!pip install -q pretty_midi pandas numpy scikit-learn tqdm PyYAML librosa mido pytorch-lightning torchmetrics music21 scipy hydra-core
 
 # GPU確認
 import torch

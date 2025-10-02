@@ -2,7 +2,42 @@
 
 ## 🎯 概要
 
-このガイドは、Google Colab GPU を使用してDUVベースモデルをトレーニングする完全な手順です。
+このガイドは、Google Colab GPU を使用してDUVベース#### Cell 2: 依存パッケージのインストール
+
+```python
+# PyTorch (CUDA対応) をインストール
+print("📦 Installing PyTorch with CUDA support...")
+!pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# 必須パッケージを個別にインストール
+print("📦 Installing core dependencies...")
+!pip install -q pretty_midi>=0.2.9
+!pip install -q pandas>=1.5.0
+!pip install -q numpy>=1.23.0
+!pip install -q scikit-learn>=1.2.0
+!pip install -q tqdm>=4.65.0
+!pip install -q PyYAML>=6.0
+!pip install -q librosa>=0.10.0
+!pip install -q mido>=1.3
+!pip install -q pytorch-lightning>=2.0
+!pip install -q torchmetrics>=1.0
+!pip install -q music21>=9.1
+!pip install -q scipy>=1.13
+!pip install -q hydra-core>=1.3
+
+print("✅ All packages installed!")
+
+# バージョン確認
+import torch
+import pandas as pd
+import numpy as np
+print(f"\n📊 Installed versions:")
+print(f"  PyTorch: {torch.__version__}")
+print(f"  NumPy: {np.__version__}")
+print(f"  Pandas: {pd.__version__}")
+```
+
+**注意**: `requirements.txt`は依存ファイルが不完全なため使用しません。完全な手順です。
 
 - **対象**: 5楽器 (guitar, bass, piano, strings, drums)
 - **データ**: 12,041,596フレーズ、127段階ベロシティ

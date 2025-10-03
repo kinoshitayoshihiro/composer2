@@ -1,127 +1,237 @@
-# Google Colab クイックスタート
+# 🎯 Google Colab Quick Start Notebook
 
-## 🚀 5分でトレーニング開始
-
-### ステップ1: 事前準備 (ローカル)
-
-```bash
-# データをGoogle Driveにアップロード
-# My Drive/composer2_data/phrase_csv/ に以下をコピー:
-# - guitar_train_raw.csv (261 MB)
-# - guitar_val_raw.csv
-# - bass_train_raw.csv
-# - bass_val_raw.csv
-# - piano_train_raw.csv
-# - piano_val_raw.csv
-# - strings_train_raw.csv
-# - strings_val_raw.csv
-# - drums_train_raw.csv
-# - drums_val_raw.csv
-```
-
-### ステップ2: Colab Notebook
-
-1. [Colab](https://colab.research.google.com/)で新規ノートブック作成
-2. ランタイム→GPUに変更
-3. 以下のセルをコピペして実行:
-
+## Step 1: Mount Google Drive
 ```python
-# === Cell 1: セットアップ ===
-!git clone https://github.com/kinoshitayoshihiro/composer2.git
-%cd composer2
-!git checkout copilot/vscode1759159549848  # 最新ブランチ
-
-# 依存関係インストール
-!pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-!pip install -q pretty_midi pandas numpy scikit-learn tqdm PyYAML librosa mido pytorch-lightning torchmetrics music21 scipy hydra-core
-
-# GPU確認
-import torch
-print(f"GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'ERROR: No GPU!'}")
-```
-
-```python
-# === Cell 2: データのコピー ===
 from google.colab import drive
 drive.mount('/content/drive')
-
-!mkdir -p data/phrase_csv
-!cp -v /content/drive/MyDrive/composer2_data/phrase_csv/*.csv data/phrase_csv/
-!ls -lh data/phrase_csv/*.csv
 ```
 
+## Step 2: Navigate to Project
 ```python
-# === Cell 3: テストラン (3分) ===
-# Guitarモデルで動作確認 (3 epochs)
+import os
+os.chdir('/content/drive/Othercomputers/マイ MacBook Air/composer2-3')
+!pwd
+```
+
+## Step 3: Verify GPU
+```python
+import torch
+print(f"✓ CUDA: {torch.cuda.is_available()}")
+print(f"✓ GPU: {torch.cuda.get_device_name(0)}")
+print(f"✓ VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+```
+
+## Step 4: Install Dependencies (if needed)
+```python
+!pip install -q pretty_midi pandas scikit-learn tqdm
+```
+
+## Step 5: Verify Data Files
+```python
+!ls -lh data/phrase_csv/*_raw.csv
+```
+
+Expected output:
+```
+guitar_train_raw.csv   261M
+bass_train_raw.csv     ~250M
+piano_train_raw.csv    87M
+strings_train_raw.csv  ~180M
+drums_train_raw.csv    88M
+```
+
+## Step 6A: Quick Test (3 epochs, 24 minutes)
+```python
 !PYTHONPATH=. python scripts/train_phrase.py \
   data/phrase_csv/guitar_train_raw.csv \
   data/phrase_csv/guitar_val_raw.csv \
   --epochs 3 \
-  --out checkpoints/guitar_test \
+  --out checkpoints/guitar_duv_raw_test \
   --arch transformer \
-  --d_model 512 --nhead 8 --layers 4 \
-  --batch-size 256 --num-workers 2 \
-  --lr 1e-4 --duv-mode reg \
-  --device cuda --save-best --progress
-
-# 確認: train_batches/epoch が 50,000以上なら成功!
+  --d_model 512 \
+  --nhead 8 \
+  --layers 4 \
+  --batch-size 128 \
+  --num-workers 2 \
+  --lr 1e-4 \
+  --duv-mode reg \
+  --w-vel-reg 1.0 \
+  --w-dur-reg 1.0 \
+  --w-vel-cls 0.0 \
+  --w-dur-cls 0.0 \
+  --device cuda \
+  --save-best \
+  --progress
 ```
+
+✅ Check for success:
+```
+INFO:root:[trainer] train_batches/epoch=25008 val_batches/epoch=2779
+```
+
+## Step 6B: Full Training (All 5 instruments, 7-8 hours)
+```python
+!bash scripts/train_all_colab.sh
+```
+
+⚠️ This will run for several hours. Monitor with:
+```python
+# In a separate cell
+!tail -20 logs/guitar_duv_raw.log
+```
+
+## Alternative: Train One-by-One
+
+### Guitar (2 hours)
+```python
+!PYTHONPATH=. python scripts/train_phrase.py \
+  data/phrase_csv/guitar_train_raw.csv \
+  data/phrase_csv/guitar_val_raw.csv \
+  --epochs 15 \
+  --out checkpoints/guitar_duv_raw \
+  --arch transformer \
+  --d_model 512 \
+  --nhead 8 \
+  --layers 4 \
+  --batch-size 128 \
+  --num-workers 2 \
+  --lr 1e-4 \
+  --duv-mode reg \
+  --w-vel-reg 1.0 \
+  --w-dur-reg 1.0 \
+  --w-vel-cls 0.0 \
+  --w-dur-cls 0.0 \
+  --device cuda \
+  --save-best \
+  --progress
+```
+
+### Bass (2 hours)
+```python
+!PYTHONPATH=. python scripts/train_phrase.py \
+  data/phrase_csv/bass_train_raw.csv \
+  data/phrase_csv/bass_val_raw.csv \
+  --epochs 15 \
+  --out checkpoints/bass_duv_raw \
+  --arch transformer \
+  --d_model 512 \
+  --nhead 8 \
+  --layers 4 \
+  --batch-size 128 \
+  --num-workers 2 \
+  --lr 1e-4 \
+  --duv-mode reg \
+  --w-vel-reg 1.0 \
+  --w-dur-reg 1.0 \
+  --w-vel-cls 0.0 \
+  --w-dur-cls 0.0 \
+  --device cuda \
+  --save-best \
+  --progress
+```
+
+### Piano (1 hour)
+```python
+!PYTHONPATH=. python scripts/train_phrase.py \
+  data/phrase_csv/piano_train_raw.csv \
+  data/phrase_csv/piano_val_raw.csv \
+  --epochs 15 \
+  --out checkpoints/piano_duv_raw \
+  --arch transformer \
+  --d_model 512 \
+  --nhead 8 \
+  --layers 4 \
+  --batch-size 128 \
+  --num-workers 2 \
+  --lr 1e-4 \
+  --duv-mode reg \
+  --w-vel-reg 1.0 \
+  --w-dur-reg 1.0 \
+  --w-vel-cls 0.0 \
+  --w-dur-cls 0.0 \
+  --device cuda \
+  --save-best \
+  --progress
+```
+
+### Strings (1.5 hours)
+```python
+!PYTHONPATH=. python scripts/train_phrase.py \
+  data/phrase_csv/strings_train_raw.csv \
+  data/phrase_csv/strings_val_raw.csv \
+  --epochs 15 \
+  --out checkpoints/strings_duv_raw \
+  --arch transformer \
+  --d_model 512 \
+  --nhead 8 \
+  --layers 4 \
+  --batch-size 128 \
+  --num-workers 2 \
+  --lr 1e-4 \
+  --duv-mode reg \
+  --w-vel-reg 1.0 \
+  --w-dur-reg 1.0 \
+  --w-vel-cls 0.0 \
+  --w-dur-cls 0.0 \
+  --device cuda \
+  --save-best \
+  --progress
+```
+
+### Drums (45 min)
+```python
+!PYTHONPATH=. python scripts/train_phrase.py \
+  data/phrase_csv/drums_train_raw.csv \
+  data/phrase_csv/drums_val_raw.csv \
+  --epochs 15 \
+  --out checkpoints/drums_duv_raw \
+  --arch transformer \
+  --d_model 512 \
+  --nhead 8 \
+  --layers 4 \
+  --batch-size 128 \
+  --num-workers 2 \
+  --lr 1e-4 \
+  --duv-mode reg \
+  --w-vel-reg 1.0 \
+  --w-dur-reg 1.0 \
+  --w-vel-cls 0.0 \
+  --w-dur-cls 0.0 \
+  --device cuda \
+  --save-best \
+  --progress
+```
+
+## Monitor Training
 
 ```python
-# === Cell 4: 本番トレーニング (4-8時間) ===
-!bash scripts/train_all_base_colab.sh
+# Check GPU usage
+!nvidia-smi
 
-# 別セルで進行確認:
-# !tail -n 20 checkpoints/guitar_duv_raw/train.log
+# Check training log
+!tail -50 logs/guitar_duv_raw.log
+
+# Check checkpoints
+!ls -lh checkpoints/*_raw*
 ```
 
-```python
-# === Cell 5: チェックポイント保存 ===
-!mkdir -p /content/drive/MyDrive/composer2_checkpoints
-!cp -v checkpoints/*_duv_raw.best.ckpt /content/drive/MyDrive/composer2_checkpoints/
-!ls -lh /content/drive/MyDrive/composer2_checkpoints/*.ckpt
+## After Training
+
+Checkpoints will be saved to:
+```
+checkpoints/guitar_duv_raw.best.ckpt   (99 MB)
+checkpoints/bass_duv_raw.best.ckpt     (99 MB)
+checkpoints/piano_duv_raw.best.ckpt    (99 MB)
+checkpoints/strings_duv_raw.best.ckpt  (99 MB)
+checkpoints/drums_duv_raw.best.ckpt    (99 MB)
 ```
 
-### ステップ3: ローカルで続き
+These will automatically sync to your MacBook Air via Google Drive!
 
-1. Google Driveから `composer2_checkpoints/*.ckpt` をダウンロード
-2. `checkpoints/` フォルダに配置
-3. LoRAモデルを再トレーニング
+## 🎉 Success!
 
-```bash
-# ベースモデルパスを更新
-# config/duv/guitarLora.yaml → base_checkpoint: checkpoints/guitar_duv_raw.best.ckpt
-
-# LoRA再トレーニング
-python scripts/train_guitar_lora.py
-```
-
----
-
-## 📊 成功の目安
-
-- ✅ `train_batches/epoch`: 50,000以上
-- ✅ `val_batches/epoch`: 5,500以上
-- ✅ `vel_mae`: 15エポック後に0.5以下
-- ✅ `dur_mae`: 15エポック後に0.3以下
-- ✅ チェックポイント: 各99MB
-
----
-
-## 🔗 詳細ガイド
-
-完全な手順は `COLAB_TRAINING.md` を参照してください。
-
-## ⚠️ トラブルシューティング
-
-**Q**: GPUが使えない  
-**A**: ランタイムタイプをGPUに変更
-
-**Q**: データが見つからない  
-**A**: Driveのパスを確認 (`/content/drive/MyDrive/composer2_data/`)
-
-**Q**: メモリ不足  
-**A**: `--batch-size 128` に削減
-
-**Q**: 途中で切断  
-**A**: 最長12時間、チェックポイントから再開可能
+Once training completes:
+1. Wait for Google Drive sync (1-2 minutes per 99MB file)
+2. On MacBook: Update LoRA configs
+3. Retrain LoRA adapters
+4. Test integrated pipeline

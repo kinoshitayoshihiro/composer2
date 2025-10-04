@@ -1,0 +1,32 @@
+INFO:root:device mps amp=False precision=medium
+INFO:root:train rows kept 33227 removed 0 | val kept 1759 removed 0
+INFO:root:class balance {'pos': 3764, 'neg': 29463}
+INFO:root:tag instrument counts {'acoustic guitar (steel)': 9240, 'electric guitar (muted)': 4004, 'acoustic guitar (nylon)': 1349, 'od guitar': 3116, 'overdriven guitar': 1878, 'guitar a.': 1039, 'electric guitar (jazz)': 1997, 'guitar 1': 1669, 'clean guitar': 679, 'cl guitar': 466, 'guitar 2': 1322, 'guitar-clean': 57, 'guitar-acou.3': 101, 'electric guitar (clean)': 1328, 'guitar st': 146, 'st guitar r': 1995, 'st guitar l': 1824, 'dist guitar': 252, 'guitar': 544, 'guitar-mutes': 45, 'solo guitar 2': 5, 'distortion guitar': 140, 'guitar-dist': 31}
+INFO:root:epoch 1 train_loss 0.7888 val_f1 0.224 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 1.46e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 296.6s
+INFO:root:epoch=1 train_loss=0.788821 val_loss=0.693147 | train_loss 0.788821 val_loss 0.693147
+INFO:root:epoch 2 train_loss 0.0381 val_f1 0.224 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.93e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 75.6s
+INFO:root:epoch=2 train_loss=0.038125 val_loss=0.693147 | train_loss 0.038125 val_loss 0.693147
+INFO:root:epoch 3 train_loss 0.0159 val_f1 0.224 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.98e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 70.1s
+INFO:root:epoch=3 train_loss=0.015882 val_loss=0.693147 | train_loss 0.015882 val_loss 0.693147
+INFO:root:epoch 4 train_loss 0.0063 val_f1 0.224 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.93e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 75.7s
+INFO:root:epoch=4 train_loss=0.006264 val_loss=0.693147 | train_loss 0.006264 val_loss 0.693147
+INFO:root:epoch 5 train_loss 0.0033 val_f1 0.224 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.84e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 59.1s
+INFO:root:epoch=5 train_loss=0.003256 val_loss=0.693147 | train_loss 0.003256 val_loss 0.693147
+INFO:root:epoch 6 train_loss 0.0016 val_f1 0.224 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.72e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 55.9s
+INFO:root:epoch=6 train_loss=0.001610 val_loss=0.693147 | train_loss 0.001610 val_loss 0.693147
+INFO:root:device mps amp=False precision=medium
+INFO:root:train rows kept 33227 removed 0 | val kept 1759 removed 0
+INFO:root:class balance {'pos': 3764, 'neg': 29463}
+INFO:root:tag instrument counts {'acoustic guitar (steel)': 9240, 'electric guitar (muted)': 4004, 'acoustic guitar (nylon)': 1349, 'od guitar': 3116, 'overdriven guitar': 1878, 'guitar a.': 1039, 'electric guitar (jazz)': 1997, 'guitar 1': 1669, 'clean guitar': 679, 'cl guitar': 466, 'guitar 2': 1322, 'guitar-clean': 57, 'guitar-acou.3': 101, 'electric guitar (clean)': 1328, 'guitar st': 146, 'st guitar r': 1995, 'st guitar l': 1824, 'dist guitar': 252, 'guitar': 544, 'guitar-mutes': 45, 'solo guitar 2': 5, 'distortion guitar': 140, 'guitar-dist': 31}
+INFO:root:epoch 1 train_loss 0.7975 val_f1 0.224 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 1.46e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 76.7s
+INFO:root:epoch=1 train_loss=0.797461 val_loss=0.693147 | train_loss 0.797461 val_loss 0.693147
+INFO:root:epoch 2 train_loss 0.0338 val_f1 0.224 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.93e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 64.0s
+INFO:root:epoch=2 train_loss=0.033751 val_loss=0.693147 | train_loss 0.033751 val_loss 0.693147
+INFO:root:epoch 3 train_loss 0.0135 val_f1 0.224 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.98e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 51.7s
+INFO:root:epoch=3 train_loss=0.013533 val_loss=0.693147 | train_loss 0.013533 val_loss 0.693147
+INFO:root:epoch 4 train_loss 0.0061 val_f1 0.224 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.93e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 54.0s
+INFO:root:epoch=4 train_loss=0.006074 val_loss=0.693147 | train_loss 0.006074 val_loss 0.693147
+INFO:root:epoch 5 train_loss 0.0032 val_f1 0.224 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.84e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 51.0s
+INFO:root:epoch=5 train_loss=0.003211 val_loss=0.693147 | train_loss 0.003211 val_loss 0.693147
+INFO:root:epoch 6 train_loss 0.0018 val_f1 0.224 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.72e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 49.2s
+INFO:root:epoch=6 train_loss=0.001754 val_loss=0.693147 | train_loss 0.001754 val_loss 0.693147

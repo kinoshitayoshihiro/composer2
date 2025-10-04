@@ -1,0 +1,16 @@
+INFO:root:device mps amp=False precision=medium
+INFO:root:train rows kept 5568 removed 0 | val kept 378 removed 0
+INFO:root:class balance {'pos': 1052, 'neg': 4516}
+INFO:root:tag instrument counts {'string ensemble 1': 1148, 'strings': 2072, 'string ensemble 2': 1045, 'strings 2': 295, 'synth strings 1': 480, 'violin': 163, 'synth strings 2': 54, 'tremolo strings': 177, 'stringsens2': 134}
+INFO:root:epoch 1 train_loss 2.3116 val_f1 0.234 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 4.08e-05 th 0.20 pos_rate 1.000 mean_p 0.500 time 19.9s
+INFO:root:epoch=1 train_loss=2.311645 val_loss=0.693147 | train_loss 2.311645 val_loss 0.693147
+INFO:root:epoch 2 train_loss 0.5352 val_f1 0.234 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 8.16e-05 th 0.20 pos_rate 1.000 mean_p 0.500 time 22.1s
+INFO:root:epoch=2 train_loss=0.535175 val_loss=0.693147 | train_loss 0.535175 val_loss 0.693147
+INFO:root:epoch 3 train_loss 0.2668 val_f1 0.234 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 1.22e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 19.0s
+INFO:root:epoch=3 train_loss=0.266837 val_loss=0.693147 | train_loss 0.266837 val_loss 0.693147
+INFO:root:epoch 4 train_loss 0.0549 val_f1 0.234 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 1.63e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 19.8s
+INFO:root:epoch=4 train_loss=0.054863 val_loss=0.693147 | train_loss 0.054863 val_loss 0.693147
+INFO:root:epoch 5 train_loss 0.0411 val_f1 0.234 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.04e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 16.2s
+INFO:root:epoch=5 train_loss=0.041087 val_loss=0.693147 | train_loss 0.041087 val_loss 0.693147
+INFO:root:epoch 6 train_loss 0.0457 val_f1 0.234 vel_mae 0.000 dur_mae 0.000 vel_acc 0.000 dur_acc 0.000 lr 2.45e-04 th 0.20 pos_rate 1.000 mean_p 0.500 time 22.7s
+INFO:root:epoch=6 train_loss=0.045737 val_loss=0.693147 | train_loss 0.045737 val_loss 0.693147

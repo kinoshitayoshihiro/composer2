@@ -83,7 +83,9 @@ def _get_device(name: str) -> torch.device:
     if name == "auto":
         if torch.cuda.is_available():
             return torch.device("cuda")
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():  # pragma: no cover - macOS
+        if (
+            hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+        ):  # pragma: no cover - macOS
             return torch.device("mps")
         return torch.device("cpu")
     return torch.device(name)
@@ -111,8 +113,15 @@ def _first_group_length(df: pd.DataFrame) -> int:
 # Stats loading / normalisation
 # ---------------------------------------------------------------------------
 
-def _load_stats(stats_json: Path | None, ckpt_path: Path) -> tuple[list[str] | None, np.ndarray, np.ndarray, dict] | None:
-    path = stats_json if stats_json and stats_json.is_file() else ckpt_path.with_suffix(ckpt_path.suffix + ".stats.json")
+
+def _load_stats(
+    stats_json: Path | None, ckpt_path: Path
+) -> tuple[list[str] | None, np.ndarray, np.ndarray, dict] | None:
+    path = (
+        stats_json
+        if stats_json and stats_json.is_file()
+        else ckpt_path.with_suffix(ckpt_path.suffix + ".stats.json")
+    )
     if not path.is_file():
         return None
     obj = json.loads(path.read_text())
@@ -130,7 +139,14 @@ def _load_stats(stats_json: Path | None, ckpt_path: Path) -> tuple[list[str] | N
     return feat_cols, mean, std, meta
 
 
-def _apply_stats(df: pd.DataFrame, feat_cols: Sequence[str] | None, mean: np.ndarray, std: np.ndarray, *, strict: bool = False) -> tuple[np.ndarray, list[str]]:
+def _apply_stats(
+    df: pd.DataFrame,
+    feat_cols: Sequence[str] | None,
+    mean: np.ndarray,
+    std: np.ndarray,
+    *,
+    strict: bool = False,
+) -> tuple[np.ndarray, list[str]]:
     cols = list(feat_cols) if feat_cols else [c for c in df.columns if c.startswith("feat_")]
     missing = [c for c in cols if c not in df.columns]
     extra = [c for c in df.columns if c.startswith("feat_") and c not in cols]
@@ -142,7 +158,12 @@ def _apply_stats(df: pd.DataFrame, feat_cols: Sequence[str] | None, mean: np.nda
     return arr, cols
 
 
-def load_stats_and_normalize(df: pd.DataFrame, stats: tuple[list[str] | None, np.ndarray, np.ndarray] | None, *, strict: bool = False) -> tuple[np.ndarray, list[str]]:
+def load_stats_and_normalize(
+    df: pd.DataFrame,
+    stats: tuple[list[str] | None, np.ndarray, np.ndarray] | None,
+    *,
+    strict: bool = False,
+) -> tuple[np.ndarray, list[str]]:
     if stats is None:
         raise ValueError("feature stats required")
     return _apply_stats(df, stats[0], stats[1], stats[2], strict=strict)
@@ -151,6 +172,7 @@ def load_stats_and_normalize(df: pd.DataFrame, stats: tuple[list[str] | None, np
 # ---------------------------------------------------------------------------
 # Duration quantisation helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_quant(step_str: str | None, meta: dict) -> float:
     if step_str:
@@ -169,6 +191,7 @@ def _parse_quant(step_str: str | None, meta: dict) -> float:
 # ---------------------------------------------------------------------------
 # Duration utilities
 # ---------------------------------------------------------------------------
+
 
 class _NoopDurationModel:
     """Fallback duration model used when a checkpoint is unavailable.
@@ -200,46 +223,17 @@ def _load_duration_model(path: Path | None) -> DurationTransformer | _NoopDurati
         return _NoopDurationModel()
 
     try:
-        obj = torch.load(ckpt_path, map_location="cpu")
-    except FileNotFoundError:
-        logging.info("duration model ckpt not found; using Noop model")
-        return _NoopDurationModel()
-    except Exception as exc:  # pragma: no cover - defensive
-        logging.warning("duration model load failed (%s); using Noop model", exc)
-        return _NoopDurationModel()
-
-    if isinstance(obj, dict):
-        direct = obj.get("duration_model") or obj.get("model")
-        if isinstance(direct, torch.nn.Module):
-            return direct.eval()
-        if isinstance(direct, dict):
-            try:
-                model = DurationTransformer()
-                model.load_state_dict(direct, strict=False)
-                return model.eval()
-            except Exception as exc:  # pragma: no cover - defensive
-                logging.warning("duration model dict load failed (%s); using Noop model", exc)
-                return _NoopDurationModel()
-        if direct is not None:
-            return direct
-        if "state_dict" in obj:
-            hparams = obj.get("hyper_parameters") or obj.get("hparams", {})
-            d_model = int(hparams.get("d_model", 64))
-            max_len = int(hparams.get("max_len", 16))
-            model = DurationTransformer(d_model=d_model, max_len=max_len)
-            model.load_state_dict(obj["state_dict"], strict=False)
-            return model.eval()
-
-    try:
-        model = DurationTransformer()
-        model.load_state_dict(obj, strict=False)
+        # Use the new load method with automatic hyperparameter inference
+        model = DurationTransformer.load(str(ckpt_path), device="cpu")
         return model.eval()
-    except Exception as exc:  # pragma: no cover - defensive
-        logging.warning("duration model state_dict load failed (%s); using Noop model", exc)
+    except Exception as exc:
+        logging.warning("duration model dict load failed (%s); using Noop model", exc)
         return _NoopDurationModel()
 
 
-def _duration_predict(df: pd.DataFrame, model: DurationTransformer | _NoopDurationModel | None) -> tuple[np.ndarray, np.ndarray]:
+def _duration_predict(
+    df: pd.DataFrame, model: DurationTransformer | _NoopDurationModel | None
+) -> tuple[np.ndarray, np.ndarray]:
     if isinstance(model, _NoopDurationModel) or model is None:
         n = len(df)
         return np.zeros(n, dtype=np.float32), np.zeros(n, dtype=np.float32)
@@ -260,7 +254,7 @@ def _duration_predict(df: pd.DataFrame, model: DurationTransformer | _NoopDurati
         g = g.sort_values("position")
         L = len(g)
         pad = max_len - L
-        pitch_class = ((g["pitch"].to_numpy() % 12).tolist() + [0] * pad)
+        pitch_class = (g["pitch"].to_numpy() % 12).tolist() + [0] * pad
         dur = g["duration"].to_list() + [0.0] * pad
         vel = g["velocity"].to_list() + [0.0] * pad
         pos = g["position"].to_list() + [0] * pad
@@ -292,6 +286,7 @@ def _tensor_slice(tensor: torch.Tensor | None, length: int) -> torch.Tensor | No
 # ---------------------------------------------------------------------------
 # Main evaluation
 # ---------------------------------------------------------------------------
+
 
 def run(args: argparse.Namespace) -> int:
     stats = _load_stats(args.stats_json, args.ckpt)
@@ -329,9 +324,11 @@ def run(args: argparse.Namespace) -> int:
         float_cols.add("beat_bin")
 
     # int列は基本スキーマ＋必須列（velocity/durationはfloatなので除外）＋オプションint
-    int_cols = set(CSV_INT32_COLUMNS) | (
-        {c for c in REQUIRED_COLUMNS if c not in {"velocity", "duration"}}
-    ) | set(OPTIONAL_INT32_COLUMNS)
+    int_cols = (
+        set(CSV_INT32_COLUMNS)
+        | ({c for c in REQUIRED_COLUMNS if c not in {"velocity", "duration"}})
+        | set(OPTIONAL_INT32_COLUMNS)
+    )
     int_cols.discard("pitch")
     int_cols.discard("program")
 
@@ -341,7 +338,11 @@ def run(args: argparse.Namespace) -> int:
 
     device = _get_device(args.device)
     vel_model = MLVelocityModel.load(str(args.ckpt))
-    loader_type = getattr(vel_model, "_duv_loader", "ts" if str(args.ckpt).endswith((".ts", ".torchscript")) else "ckpt")
+    loader_type = getattr(
+        vel_model,
+        "_duv_loader",
+        "ts" if str(args.ckpt).endswith((".ts", ".torchscript")) else "ckpt",
+    )
     core = getattr(vel_model, "core", vel_model)
     d_model = _ensure_int(getattr(vel_model, "d_model", getattr(core, "d_model", 0)), 0)
     max_len = _ensure_int(getattr(vel_model, "max_len", getattr(core, "max_len", 0)), 0)
@@ -349,8 +350,12 @@ def run(args: argparse.Namespace) -> int:
         vel_model,
         "heads",
         {
-            "vel_reg": bool(getattr(vel_model, "has_vel_head", getattr(core, "head_vel_reg", None))),
-            "dur_reg": bool(getattr(vel_model, "has_dur_head", getattr(core, "head_dur_reg", None))),
+            "vel_reg": bool(
+                getattr(vel_model, "has_vel_head", getattr(core, "head_vel_reg", None))
+            ),
+            "dur_reg": bool(
+                getattr(vel_model, "has_dur_head", getattr(core, "head_dur_reg", None))
+            ),
         },
     )
     extras = {
@@ -374,14 +379,25 @@ def run(args: argparse.Namespace) -> int:
     vel_model = vel_model.to(device).eval()
     heads = info["heads"]
     need_duration = bool(heads.get("dur_reg") or heads.get("dur_cls"))
+    prefer_duv_duration = getattr(args, "prefer_duv_duration", False)
     duration_model: DurationTransformer | _NoopDurationModel = _NoopDurationModel()
-    if need_duration:
+    if need_duration and not prefer_duv_duration:
         duration_model = _load_duration_model(args.ckpt).to(device)
     verbose = duv_verbose(getattr(args, "verbose", False))
     try:
         duv_preds = _duv_sequence_predict(df, vel_model, device, verbose=verbose)
     except Exception as exc:
         raise RuntimeError(f"DUV inference failed (rows={len(df)}): {exc}") from exc
+
+    # Debug: Check first batch predictions
+    if verbose and duv_preds is not None:
+        vel_pred_sample = duv_preds["velocity"][:8]
+        vel_mask_sample = duv_preds["velocity_mask"][:8]
+        print(f"First 8 vel predictions: {vel_pred_sample}", file=sys.stderr)
+        print(f"First 8 vel masks: {vel_mask_sample}", file=sys.stderr)
+
+        if len(vel_pred_sample) > 0 and all(v == vel_pred_sample[0] for v in vel_pred_sample):
+            print("WARNING: All velocity predictions are identical (constant)!", file=sys.stderr)
 
     y_vel = df.get("velocity")
     if y_vel is None:
@@ -436,13 +452,29 @@ def run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
-    # Duration
+    # Duration - prefer DUV head if requested and available
     dur_pred: np.ndarray | None = None
     dur_target_seq: np.ndarray | None = None
     dur_mask: np.ndarray | None = None
-    if duv_preds is not None and "duration" in df.columns and _mask_any(duv_preds["duration_mask"]):
+    use_duv_duration = (
+        prefer_duv_duration
+        and duv_preds is not None
+        and "duration" in df.columns
+        and _mask_any(duv_preds["duration_mask"])
+    )
+
+    if use_duv_duration:
         dur_pred = duv_preds["duration"].astype("float32", copy=False)
         dur_target_seq = df["duration"].to_numpy(dtype="float32", copy=False)
+        dur_mask = duv_preds["duration_mask"]
+        if verbose:
+            print({"duv_duration": "using_duv_head"}, file=sys.stderr)
+    elif not isinstance(duration_model, _NoopDurationModel) and "duration" in df.columns:
+        # External duration model fallback
+        dur_pred, dur_target_seq = _duration_predict(df, duration_model)
+        dur_mask = np.ones_like(dur_pred, dtype=bool) if dur_pred is not None else None
+        if verbose:
+            print({"duv_duration": "using_external_model"}, file=sys.stderr)
         dur_mask = duv_preds["duration_mask"]
     else:
         if (
@@ -481,9 +513,7 @@ def run(args: argparse.Namespace) -> int:
                 by = {}
                 for beat in np.unique(beat_vals):
                     sel = beat_vals == beat
-                    by[str(int(beat))] = float(
-                        np.mean(np.abs(vel_values[sel] - vel_targets[sel]))
-                    )
+                    by[str(int(beat))] = float(np.mean(np.abs(vel_values[sel] - vel_targets[sel])))
                 metrics["velocity_mae_by_beat"] = by
         metrics["velocity_pearson"] = None
         metrics["velocity_spearman"] = None
@@ -573,6 +603,17 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
         "--verbose",
         action="store_true",
         help="Emit additional DUV diagnostics including optional zero-filled feature usage",
+    )
+    p.add_argument(
+        "--prefer-duv-duration",
+        action="store_true",
+        help="Use DUV model's duration head instead of external duration model",
+    )
+    p.add_argument(
+        "--vel-smooth",
+        type=int,
+        default=0,
+        help="Apply smoothing to velocity predictions (default: 0 for no smoothing)",
     )
     args = p.parse_args(argv)
     return run(args)

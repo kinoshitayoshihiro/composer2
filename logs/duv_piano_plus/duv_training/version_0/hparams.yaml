@@ -1,0 +1,11 @@
+d_model: 256
+ff_dim: 2048
+n_layers: 6
+n_heads: 8
+max_len: 256
+dropout: 0.1
+lr: 0.0003
+w_vel: 1.0
+w_dur: 1.0
+huber_delta: 0.1
+use_program_emb: false

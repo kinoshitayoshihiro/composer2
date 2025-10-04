@@ -19,6 +19,16 @@ except Exception:  # pragma: no cover - optional
     torch = None  # type: ignore
 
 from utilities import fx_envelope
+from utilities.guitar_controls import apply_guitar_controls, GuitarControlsConfig
+from utilities.controls_bundle import (
+    apply_piano_controls,
+    apply_bass_controls,
+    apply_drum_controls,
+    PianoControlsConfig,
+    BassControlsConfig,
+    DrumControlsConfig,
+)
+from utilities.duv_apply import apply_duv_to_pretty_midi
 
 try:  # pragma: no cover - optional add_cc_events
     from utilities.cc_tools import add_cc_events, finalize_cc_events, merge_cc_events
@@ -600,6 +610,43 @@ class BasePartGenerator(ABC):
                 if pm.instruments:
                     inst_pm = pm.instruments[0]
                     apply_controls(inst_pm, cfg)
+
+                    # === New: Controls Bundle (オンセット微調整) ===
+                    controls_enabled = section_data.get("controls", {}).get("enable", True)
+                    if controls_enabled:
+                        try:
+                            pm = apply_guitar_controls(pm, GuitarControlsConfig())
+                            pm = apply_piano_controls(pm, PianoControlsConfig())
+                            pm = apply_bass_controls(pm, BassControlsConfig())
+                            pm = apply_drum_controls(pm, DrumControlsConfig())
+                        except Exception as e:  # pragma: no cover
+                            self.logger.warning(
+                                "Controls failed for %s: %s",
+                                self.part_name,
+                                e,
+                            )
+
+                    # === New: DUV (Velocity/Duration人間化) ===
+                    duv_cfg = section_data.get("duv", {})
+                    if duv_cfg.get("enable", False):
+                        try:
+                            pm = apply_duv_to_pretty_midi(
+                                pm,
+                                model_path=duv_cfg["model_path"],
+                                scaler_path=duv_cfg.get("scaler_path"),
+                                mode=duv_cfg.get("mode", "absolute"),
+                                intensity=duv_cfg.get("intensity", 1.0),
+                                include_regex=duv_cfg.get("include_regex"),
+                                exclude_regex=duv_cfg.get("exclude_regex"),
+                            )
+                        except Exception as e:  # pragma: no cover
+                            self.logger.warning(
+                                "DUV failed for %s: %s",
+                                self.part_name,
+                                e,
+                            )
+
+                    # Extract CC/PB back to part.extra_cc
                     extra = [
                         {"time": cc.time, "cc": cc.number, "val": cc.value}
                         for cc in inst_pm.control_changes

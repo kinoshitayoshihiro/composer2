@@ -1,0 +1,6 @@
+=== Guitar Base Model Training Test ===
+Mode: REGRESSION ONLY
+Epochs: 3 (quick test)
+Batch: 64 x 4 grad_accum = effective 256
+Workers: 0 (macOS optimized)
+

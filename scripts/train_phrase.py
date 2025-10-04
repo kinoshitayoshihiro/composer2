@@ -749,29 +749,42 @@ def train_model(
             # The CSV rows are appended file-by-file, so a reset of the bar index
             # indicates a new file. Using contiguous grouping preserves per-file bars
             # without requiring an explicit file id column.
+            # PATCH: If all bars are 0 (raw MIDI data), group by file instead.
             groups: list[list[dict[str, str]]] = []
             cur: list[dict[str, str]] = []
             prev_bar: int | None = None
+            prev_file: str | None = None
+
             for r in rows:
                 try:
                     bar = int(r.get("bar", 0))
                 except Exception:
                     bar = 0
+                file_name = r.get("file", "")
+
                 if prev_bar is None:
                     cur = [r]
                     prev_bar = bar
+                    prev_file = file_name
                     continue
-                if bar != prev_bar:
+
+                # Group boundary: bar change OR file change
+                if bar != prev_bar or (file_name and file_name != prev_file):
                     # finalize previous group
-                    groups.append(sorted(cur, key=lambda x: int(x.get("pos", 0))))
+                    if cur:
+                        groups.append(sorted(cur, key=lambda x: int(x.get("pos", 0))))
                     cur = [r]
                     prev_bar = bar
+                    prev_file = file_name
                 else:
                     cur.append(r)
+
             if cur:
                 groups.append(sorted(cur, key=lambda x: int(x.get("pos", 0))))
+
             if limit_groups and limit_groups > 0:
                 groups = groups[: max(1, int(limit_groups))]
+
             self.groups = groups
             self.use_bar_beat = use_bar_beat
             self.use_harmony = use_harmony
@@ -1563,6 +1576,14 @@ def train_model(
         persistent_workers=persist,
         worker_init_fn=worker_init_fn if num_workers else None,
     )
+
+    # [DEBUG] Log batch counts to verify data loader is working
+    logging.info(
+        "[trainer] train_batches/epoch=%d val_batches/epoch=%d",
+        len(dl_train),
+        len(dl_val),
+    )
+
     # If classification heads are enabled but their loss weights are zero,
     # set sensible defaults so they learn during quick iterations.
     if duv_mode in {"cls", "both"} and (w_vel_cls <= 0 and w_dur_cls <= 0):

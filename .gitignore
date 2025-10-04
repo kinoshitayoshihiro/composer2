@@ -71,3 +71,10 @@ checkpoints/
 *.onnx
 .DS_Store
 
+
+# 大容量ファイル（Git LFS対象外）
+*.pickle
+*.mid
+*.wav
+*.mp3
+*.flac

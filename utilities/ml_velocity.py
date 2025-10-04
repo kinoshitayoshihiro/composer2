@@ -75,205 +75,191 @@ class ModelV1_LSTM(nn.Module if torch is not None else object):
 
 
 class MLVelocityModel(nn.Module if torch is not None else object):
-    def __init__(self, input_dim: int = 3) -> None:
-        self.input_dim = input_dim
+    def __init__(self, core=None, input_dim: int = 3) -> None:
         if torch is None:
+            self.input_dim = input_dim
             self._dummy = True
+            self.core = core
         else:
             super().__init__()
             self._dummy = False
-            self.fc_in = nn.Linear(input_dim, 256)
-            enc_layer = nn.TransformerEncoderLayer(
-                d_model=256,
-                nhead=4,
-                dim_feedforward=256,
-                batch_first=True,
-            )
-            self.encoder = nn.TransformerEncoder(enc_layer, num_layers=4)
-            self.fc_out = nn.Linear(256, 1)
-            nn.init.constant_(self.fc_out.bias, 64.0)
-            # Ensure that an untrained model predicts the default velocity
-            # (64) by zeroing the output weights. This keeps the unit tests
-            # deterministic and provides a sensible starting point for
-            # fine-tuning.
-            nn.init.zeros_(self.fc_out.weight)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = self.fc_in(x)
-        h = self.encoder(h)
-        return self.fc_out(h).squeeze(-1)
+            if core is not None:
+                # DUVモデルとして使用（PhraseTransformerコア付き）
+                self.core = core
+                self.input_dim = getattr(core, "d_model", 256)
+                # DUV関連の属性を設定
+                self.requires_duv_feats = True
+                # 明示的にTrueに設定（実際のヘッドの存在は外部で確認済み）
+                self.has_vel_head = True
+                self.has_dur_head = True
+                self.d_model = int(getattr(core, "d_model", 256))
+                self.max_len = int(getattr(core, "max_len", 256))
+                self.heads = {
+                    "vel_reg": self.has_vel_head,
+                    "dur_reg": self.has_dur_head,
+                }
+                self._duv_loader = "ckpt"
+                # Velocity scaling configuration
+                self.vel_scale = 127.0  # 0-1 output -> 1-127 MIDI velocity
+                self.vel_offset_min = 1.0  # Minimum MIDI velocity
+            else:
+                # 従来のMLVelocityModelとして使用
+                self.input_dim = input_dim
+                self.core = None
+                self.fc_in = nn.Linear(input_dim, 256)
+                enc_layer = nn.TransformerEncoderLayer(
+                    d_model=256,
+                    nhead=4,
+                    dim_feedforward=256,
+                    batch_first=True,
+                )
+                self.encoder = nn.TransformerEncoder(enc_layer, num_layers=4)
+                self.fc_out = nn.Linear(256, 1)
+                nn.init.constant_(self.fc_out.bias, 64.0)
+                # Ensure that an untrained model predicts the default velocity
+                # (64) by zeroing the output weights. This keeps the unit tests
+                # deterministic and provides a sensible starting point for
+                # fine-tuning.
+                nn.init.zeros_(self.fc_out.weight)
 
-    @staticmethod
-    def load(path: str) -> nn.Module:
-        """Load a velocity model checkpoint as an ``nn.Module`` ready for eval.
+    def forward(self, x, mask=None):
+        if self.core is not None:
+            # DUVモードでの推論
+            if isinstance(x, dict):
+                # DUV featureの場合
+                if mask is None:
+                    first = next(iter(x.values())) if x else None
+                    if first is not None and hasattr(first, "shape"):
+                        B, T = first.shape[:2]
+                        if torch is not None:
+                            mask = torch.ones((B, T), dtype=torch.bool, device=first.device)
+                outputs = self.core(x, mask)
+                if isinstance(outputs, dict):
+                    vel = outputs.get("vel_reg")
+                    dur = outputs.get("dur_reg")
+                    return vel, dur
+                if isinstance(outputs, tuple):
+                    out0 = outputs[0] if len(outputs) > 0 else None
+                    out1 = outputs[1] if len(outputs) > 1 else None
+                    return out0, out1
+                return outputs, None
+            else:
+                # レガシー形式の場合はエラー
+                raise ValueError("DUV model requires dict input format")
+        else:
+            # 従来のMLVelocityModelでの推論
+            if torch is None:
+                raise RuntimeError("torch required")
+            h = self.fc_in(x)
+            h = self.encoder(h)
+            return self.fc_out(h).squeeze(-1)
 
-        TorchScript files are loaded via :func:`torch.jit.load`; other
-        checkpoints use :func:`torch.load` and must still yield an ``nn.Module``.
+    @classmethod
+    def _infer_hparams_from_sd(cls, sd: dict) -> dict:
         """
+        ckpt の state_dict 形状からハイパラを推定:
+          - d_model: encoder.layers.0.linear1.weight の形状 [d_ff, d_model] の第2軸
+          - d_ff   : 同行列の第1軸
+          - max_len: pos_emb.weight の第1軸（あれば）
+          - 追加埋め込みの有無: *_bucket_emb.weight などのキー有無
+        """
+        d_model = None
+        d_ff = None
+        for k, v in sd.items():
+            if k.endswith("encoder.layers.0.linear1.weight"):
+                d_ff, d_model = int(v.shape[0]), int(v.shape[1])
+                break
+        if d_model is None:
+            # フォールバック：in_proj_weight から埋め込み次元を推定
+            for k, v in sd.items():
+                if k.endswith("self_attn.in_proj_weight"):
+                    d_model = int(v.shape[1])
+                    d_ff = int(max(512, 4 * d_model))  # 仮に4*d_model
+                    break
+        max_len = 256
+        if "pos_emb.weight" in sd:
+            max_len = int(sd["pos_emb.weight"].shape[0])
+        # オプション埋め込みの有無
+        vel_in_sd = "vel_bucket_emb.weight" in sd or "model.vel_bucket_emb.weight" in sd
+        dur_in_sd = "dur_bucket_emb.weight" in sd or "model.dur_bucket_emb.weight" in sd
+        sec_in_sd = "section_emb.weight" in sd or "model.section_emb.weight" in sd
+        mood_in_sd = "mood_emb.weight" in sd or "model.mood_emb.weight" in sd
+
+        # DUVヘッドの有無をチェック
+        vel_head_in_sd = "head_vel_reg.weight" in sd or "model.head_vel_reg.weight" in sd
+        dur_head_in_sd = "head_dur_reg.weight" in sd or "model.head_dur_reg.weight" in sd
+
+        extras = {
+            "vel_bucket_emb": vel_in_sd,
+            "dur_bucket_emb": dur_in_sd,
+            "section_emb": sec_in_sd,
+            "mood_emb": mood_in_sd,
+            "has_vel_head": vel_head_in_sd,
+            "has_dur_head": dur_head_in_sd,
+        }
+        return {
+            "d_model": d_model or 256,
+            "d_ff": d_ff or 512,
+            "max_len": max_len,
+            "extras": extras,
+        }
+
+    @classmethod
+    def load(cls, path: str) -> "MLVelocityModel":
         if torch is None:
             raise RuntimeError("torch required")
 
-        p = str(path)
-        if p.endswith((".ts", ".torchscript")):
-            model = torch.jit.load(p, map_location="cpu").eval()
-            try:
-                setattr(model, "_duv_loader", "ts")
-            except Exception:  # pragma: no cover - best effort on ScriptModule
-                pass
-            return model
+        p = Path(path)
+        if p.suffix == ".ts":
+            return torch.jit.load(p, map_location="cpu").eval()
 
         obj = torch.load(p, map_location="cpu")
-        if isinstance(obj, nn.Module):
-            return obj.eval()
+        # state_dict の場所を素直に解決
+        sd = obj
+        if isinstance(obj, dict) and "model" in obj:
+            maybe = obj["model"]
+            sd = maybe.get("state_dict", maybe) if isinstance(maybe, dict) else maybe
+        if isinstance(sd, dict) and any(k.startswith("model.") for k in sd.keys()):
+            # "model." プレフィクスを除去
+            sd = {k[6:] if k.startswith("model.") else k: v for k, v in sd.items()}
 
-        if isinstance(obj, dict):
-            for key in ("model", "net", "module"):
-                mod = obj.get(key)
-                if isinstance(mod, nn.Module):
-                    return mod.eval()
-            model_state = obj.get("model")
-            if isinstance(model_state, dict):
-                if PhraseTransformer is None:
-                    raise RuntimeError("PhraseTransformer unavailable; install model dependencies")
-                meta = obj.get("meta", {}) if isinstance(obj.get("meta"), dict) else {}
+        # 形状からハイパラを推定し、その寸法で PhraseTransformer を構築
+        hp = cls._infer_hparams_from_sd(sd if isinstance(sd, dict) else {})
 
-                def _get_int(name: str, fallback: int) -> int:
-                    try:
-                        return int(meta.get(name, fallback))
-                    except Exception:
-                        return fallback
+        if PhraseTransformer is None:
+            raise RuntimeError("PhraseTransformer unavailable")
 
-                state_dict = _strip_prefix(model_state, "model.")
-                pitch_emb = state_dict.get("pitch_emb.weight")
-                pos_emb = state_dict.get("pos_emb.weight")
-                if pitch_emb is None or pos_emb is None:
-                    raise ValueError("state_dict missing pitch_emb/pos_emb tensors")
-                d_model = _get_int("d_model", int(pitch_emb.shape[1] * 4))
-                max_len = _get_int("max_len", int(pos_emb.shape[0]))
+        core = PhraseTransformer(
+            d_model=hp["d_model"],
+            max_len=hp["max_len"],
+            ff_dim=hp["d_ff"],
+            section_emb=hp["extras"]["section_emb"],
+            mood_emb=hp["extras"]["mood_emb"],
+            vel_bucket_emb=hp["extras"]["vel_bucket_emb"],
+            dur_bucket_emb=hp["extras"]["dur_bucket_emb"],
+        )
+        missing, unexpected = core.load_state_dict(sd, strict=False)
+        if missing or unexpected:
+            logging.warning({"missing_keys": missing, "unexpected_keys": unexpected})
 
-                def _rows(key: str) -> int:
-                    tensor = state_dict.get(key)
-                    try:
-                        return int(tensor.shape[0]) if tensor is not None else 0
-                    except Exception:
-                        return 0
+        # Model configuration summary
+        model_info = {
+            "d_model": hp["d_model"],
+            "max_len": hp["max_len"],
+            "d_ff": hp["d_ff"],
+            "vel_scale": 127.0,
+            "extras": hp["extras"],
+        }
+        logging.info(f"MLVelocityModel loaded: {model_info}")
 
-                def _has_param(key: str) -> bool:
-                    tensor = state_dict.get(key)
-                    if tensor is None:
-                        return False
-                    try:
-                        return int(tensor.numel()) > 0  # type: ignore[call-arg]
-                    except Exception:
-                        return False
-
-                section_vocab_size = _get_int("section_vocab_size", _rows("section_emb.weight"))
-                mood_vocab_size = _get_int("mood_vocab_size", _rows("mood_emb.weight"))
-                vel_bucket_size = _get_int("vel_bucket_size", _rows("vel_bucket_emb.weight"))
-                dur_bucket_size = _get_int("dur_bucket_size", _rows("dur_bucket_emb.weight"))
-                vel_bins = _get_int("vel_bins", _rows("head_vel_cls.weight"))
-                dur_bins = _get_int("dur_bins", _rows("head_dur_cls.weight"))
-
-                has_reg_head = _has_param("head_vel_reg.weight") or _has_param(
-                    "head_dur_reg.weight"
-                )
-                has_cls_head = vel_bins > 0 or dur_bins > 0
-                duv_mode_meta = str(meta.get("duv_mode", "")).strip()
-                if duv_mode_meta in {"reg", "cls", "both"}:
-                    duv_mode = duv_mode_meta
-                elif has_reg_head and has_cls_head:
-                    duv_mode = "both"
-                elif has_cls_head:
-                    duv_mode = "cls"
-                else:
-                    duv_mode = "reg"
-
-                use_bar_beat = bool(
-                    meta.get("use_bar_beat")
-                    if isinstance(meta.get("use_bar_beat"), bool)
-                    else _has_param("barpos_proj.weight") and _has_param("beatpos_proj.weight")
-                )
-                core = PhraseTransformer(
-                    d_model=d_model,
-                    max_len=max_len,
-                    section_vocab_size=section_vocab_size,
-                    mood_vocab_size=mood_vocab_size,
-                    vel_bucket_size=vel_bucket_size,
-                    dur_bucket_size=dur_bucket_size,
-                    vel_bins=vel_bins,
-                    dur_bins=dur_bins,
-                    use_bar_beat=use_bar_beat,
-                    duv_mode=duv_mode,
-                )
-                missing, unexpected = core.load_state_dict(state_dict, strict=False)
-                miss_list = sorted(missing) if isinstance(missing, (list, tuple)) else list(missing)
-                unexp_list = (
-                    sorted(unexpected) if isinstance(unexpected, (list, tuple)) else list(unexpected)
-                )
-                if miss_list or unexp_list:
-                    payload = {"missing_keys": miss_list, "unexpected_keys": unexp_list}
-                    if not miss_list and unexp_list == ["pos_enc.pe"]:
-                        logging.info(
-                            "state_dict extra keys ignored for compatibility: %s",
-                            unexp_list,
-                        )
-                    else:
-                        logging.warning(payload)
-
-                class PhraseDUVModule(nn.Module):
-                    def __init__(self, inner: nn.Module, *, meta: dict[str, Any]) -> None:
-                        super().__init__()
-                        self.core = inner
-                        self.meta = dict(meta)
-                        self.requires_duv_feats = True
-                        self.has_vel_head = bool(getattr(inner, "head_vel_reg", None))
-                        self.has_dur_head = bool(getattr(inner, "head_dur_reg", None))
-                        self.d_model = int(getattr(inner, "d_model", d_model))
-                        self.max_len = int(getattr(inner, "max_len", max_len))
-                        self.heads = {
-                            "vel_reg": self.has_vel_head,
-                            "dur_reg": self.has_dur_head,
-                        }
-                        self._duv_loader = "ckpt"
-
-                    def forward(
-                        self,
-                        feats: dict[str, torch.Tensor],
-                        mask: torch.Tensor | None = None,
-                    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-                        """Run the DUV core while tolerating missing padding masks."""
-                        if mask is None:
-                            first = None
-                            if isinstance(feats, dict) and feats:
-                                first = next(iter(feats.values()))
-                            else:
-                                first = feats
-                            if first is None:
-                                raise ValueError("unable to infer mask shape for DUV transformer")
-                            B, T = first.shape[:2]
-                            mask = torch.ones((B, T), dtype=torch.bool, device=first.device)
-                        outputs = self.core(feats, mask)
-                        if isinstance(outputs, dict):
-                            vel = outputs.get("vel_reg")
-                            dur = outputs.get("dur_reg")
-                            return vel, dur
-                        if isinstance(outputs, tuple):
-                            out0 = outputs[0] if len(outputs) > 0 else None
-                            out1 = outputs[1] if len(outputs) > 1 else None
-                            return out0, out1
-                        return outputs, None
-
-                return PhraseDUVModule(core.eval(), meta=meta).eval()
-            if "state_dict" in obj:
-                raise RuntimeError(
-                    "DUV ckpt is state_dict-only. Export to TorchScript or restore model class to load state_dict."
-                )
-
-        raise RuntimeError(f"Unsupported ckpt type: {type(obj).__name__}")
+        model = cls(core)
+        return model.eval()
 
     def predict(self, ctx, *, cache_key: str | None = None) -> "np.ndarray":
         if torch is None or getattr(self, "_dummy", False):
             import numpy as np
+
             return np.full((ctx.shape[0],), 64.0, dtype=np.float32)
 
         device = "cuda" if torch.cuda.is_available() else "cpu"

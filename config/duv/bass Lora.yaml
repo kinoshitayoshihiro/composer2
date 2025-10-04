@@ -1,0 +1,69 @@
+# Bass DUV — LoRA fine-tune config
+# 目的: 汎用DUV(Transformer)をベース用に軽量適応
+
+base_checkpoint: checkpoints/bass_duv_v2.best.ckpt
+base_frozen: true
+
+lora:
+  enable: true
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules:
+    ["attn.q_proj", "attn.v_proj", "attn.out_proj", "ff.in", "ff.out"]
+
+# Data - Use existing CSV data (already prepared for DUV training)
+train_csv: data/phrase_csv/bass_train.csv
+valid_csv: data/phrase_csv/bass_valid.csv
+
+# Alternative: JSONL manifest (requires note-level enrichment)
+# manifest: manifests/lamd_bass_enriched_full.jsonl
+train_split: 0.9
+valid_split: 0.1
+shuffle: true
+
+filters:
+  min_notes: 8 # Relaxed from 48
+  max_duration_sec: 600
+  min_duration_sec: 0.5 # Relaxed from 3
+
+features:
+  # Available in CSV: pitch, velocity, duration, pos, boundary, bar,
+  # instrument, program, song_id, velocity_bucket, duration_bucket
+  inputs: [
+      "pos", # Position in bar
+      "pitch", # MIDI pitch
+      "duration", # Note duration
+      "boundary", # Phrase boundary indicator
+      "bar", # Bar number
+      "program", # MIDI program
+      "velocity_bucket", # Velocity quantization
+      "duration_bucket", # Duration quantization
+    ]
+  targets: ["velocity", "duration"]
+  normalize: true
+  scaler_out: checkpoints/scalers/bass_duv.json
+
+targets_mode: absolute
+
+trainer:
+  epochs: 6
+  batch_size: 64
+  max_len: 128 # Match base model
+  lr: 2.0e-4
+  weight_decay: 0.01
+  warmup_steps: 1000
+  early_stop_patience: null # Disabled (validation may be limited)
+  grad_clip_norm: 1.0
+  precision: bf16
+  seed: 42
+
+output_dir: checkpoints/duv_bass_lora
+save_every: 1
+eval_every: 1000
+
+inference:
+  intensity: 0.95
+  include_regex: "(?i)bass|contra|upright"
+  exclude_regex: "(?i)drum|perc"
+  mode: absolute

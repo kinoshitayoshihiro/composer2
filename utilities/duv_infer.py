@@ -62,6 +62,7 @@ CSV_INT32_COLUMNS: set[str] = {
     "program",
 }
 
+
 def _mask_any(x: object):
     """Reduce *x* to a single truthy scalar with robust semantics.
     Always returns a numpy.bool_ so callers may safely call .item()."""
@@ -69,12 +70,12 @@ def _mask_any(x: object):
     _np = np if "np" in globals() else None
 
     if x is None:
-        return (_np.bool_(False) if _np is not None else False)
+        return _np.bool_(False) if _np is not None else False
 
     try:
         t = torch.as_tensor(x)
         val = bool(t.any().item())
-        return (_np.bool_(val) if _np is not None else val)
+        return _np.bool_(val) if _np is not None else val
     except Exception:
         pass
 
@@ -86,10 +87,10 @@ def _mask_any(x: object):
 
     try:
         val = any(bool(v) for v in x)  # type: ignore[arg-type]
-        return (_np.bool_(val) if _np is not None else val)
+        return _np.bool_(val) if _np is not None else val
     except Exception:
         val = bool(x)
-        return (_np.bool_(val) if _np is not None else val)
+        return _np.bool_(val) if _np is not None else val
 
 
 def mask_any(mask: object):
@@ -97,6 +98,7 @@ def mask_any(mask: object):
     Intentionally returns numpy.bool_ (when available) to support ``.item()``."""
 
     return _mask_any(mask)
+
 
 def _missing_required(columns: Iterable[str]) -> list[str]:
     return sorted(REQUIRED_COLUMNS - set(columns))
@@ -155,15 +157,16 @@ def load_duv_dataframe(
     _coerce_numeric(df, ["duration"], "float32", fill_value=0.0)
     _coerce_numeric(df, ["bar", "position"], "int32")
 
-    extra_int32 = (
-        (OPTIONAL_INT32_COLUMNS | CSV_INT32_COLUMNS) - {"pitch", "program", "position", "bar"}
-    )
+    extra_int32 = (OPTIONAL_INT32_COLUMNS | CSV_INT32_COLUMNS) - {
+        "pitch",
+        "program",
+        "position",
+        "bar",
+    }
     _coerce_numeric(df, extra_int32, "int32")
 
     float_targets = (
-        set(feature_columns or ())
-        | CSV_FLOAT32_COLUMNS
-        | OPTIONAL_FLOAT32_COLUMNS
+        set(feature_columns or ()) | CSV_FLOAT32_COLUMNS | OPTIONAL_FLOAT32_COLUMNS
     ) - {"duration", "velocity"}
     _coerce_numeric(df, float_targets, "float32", fill_value=0.0)
 
@@ -171,9 +174,7 @@ def load_duv_dataframe(
         try:
             df = df.query(filter_expr, engine="python")
         except UndefinedVariableError as exc:
-            raise SystemExit(
-                f"--filter-program referenced missing column: {exc}"
-            ) from exc
+            raise SystemExit(f"--filter-program referenced missing column: {exc}") from exc
 
     df = df.reset_index(drop=True)
 
@@ -185,6 +186,8 @@ def load_duv_dataframe(
         program_hist = df["program"].value_counts().sort_values(ascending=False)
 
     return df, program_hist
+
+
 def duv_verbose(flag: bool | None) -> bool:
     env = os.getenv("COMPOSER2_VERBOSE", "")
     if env.lower() not in {"", "0", "false", "no"}:
@@ -388,6 +391,60 @@ def duv_sequence_predict(
         mask = torch.zeros(1, max_len, dtype=torch.bool, device=device)
         mask[:, :length] = True
 
+        # Verbose診断ログ: mask, features distribution
+        if verbose and stderr is not None:
+            mask_sum = mask.sum().item()
+            print(
+                {
+                    "duv_debug": {
+                        "mask_sum": int(mask_sum),
+                        "length": int(length),
+                        "max_len": int(max_len),
+                        "position_range": [int(pos_vals.min().item()), int(pos_vals.max().item())],
+                        "position_unique": int(len(pos_vals.unique())),
+                        "velocity_range": [
+                            float(vel_vals.min().item()),
+                            float(vel_vals.max().item()),
+                        ],
+                        "velocity_var": float(vel_vals.var().item()),
+                        "duration_range": [
+                            float(dur_vals.min().item()),
+                            float(dur_vals.max().item()),
+                        ],
+                    }
+                },
+                file=stderr,
+            )
+
+        # Debug: feature statistics for verbose mode
+        if verbose and stderr is not None:
+            print("=== Feature Statistics ===", file=stderr)
+            feature_order = sorted(feat_dict.keys())
+            print(f"Feature order: {feature_order}", file=stderr)
+            for key in feature_order:
+                tensor = feat_dict[key]
+                if tensor.dtype.is_floating_point:
+                    print(
+                        f"{key}: shape={tuple(tensor.shape)}, "
+                        f"min={tensor.min().item():.6f}, "
+                        f"max={tensor.max().item():.6f}, "
+                        f"mean={tensor.mean().item():.6f}",
+                        file=stderr,
+                    )
+                else:
+                    print(
+                        f"{key}: shape={tuple(tensor.shape)}, dtype={tensor.dtype}, "
+                        f"min={tensor.min().item()}, "
+                        f"max={tensor.max().item()}",
+                        file=stderr,
+                    )
+
+            # Enable debug mode for PhraseTransformer
+            if hasattr(model, "core"):
+                setattr(model.core, "_debug", True)
+            else:
+                setattr(model, "_debug", True)
+
         with torch.no_grad():
             outputs = model(feat_dict, mask=mask)
 
@@ -416,6 +473,32 @@ def duv_sequence_predict(
         if verbose and not optional_summary_printed and summary and stderr is not None:
             print({"duv_optional_features": summary}, file=stderr)
             optional_summary_printed = True
+
+        # Verbose診断ログ: model output distribution
+        if verbose and stderr is not None:
+            output_debug = {}
+            if vel_out is not None:
+                vel_raw = vel_out.squeeze(0)[:length]
+                output_debug["vel_raw"] = {
+                    "min": float(vel_raw.min().item()),
+                    "max": float(vel_raw.max().item()),
+                    "mean": float(vel_raw.mean().item()),
+                    "std": float(vel_raw.std().item()),
+                    "nan_count": int(torch.isnan(vel_raw).sum().item()),
+                    "inf_count": int(torch.isinf(vel_raw).sum().item()),
+                }
+            if dur_out is not None:
+                dur_raw = dur_out.squeeze(0)[:length]
+                output_debug["dur_raw"] = {
+                    "min": float(dur_raw.min().item()),
+                    "max": float(dur_raw.max().item()),
+                    "mean": float(dur_raw.mean().item()),
+                    "std": float(dur_raw.std().item()),
+                    "nan_count": int(torch.isnan(dur_raw).sum().item()),
+                    "inf_count": int(torch.isinf(dur_raw).sum().item()),
+                }
+            if output_debug:
+                print({"duv_model_output": output_debug}, file=stderr)
 
         if vel_out is not None:
             v = torch.clamp(vel_out.squeeze(0), 0.0, 1.0).mul(127.0).round().clamp(1.0, 127.0)
